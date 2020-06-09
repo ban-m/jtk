@@ -1,0 +1,7 @@
+[workspace]
+members = [
+        "definitions",
+        "hla_cli",
+        "bio_utils",
+        "haplotyper",
+]

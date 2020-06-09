@@ -1,0 +1,16 @@
+**/target
+**/*.rs.bk
+*.fa*
+*.ans
+*.sam
+**/last
+*.maf
+*.dat
+**/result
+**/data
+**/logfiles
+**/pdf
+**/png
+**/pics
+.*
+!.gitignore

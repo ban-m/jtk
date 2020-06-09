@@ -1,0 +1,16 @@
+[package]
+name = "hla_cli"
+version = "0.1.0"
+authors = ["ban-m <ban-m@g.ecc.u-tokyo.ac.jp>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = "*"
+definitions = {path = "../definitions"}
+log = "*"
+env_logger = "*"
+serde_json = "*"
+bio_utils = {path = "../bio_utils"}
+haplotyper = {path = "../haplotyper"}
