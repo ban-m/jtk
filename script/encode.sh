@@ -9,23 +9,26 @@
 #$ -V
 set -ue 
 TARGET=${PWD}/result/CCS_reads.15000.1M.fa
-ENCODE=${PWD}/result/CCS_reads.15000.1M.encode.units.json
+ENTRY=${PWD}/result/CCS_reads.15000.1M.entry.units.json
 UNITS=${PWD}/result/CCS_reads.15000.1M.units.fa
 JTK=${PWD}/target/release/jtk
 cargo build --release
-cat ${TARGET} | ${JTK} entry | ${JTK} select_unit -vv \
-    | ${JTK} stats -vv -f encode.log > ${ENCODE}
-cat ${ENCODE} | ${JTK} extract -f fasta -t units > ${UNITS}
+cat ${TARGET} | ${JTK} entry |\
+    ${JTK} select_unit -vv |\
+    ${JTK} stats -vv -f encode.log |\
+    tee ${ENTRY} |\
+    ${JTK} extract -f fasta -t units > ${UNITS}
 
-
-ALIGNMENT=${PWD}/result/CCS_reads.15000.1M.units.sam
+# ALIGNMENT=${PWD}/result/CCS_reads.15000.1M.units.sam
 # minimap2 -a -t 12 -x map-pb ${UNITS} ${TARGET} > ${ALIGNMENT}
-
 cd ${PWD}/result
 lastdb -R00 -Q0 units ${UNITS}
 last-train -P12 -Q0 units ${TARGET} > score.matrix
 lastal -f maf -P12 -R00 -Q0 -p score.matrix units ${TARGET}|\
     maf-convert tab --join 500 > alignments.tab
-## last-split
-    
 cd ../
+
+ENCODE=${PWD}/result/CCS_reads.15000.1M.entry.units.encode.json
+cat ${ENTRY} |\
+    ${JTK} encode -vv -a ${PWD}/result/alignments.tab > ${ENCODE}
+
