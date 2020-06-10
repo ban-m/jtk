@@ -1,12 +1,14 @@
-use bio_utils::sam::Sam;
+use bio_utils::lasttab;
+use bio_utils::lasttab::LastTAB;
 use std::collections::HashMap;
 pub trait Encode {
-    fn encode(self, alignmnets: &[Sam]) -> Self;
+    fn encode(self, alignmnets: &[LastTAB]) -> Self;
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(mut self, alignments: &[Sam]) -> Self {
-        let alignments_each_reads: HashMap<String, Vec<&Sam>> = distribute(alignments);
+    fn encode(mut self, alignments: &[LastTAB]) -> Self {
+        let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(alignments);
+        debug!("{}", alignments_each_reads.len());
         let encoded_reads: Vec<_> = self
             .raw_reads
             .iter()
@@ -20,23 +22,49 @@ impl Encode for definitions::DataSet {
     }
 }
 
-fn distribute<'a>(alignments: &'a [Sam]) -> HashMap<String, Vec<&'a Sam>> {
+fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>> {
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
     for alignment in alignments {
-        let q_name = alignment.q_name().to_string();
+        let q_name = alignment.seq2_name().to_string();
         buckets.entry(q_name).or_default().push(alignment);
     }
     buckets
 }
 
 use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
-fn encode(read: &RawRead, alignments: &[&Sam], units: &[Unit]) -> Option<EncodedRead> {
+fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option<EncodedRead> {
+    // for aln in alignments.iter() {
+    //     let reflen = aln
+    //         .alignment()
+    //         .iter()
+    //         .map(|op| match op {
+    //             lasttab::Op::Seq2In(l) | lasttab::Op::Match(l) => *l,
+    //             _ => 0,
+    //         })
+    //         .sum::<usize>();
+    //     // It is 0-indexed.
+    //     assert_eq!(reflen, aln.seq1_matchlen());
+    //     let q_len = aln
+    //         .alignment()
+    //         .iter()
+    //         .map(|op| match op {
+    //             lasttab::Op::Seq1In(l) | lasttab::Op::Match(l) => *l,
+    //             _ => 0,
+    //         })
+    //         .sum::<usize>();
+    //     assert_eq!(q_len, aln.seq2_matchlen());
+    // }
+    // debug!("Alignments checked.");
     let mut nodes: Vec<_> = alignments
         .iter()
+        .filter(|aln| aln.seq1_matchlen() > aln.seq1_len() * 98 / 1000)
         .filter_map(|aln| encode_alignment(aln, units, read))
         .collect();
     nodes.sort_by_key(|e| e.position_from_start);
-    let edges: Vec<_> = nodes.windows(2).map(Edge::from_nodes).collect();
+    let edges: Vec<_> = nodes
+        .windows(2)
+        .map(|w| Edge::from_nodes(w, read.seq()))
+        .collect();
     let leading_gap = nodes.first()?.position_from_start;
     let trailing_gap = {
         let last = nodes.last()?;
@@ -52,16 +80,55 @@ fn encode(read: &RawRead, alignments: &[&Sam], units: &[Unit]) -> Option<Encoded
     })
 }
 
-fn encode_alignment(aln: &Sam, units: &[Unit], read: &RawRead) -> Option<Node> {
-    None
+fn encode_alignment(aln: &LastTAB, _units: &[Unit], read: &RawRead) -> Option<Node> {
+    let position = aln.seq2_start_from_forward();
+    let unit: u64 = aln.seq1_name().parse().ok()?;
+    let is_forward = aln.seq2_direction().is_forward();
+    let seq = {
+        let start = aln.seq2_start();
+        let end = start + aln.seq2_matchlen();
+        let seq = if is_forward {
+            read.seq().to_vec()
+        } else {
+            bio_utils::revcmp(read.seq())
+        };
+        seq[start..end].to_vec()
+    };
+    let cigar = convert_aln_to_cigar(aln);
+    Some(Node {
+        position_from_start: position,
+        unit,
+        seq: String::from_utf8_lossy(&seq).to_string(),
+        is_forward,
+        cigar,
+    })
+}
+
+fn convert_aln_to_cigar(aln: &lasttab::LastTAB) -> Vec<Op> {
+    let mut cigar = if aln.seq1_start_from_forward() != 0 {
+        vec![Op::Del(aln.seq1_start_from_forward())]
+    } else {
+        vec![]
+    };
+    cigar.extend(aln.alignment().into_iter().map(|op| match op {
+        lasttab::Op::Seq1In(l) => Op::Ins(l),
+        lasttab::Op::Seq2In(l) => Op::Del(l),
+        lasttab::Op::Match(l) => Op::Match(l),
+    }));
+    let reflen = consumed_reference_length(&cigar);
+    assert!(reflen <= aln.seq1_len(), "{} > {}", reflen, aln.seq1_len());
+    if aln.seq1_len() > reflen {
+        cigar.push(Op::Del(aln.seq1_len() - reflen))
+    }
+    cigar
 }
 
 fn consumed_reference_length(cigar: &[Op]) -> usize {
     cigar
         .iter()
         .map(|op| match op {
-            Op::Match(l) | Op::MisMatch(l) | Op::Del(l) => *l,
-            Op::Ins(l) => 0,
+            Op::Match(l) | Op::Del(l) => *l,
+            Op::Ins(_) => 0,
         })
         .sum::<usize>()
 }

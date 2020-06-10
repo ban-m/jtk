@@ -1,10 +1,10 @@
 Raw Reads
-Total Length:89160348
+Total Length:89350484
 # of Read:6000
-Mean Length:14860
-Max Length:25686
-Min Length:173
+Mean Length:14891
+Max Length:26080
+Min Length:113
 Chunks
-Total Length:3000000
-# of Units:3000
+Total Length:500000
+# of Units:500
 Mean Length:1000

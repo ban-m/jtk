@@ -27,3 +27,10 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 # Memos
 
 /data/hacone/randseq/
+
+## TODO
+
+### Compact serialization(BinCode) vs Readable serialization(JSON)
+
+- It is preferrable to switch between them easily. Currently I think the message passing should be based on JSON by default, as sometimes we do need some help of other language or script such as Python, Ruby, or even Javascript.
+However, as the final product or 'publishable state', it would be more elegant to impelemt them entirely in Rust language, where the use of JSON does not make any sense.

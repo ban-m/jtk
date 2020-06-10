@@ -1,3 +1,4 @@
+use bio_utils::lasttab::LastTAB;
 use clap::{App, Arg, SubCommand};
 use definitions::*;
 use haplotyper::*;
@@ -92,7 +93,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("chunk_num")
                 .takes_value(true)
-                .default_value(&"3000")
+                .default_value(&"500")
                 .help("Number of chunks"),
         )
         .arg(
@@ -130,8 +131,30 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .takes_value(true)
                 .required(true)
                 .long("alignment")
-                .value_name("ALIGNMENT<SAM>")
+                .value_name("ALIGNMENT<LastTAB>")
                 .help("alignment between units and reads (units are references)."),
+        )
+}
+
+fn subcommand_view() -> App<'static, 'static> {
+    SubCommand::with_name("view")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("View reads")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("name")
+                .short("n")
+                .long("name")
+                .takes_value(true)
+                .required(true)
+                .value_name("NAME")
+                .help("Name of the read to be showed."),
         )
 }
 
@@ -286,6 +309,15 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
     }
 }
 
+fn parse_tab_file<P: AsRef<std::path::Path>>(tab_file: P) -> std::io::Result<Vec<LastTAB>> {
+    let lines = std::fs::read_to_string(tab_file)?;
+    Ok(lines
+        .lines()
+        .filter(|e| !e.starts_with('#'))
+        .filter_map(LastTAB::from_line)
+        .collect())
+}
+
 fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
@@ -296,7 +328,6 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Encode");
     use std::io::BufReader;
-    debug!("Select Units");
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
     let dataset: DataSet = match serde_json::de::from_reader(reader) {
@@ -307,7 +338,7 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
         }
         Ok(res) => res,
     };
-    let alignment = bio_utils::sam::load_sam_file(matches.value_of("alignment").unwrap())?;
+    let alignment = parse_tab_file(matches.value_of("alignment").unwrap())?;
     let dataset = dataset.encode(&alignment);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());
@@ -320,6 +351,31 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
     }
 }
 
+fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let level = match matches.occurrences_of("verbose") {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        3 | _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    debug!("View");
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let dataset: DataSet = match serde_json::de::from_reader(reader) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid Input from STDIN.");
+            std::process::exit(1);
+        }
+        Ok(res) => res,
+    };
+    let name = matches.value_of("name").unwrap();
+    dataset.view(name);
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     let matches = App::new("jtk")
         .version("0.1")
@@ -330,6 +386,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_stats())
         .subcommand(subcommand_select_unit())
         .subcommand(subcommand_encode())
+        .subcommand(subcommand_view())
         .get_matches();
     match matches.subcommand() {
         ("entry", Some(sub_m)) => entry(sub_m),
@@ -337,6 +394,7 @@ fn main() -> std::io::Result<()> {
         ("stats", Some(sub_m)) => stats(sub_m),
         ("select_unit", Some(sub_m)) => select_unit(sub_m),
         ("encode", Some(sub_m)) => encode(sub_m),
+        ("view", Some(sub_m)) => view(sub_m),
         _ => Ok(()),
     }
 }

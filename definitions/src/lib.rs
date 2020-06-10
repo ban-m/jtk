@@ -44,6 +44,12 @@ impl RawRead {
     }
 }
 
+impl std::fmt::Display for RawRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} {} {}\n{}", self.name, self.desc, self.id, self.seq)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HiCPair {
     pub pair1: u64,
@@ -121,16 +127,23 @@ impl Edge {
     pub fn label(&self) -> &[u8] {
         self.label.as_bytes()
     }
-    pub fn from_nodes(ns: &[Node]) -> Self {
+    pub fn from_nodes(ns: &[Node], seq: &[u8]) -> Self {
         let (from, to) = match ns {
             &[ref from, ref to] => (from, to),
             _ => unreachable!(),
         };
+        let end = from.position_from_start + from.query_length();
+        let start = to.position_from_start;
+        let label = if start < end {
+            "".to_string()
+        } else {
+            String::from_utf8_lossy(&seq[end..start]).to_string()
+        };
         Edge {
             from: from.unit,
             to: to.unit,
-            offset: 0,
-            label: "".to_string(),
+            offset: start as i64 - end as i64,
+            label: label,
         }
     }
 }
@@ -144,6 +157,7 @@ pub struct Node {
     pub is_forward: bool,
     pub cigar: Vec<Op>,
 }
+
 impl Node {
     pub fn seq(&self) -> &[u8] {
         self.seq.as_bytes()
@@ -152,17 +166,52 @@ impl Node {
         self.cigar
             .iter()
             .map(|op| match op {
-                Op::MisMatch(l) | Op::Match(l) | Op::Ins(l) => *l,
+                Op::Match(l) | Op::Ins(l) => *l,
                 Op::Del(_) => 0,
             })
             .sum::<usize>()
+    }
+    pub fn recover(&self, unit: &Unit) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let (read, unit) = (self.seq(), unit.seq());
+        println!("R:{}", String::from_utf8_lossy(read));
+        println!("Q:{}", String::from_utf8_lossy(unit));
+        let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
+        let (mut q_pos, mut r_pos) = (0, 0);
+        for op in self.cigar.iter() {
+            match *op {
+                Op::Match(l) => {
+                    al.extend(
+                        read[q_pos..q_pos + l]
+                            .iter()
+                            .zip(&unit[r_pos..r_pos + l])
+                            .map(|(x, y)| if x == y { b'|' } else { b'X' }),
+                    );
+                    q.extend(read[q_pos..q_pos + l].iter().copied());
+                    r.extend(unit[r_pos..r_pos + l].iter().copied());
+                    q_pos += l;
+                    r_pos += l;
+                }
+                Op::Del(l) => {
+                    al.extend(vec![b' '; l]);
+                    q.extend(vec![b' '; l]);
+                    r.extend(unit[r_pos..r_pos + l].iter().copied());
+                    r_pos += l;
+                }
+                Op::Ins(l) => {
+                    al.extend(vec![b' '; l]);
+                    q.extend(read[q_pos..q_pos + l].iter().copied());
+                    r.extend(vec![b' '; l]);
+                    q_pos += l;
+                }
+            }
+        }
+        (q, al, r)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum Op {
     Match(usize),
-    MisMatch(usize),
     /// Deletion with respect to the reference.
     Del(usize),
     /// Insertion with respect to the reference.
