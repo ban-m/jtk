@@ -121,10 +121,24 @@ impl Edge {
     pub fn label(&self) -> &[u8] {
         self.label.as_bytes()
     }
+    pub fn from_nodes(ns: &[Node]) -> Self {
+        let (from, to) = match ns {
+            &[ref from, ref to] => (from, to),
+            _ => unreachable!(),
+        };
+        Edge {
+            from: from.unit,
+            to: to.unit,
+            offset: 0,
+            label: "".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
+    /// 0-index.
+    pub position_from_start: usize,
     pub unit: u64,
     pub seq: String,
     pub is_forward: bool,

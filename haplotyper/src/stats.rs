@@ -40,12 +40,12 @@ impl Stats for definitions::DataSet {
         if !self.selected_chunks.is_empty() {
             let lens = self.selected_chunks.iter().map(|u| u.seq().len());
             let sum = lens.clone().sum::<usize>();
-            let len = self.raw_reads.len();
+            let len = self.selected_chunks.len();
             let ave = sum / len;
             writeln!(&mut wtr, "Chunks")?;
             writeln!(
                 &mut wtr,
-                "Total Length:{}\n# of Pairs:{}\nMean Length:{}",
+                "Total Length:{}\n# of Units:{}\nMean Length:{}",
                 sum, len, ave
             )?;
         }
