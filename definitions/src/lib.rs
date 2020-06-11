@@ -230,11 +230,11 @@ pub struct HiCEdge {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Assignment {
     pub id: u64,
-    pub cluster: u32,
+    pub cluster: usize,
 }
 
 impl Assignment {
-    pub fn new(id: u64, cluster: u32) -> Self {
+    pub fn new(id: u64, cluster: usize) -> Self {
         Self { id, cluster }
     }
 }

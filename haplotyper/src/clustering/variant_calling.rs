@@ -1,13 +1,13 @@
+use super::create_model::get_models;
+use super::ChunkedUnit;
 use super::ClusteringConfig;
-use super::ERead;
+use super::SMALL_WEIGHT;
 use nalgebra::DMatrix;
-use poa_hmm::{ POA};
+use poa_hmm::POA;
 use rand::Rng;
 use rayon::prelude::*;
-use super::SMALL_WEIGHT;
-use super::create_model::get_models;
 pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
-    data: &[ERead],
+    data: &[ChunkedUnit],
     chain_len: usize,
     rng: &mut R,
     c: &ClusteringConfig<F>,
@@ -37,7 +37,7 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
 // Calculate LK matrices for each read. Total LK would be also returned.
 // Note that each matrix is flattened in row-order.
 fn calc_matrices_poa(
-    data: &[ERead],
+    data: &[ChunkedUnit],
     c: &poa_hmm::Config,
     ws: &[f64],
     models: &[Vec<POA>],
@@ -70,7 +70,12 @@ fn calc_matrices_poa(
 
 // Return likelihoods of the read.
 // the cl * i + j -th element is the likelihood for the i-th cluster at the j-th position.
-fn lks_poa(models: &[Vec<POA>], read: &ERead, config: &poa_hmm::Config, cl: usize) -> Vec<f64> {
+fn lks_poa(
+    models: &[Vec<POA>],
+    read: &ChunkedUnit,
+    config: &poa_hmm::Config,
+    cl: usize,
+) -> Vec<f64> {
     let mut res = vec![0.; cl * models.len()];
     for (i, ms) in models.iter().enumerate() {
         for c in read.chunks.iter() {
@@ -175,7 +180,7 @@ fn centrize_vector_of(matrices: &[Vec<f64>], row: usize, column: usize) -> Vec<V
 // Note that returned matrix is lower-triangled. In other words,
 // xs[i][j] would be varid only if j < i.
 fn variant_calling(
-    data: &[ERead],
+    data: &[ChunkedUnit],
     c: &poa_hmm::Config,
     ws: &[f64],
     models: &[Vec<POA>],
@@ -248,7 +253,7 @@ fn select_variants(
             let thr = {
                 let mut var = bs.clone();
                 var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                let pos = (var.len() as f64 * variant_fraction).floor() as usize;
+                let pos = (var.len() as f64 * (1. - variant_fraction)).floor() as usize;
                 var[pos]
             };
             for (idx, b) in bs.iter_mut().enumerate() {
@@ -263,7 +268,11 @@ fn select_variants(
     (variants, position)
 }
 
-fn get_cluster_fraction(data: &[ERead], update_data: &[bool], cluster_num: usize) -> Vec<f64> {
+fn get_cluster_fraction(
+    data: &[ChunkedUnit],
+    update_data: &[bool],
+    cluster_num: usize,
+) -> Vec<f64> {
     let total = update_data.iter().filter(|&b| !b).count() as f64;
     (0..cluster_num)
         .map(|cl| {

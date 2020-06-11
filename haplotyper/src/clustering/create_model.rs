@@ -1,5 +1,5 @@
 use super::ClusteringConfig;
-use super::ERead;
+use super::ChunkedUnit;
 use poa_hmm::POA;
 use rand::distributions::Standard;
 use rand::seq::SliceRandom;
@@ -13,7 +13,7 @@ fn select<R: Rng>(choises: &[usize], rng: &mut R, cl: usize, pick: f64) -> usize
 }
 
 pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
-    data: &[ERead],
+    data: &[ChunkedUnit],
     chain_len: usize,
     rng: &mut R,
     c: &ClusteringConfig<F>,

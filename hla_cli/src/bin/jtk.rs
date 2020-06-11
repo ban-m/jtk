@@ -85,7 +85,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("l")
                 .long("chunk_len")
                 .takes_value(true)
-                .default_value(&"1000")
+                .default_value(&"2000")
                 .help("Length of a chunk"),
         )
         .arg(
@@ -93,7 +93,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("chunk_num")
                 .takes_value(true)
-                .default_value(&"500")
+                .default_value(&"250")
                 .help("Number of chunks"),
         )
         .arg(
@@ -101,7 +101,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("s")
                 .long("skip_len")
                 .takes_value(true)
-                .default_value(&"4000")
+                .default_value(&"1000")
                 .help("Margin between units"),
         )
         .arg(
@@ -109,7 +109,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("m")
                 .long("margin")
                 .takes_value(true)
-                .default_value(&"2000")
+                .default_value(&"1000")
                 .help("Margin at the both end of a read."),
         )
 }
@@ -186,7 +186,7 @@ fn subcommand_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("LIMIT")
                 .help("Maximum Execution time(sec)")
-                .default_value(&"7200")
+                .default_value(&"3000")
                 .takes_value(true),
         )
         .arg(
@@ -459,11 +459,10 @@ fn clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("limit")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let subchunk_length: usize = matches
+    let length: usize = matches
         .value_of("subchunk_len")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let config = ClusteringConfig::with_default(threads, cluster_num, subchunk_length, limit);
     use std::io::BufReader;
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
@@ -476,6 +475,7 @@ fn clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         Ok(res) => res,
     };
     debug!("Parsed Dataset.");
+    let config = ClusteringConfig::with_default(&dataset, threads, cluster_num, length, limit);
     let dataset = dataset.clustering(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());

@@ -16,10 +16,6 @@ use eread::*;
 
 pub trait Clustering {
     fn clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(self, c: &ClusteringConfig<F>) -> Self;
-    // fn serialize_subchunk<F: Fn(u8, u8) -> i32>(
-    //     &self,
-    //     c: &ClusteringConfig<F>,
-    // ) -> (usize, Vec<ERead>);
 }
 
 impl Clustering for DataSet {
@@ -31,69 +27,84 @@ impl Clustering for DataSet {
             .num_threads(c.threads)
             .build_global()
             .unwrap();
-        let max_unit = self.selected_chunks.iter().map(|u| u.id).max().expect("u");
-        let mut pileups: Vec<(_, _, &Node)> = vec![vec![]; max_unit as usize + 1];
+        let max_unit = self.selected_chunks.iter().map(|u| u.id).max().unwrap() + 1;
+        let mut pileups: Vec<Vec<(_, _, &Node)>> = vec![vec![]; max_unit as usize];
         for read in self.encoded_reads.iter() {
-            for (idx, node) in read.nodes.iter() {
-                pileup[node.unit as usize].push((read.id, idx, node));
+            for (idx, node) in read.nodes.iter().enumerate() {
+                pileups[node.unit as usize].push((read.id, idx, node));
             }
         }
-        let reads_as_paths:Vec<_> = {
-            use std::collections::HashMap;
+        let reads_as_paths: Vec<_> = {
             let mut clustered_chunks: HashMap<u64, Vec<(usize, Elm)>> = HashMap::new();
-            for pileup in 
+            for (unit_id, units) in pileups.into_iter().enumerate() {
+                debug!("The {}-th pileup", unit_id);
+                let ref_unit = match self.selected_chunks.iter().find(|u| u.id == unit_id as u64) {
+                    Some(res) => res,
+                    None => continue,
+                };
+                let assignments = unit_clustering(&units, c, ref_unit);
+                if log_enabled!(log::Level::Debug) {
+                    let id_to_name: HashMap<_, _> =
+                        self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+                    for cl in 0..c.cluster_num {
+                        for (_, (readid, _, _)) in assignments
+                            .iter()
+                            .zip(units.iter())
+                            .filter(|&(&a, _)| a == cl)
+                        {
+                            debug!("{}\t{}\t{}", cl, readid, id_to_name[&readid]);
+                        }
+                    }
+                }
+                for (cluster, (readid, pos, node)) in assignments.into_iter().zip(units) {
+                    let elm = Elm::new(node.unit, cluster);
+                    clustered_chunks.entry(readid).or_default().push((pos, elm))
+                }
+            }
+            clustered_chunks
+                .into_iter()
+                .map(|(id, mut units)| {
+                    units.sort_by_key(|e| e.0);
+                    let path: Vec<_> = units.into_iter().map(|e| e.1).collect();
+                    let cluster = 0;
+                    ERead { id, path, cluster }
+                })
+                .collect()
         };
-        let assignments = clustering_by_kmeans(data, chain_len, c);
+        let assignments = path_clustering(reads_as_paths, c);
+        if log_enabled!(log::Level::Debug) {
+            let id_to_name: HashMap<_, _> =
+                self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+            for cl in 0..c.cluster_num {
+                for asn in assignments.iter().filter(|asn| asn.cluster == cl) {
+                    debug!("{}\t{}\t{}", cl, asn.id, id_to_name[&asn.id]);
+                }
+            }
+        }
         self.assignments = assignments;
         self
     }
-    // fn serialize_subchunk<F: Fn(u8, u8) -> i32>(
-    //     &self,
-    //     c: &ClusteringConfig<F>,
-    // ) -> (usize, Vec<ERead>) {
-    //     // (UnitID, subchunkID) -> Serialized Position
-    //     let locationmap: HashMap<(u64, usize), usize> = self
-    //         .selected_chunks
-    //         .iter()
-    //         .flat_map(|u| {
-    //             let len = if u.seq().len() % c.subchunk_length == 0 {
-    //                 u.seq().len() / c.subchunk_length
-    //             } else {
-    //                 u.seq().len() / c.subchunk_length + 1
-    //             };
-    //             (0..len).map(|i| (u.id, i)).collect::<Vec<_>>()
-    //         })
-    //         .enumerate()
-    //         .map(|(x, y)| (y, x))
-    //         .collect();
-    //     let chain_length = *locationmap.values().max().expect("chain length") + 1;
-    //     let data = self
-    //         .encoded_reads
-    //         .iter()
-    //         .map(|read| split_into_subchunks(read, c.subchunk_length, &locationmap))
-    //         .collect();
-    //     (chain_length, data)
-    // }
 }
-
-fn split_into_subchunks(
-    read: &EncodedRead,
-    len: usize,
-    map: &HashMap<(u64, usize), usize>,
-) -> ERead {
-    let chunks: Vec<_> = read
-        .nodes
-        .iter()
-        .flat_map(|node| node_to_subchunks(node, len, map))
+// Clustering units.
+fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    units: &[(u64, usize, &Node)],
+    c: &ClusteringConfig<F>,
+    ref_unit: &Unit,
+) -> Vec<usize> {
+    let len = if ref_unit.seq().len() % c.subchunk_length == 0 {
+        ref_unit.seq().len() / c.subchunk_length
+    } else {
+        ref_unit.seq().len() / c.subchunk_length + 1
+    };
+    let data: Vec<ChunkedUnit> = units
+        .into_iter()
+        .map(|(_, _, node)| node_to_subchunks(node, c.subchunk_length))
+        .map(|chunks| ChunkedUnit { cluster: 0, chunks })
         .collect();
-    ERead {
-        id: read.id,
-        chunks,
-        cluster: 0,
-    }
+    clustering_by_kmeans(data, len, c, c.seed * ref_unit.id)
 }
 
-fn node_to_subchunks(node: &Node, len: usize, map: &HashMap<(u64, usize), usize>) -> Vec<Chunk> {
+fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
     let (mut q_pos, mut r_pos) = (0, 0);
     let mut target = len;
     let mut ops = node.cigar.clone();
@@ -169,9 +180,8 @@ fn node_to_subchunks(node: &Node, len: usize, map: &HashMap<(u64, usize), usize>
         .windows(2)
         .enumerate()
         .filter_map(|(idx, w)| {
-            let pos = *map.get(&(node.unit, idx))?;
             let chunk = Chunk {
-                pos,
+                pos: idx,
                 seq: node.seq()[w[0]..w[1]].to_vec(),
             };
             Some(chunk)
@@ -180,14 +190,15 @@ fn node_to_subchunks(node: &Node, len: usize, map: &HashMap<(u64, usize), usize>
 }
 
 fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    mut data: Vec<ERead>,
+    mut data: Vec<ChunkedUnit>,
     chain_len: usize,
     c: &ClusteringConfig<F>,
-) -> Vec<Assignment> {
+    seed: u64,
+) -> Vec<usize> {
     // Construct Pileups.
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(c.seed);
-    data.iter_mut().for_each(|r| {
-        r.cluster = rng.gen_range(0, c.cluster_num);
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
+    data.iter_mut().for_each(|cs| {
+        cs.cluster = rng.gen_range(0, c.cluster_num);
     });
     let mut beta = c.initial_beta;
     let mut count = 0;
@@ -218,12 +229,10 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             break;
         }
     }
-    data.iter()
-        .map(|d| Assignment::new(d.id, d.cluster as u32))
-        .collect()
+    data.iter().map(|d| d.cluster).collect()
 }
 
-fn report(id: u64, data: &[ERead], count: u32, lk: f64, beta: f64) {
+fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64) {
     debug!("{}\t{}\t{}\t{}", id, count, lk, beta);
     let mut count: std::collections::HashMap<usize, usize> = HashMap::new();
     for read in data {
@@ -236,7 +245,11 @@ fn report(id: u64, data: &[ERead], count: u32, lk: f64, beta: f64) {
     }
 }
 
-fn get_fraction_on_position(data: &[ERead], chain_len: usize, cluster_num: usize) -> Vec<Vec<f64>> {
+fn get_fraction_on_position(
+    data: &[ChunkedUnit],
+    chain_len: usize,
+    cluster_num: usize,
+) -> Vec<Vec<f64>> {
     let mut total_count = vec![0; chain_len];
     let mut counts = vec![vec![0; chain_len]; cluster_num];
     for read in data.iter() {
@@ -264,7 +277,7 @@ fn get_argmax(ws: &[f64]) -> Option<usize> {
 }
 
 fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    data: &mut [ERead],
+    data: &mut [ChunkedUnit],
     chain_len: usize,
     c: &ClusteringConfig<F>,
     update_data: &[bool],
@@ -317,4 +330,119 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             is_the_same
         })
         .sum::<u32>()
+}
+
+struct Graph {
+    nodes: Vec<GNode>,
+    node_num: usize,
+}
+
+impl Graph {
+    fn new(reads_as_paths: &[ERead], cluster: usize) -> Self {
+        let node_num = reads_as_paths
+            .iter()
+            .flat_map(|r| r.path.iter())
+            .map(|elm| elm.unit)
+            .max()
+            .unwrap() as usize
+            + 1;
+        let nodes: Vec<_> = (0..cluster * node_num).map(|_| GNode::new()).collect();
+        let graph = Graph { nodes, node_num };
+        reads_as_paths
+            .iter()
+            .filter(|r| r.cluster == cluster)
+            .fold(graph, |g, read| g.register(read))
+    }
+    fn register(mut self, read: &ERead) -> Self {
+        for w in read.path.windows(2) {
+            let from = w[0].unit as usize + w[0].cluster * self.node_num;
+            let to = w[1].unit as usize + w[1].cluster * self.node_num;
+            self.nodes[from].register(to);
+        }
+        self
+    }
+    fn score(&self, path: &ERead) -> f64 {
+        path.path
+            .windows(2)
+            .map(|w| {
+                let from = w[0].unit as usize + w[0].cluster * self.node_num;
+                let to = w[1].unit as usize + w[1].cluster * self.node_num;
+                let edg = &self.nodes[from];
+                edg.edges
+                    .iter()
+                    .find(|e| e.to == to)
+                    .map(|e| e.weight as f64 / edg.total as f64)
+                    .unwrap_or(0.)
+            })
+            .sum::<f64>()
+    }
+}
+
+struct GNode {
+    edges: Vec<GEdge>,
+    total: u64,
+}
+impl GNode {
+    fn new() -> Self {
+        Self {
+            edges: vec![],
+            total: 0,
+        }
+    }
+    fn register(&mut self, to: usize) {
+        self.total += 1;
+        if let Some(edge) = self.edges.iter_mut().find(|e| e.to == to) {
+            edge.weight += 1;
+        } else {
+            self.edges.push(GEdge { to, weight: 1 });
+        }
+    }
+}
+
+struct GEdge {
+    to: usize,
+    weight: u64,
+}
+
+fn path_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    mut reads_as_paths: Vec<ERead>,
+    c: &ClusteringConfig<F>,
+) -> Vec<Assignment> {
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(c.seed);
+    reads_as_paths.iter_mut().for_each(|cs| {
+        cs.cluster = rng.gen_range(0, c.cluster_num);
+    });
+    let mut count = 0;
+    let start = std::time::Instant::now();
+    let stable_thr = (reads_as_paths.len() / 100).max(4) as u32;
+    while count < c.stable_limit {
+        let models: Vec<_> = (0..c.cluster_num)
+            .map(|cl| Graph::new(&reads_as_paths, cl))
+            .collect();
+        let change_num = reads_as_paths
+            .iter_mut()
+            .map(|read| {
+                let (argmax, _) = models
+                    .iter()
+                    .map(|m| m.score(read))
+                    .enumerate()
+                    .max_by(|x, y| (x.0).partial_cmp(&y.0).unwrap())
+                    .unwrap();
+                let changed = 1 - (read.cluster == argmax) as u32;
+                read.cluster = argmax;
+                changed
+            })
+            .sum::<u32>();
+        count += (change_num < stable_thr) as u32;
+        debug!("ChangeNum:{},{}", change_num, stable_thr);
+        let elapsed = (std::time::Instant::now() - start).as_secs();
+        if elapsed > c.limit && count < c.stable_limit / 2 {
+            info!("Break by timelimit:{:?}", elapsed);
+            break;
+        }
+    }
+    reads_as_paths
+        .iter()
+        .map(|read| Assignment::new(read.id, read.cluster))
+        .collect()
 }
