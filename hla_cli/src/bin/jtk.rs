@@ -158,6 +158,59 @@ fn subcommand_view() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_clustering() -> App<'static, 'static> {
+    SubCommand::with_name("clustering")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Clustering reads.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("limit")
+                .short("l")
+                .long("limit")
+                .required(false)
+                .value_name("LIMIT")
+                .help("Maximum Execution time(sec)")
+                .default_value(&"7200")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("cluster_num")
+                .short("c")
+                .long("cluster_num")
+                .required(false)
+                .value_name("CLUSTER_NUM")
+                .help("Minimum cluster number.")
+                .default_value(&"2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("subchunk_len")
+                .short("s")
+                .long("subchunk_len")
+                .required(false)
+                .value_name("SubChunkLength")
+                .help("The length of sub-chunks")
+                .default_value(&"100")
+                .takes_value(true),
+        )
+}
+
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
@@ -231,7 +284,7 @@ fn stats(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     use std::io::BufReader;
-    debug!("Stats");
+    debug!("Start Stats step");
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
     let dataset: DataSet = match serde_json::de::from_reader(reader) {
@@ -251,7 +304,10 @@ fn stats(matches: &clap::ArgMatches) -> std::io::Result<()> {
             eprintln!("{:?}", why);
             std::process::exit(1);
         }
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            debug!("Finish Stats");
+            Ok(())
+        }
     }
 }
 
@@ -264,7 +320,7 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     use std::io::BufReader;
-    debug!("Select Units");
+    debug!("Start Selecting Units");
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
     let dataset: DataSet = match serde_json::de::from_reader(reader) {
@@ -305,7 +361,10 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
             eprintln!("{:?}", why);
             std::process::exit(1);
         }
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            debug!("Finish selecting units");
+            Ok(())
+        }
     }
 }
 
@@ -326,7 +385,7 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
         3 | _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    debug!("Encode");
+    debug!("Start Encoding step");
     use std::io::BufReader;
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
@@ -347,7 +406,10 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
             eprintln!("{:?}", why);
             std::process::exit(1);
         }
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            debug!("Finish Encoding step");
+            Ok(())
+        }
     }
 }
 
@@ -376,17 +438,72 @@ fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
     Ok(())
 }
 
+fn clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let level = match matches.occurrences_of("verbose") {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        3 | _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    debug!("Start Clustering step");
+    let cluster_num: usize = matches
+        .value_of("cluster_num")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let limit: u64 = matches
+        .value_of("limit")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let subchunk_length: usize = matches
+        .value_of("subchunk_len")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let config = ClusteringConfig::with_default(threads, cluster_num, subchunk_length, limit);
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let dataset: DataSet = match serde_json::de::from_reader(reader) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid Input from STDIN.");
+            std::process::exit(1);
+        }
+        Ok(res) => res,
+    };
+    debug!("Parsed Dataset.");
+    let dataset = dataset.clustering(&config);
+    let stdout = std::io::stdout();
+    let mut wtr = std::io::BufWriter::new(stdout.lock());
+    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            std::process::exit(1);
+        }
+        Ok(()) => {
+            debug!("Finish Clustering Step");
+            Ok(())
+        }
+    }
+}
+
 fn main() -> std::io::Result<()> {
     let matches = App::new("jtk")
         .version("0.1")
         .author("Bansho Masutani")
         .about("HLA toolchain")
+        .setting(clap::AppSettings::ArgRequiredElseHelp)
         .subcommand(subcommand_entry())
         .subcommand(subcommand_extract())
         .subcommand(subcommand_stats())
         .subcommand(subcommand_select_unit())
         .subcommand(subcommand_encode())
         .subcommand(subcommand_view())
+        .subcommand(subcommand_clustering())
         .get_matches();
     match matches.subcommand() {
         ("entry", Some(sub_m)) => entry(sub_m),
@@ -395,6 +512,7 @@ fn main() -> std::io::Result<()> {
         ("select_unit", Some(sub_m)) => select_unit(sub_m),
         ("encode", Some(sub_m)) => encode(sub_m),
         ("view", Some(sub_m)) => view(sub_m),
+        ("clustering", Some(sub_m)) => clustering(sub_m),
         _ => Ok(()),
     }
 }

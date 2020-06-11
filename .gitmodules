@@ -1,3 +1,6 @@
 [submodule "bio_utils"]
 	path = bio_utils
 	url = git@github.com:ban-m/bio_utils.git
+[submodule "partial_order_alignment"]
+	path = partial_order_alignment
+	url = git@github.com:ban-m/partial_order_alignment.git

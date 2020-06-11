@@ -14,6 +14,6 @@ impl Entry for definitions::DataSet {
                 seq: String::from_utf8_lossy(read.seq()).to_string(),
             })
             .collect();
-        definitions::DataSet::with_param(raw_reads, vec![], vec![], vec![], vec![])
+        definitions::DataSet::with_param(raw_reads, vec![], vec![], vec![], vec![], vec![])
     }
 }

@@ -51,7 +51,13 @@ impl Stats for definitions::DataSet {
         }
         // Encoded Reads
         if !self.encoded_reads.is_empty() {
-            let gap_read = self.encoded_reads.iter().filter(|e| e.is_gappy()).count();
+            use std::collections::HashSet;
+            let reads: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
+            let gap_read = self
+                .raw_reads
+                .iter()
+                .filter(|e| reads.contains(&e.id))
+                .count();
             let covered_length = self
                 .encoded_reads
                 .iter()
@@ -69,6 +75,30 @@ impl Stats for definitions::DataSet {
                 "Gappy read:{}\nEncodedRate:{:.4}(%)",
                 gap_read, cover_rate
             )?;
+        }
+        // Unit statistics
+        if !self.encoded_reads.is_empty() {
+            let units: Vec<(u64, usize)> = {
+                use std::collections::HashMap;
+                let mut count: HashMap<u64, usize> = HashMap::new();
+                for read in self.encoded_reads.iter() {
+                    for node in read.nodes.iter() {
+                        *count.entry(node.unit).or_default() += 1;
+                    }
+                }
+                let mut count: Vec<(u64, usize)> = count.into_iter().collect();
+                count.sort_by_key(|e| e.0);
+                count
+            };
+            let max = units.iter().map(|e| e.1).max().unwrap();
+            let min = units.iter().map(|e| e.1).max().unwrap();
+            let sum = units.iter().map(|e| e.1).sum::<usize>();
+            let ave = sum as f64 / units.len() as f64;
+            writeln!(&mut wtr, "Encoding summary")?;
+            writeln!(&mut wtr, "Min:{}\tMax:{}\tAve:{:.2}", max, min, ave)?;
+            for (unit, count) in units.iter() {
+                writeln!(&mut wtr, "Unit\t{}\t{}", unit, count)?;
+            }
         }
         Ok(())
     }

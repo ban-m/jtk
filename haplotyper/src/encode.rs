@@ -8,7 +8,6 @@ pub trait Encode {
 impl Encode for definitions::DataSet {
     fn encode(mut self, alignments: &[LastTAB]) -> Self {
         let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(alignments);
-        debug!("{}", alignments_each_reads.len());
         let encoded_reads: Vec<_> = self
             .raw_reads
             .iter()
@@ -17,6 +16,7 @@ impl Encode for definitions::DataSet {
                 encode(read, alns, &self.selected_chunks)
             })
             .collect();
+        debug!("Encoding {} reads.", encoded_reads.len());
         self.encoded_reads = encoded_reads;
         self
     }
@@ -33,31 +33,9 @@ fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>
 
 use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
 fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option<EncodedRead> {
-    // for aln in alignments.iter() {
-    //     let reflen = aln
-    //         .alignment()
-    //         .iter()
-    //         .map(|op| match op {
-    //             lasttab::Op::Seq2In(l) | lasttab::Op::Match(l) => *l,
-    //             _ => 0,
-    //         })
-    //         .sum::<usize>();
-    //     // It is 0-indexed.
-    //     assert_eq!(reflen, aln.seq1_matchlen());
-    //     let q_len = aln
-    //         .alignment()
-    //         .iter()
-    //         .map(|op| match op {
-    //             lasttab::Op::Seq1In(l) | lasttab::Op::Match(l) => *l,
-    //             _ => 0,
-    //         })
-    //         .sum::<usize>();
-    //     assert_eq!(q_len, aln.seq2_matchlen());
-    // }
-    // debug!("Alignments checked.");
     let mut nodes: Vec<_> = alignments
         .iter()
-        .filter(|aln| aln.seq1_matchlen() > aln.seq1_len() * 98 / 1000)
+        .filter(|aln| aln.seq1_matchlen() > aln.seq1_len() * 98 / 100)
         .filter_map(|aln| encode_alignment(aln, units, read))
         .collect();
     nodes.sort_by_key(|e| e.position_from_start);

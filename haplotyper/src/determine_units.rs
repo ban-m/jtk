@@ -26,8 +26,7 @@ impl DetermineUnit for definitions::DataSet {
             .map(|(idx, c)| {
                 let id = idx as u64;
                 let seq = String::from_utf8_lossy(c).to_string();
-                let cluster = 0;
-                Unit { id, seq, cluster }
+                Unit { id, seq }
             })
             .collect();
         debug!("Units collected. {} units.", selected_chunks.len());

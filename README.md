@@ -1,4 +1,4 @@
-# Jittoku -- HLA decomposer
+# JKT -- HLA decomposer
 
 Author: Bansho Masutani
 
@@ -6,7 +6,7 @@ Mail: ban-m@g.ecc.u-tokyo.ac.jp
 
 # Desc
 
-It has ONLY ONE command line interface, `jtk.` `jtk` (short for Jittoku) is THE entry point of entire analysis. It provides ways to modify dataset, inspect intermidiate file, and generate filnal product.
+It has ONLY ONE command line interface, `jtk.` `jtk` (short for Jittoku or Japanese HAL analysis toolkit) is THE entry point of entire analysis. It provides ways to modify dataset, inspect intermidiate file, and generate filnal product.
 
 To see the detail, run `cargo build --release` and then `./target/release/jtk --help`.
 
@@ -28,6 +28,17 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 
 
 ## TODO
+
+### Documentation
+
+Currently, I've written documents on only a few types. We should write more and more ducumentation, before we forget the meaning of fragments of codes.
+
+
+### Sanity check
+
+At each stage of the pipeline, we should check whether the input data has enough information; In the clustering step, the dataset should have, at least, an encoded read set and selected units.
+
+Also, we should have some "invariant checker" for sanity check. For example, we need to check the dataset is consistent. For example, all encoded reads should have corresponding raw reads. This checker is required, as in the future we filter out raw reads and encoded reads at some stage among the pipiline, or there would be some interplay between Python <-> Rust or Javascript <-> Rust.
 
 ### Compact serialization(BinCode) vs Readable serialization(JSON)
 

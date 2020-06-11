@@ -1,3 +1,4 @@
+mod clustering;
 mod determine_units;
 mod encode;
 mod entry;
@@ -11,9 +12,9 @@ pub use extract::Extract;
 pub use extract::ExtractTarget;
 pub use view::View;
 pub mod stats;
+pub use clustering::*;
 pub use determine_units::*;
 pub use stats::Stats;
-
 #[cfg(test)]
 mod tests {
     #[test]

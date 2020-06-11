@@ -41,8 +41,7 @@ impl Extract for definitions::DataSet {
                 .iter()
                 .map(|u| {
                     let id = format!("{}", u.id);
-                    let desc = Some(format!("{}", u.cluster));
-                    fasta::Record::with_data(&id, &desc, &u.seq())
+                    fasta::Record::with_data(&id, &None, &u.seq())
                 })
                 .collect(),
         }

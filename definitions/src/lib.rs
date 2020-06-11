@@ -10,6 +10,7 @@ pub struct DataSet {
     pub selected_chunks: Vec<Unit>,
     pub encoded_reads: Vec<EncodedRead>,
     pub hic_edges: Vec<HiCEdge>,
+    pub assignments: Vec<Assignment>,
 }
 
 impl DataSet {
@@ -19,6 +20,7 @@ impl DataSet {
         selected_chunks: Vec<Unit>,
         encoded_reads: Vec<EncodedRead>,
         hic_edges: Vec<HiCEdge>,
+        assignments: Vec<Assignment>,
     ) -> Self {
         Self {
             raw_reads,
@@ -26,6 +28,7 @@ impl DataSet {
             selected_chunks,
             encoded_reads,
             hic_edges,
+            assignments,
         }
     }
 }
@@ -72,7 +75,6 @@ impl HiCPair {
 pub struct Unit {
     pub id: u64,
     pub seq: String,
-    pub cluster: u32,
 }
 impl Unit {
     pub fn seq(&self) -> &[u8] {
@@ -223,6 +225,18 @@ pub struct HiCEdge {
     pub pair_id: u64,
     pub pair1: u64,
     pub pair2: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Assignment {
+    pub id: u64,
+    pub cluster: u32,
+}
+
+impl Assignment {
+    pub fn new(id: u64, cluster: u32) -> Self {
+        Self { id, cluster }
+    }
 }
 
 #[cfg(test)]
