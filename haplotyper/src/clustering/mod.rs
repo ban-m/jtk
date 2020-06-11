@@ -31,12 +31,6 @@ impl Clustering for DataSet {
             .num_threads(c.threads)
             .build_global()
             .unwrap();
-        // Serialize the input.
-        // let (chain_len, data) = self.serialize_subchunk(c);
-        // debug!("Chain Length:{}", chain_len);
-        // let units = data.iter().map(|e| e.chunks.len()).sum::<usize>();
-        // debug!("{} units in total.", units);
-        // Clustering in unit level.
         let max_unit = self.selected_chunks.iter().map(|u| u.id).max().expect("u");
         let mut pileups: Vec<(_, _, &Node)> = vec![vec![]; max_unit as usize + 1];
         for read in self.encoded_reads.iter() {
