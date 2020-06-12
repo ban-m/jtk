@@ -156,6 +156,15 @@ fn subcommand_view() -> App<'static, 'static> {
                 .value_name("NAME")
                 .help("Name of the read to be showed."),
         )
+        .arg(
+            Arg::with_name("type")
+                .short("t")
+                .long("type")
+                .takes_value(true)
+                .required(true)
+                .value_name("TYPE")
+                .possible_values(&["read", "unit"]),
+        )
 }
 
 fn subcommand_clustering() -> App<'static, 'static> {
@@ -434,7 +443,11 @@ fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
         Ok(res) => res,
     };
     let name = matches.value_of("name").unwrap();
-    dataset.view(name);
+    match matches.value_of("type") {
+        Some(x) if x == "read" => dataset.view(name),
+        Some(x) if x == "unit" => dataset.view_unit(name),
+        _ => Some(()),
+    };
     Ok(())
 }
 

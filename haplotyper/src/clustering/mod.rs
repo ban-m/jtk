@@ -37,13 +37,21 @@ impl Clustering for DataSet {
         let reads_as_paths: Vec<_> = {
             let mut clustered_chunks: HashMap<u64, Vec<(usize, Elm)>> = HashMap::new();
             for (unit_id, units) in pileups.into_iter().enumerate() {
-                debug!("The {}-th pileup", unit_id);
+                // debug!("The {}-th pileup", unit_id);
                 let ref_unit = match self.selected_chunks.iter().find(|u| u.id == unit_id as u64) {
                     Some(res) => res,
                     None => continue,
                 };
-                let assignments = unit_clustering(&units, c, ref_unit);
-                if log_enabled!(log::Level::Debug) {
+                if false {
+                    let _assignments = unit_clustering(&units, c, ref_unit);
+                }
+                let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(100);
+                let assignments: Vec<_> = units
+                    .iter()
+                    .map(|_| rng.gen_range(0, c.cluster_num))
+                    .collect();
+                if log_enabled!(log::Level::Trace) {
+                    debug!("Dump result....");
                     let id_to_name: HashMap<_, _> =
                         self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
                     for cl in 0..c.cluster_num {
@@ -86,7 +94,7 @@ impl Clustering for DataSet {
     }
 }
 // Clustering units.
-fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     units: &[(u64, usize, &Node)],
     c: &ClusteringConfig<F>,
     ref_unit: &Unit,
@@ -212,6 +220,12 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         beta = (beta * c.beta_increase).min(c.max_beta);
         report(c.id, &data, count, lk, beta);
         lk = next_lk;
+        assert_eq!(chain_len, pos.len());
+        for beta in betas.iter() {
+            for bs in beta.iter() {
+                assert_eq!(bs.len(), chain_len);
+            }
+        }
         let changed_num = (0..c.sample_rate.recip().ceil() as usize / 2)
             .map(|_| {
                 let update_data: Vec<_> = (0..data.len())
@@ -311,6 +325,9 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                 .map(|l| {
                     (0..c.cluster_num)
                         .map(|k| {
+                            if k == l {
+                                return 0.;
+                            }
                             let (i, j) = (l.max(k), l.min(k));
                             let prior = beta * (ws[k].ln() - ws[l].ln());
                             prior
@@ -338,7 +355,7 @@ struct Graph {
 }
 
 impl Graph {
-    fn new(reads_as_paths: &[ERead], cluster: usize) -> Self {
+    fn new(reads_as_paths: &[ERead], cluster: usize, cluster_num: usize) -> Self {
         let node_num = reads_as_paths
             .iter()
             .flat_map(|r| r.path.iter())
@@ -346,7 +363,7 @@ impl Graph {
             .max()
             .unwrap() as usize
             + 1;
-        let nodes: Vec<_> = (0..cluster * node_num).map(|_| GNode::new()).collect();
+        let nodes: Vec<_> = (0..cluster_num * node_num).map(|_| GNode::new()).collect();
         let graph = Graph { nodes, node_num };
         reads_as_paths
             .iter()
@@ -378,10 +395,19 @@ impl Graph {
     }
 }
 
+impl std::fmt::Display for Graph {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let node_num = self.nodes.len();
+        let edge_num = self.nodes.iter().map(|n| n.edges.len()).count();
+        write!(f, "NodeNum:{}\tEdgeNum:{}", node_num, edge_num)
+    }
+}
+
 struct GNode {
     edges: Vec<GEdge>,
     total: u64,
 }
+
 impl GNode {
     fn new() -> Self {
         Self {
@@ -412,22 +438,29 @@ fn path_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     reads_as_paths.iter_mut().for_each(|cs| {
         cs.cluster = rng.gen_range(0, c.cluster_num);
     });
+    debug!("Start path clustering");
     let mut count = 0;
     let start = std::time::Instant::now();
     let stable_thr = (reads_as_paths.len() / 100).max(4) as u32;
     while count < c.stable_limit {
         let models: Vec<_> = (0..c.cluster_num)
-            .map(|cl| Graph::new(&reads_as_paths, cl))
+            .map(|cl| Graph::new(&reads_as_paths, cl, c.cluster_num))
             .collect();
         let change_num = reads_as_paths
             .iter_mut()
             .map(|read| {
-                let (argmax, _) = models
+                let scores: Vec<_> = models.iter().map(|m| m.score(read)).collect();
+                let line: Vec<_> = scores.iter().map(|e| format!("{:.3}", e)).collect();
+                if scores.iter().all(|&s| s < 0.001) {
+                    debug!("{:?}", read);
+                }
+                debug!("{}\t{}", read.id, line.join(","));
+                let (argmax, _) = scores
                     .iter()
-                    .map(|m| m.score(read))
                     .enumerate()
-                    .max_by(|x, y| (x.0).partial_cmp(&y.0).unwrap())
+                    .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
                     .unwrap();
+                debug!("{}", argmax);
                 let changed = 1 - (read.cluster == argmax) as u32;
                 read.cluster = argmax;
                 changed

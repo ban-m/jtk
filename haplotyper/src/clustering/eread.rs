@@ -4,6 +4,17 @@ pub struct ERead {
     pub cluster: usize,
 }
 
+impl std::fmt::Debug for ERead {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let path: Vec<_> = self
+            .path
+            .iter()
+            .map(|p| format!("{}:{}", p.unit, p.cluster))
+            .collect();
+        write!(f, "{}\t{}\t{}", self.id, self.cluster, path.join("-"))
+    }
+}
+
 pub struct Elm {
     pub unit: u64,
     pub cluster: usize,

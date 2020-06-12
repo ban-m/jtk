@@ -2,7 +2,7 @@
 #$ -S /bin/bash
 #$ -N Workflow
 #$ -cwd
-#$ -pe smp 24
+#$ -pe smp 12
 #$ -o ./logfiles/pipeline.out
 #$ -e ./logfiles/pipeline.log
 #$ -j y
@@ -33,4 +33,4 @@ ENCODED=${PWD}/result/CCS_reads.15000.1M.entry.units.encode.json
 cat ${ENTRY} |\
     ${JTK} encode -vv -a ${PWD}/result/alignments.tab |\
     ${JTK} stats -vv -f ${PWD}/result/encode.log > ${ENCODED}
-cat ${ENCODED} | ${JTK} clustering -vv --threads 24 --cluster_num 4 > ${CLUSTERED}
+cat ${ENCODED} | ${JTK} clustering -vv --threads 12 --cluster_num 4 > ${CLUSTERED}

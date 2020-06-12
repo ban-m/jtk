@@ -1,5 +1,6 @@
 pub trait View {
     fn view(&self, name: &str) -> Option<()>;
+    fn view_unit(&self, name: &str) -> Option<()>;
 }
 
 impl View for definitions::DataSet {
@@ -33,6 +34,20 @@ impl View for definitions::DataSet {
             println!("{}-//{}//-{}", edge.from, edge.offset, edge.to);
         }
         println!("{}", read);
+        Some(())
+    }
+    fn view_unit(&self, name: &str) -> Option<()> {
+        let unit_id: u64 = match name.parse() {
+            Ok(res) => res,
+            Err(why) => panic!("{:?}-{} is not a valid Unit ID.", why, name),
+        };
+        use std::collections::HashMap;
+        let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+        for read in self.encoded_reads.iter() {
+            if let Some(c) = read.nodes.iter().find(|n| n.unit == unit_id) {
+                println!(">{}\n{}", id_to_name[&read.id], c.seq);
+            }
+        }
         Some(())
     }
 }

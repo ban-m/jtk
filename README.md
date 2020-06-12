@@ -29,9 +29,36 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 
 ## TODO
 
+
+### Unit selection
+
+We should consider the repeatitive regions in mind. For this prepose, we can take one of both of two following approach:
+
+1. Treat units having large occurrence correctly
+2. Define units so that it should have the moderate occurence
+
+I do not have any idea or pros-and-cons on these two approach. Discussions welcome!
+
+
+### Unit encoding
+
+Last -> Something else, hopefully integrated in Rust. The priority of this TODO is extremely low, as LAST would serve good aligner as far.
+
+
+### GraphViz
+
+To check whether my encoding scheme is good or well unfolded, I currently aim to make some script to convert JSON -> Grpah(SVG). Maybe it can be done by D3.js but I do not have sufficient spare time to do this. Help needed.
+
 ### Documentation
 
+
 Currently, I've written documents on only a few types. We should write more and more ducumentation, before we forget the meaning of fragments of codes.
+
+
+### Clustering (Local)
+
+
+### Clustering (Global)
 
 
 ### Sanity check

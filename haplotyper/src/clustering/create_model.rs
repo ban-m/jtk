@@ -1,5 +1,5 @@
-use super::ClusteringConfig;
 use super::ChunkedUnit;
+use super::ClusteringConfig;
 use poa_hmm::POA;
 use rand::distributions::Standard;
 use rand::seq::SliceRandom;
@@ -20,7 +20,6 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     use_position: &[bool],
     update_data: &[bool],
 ) -> Vec<Vec<POA>> {
-    debug!("Gettingmodel");
     let mut chunks: Vec<_> = vec![vec![vec![]; chain_len]; c.cluster_num];
     let choises: Vec<usize> = (0..c.cluster_num).collect();
     for (read, _) in data.iter().zip(update_data).filter(|&(_, b)| !b) {
@@ -45,8 +44,7 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .zip(use_position.par_iter())
                 .map(|((cs, &s), &b)| {
                     if b {
-                        poa.clone()
-                            .update(cs, &vec![1.; cs.len()], (ins, del, score), s)
+                        poa.clone().update_thr(cs, (ins, del, score), s, 0.4, 1.05)
                     } else {
                         poa.clone()
                     }

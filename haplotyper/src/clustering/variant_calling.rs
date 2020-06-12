@@ -190,7 +190,7 @@ fn variant_calling(
     let chain_len = models[0].len();
     let betas: Vec<Vec<Vec<f64>>> = (0..cluster_num)
         .map(|i| {
-            (0..=i)
+            (0..i)
                 .map(|j| call_variants(i, j, &matrices, chain_len))
                 .collect()
         })
@@ -201,9 +201,6 @@ fn variant_calling(
 // Call varinants between cluster i and cluster j.
 fn call_variants(i: usize, j: usize, matrices: &[Vec<f64>], column: usize) -> Vec<f64> {
     // Extract focal rows for each read.
-    if i == j {
-        return vec![0.; column];
-    }
     let matrices: Vec<Vec<_>> = matrices
         .iter()
         .map(|matrix| {
