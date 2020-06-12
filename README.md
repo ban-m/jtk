@@ -26,52 +26,43 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 
 # Memos
 
-
 ## TODO
 
-
 ### Unit selection
+We should consider the repetitive regions in mind. For this prepose, we can take one or both of the two following approach:
 
-We should consider the repeatitive regions in mind. For this prepose, we can take one of both of two following approach:
+We treat units having large occurrence correctly. For example, we estimate the repetitiveness of a unit, adjust the number of the cluster, and dynamically change the number of nodes in the global clustering.
+Or We define units so that it should have a moderate occurrence. To this end, if there were no errors, we can use traditional suffix trees to count the number of leaves under a node in the tree.
 
-1. Treat units having large occurrence correctly
-2. Define units so that it should have the moderate occurence
-
-I do not have any idea or pros-and-cons on these two approach. Discussions welcome!
-
+I do not have any idea or pros-and-cons on these two approaches. Discussions welcome!
 
 ### Unit encoding
-
-Last -> Something else, hopefully integrated in Rust. The priority of this TODO is extremely low, as LAST would serve good aligner as far.
-
+Last -> Something else. Hopefully, it is written in Rust. The priority of this TODO is extremely low, as LAST would serve a good aligner as far.
 
 ### GraphViz
+To check whether my encoding scheme is good or well unfolded, I currently aim to make some script to convert JSON -> Graph(SVG). It may be done by D3.js, but I do not have sufficient spare time to do this. Help needed.
 
-To check whether my encoding scheme is good or well unfolded, I currently aim to make some script to convert JSON -> Grpah(SVG). Maybe it can be done by D3.js but I do not have sufficient spare time to do this. Help needed.
-
-### Documentation
-
-
-Currently, I've written documents on only a few types. We should write more and more ducumentation, before we forget the meaning of fragments of codes.
-
+###  Documentation
+Currently, I've written documents on only a few types. We should write more and more documentation before we forget the meaning of fragments of codes.
 
 ### Clustering (Local)
+I've tuned the parameters of the original PO-HMM for erroneous reads, i.e., CLR. Thus, there is room for improvement. Searching parameters would be the major work. It is a somewhat boring task, and I postpone it so far.
 
+Also, the current POA is optimal and exact. It is acceptable and preferable in the case of CLR, as there are many errors in a read. However, in the case of CSS, we expect a few errors out of 100 bases. Thus, we can employ a faster algorithm. For example, a naive implementation of Myer's diff would give us an O(dn) POA algorithm. The priority of this work is high.
 
 ### Clustering (Global)
+The entire algorithm should be more mature and sophisticated. We need to find some foundation of our clustering algorithm. Maybe a theory on Markov's walk on graphs serves a good guide.
 
 
 ### Sanity check
-
-At each stage of the pipeline, we should check whether the input data has enough information; In the clustering step, the dataset should have, at least, an encoded read set and selected units.
-
-Also, we should have some "invariant checker" for sanity check. For example, we need to check the dataset is consistent. For example, all encoded reads should have corresponding raw reads. This checker is required, as in the future we filter out raw reads and encoded reads at some stage among the pipiline, or there would be some interplay between Python <-> Rust or Javascript <-> Rust.
+At each stage of the pipeline, we should check whether the input data has enough information. In the clustering step, the dataset should have, at least, an encoded read set and selected units.
+Also, we should have some "invariant checker" for a sanity check. For example, we need to check the dataset is consistent. For instance, all encoded reads should have corresponding raw reads. This checker is required, as we filter out raw reads and encoded reads at some stage among the pipeline in the future. Also, there would be some interplay between Python <-> Rust or Javascript <-> Rust.
 
 ### Compact serialization(BinCode) vs Readable serialization(JSON)
 
-- It is preferrable to switch between them easily. Currently I think the message passing should be based on JSON by default, as sometimes we do need some help of other language or script such as Python, Ruby, or even Javascript.
-However, as the final product or 'publishable state', it would be more elegant to impelemt them entirely in Rust language, where the use of JSON does not make any sense.
-
+It is preferable to switch between them easily. Currently, message passing is based on JSON, as we need some help from other scripts such as Python and Javascript.
+However, when we run the pipeline only with `jtk`, which is entirely written in Rust, the use of JSON does not make any sense.
+The priority of this TODO is extremely low. The pipeline is not broken, and we do not have to fix something not broken.
 
 # Reference
 
