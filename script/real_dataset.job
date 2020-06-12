@@ -1,0 +1,5 @@
+#!/bin/bash
+qsub -o ./logfiles/real_read.out -e ./logfiles/real_read.log\
+     ./script/pipeline.sh \
+     ${PWD}/result/HG002_MHC.fa \
+     ${PWD}/result/HG002_MHC.1M

@@ -34,6 +34,7 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
         del,
         ref score,
     } = &c.alnparam;
+    let param = (ins, del, score);
     chunks
         .par_iter()
         .map(|cluster| {
@@ -42,12 +43,9 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .par_iter()
                 .zip(seeds.par_iter())
                 .zip(use_position.par_iter())
-                .map(|((cs, &s), &b)| {
-                    if b {
-                        poa.clone().update_thr(cs, (ins, del, score), s, 0.4, 1.05)
-                    } else {
-                        poa.clone()
-                    }
+                .map(|((cs, &s), &b)| match b {
+                    true => poa.clone().update_thr(cs, param, s, 0.3, 1.05),
+                    false => poa.clone(),
                 })
                 .collect()
         })

@@ -220,19 +220,13 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let mut lk = std::f64::NEG_INFINITY;
     let rng = &mut rng;
     let start = std::time::Instant::now();
-    let stable_thr = (data.len() as f64 * c.sample_rate / 2.).max(4.) as u32;
+    let stable_thr = (data.len() as f64 * c.sample_rate / 2.).max(2.) as u32;
     while count < c.stable_limit {
-        debug!("Calc Variants");
-        let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c, 2.);
+        let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c, 1.);
+        // let betas = vec![vec![vec![1.; chain_len]; c.cluster_num]; c.cluster_num];
         beta = (beta * c.beta_increase).min(c.max_beta);
         report(c.id, &data, count, lk, beta);
         lk = next_lk;
-        assert_eq!(chain_len, pos.len());
-        for beta in betas.iter() {
-            for bs in beta.iter() {
-                assert_eq!(bs.len(), chain_len);
-            }
-        }
         let changed_num = (0..c.sample_rate.recip().ceil() as usize / 2)
             .map(|_| {
                 let update_data: Vec<_> = (0..data.len())
@@ -268,9 +262,8 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64) {
     }
     let mut count: Vec<(usize, usize)> = count.into_iter().collect();
     count.sort_by_key(|e| e.0);
-    for (cl, cnt) in count {
-        debug!("{}:{}", cl, cnt);
-    }
+    let count: Vec<_> = count.iter().map(|(_, cnt)| format!("{}", cnt)).collect();
+    debug!("{}", count.join("\t"));
 }
 
 fn get_fraction_on_position(

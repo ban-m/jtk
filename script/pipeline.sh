@@ -2,19 +2,20 @@
 #$ -S /bin/bash
 #$ -N Workflow
 #$ -cwd
-#$ -pe smp 12
+#$ -pe smp 24
 #$ -o ./logfiles/pipeline.out
 #$ -e ./logfiles/pipeline.log
 #$ -j y
 #$ -m e 
 #$ -V
-set -ue 
-TARGET=${PWD}/result/CCS_reads.15000.1M.fa
-ENTRY=${PWD}/result/CCS_reads.15000.1M.entry.units.json
-UNITS=${PWD}/result/CCS_reads.15000.1M.units.fa
+set -ue
 JTK=${PWD}/target/release/jtk
-CLUSTERED=${PWD}/result/CCS_reads.15000.1M.entry.units.encode.clustered.json
-
+TARGET=$1
+ENTRY=${2}.entry.units.json
+UNITS=${2}.units.fa
+ENCODED=${2}.entry.units.encode.json
+CLUSTERED=${2}.entry.units.encode.clustered.json
+LOG=${2}.log
 
 cargo build --release
 cat ${TARGET} | ${JTK} entry |\
@@ -23,14 +24,17 @@ cat ${TARGET} | ${JTK} entry |\
     ${JTK} extract -f fasta -t units > ${UNITS}
 
 cd ${PWD}/result
-lastdb -R00 -Q0 units ${UNITS}
-last-train -P12 -Q0 units ${TARGET} > score.matrix
-lastal -f maf -P12 -R00 -Q0 -p score.matrix units ${TARGET}|\
-    maf-convert tab --join 500 > alignments.tab
+REFNAME=${RANDOM}
+echo ${REFNAME} 1>&2
+lastdb -R00 -Q0 ${REFNAME} ${UNITS}
+last-train -P12 -Q0 ${REFNAME} ${TARGET} > ${REFNAME}.matrix
+lastal -f maf -P12 -R00 -Q0 -p ${REFNAME}.matrix ${REFNAME} ${TARGET}|\
+    maf-convert tab --join 500 > ${REFNAME}_alignments.tab
 cd ../
 
-ENCODED=${PWD}/result/CCS_reads.15000.1M.entry.units.encode.json
+
 cat ${ENTRY} |\
-    ${JTK} encode -vv -a ${PWD}/result/alignments.tab |\
-    ${JTK} stats -vv -f ${PWD}/result/encode.log > ${ENCODED}
-cat ${ENCODED} | ${JTK} clustering -vv --threads 12 --cluster_num 4 > ${CLUSTERED}
+    ${JTK} encode -vv -a ${PWD}/result/${REFNAME}_alignments.tab |\
+    ${JTK} stats -vv -f ${LOG} |\
+    ${JTK} clustering -vv --threads 24 --cluster_num 3 > ${CLUSTERED}
+# ./target/release/debug ${ENCODED} 

@@ -56,8 +56,16 @@ impl Stats for definitions::DataSet {
             let gap_read = self
                 .raw_reads
                 .iter()
-                .filter(|e| reads.contains(&e.id))
+                .filter(|e| !reads.contains(&e.id))
+                .inspect(|e| writeln!(&mut wtr, "Gaped:{}", e.name).unwrap())
                 .count();
+            let gap_mean = self
+                .raw_reads
+                .iter()
+                .filter(|e| !reads.contains(&e.id))
+                .map(|e| e.seq().len())
+                .sum::<usize>()
+                / gap_read;
             let covered_length = self
                 .encoded_reads
                 .iter()
@@ -70,11 +78,8 @@ impl Stats for definitions::DataSet {
                 .sum::<usize>();
             let cover_rate = covered_length as f64 / total_length as f64;
             writeln!(&mut wtr, "EncodedRead")?;
-            writeln!(
-                &mut wtr,
-                "Gappy read:{}\nEncodedRate:{:.4}(%)",
-                gap_read, cover_rate
-            )?;
+            writeln!(&mut wtr, "Gappy read:{}\nGapMean:{}", gap_read, gap_mean)?;
+            writeln!(&mut wtr, "EncodedRate:{:.4}(%)", cover_rate)?;
         }
         // Unit statistics
         if !self.encoded_reads.is_empty() {

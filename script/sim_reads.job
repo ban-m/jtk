@@ -1,0 +1,6 @@
+#!/bin/bash
+qsub -o ./logfiles/sim_read.out -e ./logfiles/sim_read.log\
+        ./script/pipeline.sh \
+        ${PWD}/result/CCS_reads.15000.1M.fa \
+        ${PWD}/result/CCS_reads.15000.1M
+

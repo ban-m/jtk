@@ -2,7 +2,7 @@
 #$ -S /bin/bash
 #$ -N Workflow
 #$ -cwd
-#$ -pe smp 12
+#$ -pe smp 24
 #$ -o ./logfiles/debug_chunk.out
 #$ -e ./logfiles/debug_chunk.log
 #$ -j y
