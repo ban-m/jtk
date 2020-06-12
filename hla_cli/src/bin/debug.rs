@@ -7,7 +7,7 @@ fn main() -> std::io::Result<()> {
     use std::io::BufReader;
     let rdr = BufReader::new(std::fs::File::open(&args[1])?);
     let dataset = serde_json::de::from_reader(rdr).unwrap();
-    let config = haplotyper::ClusteringConfig::with_default(&dataset, 12, 4, 100, 5000);
+    let config = haplotyper::ClusteringConfig::with_default(&dataset, 12, 3, 100, 5000);
     let ref_unit = dataset
         .selected_chunks
         .iter()
@@ -26,9 +26,15 @@ fn main() -> std::io::Result<()> {
         })
         .collect();
     // Clustering
+    use std::collections::HashMap;
     let result = haplotyper::unit_clustering(&units, &config, ref_unit);
-    for (asn, (readid, _, _)) in result.iter().zip(units) {
-        debug!("{}\t{}", asn, readid);
+    let id2name: HashMap<_, _> = dataset.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    for cl in 0..config.cluster_num {
+        for (&asn, (readid, _, _)) in result.iter().zip(units.iter()) {
+            if asn == cl {
+                debug!("{}\t{}", asn, id2name[&readid]);
+            }
+        }
     }
     Ok(())
 }
