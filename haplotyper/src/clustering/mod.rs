@@ -233,18 +233,19 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                     .map(|_| rng.gen_bool(c.sample_rate))
                     .collect::<Vec<_>>();
                 let ms = get_models(&data, chain_len, rng, c, &pos, &update_data);
-                for (c, m) in ms.iter().enumerate() {
-                    for (p, m) in m.iter().enumerate() {
-                        if m.weight() > 0.1 {
-                            debug!("{}\t{}\t{}", c, p, m);
-                        }
-                    }
-                }
+                // for (c, m) in ms.iter().enumerate() {
+                //     for (p, m) in m.iter().enumerate() {
+                //         if m.weight() > 0.1 {
+                //             debug!("{}\t{}\t{}", c, p, m);
+                //         }
+                //     }
+                // }
                 update_assignment(&mut data, chain_len, c, &update_data, &betas, beta, &ms)
             })
             .sum::<u32>();
         debug!("CHANGENUM\t{}", changed_num);
         count += (changed_num <= stable_thr) as u32;
+        count *= (changed_num <= stable_thr) as u32;
         let elapsed = (std::time::Instant::now() - start).as_secs();
         if elapsed > c.limit && count < c.stable_limit / 2 {
             info!("Break by timelimit:{:?}", elapsed);
