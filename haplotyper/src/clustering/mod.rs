@@ -13,7 +13,7 @@ mod variant_calling;
 use variant_calling::*;
 mod eread;
 use eread::*;
-
+const DEBUG: bool = false;
 pub trait Clustering {
     fn clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(self, c: &ClusteringConfig<F>) -> Self;
 }
@@ -42,12 +42,15 @@ impl Clustering for DataSet {
                     Some(res) => res,
                     None => continue,
                 };
-                let assignments = unit_clustering(&units, c, ref_unit);
-                // let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(100);
-                // let assignments: Vec<_> = units
-                //     .iter()
-                //     .map(|_| rng.gen_range(0, c.cluster_num))
-                //     .collect();
+                let assignments: Vec<_> = if !DEBUG {
+                    unit_clustering(&units, c, ref_unit)
+                } else {
+                    let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(100);
+                    units
+                        .iter()
+                        .map(|_| rng.gen_range(0, c.cluster_num))
+                        .collect()
+                };
                 if log_enabled!(log::Level::Debug) {
                     debug!("Dump result....");
                     let id_to_name: HashMap<_, _> =
@@ -489,16 +492,14 @@ fn path_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             .iter_mut()
             .map(|read| {
                 let scores: Vec<_> = models.iter().map(|m| m.score(read)).collect();
-                // let line: Vec<_> = scores.iter().map(|e| format!("{:.3}", e)).collect();
-                // if scores.iter().all(|&s| s < 0.001) {
-                //     debug!("{:?}", read);
-                // }
                 let (argmax, _) = scores
                     .iter()
                     .enumerate()
-                    .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+                    .max_by(|x, y| match (x.1).partial_cmp(&y.1) {
+                        Some(res) => res,
+                        None => panic!("{}\t{:?}", line!(), scores),
+                    })
                     .unwrap();
-                // debug!("{}\t{}\t{}", read.id, line.join(","), argmax);
                 let changed = 1 - (read.cluster == argmax) as u32;
                 read.cluster = argmax;
                 changed
