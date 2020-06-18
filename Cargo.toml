@@ -4,5 +4,6 @@ members = [
         "hla_cli",
         "bio_utils",
         "haplotyper",
-        "partial_order_alignment"
+        "partial_order_alignment",
+        "sandbox"
 ]

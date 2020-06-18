@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct ERead {
     pub id: u64,
     pub path: Vec<Elm>,
@@ -15,6 +16,7 @@ impl std::fmt::Debug for ERead {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Elm {
     pub unit: u64,
     pub cluster: usize,

@@ -8,12 +8,20 @@ const SMALL_WEIGHT: f64 = 0.000_000_001;
 mod config;
 pub use config::*;
 mod create_model;
-use create_model::*;
-mod variant_calling;
-use variant_calling::*;
 mod eread;
+mod variant_calling;
+use create_model::*;
 use eread::*;
-const DEBUG: bool = false;
+use variant_calling::*;
+
+pub enum Mode {
+    Debug,
+    Log,
+    Fresh,
+    Read,
+}
+const MODE: Mode = Mode::Log;
+
 pub trait Clustering {
     fn clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(self, c: &ClusteringConfig<F>) -> Self;
 }
@@ -42,14 +50,29 @@ impl Clustering for DataSet {
                     Some(res) => res,
                     None => continue,
                 };
-                let assignments: Vec<_> = if !DEBUG {
-                    unit_clustering(&units, c, ref_unit)
-                } else {
-                    let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(100);
-                    units
-                        .iter()
-                        .map(|_| rng.gen_range(0, c.cluster_num))
-                        .collect()
+                let assignments: Vec<usize> = match MODE {
+                    Mode::Fresh => unit_clustering(&units, c, ref_unit),
+                    Mode::Log => {
+                        let res = unit_clustering(&units, c, ref_unit);
+                        let file = format!("./logfiles/assign/{}.json", unit_id);
+                        let file = std::fs::File::create(file).unwrap();
+                        let mut file = std::io::BufWriter::new(file);
+                        serde_json::ser::to_writer(&mut file, &res).unwrap();
+                        res
+                    }
+                    Mode::Read => {
+                        let file = format!("./logfiles/assign/{}.json", unit_id);
+                        let file = std::fs::File::open(file).unwrap();
+                        let file = std::io::BufReader::new(file);
+                        serde_json::de::from_reader(file).unwrap()
+                    }
+                    Mode::Debug => {
+                        let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(100);
+                        units
+                            .iter()
+                            .map(|_| rng.gen_range(0, c.cluster_num))
+                            .collect()
+                    }
                 };
                 if log_enabled!(log::Level::Debug) {
                     debug!("Dump result....");
@@ -103,7 +126,7 @@ impl Clustering for DataSet {
         self
     }
 }
-// Clustering units.
+
 pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     units: &[(u64, usize, &Node)],
     c: &ClusteringConfig<F>,
@@ -236,13 +259,6 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                     .map(|_| rng.gen_bool(c.sample_rate))
                     .collect::<Vec<_>>();
                 let ms = get_models(&data, chain_len, rng, c, &pos, &update_data);
-                // for (c, m) in ms.iter().enumerate() {
-                //     for (p, m) in m.iter().enumerate() {
-                //         if m.weight() > 0.1 {
-                //             debug!("{}\t{}\t{}", c, p, m);
-                //         }
-                //     }
-                // }
                 update_assignment(&mut data, chain_len, c, &update_data, &betas, beta, &ms)
             })
             .sum::<u32>();
@@ -401,6 +417,9 @@ impl Graph {
                 .map(|c| n + c * self.node_num)
                 .map(|idx| self.nodes[idx].total)
                 .sum::<u64>() as f64;
+            if sum_of_tot < 0.00001 {
+                continue;
+            }
             for c in 0..self.cluster_num {
                 let idx = n + c * self.node_num;
                 self.nodes[idx].weight = self.nodes[idx].total as f64 / sum_of_tot;
@@ -480,17 +499,20 @@ fn path_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     reads_as_paths.iter_mut().for_each(|cs| {
         cs.cluster = rng.gen_range(0, c.cluster_num);
     });
+    assert!(!reads_as_paths.is_empty());
     debug!("Start path clustering");
     let mut count = 0;
     let start = std::time::Instant::now();
     let stable_thr = (reads_as_paths.len() / 100).max(4) as u32;
+    let len = reads_as_paths.len();
+    use rand::seq::SliceRandom;
     while count < c.stable_limit {
-        let models: Vec<_> = (0..c.cluster_num)
-            .map(|cl| Graph::new(&reads_as_paths, cl, c.cluster_num))
-            .collect();
-        let change_num = reads_as_paths
-            .iter_mut()
-            .map(|read| {
+        let change_num = (0..len)
+            .map(|_| {
+                let models: Vec<_> = (0..c.cluster_num)
+                    .map(|cl| Graph::new(&reads_as_paths, cl, c.cluster_num))
+                    .collect();
+                let read = reads_as_paths.choose_mut(&mut rng).unwrap();
                 let scores: Vec<_> = models.iter().map(|m| m.score(read)).collect();
                 let (argmax, _) = scores
                     .iter()
@@ -517,4 +539,102 @@ fn path_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         .iter()
         .map(|read| Assignment::new(read.id, read.cluster))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[derive(Clone, Copy, Debug)]
+    struct TestConfig {
+        cl: usize,
+        num: usize,
+        fail: f64,
+        skip: f64,
+        max_len: usize,
+        min_len: usize,
+    }
+    use super::*;
+    #[test]
+    fn works() {}
+    fn gen_dataset<R: Rng>(r: &mut R, conf: TestConfig) -> Vec<ERead> {
+        let TestConfig {
+            cl,
+            num,
+            fail,
+            skip,
+            max_len,
+            min_len,
+        } = conf;
+        (0..num)
+            .map(|i| {
+                let id = i as u64;
+                let cluster = i % cl;
+                let len = r.gen::<usize>() % (max_len - min_len) + min_len;
+                let path: Vec<_> = (0..len)
+                    .map(|unit| unit as u64)
+                    .filter_map(|unit| {
+                        if r.gen_bool(skip) {
+                            None
+                        } else if r.gen_bool(fail) {
+                            let cluster = r.gen::<usize>() % cl;
+                            Some(Elm { unit, cluster })
+                        } else {
+                            Some(Elm { unit, cluster })
+                        }
+                    })
+                    .collect();
+                ERead { id, cluster, path }
+            })
+            .collect()
+    }
+    #[test]
+    fn path_clustering_test() {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(10);
+        let conf = TestConfig {
+            cl: 2,
+            num: 200,
+            fail: 0.05,
+            skip: 0.02,
+            max_len: 40,
+            min_len: 5,
+        };
+        let reads: Vec<_> = gen_dataset(&mut rng, conf);
+        let alnparam = DEFAULT_ALN;
+        let poa_config = poa_hmm::DEFAULT_CONFIG;
+        let c = ClusteringConfig {
+            threads: 1,
+            cluster_num: conf.cl,
+            subchunk_length: 100,
+            limit: 400,
+            sample_rate: 0.02,
+            alnparam,
+            poa_config,
+            seed: 10,
+            id: 10,
+            beta_increase: 0.001,
+            initial_beta: 0.0001,
+            max_beta: 0.8,
+            repeat_num: 2,
+            gibbs_prior: 0.2,
+            stable_limit: 4,
+            variant_fraction: 0.1,
+        };
+        let result: HashMap<u64, usize> = path_clustering(reads.clone(), &c)
+            .into_iter()
+            .map(|a| (a.id, a.cluster))
+            .collect();
+        let correct = reads
+            .iter()
+            .filter_map(|e| result.get(&e.id).map(|&c| c == e.cluster))
+            .filter(|&e| e)
+            .count();
+        eprintln!("{}/{}", correct, reads.len());
+        for (cl, read) in reads
+            .iter()
+            .filter_map(|e| result.get(&e.id).map(|c| (c, e)))
+        {
+            eprintln!("{}\t{}\t{}", cl, read.cluster, read.path.len());
+        }
+        assert!(correct > reads.len() * 8 / 10);
+    }
 }
