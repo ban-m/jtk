@@ -1,19 +1,12 @@
-use poa_hmm::*;
-use rand::{seq::SliceRandom, SeedableRng};
-use rand_xoshiro::Xoshiro256StarStar;
-use poa_hmm::gen_sample::*;
+use rand_distr::{Distribution, Normal};
 fn main() {
-    let bases = b"ACTG";
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(1212132);
-    let template: Vec<_> = (0..150)
-        .filter_map(|_| bases.choose(&mut rng))
-        .copied()
+    let normal = Normal::new(100., 10.).unwrap();
+    let mut rng = rand::thread_rng();
+    let data: Vec<_> = normal
+        .sample_iter(&mut rng)
+        .take(10000)
+        .map(|x: f64| if x < 0. { 0 } else { x.floor() as usize })
         .collect();
-    let model1: Vec<Vec<_>> = (0..50)
-        .map(|_| introduce_randomness(&template, &mut rng, &CCS_PROFILE))
-        .collect();
-    let model1: Vec<&[u8]> = model1.iter().map(|e| e.as_slice()).collect();
-    let ps = (-1, -1, &|x, y| if x == y { 1 } else { -1 });
-    let model = POA::generate_banded(&model1, ps, 10, 101010);
-    println!("{}", model);
+    let hst = histgram_viz::Histgram::new(&data);
+    println!("{}", hst.format(40, 10));
 }

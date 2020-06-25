@@ -5,7 +5,7 @@ use super::SMALL_WEIGHT;
 use nalgebra::DMatrix;
 use poa_hmm::POA;
 use rand::Rng;
-use rayon::prelude::*;
+// use rayon::prelude::*;
 pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     data: &[ChunkedUnit],
     chain_len: usize,
@@ -50,7 +50,7 @@ fn calc_matrices_poa(
     // To access the likelihood of the j-th position of the k-th cluster,
     // lk_matrix[i][chain_len * k + j] would work.
     let lk_matrices: Vec<Vec<f64>> = data
-        .par_iter()
+        .iter()
         .map(|read| lks_poa(models, read, c, chain_len))
         .collect();
     let lk = lk_matrices
@@ -90,7 +90,7 @@ fn centrize(mut matrices: Vec<Vec<f64>>, row: usize, column: usize) -> Vec<Vec<f
     // Centrize the matrices. In other words,
     // we add the offset cv for each position.
     // Note that we only care at the position where the likelihood is non-zero value.
-    matrices.par_iter_mut().for_each(|matrix| {
+    matrices.iter_mut().for_each(|matrix| {
         for pos in 0..column {
             if (0..row).any(|cluster| matrix[column * cluster + pos].abs() > 0.001) {
                 for cluster in 0..row {

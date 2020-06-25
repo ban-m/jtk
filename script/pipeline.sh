@@ -36,6 +36,4 @@ cd ../
 cat ${ENTRY} |\
     ${JTK} encode -vv -a ${2}.alignment.tab |\
     ${JTK} stats -vv -f ${LOG} |\
-    ${JTK} clustering -vv --threads 24 --cluster_num 3 > ${CLUSTERED}
-
-# ./target/release/debug ${ENCODED} 
+    ${JTK} global_clustering -vv --threads 24 --cluster_num 3 > ${CLUSTERED}

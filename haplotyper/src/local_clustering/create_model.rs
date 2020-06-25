@@ -4,7 +4,7 @@ use poa_hmm::POA;
 use rand::distributions::Standard;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use rayon::prelude::*;
+//use rayon::prelude::*;
 
 fn select<R: Rng>(choises: &[usize], rng: &mut R, cl: usize, pick: f64) -> usize {
     *choises
@@ -36,16 +36,15 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     } = &c.alnparam;
     let param = (ins, del, score);
     chunks
-        .par_iter()
+        .iter()
         .map(|cluster| {
-            let poa = POA::default();
             cluster
-                .par_iter()
-                .zip(seeds.par_iter())
-                .zip(use_position.par_iter())
+                .iter()
+                .zip(seeds.iter())
+                .zip(use_position.iter())
                 .map(|((cs, &s), &b)| match b {
-                    true => poa.clone().update_thr(cs, param, s, 0.3, 1.05),
-                    false => poa.clone(),
+                    true => POA::generate_banded(cs, param, 10, s),
+                    false => POA::default(),
                 })
                 .collect()
         })

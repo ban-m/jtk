@@ -188,6 +188,7 @@ dependencies = [
  "bio_utils",
  "definitions",
  "env_logger",
+ "histgram_viz",
  "log",
  "nalgebra",
  "poa_hmm",
@@ -206,6 +207,10 @@ checksum = "91780f809e750b0a89f5544be56617ff6b1227ee485bcb06ebe10cdf89bd3b71"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "histgram_viz"
+version = "0.1.0"
 
 [[package]]
 name = "hla_cli"
@@ -556,9 +561,14 @@ checksum = "71d301d4193d031abdd79ff7e3dd721168a9572ef3fe51a1517aba235bd8f86e"
 name = "sandbox"
 version = "0.1.0"
 dependencies = [
+ "definitions",
+ "histgram_viz",
  "poa_hmm",
  "rand",
+ "rand_distr",
  "rand_xoshiro",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

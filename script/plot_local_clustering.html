@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<html>
+  <head>
+    <title>Local Clustering --- CCS reads</title>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+  </head>
+  <body>
+    <div class = "figure"></div>
+    <div class = "info"></div>
+    <script src="./plot_local_clustering.js"></script>
+    <script>
+      const dataset = "./../logfiles/local_clusterings.json";
+      const cluster_num = 3;
+      plotData(dataset, cluster_num);
+    </script>
+  </body>
+</html>
+
+
+
+

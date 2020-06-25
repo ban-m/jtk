@@ -76,6 +76,7 @@ fn encode_alignment(aln: &LastTAB, _units: &[Unit], read: &RawRead) -> Option<No
     Some(Node {
         position_from_start: position,
         unit,
+        cluster: 0,
         seq: String::from_utf8_lossy(&seq).to_string(),
         is_forward,
         cigar,

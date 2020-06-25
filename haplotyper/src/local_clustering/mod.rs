@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use definitions::*;
 use poa_hmm::*;
 use rand::{Rng, SeedableRng};
@@ -13,21 +14,15 @@ mod variant_calling;
 use create_model::*;
 use eread::*;
 use variant_calling::*;
-
-pub enum Mode {
-    Debug,
-    Log,
-    Fresh,
-    Read,
-}
-const MODE: Mode = Mode::Log;
-
-pub trait Clustering {
-    fn clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(self, c: &ClusteringConfig<F>) -> Self;
+pub trait LocalClustering {
+    fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+        self,
+        c: &ClusteringConfig<F>,
+    ) -> Self;
 }
 
-impl Clustering for DataSet {
-    fn clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+impl LocalClustering for DataSet {
+    fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         mut self,
         c: &ClusteringConfig<F>,
     ) -> Self {
@@ -36,113 +31,57 @@ impl Clustering for DataSet {
             .build_global()
             .unwrap();
         let max_unit = self.selected_chunks.iter().map(|u| u.id).max().unwrap() + 1;
-        let mut pileups: Vec<Vec<(_, _, &Node)>> = vec![vec![]; max_unit as usize];
-        for read in self.encoded_reads.iter() {
-            for (idx, node) in read.nodes.iter().enumerate() {
+        let mut pileups: Vec<Vec<(_, _, &mut Node)>> = (0..max_unit).map(|_| Vec::new()).collect();
+        for read in self.encoded_reads.iter_mut() {
+            for (idx, node) in read.nodes.iter_mut().enumerate() {
                 pileups[node.unit as usize].push((read.id, idx, node));
             }
         }
-        let reads_as_paths: Vec<_> = {
-            let mut clustered_chunks: HashMap<u64, Vec<(usize, Elm)>> = HashMap::new();
-            for (unit_id, units) in pileups.into_iter().enumerate() {
+        let selected_chunks = self.selected_chunks.clone();
+        let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+        pileups
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(unit_id, mut units)| {
                 debug!("The {}-th pileup", unit_id);
-                let ref_unit = match self.selected_chunks.iter().find(|u| u.id == unit_id as u64) {
+                let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
                     Some(res) => res,
-                    None => continue,
+                    None => return,
                 };
-                let assignments: Vec<usize> = match MODE {
-                    Mode::Fresh => unit_clustering(&units, c, ref_unit),
-                    Mode::Log => {
-                        let res = unit_clustering(&units, c, ref_unit);
-                        let file = format!("./logfiles/assign/{}.json", unit_id);
-                        let file = std::fs::File::create(file).unwrap();
-                        let mut file = std::io::BufWriter::new(file);
-                        serde_json::ser::to_writer(&mut file, &res).unwrap();
-                        res
-                    }
-                    Mode::Read => {
-                        let file = format!("./logfiles/assign/{}.json", unit_id);
-                        let file = std::fs::File::open(file).unwrap();
-                        let file = std::io::BufReader::new(file);
-                        serde_json::de::from_reader(file).unwrap()
-                    }
-                    Mode::Debug => {
-                        let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(100);
-                        units
-                            .iter()
-                            .map(|_| rng.gen_range(0, c.cluster_num))
-                            .collect()
-                    }
-                };
+                unit_clustering(&mut units, c, ref_unit);
                 if log_enabled!(log::Level::Debug) {
-                    debug!("Dump result....");
-                    let id_to_name: HashMap<_, _> =
-                        self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
                     for cl in 0..c.cluster_num {
-                        for (_, (readid, _, _)) in assignments
-                            .iter()
-                            .zip(units.iter())
-                            .filter(|&(&a, _)| a == cl)
-                        {
-                            debug!("{}\t{}\t{}", cl, readid, id_to_name[&readid]);
+                        let cl = cl as u64;
+                        for (id, _, _) in units.iter().filter(|&(_, _, n)| n.cluster == cl) {
+                            debug!("{}\t{}\t{}", cl, id, id_to_name[&id]);
                         }
                     }
                 }
-                for (cluster, (readid, pos, node)) in assignments.into_iter().zip(units) {
-                    let elm = Elm::new(node.unit, cluster);
-                    clustered_chunks.entry(readid).or_default().push((pos, elm))
-                }
-            }
-            clustered_chunks
-                .into_iter()
-                .map(|(id, mut units)| {
-                    units.sort_by_key(|e| e.0);
-                    let path: Vec<_> = units.into_iter().map(|e| e.1).collect();
-                    let cluster = 0;
-                    ERead { id, path, cluster }
-                })
-                .collect()
-        };
-        let assignments = path_clustering(reads_as_paths, c);
-        if log_enabled!(log::Level::Debug) {
-            let mut count: HashMap<usize, usize> = HashMap::new();
-            for asn in assignments.iter() {
-                *count.entry(asn.cluster).or_default() += 1;
-            }
-            let mut count: Vec<_> = count.into_iter().collect();
-            count.sort_by_key(|e| e.0);
-            for (cl, count) in count {
-                debug!("{}\t{}", cl, count);
-            }
-            let id_to_name: HashMap<_, _> =
-                self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-            for cl in 0..c.cluster_num {
-                for asn in assignments.iter().filter(|asn| asn.cluster == cl) {
-                    debug!("{}\t{}\t{}", cl, asn.id, id_to_name[&asn.id]);
-                }
-            }
-        }
-        self.assignments = assignments;
+            });
         self
     }
 }
 
 pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    units: &[(u64, usize, &Node)],
+    units: &mut [(u64, usize, &mut Node)],
     c: &ClusteringConfig<F>,
     ref_unit: &Unit,
-) -> Vec<usize> {
+) {
     let len = if ref_unit.seq().len() % c.subchunk_length == 0 {
         ref_unit.seq().len() / c.subchunk_length
     } else {
         ref_unit.seq().len() / c.subchunk_length + 1
     };
-    let data: Vec<ChunkedUnit> = units
+    let mut data: Vec<ChunkedUnit> = units
         .into_iter()
         .map(|(_, _, node)| node_to_subchunks(node, c.subchunk_length))
         .map(|chunks| ChunkedUnit { cluster: 0, chunks })
         .collect();
-    clustering_by_kmeans(data, len, c, c.seed * ref_unit.id)
+    clustering_by_kmeans(&mut data, len, c, ref_unit.id);
+    assert_eq!(data.len(), units.len());
+    for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
+        n.cluster = d.cluster as u64;
+    }
 }
 
 fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
@@ -231,27 +170,25 @@ fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
 }
 
 fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    mut data: Vec<ChunkedUnit>,
+    data: &mut Vec<ChunkedUnit>,
     chain_len: usize,
     c: &ClusteringConfig<F>,
-    seed: u64,
-) -> Vec<usize> {
-    // Construct Pileups.
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
+    ref_unit: u64,
+) {
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit * 101);
     data.iter_mut().for_each(|cs| {
         cs.cluster = rng.gen_range(0, c.cluster_num);
     });
+    let id = ref_unit;
     let mut beta = c.initial_beta;
     let mut count = 0;
-    let mut lk = std::f64::NEG_INFINITY;
+    let mut lk; // = std::f64::NEG_INFINITY;
     let rng = &mut rng;
     let start = std::time::Instant::now();
     let stable_thr = (data.len() as f64 * c.sample_rate / 2.).max(2.) as u32;
     while count < c.stable_limit {
         let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c, 1.);
-        // let betas = vec![vec![vec![1.; chain_len]; c.cluster_num]; c.cluster_num];
         beta = (beta * c.beta_increase).min(c.max_beta);
-        report(c.id, &data, count, lk, beta);
         lk = next_lk;
         let changed_num = (0..c.sample_rate.recip().ceil() as usize / 2)
             .map(|_| {
@@ -259,10 +196,10 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                     .map(|_| rng.gen_bool(c.sample_rate))
                     .collect::<Vec<_>>();
                 let ms = get_models(&data, chain_len, rng, c, &pos, &update_data);
-                update_assignment(&mut data, chain_len, c, &update_data, &betas, beta, &ms)
+                update_assignment(data, chain_len, c, &update_data, &betas, beta, &ms)
             })
             .sum::<u32>();
-        debug!("CHANGENUM\t{}", changed_num);
+        report(id, &data, count, lk, beta, changed_num);
         count += (changed_num <= stable_thr) as u32;
         count *= (changed_num <= stable_thr) as u32;
         let elapsed = (std::time::Instant::now() - start).as_secs();
@@ -271,11 +208,13 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             break;
         }
     }
-    data.iter().map(|d| d.cluster).collect()
 }
 
-fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64) {
-    debug!("{}\t{}\t{}\t{}", id, count, lk, beta);
+fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32) {
+    if !log_enabled!(log::Level::Trace) {
+        return;
+    }
+    trace!("{}\t{}\t{}\t{}\t{}", id, count, lk, beta, c);
     let mut count: std::collections::HashMap<usize, usize> = HashMap::new();
     for read in data {
         *count.entry(read.cluster).or_default() += 1;
@@ -283,7 +222,7 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64) {
     let mut count: Vec<(usize, usize)> = count.into_iter().collect();
     count.sort_by_key(|e| e.0);
     let count: Vec<_> = count.iter().map(|(_, cnt)| format!("{}", cnt)).collect();
-    debug!("{}", count.join("\t"));
+    trace!("{}", count.join("\t"));
 }
 
 fn get_fraction_on_position(
@@ -333,10 +272,10 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         .map(|(read, _)| {
             let likelihoods: Vec<(usize, Vec<_>)> = read
                 .chunks
-                .par_iter()
+                .iter()
                 .map(|chunk| {
                     let lks = models
-                        .par_iter()
+                        .iter()
                         .map(|ms| ms[chunk.pos].forward(&chunk.seq, &c.poa_config))
                         .collect();
                     (chunk.pos, lks)
@@ -503,10 +442,10 @@ fn path_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     debug!("Start path clustering");
     let mut count = 0;
     let start = std::time::Instant::now();
-    let stable_thr = (reads_as_paths.len() / 100).max(4) as u32;
+    let stable_thr = (reads_as_paths.len() / 1000).max(4) as u32;
     let len = reads_as_paths.len();
     use rand::seq::SliceRandom;
-    while count < c.stable_limit {
+    while count < c.stable_limit * 3 {
         let change_num = (0..len)
             .map(|_| {
                 let models: Vec<_> = (0..c.cluster_num)
@@ -551,6 +490,7 @@ mod tests {
         skip: f64,
         max_len: usize,
         min_len: usize,
+        unit_len: usize,
     }
     use super::*;
     #[test]
@@ -563,33 +503,61 @@ mod tests {
             skip,
             max_len,
             min_len,
+            unit_len,
         } = conf;
+        use rand::seq::SliceRandom;
+        let _unit_map: HashMap<usize, u64> = {
+            let units: Vec<_> = (0..unit_len).collect();
+            units
+                .choose_multiple(r, unit_len)
+                .enumerate()
+                .map(|(idx, &u)| (idx, u as u64))
+                .collect()
+        };
         (0..num)
             .map(|i| {
                 let id = i as u64;
                 let cluster = i % cl;
                 let len = r.gen::<usize>() % (max_len - min_len) + min_len;
-                let path: Vec<_> = (0..len)
-                    .map(|unit| unit as u64)
-                    .filter_map(|unit| {
-                        if r.gen_bool(skip) {
-                            None
-                        } else if r.gen_bool(fail) {
-                            let cluster = r.gen::<usize>() % cl;
-                            Some(Elm { unit, cluster })
-                        } else {
-                            Some(Elm { unit, cluster })
-                        }
-                    })
-                    .collect();
+                let path: Vec<_> = if r.gen_bool(0.5) {
+                    let start = r.gen::<usize>() % (unit_len - len);
+                    (start..start + len)
+                        .map(|unit| unit as u64)
+                        .filter_map(|unit| {
+                            if r.gen_bool(skip) {
+                                None
+                            } else if r.gen_bool(fail) {
+                                let cluster = r.gen::<usize>() % cl;
+                                Some(Elm { unit, cluster })
+                            } else {
+                                Some(Elm { unit, cluster })
+                            }
+                        })
+                        .collect()
+                } else {
+                    let start = r.gen::<usize>() % (unit_len - len) + len;
+                    (start - len..start)
+                        .rev()
+                        .map(|unit| unit as u64)
+                        .filter_map(|unit| {
+                            if r.gen_bool(skip) {
+                                None
+                            } else if r.gen_bool(fail) {
+                                let cluster = r.gen::<usize>() % cl;
+                                Some(Elm { unit, cluster })
+                            } else {
+                                Some(Elm { unit, cluster })
+                            }
+                        })
+                        .collect()
+                };
                 ERead { id, cluster, path }
             })
             .collect()
     }
-    #[test]
+    //#[test]
     fn path_clustering_test() {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(10);
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
         let conf = TestConfig {
             cl: 2,
             num: 200,
@@ -597,6 +565,7 @@ mod tests {
             skip: 0.02,
             max_len: 40,
             min_len: 5,
+            unit_len: 500,
         };
         let reads: Vec<_> = gen_dataset(&mut rng, conf);
         let alnparam = DEFAULT_ALN;
@@ -618,7 +587,101 @@ mod tests {
             gibbs_prior: 0.2,
             stable_limit: 4,
             variant_fraction: 0.1,
+            k_mer: 3,
         };
+        let result: HashMap<u64, usize> = path_clustering(reads.clone(), &c)
+            .into_iter()
+            .map(|a| (a.id, a.cluster))
+            .collect();
+        let correct = reads
+            .iter()
+            .filter_map(|e| result.get(&e.id).map(|&c| c == e.cluster))
+            .filter(|&e| e)
+            .count();
+        eprintln!("{}/{}", correct, reads.len());
+        for (cl, read) in reads
+            .iter()
+            .filter_map(|e| result.get(&e.id).map(|c| (c, e)))
+        {
+            eprintln!("{}\t{}\t{}", cl, read.cluster, read.path.len());
+        }
+        assert!(correct > reads.len() * 8 / 10);
+    }
+    //#[test]
+    // fn path_clustering_test_mult() {
+    //     //env_logger::Builder::from_env(env_logger::Env::default().default_filter_ordering("debug")).init();
+    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(10);
+    //     let conf = TestConfig {
+    //         cl: 3,
+    //         num: 200,
+    //         fail: 0.0,
+    //         skip: 0.0,
+    //         max_len: 40,
+    //         min_len: 5,
+    //         unit_len: 200,
+    //     };
+    //     let reads: Vec<_> = gen_dataset(&mut rng, conf);
+    //     let alnparam = DEFAULT_ALN;
+    //     let poa_config = poa_hmm::DEFAULT_CONFIG;
+    //     let c = ClusteringConfig {
+    //         threads: 1,
+    //         cluster_num: conf.cl,
+    //         subchunk_length: 100,
+    //         limit: 400,
+    //         sample_rate: 0.02,
+    //         alnparam,
+    //         poa_config,
+    //         seed: 10,
+    //         id: 10,
+    //         beta_increase: 0.001,
+    //         initial_beta: 0.0001,
+    //         max_beta: 0.8,
+    //         repeat_num: 2,
+    //         gibbs_prior: 0.2,
+    //         stable_limit: 4,
+    //         variant_fraction: 0.1,
+    //     };
+    //     let result: HashMap<u64, usize> = path_clustering(reads.clone(), &c)
+    //         .into_iter()
+    //         .map(|a| (a.id, a.cluster))
+    //         .collect();
+    //     let correct = reads
+    //         .iter()
+    //         .filter_map(|e| result.get(&e.id).map(|&c| c == e.cluster))
+    //         .filter(|&e| e)
+    //         .count();
+    //     eprintln!("{}/{}", correct, reads.len());
+    //     let mut res = vec![vec![0; 3]; 3];
+    //     for (cl, read) in reads
+    //         .iter()
+    //         .filter_map(|e| result.get(&e.id).map(|c| (c, e)))
+    //     {
+    //         res[*cl][read.cluster] += 1;
+    //     }
+    //     eprintln!("=====");
+    //     for (idx, rs) in res.iter().enumerate() {
+    //         for (jdx, r) in rs.iter().enumerate() {
+    //             eprintln!("{}\t{}\t{}", idx, jdx, r);
+    //         }
+    //     }
+    //assert!(correct > reads.len() * 8 / 10);
+    //    }
+    #[ignore]
+    #[test]
+    fn path_clustering_test_long() {
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(10);
+        let conf = TestConfig {
+            cl: 2,
+            num: 1000,
+            fail: 0.1,
+            skip: 0.1,
+            max_len: 10,
+            min_len: 5,
+            unit_len: 200,
+        };
+        let reads: Vec<_> = gen_dataset(&mut rng, conf);
+        let mut c = ClusteringConfig::default();
+        c.cluster_num = conf.cl;
         let result: HashMap<u64, usize> = path_clustering(reads.clone(), &c)
             .into_iter()
             .map(|a| (a.id, a.cluster))

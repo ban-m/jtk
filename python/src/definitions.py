@@ -103,6 +103,8 @@ class Node:
         The start position where the encoding started.
     unit: int
         The ID number of the unit which encods the part of the read.
+    cluster: int
+        The (local) cluster assigned to this node. Note that the default value is 0.
     seq: str
         The raw sequence of the **read** (not unit sequence, which can be 
         obtained by checking unit ID number). 
@@ -112,8 +114,9 @@ class Node:
         Each :obj: is one of the following:
         {"Match":int}, {"Del": int}, or {"Ins":int}
     """
-    def __init__(self, position_from_start, unit, seq, is_forward, cigar):
+    def __init__(self, position_from_start, unit, cluster, seq, is_forward, cigar):
         self.position_from_start = position_from_start
+        self.cluster = cluster
         self.unit = unit
         self.seq = seq
         self.is_forward = is_forward
@@ -242,6 +245,7 @@ def as_dataset(dct):
     elif 'position_from_start' in dct:
         return Node(position_from_start = dct['position_from_start'],
                     unit = dct['unit'],
+                    cluster = dct['cluster'],
                     seq = dct['seq'],
                     is_forward = dct['is_forward'],
                     cigar = dct['cigar'])
@@ -309,6 +313,7 @@ class DataSetEncoder(json.JSONEncoder):
             return {
                 'position_from_start': obj.position_from_start,
                 'unit': obj.unit,
+                'cluster': obj.cluster,
                 'seq': obj.seq,
                 'is_forward':obj.is_forward,
                 'cigar': obj.cigar,

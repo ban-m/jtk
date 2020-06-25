@@ -6,7 +6,7 @@ const BETA_INCREASE: f64 = 1.02;
 const MAX_BETA: f64 = 0.8;
 const REPEAT_NUM: usize = 1;
 const GIBBS_PRIOR: f64 = 0.02;
-const STABLE_LIMIT: u32 = 8;
+const STABLE_LIMIT: u32 = 4;
 const VARIANT_FRACTION: f64 = 0.1;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]
@@ -59,6 +59,29 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             poa_config: config,
             sample_rate: SAMPLE_RATE,
             seed,
+            id,
+            beta_increase: BETA_INCREASE,
+            initial_beta: INITIAL_BETA,
+            max_beta: MAX_BETA,
+            repeat_num: REPEAT_NUM,
+            gibbs_prior: GIBBS_PRIOR,
+            stable_limit: STABLE_LIMIT,
+            variant_fraction: VARIANT_FRACTION,
+        }
+    }
+    pub fn default() -> Self {
+        let id: u64 = thread_rng().gen::<u64>() % 100_000;
+        let config = poa_hmm::PACBIO_CONFIG;
+        debug!("Config:{}", config);
+        Self {
+            threads: 12,
+            cluster_num: 3,
+            subchunk_length: 100,
+            limit: 1000,
+            alnparam: DEFAULT_ALN,
+            poa_config: config,
+            sample_rate: SAMPLE_RATE,
+            seed: 10000,
             id,
             beta_increase: BETA_INCREASE,
             initial_beta: INITIAL_BETA,

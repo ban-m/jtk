@@ -3,14 +3,28 @@ pub enum ExtractTarget {
     RawReads,
     HiCReads,
     Units,
+    Assignments,
 }
 
 pub trait Extract {
     fn extract_fasta(&self, target: ExtractTarget) -> Vec<fasta::Record>;
+    fn extract_assignments(&self) -> Vec<(usize, String)>;
 }
 
 use bio_utils::fasta;
 impl Extract for definitions::DataSet {
+    fn extract_assignments(&self) -> Vec<(usize, String)> {
+        use std::collections::HashMap;
+        let id2name: HashMap<_, _> = self
+            .raw_reads
+            .iter()
+            .map(|r| (r.id, r.name.clone()))
+            .collect();
+        self.assignments
+            .iter()
+            .filter_map(|asn| id2name.get(&asn.id).map(|name| (asn.cluster, name.clone())))
+            .collect()
+    }
     fn extract_fasta(&self, target: ExtractTarget) -> Vec<fasta::Record> {
         match target {
             ExtractTarget::RawReads => self
@@ -44,6 +58,7 @@ impl Extract for definitions::DataSet {
                     fasta::Record::with_data(&id, &None, &u.seq())
                 })
                 .collect(),
+            _ => unreachable!(),
         }
     }
 }

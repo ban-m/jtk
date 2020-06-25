@@ -101,9 +101,13 @@ impl Stats for definitions::DataSet {
             let ave = sum as f64 / units.len() as f64;
             writeln!(&mut wtr, "Encoding summary")?;
             writeln!(&mut wtr, "Min:{}\tMax:{}\tAve:{:.2}", max, min, ave)?;
-            for (unit, count) in units.iter() {
-                writeln!(&mut wtr, "Unit\t{}\t{}", unit, count)?;
-            }
+            let units: Vec<usize> = self
+                .encoded_reads
+                .iter()
+                .flat_map(|read| read.nodes.iter().map(|node| node.unit as usize))
+                .collect();
+            let hist = histgram_viz::Histgram::new(&units);
+            writeln!(&mut wtr, "Unit Histgram\n{}", hist.format(20, 20))?;
         }
         Ok(())
     }

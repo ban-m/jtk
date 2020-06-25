@@ -155,6 +155,7 @@ pub struct Node {
     /// 0-index.
     pub position_from_start: usize,
     pub unit: u64,
+    pub cluster: u64,
     pub seq: String,
     pub is_forward: bool,
     pub cigar: Vec<Op>,

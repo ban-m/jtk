@@ -2,6 +2,7 @@ use bio_utils::lasttab::LastTAB;
 use clap::{App, Arg, SubCommand};
 use definitions::*;
 use haplotyper::*;
+use std::io::Write;
 #[macro_use]
 extern crate log;
 fn subcommand_entry() -> App<'static, 'static> {
@@ -35,16 +36,7 @@ fn subcommand_extract() -> App<'static, 'static> {
                 .takes_value(true)
                 .value_name("TARGET")
                 .required(true)
-                .possible_values(&["raw_reads", "hic_reads", "units"]),
-        )
-        .arg(
-            Arg::with_name("format")
-                .short("f")
-                .long("format")
-                .required(true)
-                .takes_value(true)
-                .value_name("FORMAT")
-                .possible_values(&["fasta", "fastq"]),
+                .possible_values(&["raw_reads", "hic_reads", "units", "assignments"]),
         )
 }
 
@@ -93,7 +85,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("chunk_num")
                 .takes_value(true)
-                .default_value(&"500")
+                .default_value(&"800")
                 .help("Number of chunks"),
         )
         .arg(
@@ -101,7 +93,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("s")
                 .long("skip_len")
                 .takes_value(true)
-                .default_value(&"4000")
+                .default_value(&"3000")
                 .help("Margin between units"),
         )
         .arg(
@@ -167,11 +159,11 @@ fn subcommand_view() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_clustering() -> App<'static, 'static> {
-    SubCommand::with_name("clustering")
+fn subcommand_local_clustering() -> App<'static, 'static> {
+    SubCommand::with_name("local_clustering")
         .version("0.1")
         .author("BanshoMasutani")
-        .about("Clustering reads.")
+        .about("Clustering reads. (Local)")
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -216,6 +208,29 @@ fn subcommand_clustering() -> App<'static, 'static> {
                 .value_name("SubChunkLength")
                 .help("The length of sub-chunks")
                 .default_value(&"100")
+                .takes_value(true),
+        )
+}
+
+fn subcommand_global_clustering() -> App<'static, 'static> {
+    SubCommand::with_name("global_clustering")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Clustering reads (Global).")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
                 .takes_value(true),
         )
 }
@@ -267,20 +282,38 @@ fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
         Ok(res) => res,
     };
     debug!("Target is {}", matches.value_of("target").unwrap());
-    debug!("Format is {}", matches.value_of("format").unwrap());
-    let target = match matches.value_of("target").unwrap() {
-        "raw_reads" => ExtractTarget::RawReads,
-        "hic_reads" => ExtractTarget::HiCReads,
-        "units" => ExtractTarget::Units,
+    match matches.value_of("target").unwrap() {
+        "raw_reads" => {
+            let stdout = std::io::stdout();
+            let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
+            for seq in dataset.extract_fasta(ExtractTarget::RawReads) {
+                wtr.write_record(&seq)?;
+            }
+        }
+        "hic_reads" => {
+            let stdout = std::io::stdout();
+            let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
+            for seq in dataset.extract_fasta(ExtractTarget::HiCReads) {
+                wtr.write_record(&seq)?;
+            }
+        }
+        "units" => {
+            let stdout = std::io::stdout();
+            let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
+            for seq in dataset.extract_fasta(ExtractTarget::Units) {
+                wtr.write_record(&seq)?;
+            }
+        }
+        "assignments" => {
+            let asn_and_name = dataset.extract_assignments();
+            let stdout = std::io::stdout();
+            let mut wtr = std::io::BufWriter::new(stdout.lock());
+            for (asn, name) in asn_and_name {
+                writeln!(&mut wtr, "{}\t{}", asn, name)?;
+            }
+        }
         &_ => unreachable!(),
     };
-    let stdout = std::io::stdout();
-    let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
-    if matches.value_of("format").unwrap() == "fasta" {
-        for seq in dataset.extract_fasta(target) {
-            wtr.write_record(&seq)?;
-        }
-    }
     Ok(())
 }
 
@@ -451,7 +484,7 @@ fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
     Ok(())
 }
 
-fn clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
+fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
         1 => "info",
@@ -459,7 +492,7 @@ fn clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         3 | _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    debug!("Start Clustering step");
+    debug!("Start Local Clustering step");
     let cluster_num: usize = matches
         .value_of("cluster_num")
         .and_then(|num| num.parse().ok())
@@ -489,7 +522,48 @@ fn clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     debug!("Parsed Dataset.");
     let config = ClusteringConfig::with_default(&dataset, threads, cluster_num, length, limit);
-    let dataset = dataset.clustering(&config);
+    let dataset = dataset.local_clustering(&config);
+    let stdout = std::io::stdout();
+    let mut wtr = std::io::BufWriter::new(stdout.lock());
+    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            std::process::exit(1);
+        }
+        Ok(()) => {
+            debug!("Finish Clustering Step");
+            Ok(())
+        }
+    }
+}
+
+fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let level = match matches.occurrences_of("verbose") {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        3 | _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    debug!("Start Local Clustering step");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let dataset: DataSet = match serde_json::de::from_reader(reader) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid Input from STDIN.");
+            std::process::exit(1);
+        }
+        Ok(res) => res,
+    };
+    debug!("Parsed Dataset.");
+    let config = haplotyper::GlobalClusteringConfig::new(threads, 3);
+    let dataset = dataset.global_clustering(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());
     match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
@@ -516,7 +590,8 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_select_unit())
         .subcommand(subcommand_encode())
         .subcommand(subcommand_view())
-        .subcommand(subcommand_clustering())
+        .subcommand(subcommand_local_clustering())
+        .subcommand(subcommand_global_clustering())
         .get_matches();
     match matches.subcommand() {
         ("entry", Some(sub_m)) => entry(sub_m),
@@ -525,7 +600,8 @@ fn main() -> std::io::Result<()> {
         ("select_unit", Some(sub_m)) => select_unit(sub_m),
         ("encode", Some(sub_m)) => encode(sub_m),
         ("view", Some(sub_m)) => view(sub_m),
-        ("clustering", Some(sub_m)) => clustering(sub_m),
+        ("local_clustering", Some(sub_m)) => local_clustering(sub_m),
+        ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
         _ => Ok(()),
     }
 }
