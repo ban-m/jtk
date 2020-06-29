@@ -21,7 +21,7 @@ cargo build --release
 cat ${TARGET} | ${JTK} entry |\
     ${JTK} select_unit -vv |\
     tee ${ENTRY} |\
-    ${JTK} extract -f fasta -t units > ${UNITS}
+    ${JTK} extract -t units > ${UNITS}
 
 cd ${PWD}/result
 REFNAME=${RANDOM}
@@ -35,5 +35,6 @@ cd ../
 
 cat ${ENTRY} |\
     ${JTK} encode -vv -a ${2}.alignment.tab |\
+    ${JTK} local_clustering -vv --threads 24 --cluster_num 3 |\
     ${JTK} stats -vv -f ${LOG} |\
-    ${JTK} global_clustering -vv --threads 24 --cluster_num 3 > ${CLUSTERED}
+    ${JTK} global_clustering -vv --threads 2 > ${CLUSTERED}

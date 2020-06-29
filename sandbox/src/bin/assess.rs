@@ -105,15 +105,17 @@ fn unit_assess(preds: &[(usize, u64)]) -> Vec<(usize, f64, f64)> {
 }
 
 fn global_assess(answer: &HashMap<u64, usize>, dataset: &DataSet) -> std::io::Result<()> {
-    let mut counts = [[0; 3]; 3];
+    let mut counts: Vec<HashMap<_, usize>> = (0..3).map(|_| HashMap::new()).collect();
     for asn in dataset.assignments.iter() {
         let ans = answer[&asn.id];
-        counts[ans][asn.cluster] += 1;
+        *counts[ans].entry(asn.cluster).or_default() += 1;
     }
     let mut out = BufWriter::new(std::fs::File::create("global.tsv")?);
     writeln!(&mut out, "Answer\tPred\tCount")?;
     for (ans, preds) in counts.iter().enumerate() {
-        for (pred, count) in preds.iter().enumerate() {
+        let mut preds: Vec<_> = preds.into_iter().collect();
+        preds.sort_by_key(|x| x.0);
+        for (pred, count) in preds {
             writeln!(&mut out, "{}\t{}\t{}", ans, pred, count)?;
         }
     }

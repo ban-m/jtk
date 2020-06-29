@@ -190,6 +190,7 @@ dependencies = [
  "env_logger",
  "histgram_viz",
  "log",
+ "mcl",
  "nalgebra",
  "poa_hmm",
  "rand",
@@ -281,6 +282,15 @@ name = "maybe-uninit"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
+
+[[package]]
+name = "mcl"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "nalgebra",
+ "serde",
+]
 
 [[package]]
 name = "memchr"
@@ -562,6 +572,7 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "definitions",
+ "haplotyper",
  "histgram_viz",
  "poa_hmm",
  "rand",

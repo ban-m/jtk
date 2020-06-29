@@ -19,3 +19,4 @@ poa_hmm = {path = "../partial_order_alignment"}
 nalgebra  = "*"
 serde_json = "*"
 histgram_viz = {path = "../histgram_viz"}
+mcl = {path = "../mcl"}

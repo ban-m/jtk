@@ -85,7 +85,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("chunk_num")
                 .takes_value(true)
-                .default_value(&"800")
+                .default_value(&"1000")
                 .help("Number of chunks"),
         )
         .arg(
@@ -231,6 +231,26 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .value_name("THREADS")
                 .help("Number of Threads")
                 .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("k")
+                .short("k")
+                .long("kmer_size")
+                .required(false)
+                .value_name("KMER_SIZE")
+                .help("The size of the kmer")
+                .default_value(&"3")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("min_cluster_size")
+                .short("m")
+                .long("min_cluster_size")
+                .required(false)
+                .value_name("MIN_CLUSTER_SIZE")
+                .help("The minimum size of a cluster")
+                .default_value(&"50")
                 .takes_value(true),
         )
 }
@@ -545,9 +565,17 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         3 | _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    debug!("Start Local Clustering step");
+    debug!("Start Global Clustering step");
     let threads: usize = matches
         .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let kmer: usize = matches
+        .value_of("k")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let min_cluster_size = matches
+        .value_of("min_cluster_size")
         .and_then(|num| num.parse().ok())
         .unwrap();
     use std::io::BufReader;
@@ -562,7 +590,7 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         Ok(res) => res,
     };
     debug!("Parsed Dataset.");
-    let config = haplotyper::GlobalClusteringConfig::new(threads, 3);
+    let config = haplotyper::GlobalClusteringConfig::new(threads, kmer, min_cluster_size);
     let dataset = dataset.global_clustering(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());

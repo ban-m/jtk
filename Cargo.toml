@@ -7,4 +7,5 @@ members = [
         "partial_order_alignment",
         "sandbox",
         "histgram_viz",
+        "mcl",
 ]

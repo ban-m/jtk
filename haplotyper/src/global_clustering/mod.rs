@@ -1,15 +1,23 @@
+#![allow(dead_code)]
 use super::find_union::FindUnion;
 use definitions;
 use std::collections::HashMap;
 use std::collections::HashSet;
+pub mod path_clustering;
+pub use path_clustering::path_clustering;
 #[derive(Debug, Clone, Copy)]
 pub struct GlobalClusteringConfig {
     pub threads: usize,
     pub k_mer: usize,
+    pub min_cluster_size: usize,
 }
 impl GlobalClusteringConfig {
-    pub fn new(threads: usize, k_mer: usize) -> Self {
-        Self { threads, k_mer }
+    pub fn new(threads: usize, k_mer: usize, min_cluster_size: usize) -> Self {
+        Self {
+            threads,
+            k_mer,
+            min_cluster_size,
+        }
     }
 }
 pub trait GlobalClustering {
@@ -164,10 +172,38 @@ impl DeBruijnGraph {
         let thr = mean / 2;
         return thr;
     }
+    fn calc_thr_edge(&self) -> u64 {
+        let counts = self
+            .nodes
+            .iter()
+            .map(|n| n.edges.iter().fold(0, |x, w| x + w.weight))
+            .sum::<u64>();
+        let len: usize = self.nodes.iter().map(|n| n.edges.len()).sum::<usize>();
+        counts / len as u64 / 2
+    }
     fn clean_up_auto(self) -> Self {
-        let thr = self.calc_thr();
-        debug!("Removing nodes with occ less than {}", thr);
-        self.clean_up(thr)
+        // let thr = self.calc_thr();
+        // debug!("Removing nodes with occ less than {}", thr);
+        // self.clean_up(thr)
+        let thr = self.calc_thr_edge();
+        debug!("Removing edges with weight less than {}", thr);
+        self.clean_up_2(thr)
+    }
+    fn clean_up_2(mut self, thr: u64) -> Self {
+        // Removing weak and non-solo edge.
+        // This is because, solo-edge would be true edge
+        // Even if the weight is small.
+        // It is not a problem to leave consective false-edge ,
+        // as such a cluster would be removed by filtering
+        // clusters by their sizes.
+        self.nodes
+            .iter_mut()
+            .filter(|node| node.edges.len() > 2)
+            .for_each(|node| {
+                // Remove weak edges.
+                node.edges.retain(|edge| edge.weight > thr);
+            });
+        self
     }
     fn clean_up(self, thr: usize) -> Self {
         let mut resulting_node = vec![];
@@ -189,16 +225,10 @@ impl DeBruijnGraph {
             }
         }
         resulting_node.iter_mut().for_each(|n| {
-            n.edges = n
-                .edges
-                .iter()
-                .filter_map(|edge| {
-                    map[edge.to].map(|t| Edge {
-                        to: t,
-                        weight: edge.weight,
-                    })
-                })
-                .collect();
+            n.edges.retain(|edge| map[edge.to].is_some());
+            n.edges
+                .iter_mut()
+                .for_each(|edge| edge.to = map[edge.to].unwrap());
         });
         Self {
             k,
@@ -235,6 +265,42 @@ impl DeBruijnGraph {
         }
         components
     }
+    fn clustering_mcl(&self, e: i32, r: i32) -> Vec<HashSet<(u64, u64)>> {
+        // Convert de Bruijn graph into an usual node-edge graph.
+        let nodes = self.nodes.len();
+        let edges: Vec<Vec<(usize, u64)>> = self
+            .nodes
+            .iter()
+            .map(|node| node.edges.iter().map(|e| (e.to, e.weight)).collect())
+            .collect();
+        let num_edge: usize = edges.iter().map(|x| x.len()).sum::<usize>();
+        debug!("Node:{}, edges:{}", nodes, num_edge);
+        let graph = mcl::Graph::new(nodes, &edges);
+        debug!("Constructed a MCL graph.");
+        let mut components = graph.clustering(e, r);
+        components.retain(|c| c.len() > 10);
+        debug!("Clustered. Deduping..");
+        components.sort();
+        components.dedup();
+        debug!("Convert into HashSet.");
+        components
+            .into_iter()
+            .map(|comp| {
+                comp.into_iter()
+                    .flat_map(|idx| {
+                        self.nodes
+                            .iter()
+                            .find(|n| match self.indexer.get(n) {
+                                Some(i) => *i == idx,
+                                None => false,
+                            })
+                            .map(|n| n.kmer.clone())
+                            .unwrap_or_else(|| Vec::new())
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 impl GlobalClustering for definitions::DataSet {
@@ -256,8 +322,10 @@ impl GlobalClustering for definitions::DataSet {
             let hist = histgram_viz::Histgram::new(&count);
             eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
         }
-        let components: Vec<HashSet<(u64, u64)>> = graph.clustering(0);
-        let components = merge(components, &self.encoded_reads);
+        let mut components: Vec<HashSet<(u64, u64)>> = graph.clustering(0);
+        components.retain(|cmp| cmp.len() > c.min_cluster_size);
+        // let components = graph.clustering_mcl(2, 2);
+        //let components = merge(components, &self.encoded_reads);
         debug!("Resulting in {} clusters.", components.len());
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = self
@@ -575,7 +643,8 @@ mod tests {
         let graph = DeBruijnGraph::new(&reads, 3);
         let graph = graph.clean_up_auto();
         eprintln!("{:?}", graph);
-        let components = graph.clustering(1);
+        let mut components = graph.clustering(1);
+        components.retain(|c| c.len() > 100);
         assert_eq!(components.len(), 2);
         let preds: Vec<_> = reads
             .iter()
@@ -609,9 +678,9 @@ mod tests {
         let conf = TestConfig {
             cl: 2,
             num: 5000,
-            fail: 0.01,
-            skip: 0.01,
-            max_len: 20,
+            fail: 0.02,
+            skip: 0.02,
+            max_len: 40,
             min_len: 10,
             unit_len: 800,
         };
@@ -619,7 +688,8 @@ mod tests {
         let graph = DeBruijnGraph::new(&reads, 3);
         let graph = graph.clean_up_auto();
         eprintln!("{:?}", graph);
-        let components = graph.clustering(1);
+        let mut components = graph.clustering(1);
+        components.retain(|cl| cl.len() > 100);
         assert_eq!(components.len(), 2);
         let preds: Vec<_> = reads
             .iter()
@@ -645,9 +715,101 @@ mod tests {
         let correct = correct.max(reads.len() - correct);
         assert!(correct > reads.len() * 8 / 10);
     }
-
     #[test]
     fn path_clustering_test_short() {
+        use rand::SeedableRng;
+        use rand_xoshiro::Xoshiro256StarStar;
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
+        let conf = TestConfig {
+            cl: 2,
+            num: 200,
+            fail: 0.01,
+            skip: 0.01,
+            max_len: 20,
+            min_len: 10,
+            unit_len: 50,
+        };
+        let (reads, answer) = gen_dataset(&mut rng, conf);
+        let graph = DeBruijnGraph::new(&reads, 3);
+        let graph = graph.clean_up_auto();
+        eprintln!("{:?}", graph);
+        let mut components = graph.clustering(0);
+        components.retain(|c| c.len() > 20);
+        assert_eq!(components.len(), 2);
+        let preds: Vec<_> = reads
+            .iter()
+            .filter_map(|read| {
+                components
+                    .iter()
+                    .map(|c| read.iter().filter(|x| c.contains(x)).count())
+                    .enumerate()
+                    .max_by_key(|x| x.1)
+            })
+            .map(|x| x.0)
+            .collect();
+        assert_eq!(preds.len(), answer.len());
+        let correct = answer
+            .iter()
+            .zip(preds.iter())
+            .filter(|&(ans, pred)| ans == pred)
+            .count();
+        eprintln!("{}/{}", correct, reads.len());
+        for ((read, assign), ans) in reads.iter().zip(preds.iter()).zip(answer.iter()) {
+            eprintln!("{}\t{}\t{}", ans, assign, read.len());
+        }
+        let correct = correct.max(reads.len() - correct);
+        assert!(correct > reads.len() * 8 / 10);
+    }
+    fn path_clustering_test_mcl() {
+        use rand::SeedableRng;
+        use rand_xoshiro::Xoshiro256StarStar;
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
+        let conf = TestConfig {
+            cl: 2,
+            num: 100,
+            fail: 0.05,
+            skip: 0.05,
+            max_len: 15,
+            min_len: 8,
+            unit_len: 50,
+        };
+        let (reads, answer) = gen_dataset(&mut rng, conf);
+        let graph = DeBruijnGraph::new(&reads, 3);
+        let components = graph.clustering_mcl(10, 2);
+        assert_eq!(components.len(), 2, "{:?}", components,);
+        {
+            for c in components.iter() {
+                let mut c: Vec<_> = c.iter().copied().collect();
+                c.sort();
+                eprintln!("{:?}", c);
+            }
+        }
+
+        let preds: Vec<_> = reads
+            .iter()
+            .filter_map(|read| {
+                components
+                    .iter()
+                    .map(|c| read.iter().filter(|x| c.contains(x)).count())
+                    .enumerate()
+                    .max_by_key(|x| x.1)
+            })
+            .map(|x| x.0)
+            .collect();
+        assert_eq!(preds.len(), answer.len());
+        let correct = answer
+            .iter()
+            .zip(preds.iter())
+            .filter(|&(ans, pred)| {
+                eprintln!("{}\t{}", ans, pred);
+                ans == pred
+            })
+            .count();
+        eprintln!("{}/{}", correct, reads.len());
+        let correct = correct.max(reads.len() - correct);
+        assert!(correct > reads.len() * 8 / 10);
+    }
+    fn path_clustering_test_mcl_with() {
         use rand::SeedableRng;
         use rand_xoshiro::Xoshiro256StarStar;
         let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
@@ -662,22 +824,53 @@ mod tests {
         };
         let (reads, answer) = gen_dataset(&mut rng, conf);
         let graph = DeBruijnGraph::new(&reads, 3);
-        let graph = graph.clean_up_auto();
-        eprintln!("{:?}", graph);
-        let components = graph.clustering(0);
-        assert_eq!(components.len(), 2);
-        let preds: Vec<_> = reads
+        let components = graph.clustering_mcl(10, 2);
+        assert_eq!(components.len(), 2, "{:?}", components,);
+        {
+            for c in components.iter() {
+                let mut c: Vec<_> = c.iter().copied().collect();
+                c.sort();
+                eprintln!("{:?}", c);
+            }
+        }
+        let init: Vec<_> = reads
             .iter()
             .filter_map(|read| {
-                components
+                let counts: Vec<_> = components
                     .iter()
                     .map(|c| read.iter().filter(|x| c.contains(x)).count())
-                    .enumerate()
-                    .max_by_key(|x| x.1)
+                    .collect();
+                counts.into_iter().enumerate().max_by_key(|x| x.1)
             })
             .map(|x| x.0)
             .collect();
-        assert_eq!(preds.len(), answer.len());
+        assert_eq!(init.len(), answer.len());
+        let preds = {
+            let units: HashSet<_> = reads.iter().flat_map(|e| e).copied().collect();
+            let map: HashMap<(u64, u64), usize> =
+                units.into_iter().enumerate().map(|(x, y)| (y, x)).collect();
+            let reads: Vec<Vec<_>> = reads
+                .iter()
+                .map(|read| read.iter().map(|u| map[u]).collect())
+                .collect();
+            path_clustering::path_clustering(&reads, &init)
+        };
+        eprintln!("------------------");
+        {
+            let max = *preds.iter().max().unwrap();
+            for cl in 0..=max {
+                let mut component: Vec<_> = reads
+                    .iter()
+                    .zip(preds.iter())
+                    .filter(|&(_, &x)| x == cl)
+                    .flat_map(|(p, _)| p.iter())
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                component.sort();
+                eprintln!("{:?}", component);
+            }
+        }
         let correct = answer
             .iter()
             .zip(preds.iter())
