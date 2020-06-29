@@ -197,8 +197,6 @@ mod tests {
         (reads, answer)
     }
     fn path_clustering_test() {
-        use rand::SeedableRng;
-        use rand_xoshiro::Xoshiro256StarStar;
         let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
         let conf = TestConfig {
             cl: 2,

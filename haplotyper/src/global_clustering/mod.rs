@@ -3,6 +3,9 @@ use super::find_union::FindUnion;
 use definitions;
 use std::collections::HashMap;
 use std::collections::HashSet;
+mod error_correction;
+use error_correction::local_correction;
+use error_correction::CorrectedRead;
 pub mod path_clustering;
 pub use path_clustering::path_clustering;
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +48,7 @@ struct Node {
     occ: usize,
     edges: Vec<Edge>,
     kmer: Vec<(u64, u64)>,
+    cluster: usize,
 }
 impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -58,7 +62,14 @@ impl std::fmt::Debug for Node {
             .iter()
             .map(|(u, c)| format!("{}-{}", u, c))
             .collect();
-        write!(f, "{}\t{}\t[{}]", self.occ, edges.join(","), kmer.join(","))
+        write!(
+            f,
+            "{}\t{}\t{}\t[{}]",
+            self.cluster,
+            self.occ,
+            edges.join(","),
+            kmer.join(",")
+        )
     }
 }
 
@@ -77,9 +88,37 @@ impl Node {
         } else {
             w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
         };
-        let (edges, occ) = (vec![], 0);
-        Self { kmer, edges, occ }
+        let (edges, occ, cluster) = (vec![], 0, 0);
+        Self {
+            kmer,
+            edges,
+            occ,
+            cluster,
+        }
     }
+    fn from_corrected(w: &[error_correction::Unit]) -> Self {
+        let first = {
+            let f = w.first().unwrap();
+            (f.unit, f.cluster)
+        };
+        let last = {
+            let l = w.last().unwrap();
+            (l.unit, l.cluster)
+        };
+        let kmer: Vec<_> = if first < last {
+            w.iter().map(|n| (n.unit, n.cluster)).collect()
+        } else {
+            w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
+        };
+        let (edges, occ, cluster) = (vec![], 0, 0);
+        Self {
+            kmer,
+            edges,
+            occ,
+            cluster,
+        }
+    }
+
     fn push(&mut self, to: usize) {
         match self.edges.iter_mut().find(|e| e.to == to) {
             Some(x) => {
@@ -166,6 +205,38 @@ impl DeBruijnGraph {
 
         Self { k, nodes, indexer }
     }
+    fn from_corrected_reads(reads: &[CorrectedRead], k: usize) -> Self {
+        let (mut nodes, mut indexer) = (vec![], HashMap::new());
+        for read in reads {
+            for w in read.nodes.windows(k + 1) {
+                // Calc kmer
+                let from = Node::from_corrected(&w[..k]);
+                let to = Node::from_corrected(&w[1..]);
+                // Check entry.
+                let from = if !indexer.contains_key(&from) {
+                    indexer.insert(from.clone(), nodes.len());
+                    nodes.push(from);
+                    nodes.len() - 1
+                } else {
+                    *indexer.get(&from).unwrap()
+                };
+                let to = if !indexer.contains_key(&to) {
+                    indexer.insert(to.clone(), nodes.len());
+                    nodes.push(to);
+                    nodes.len() - 1
+                } else {
+                    *indexer.get(&to).unwrap()
+                };
+                nodes[from].occ += 1;
+                nodes[to].occ += 1;
+                nodes[from].push(to);
+                nodes[to].push(from);
+            }
+        }
+
+        Self { k, nodes, indexer }
+    }
+
     fn calc_thr(&self) -> usize {
         let counts: Vec<_> = self.nodes.iter().map(|n| n.occ).collect();
         let mean = counts.iter().sum::<usize>() / counts.len();
@@ -236,6 +307,42 @@ impl DeBruijnGraph {
             indexer,
         }
     }
+    fn assign_corrected_read(&self, read: &CorrectedRead) -> Option<usize> {
+        let mut count = HashMap::<_, u32>::new();
+        for w in read.nodes.windows(self.k) {
+            let node = Node::from_corrected(w);
+            if let Some(&idx) = self.indexer.get(&node) {
+                *count.entry(self.nodes[idx].cluster).or_default() += 1;
+            }
+        }
+        count.into_iter().max_by_key(|x| x.1).map(|x| x.0)
+    }
+    fn coloring(&mut self, _c: &GlobalClusteringConfig) {
+        // Coloring node of the de Bruijn graph.
+        // As a first try, I just color de Bruijn graph by its connected components.
+        let mut fu = FindUnion::new(self.nodes.len());
+        for (from, node) in self.nodes.iter().enumerate().filter(|x| x.1.occ > 0) {
+            for edge in node.edges.iter().filter(|e| e.weight > 0) {
+                fu.unite(from, edge.to);
+            }
+        }
+        let mut current_component = 0;
+        for cluster in 0..self.nodes.len() {
+            if fu.find(cluster).unwrap() != cluster {
+                continue;
+            }
+            let count = (0..self.nodes.len())
+                .filter(|&x| fu.find(x).unwrap() == cluster)
+                .count();
+            debug!("Find cluster. Containing {} k-mers.", count);
+            for (idx, node) in self.nodes.iter_mut().enumerate() {
+                if fu.find(idx).unwrap() == cluster {
+                    node.cluster = current_component;
+                }
+            }
+            current_component += 1;
+        }
+    }
     fn clustering(&self, thr: usize) -> Vec<HashSet<(u64, u64)>> {
         // Clustering de Bruijn graph.
         // As a first try, I implement very naive conneceted component analysis.
@@ -254,6 +361,10 @@ impl DeBruijnGraph {
             if fu.find(cluster).unwrap() != cluster {
                 continue;
             }
+            let count = (0..self.nodes.len())
+                .filter(|&x| fu.find(x).unwrap() == cluster)
+                .count();
+            debug!("Find cluster. Containing {} k-mers.", count);
             let component: HashSet<_> = (0..self.nodes.len())
                 .filter(|&x| fu.find(x).unwrap() == cluster)
                 .flat_map(|node_idx| self.nodes[node_idx].kmer.iter())
@@ -305,45 +416,67 @@ impl DeBruijnGraph {
 
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
-        let graph = DeBruijnGraph::from_encoded_reads(&self.encoded_reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&length);
             eprintln!("Read({})\n{}", length.len(), hist.format(20, 40));
         }
+        let reads = local_correction(&self);
+        debug!("Corrected reads.");
+        if log_enabled!(log::Level::Debug) {
+            let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
+            let hist = histgram_viz::Histgram::new(&length);
+            eprintln!("Read({})\n{}", length.len(), hist.format(20, 40));
+        }
+        //let graph = DeBruijnGraph::from_encoded_reads(&self.encoded_reads, c.k_mer);
+        let mut graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
             let hist = histgram_viz::Histgram::new(&count);
             eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
         }
-        let graph = graph.clean_up_auto();
-        if log_enabled!(log::Level::Debug) {
-            let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
-            let hist = histgram_viz::Histgram::new(&count);
-            eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
-        }
-        let mut components: Vec<HashSet<(u64, u64)>> = graph.clustering(0);
-        components.retain(|cmp| cmp.len() > c.min_cluster_size);
+        // let graph = graph.clean_up_auto();
+        // if log_enabled!(log::Level::Debug) {
+        //     let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
+        //     let hist = histgram_viz::Histgram::new(&count);
+        //     eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
+        // }
+        // let mut components: Vec<HashSet<(u64, u64)>> = graph.clustering(0);
+        // components.retain(|cmp| cmp.len() > c.min_cluster_size);
         // let components = graph.clustering_mcl(2, 2);
         //let components = merge(components, &self.encoded_reads);
-        debug!("Resulting in {} clusters.", components.len());
+        // debug!("Resulting in {} clusters.", components.len());
+        graph.coloring(c);
+        graph.merge_by(&reads);
+        let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap();
+        debug!("Resulting in {} clusters.", component_num);
         let mut count: HashMap<_, usize> = HashMap::new();
-        let assignments: Vec<_> = self
-            .encoded_reads
-            .iter()
-            .map(|read| {
+        let assignments: Vec<_> = reads
+            .into_iter()
+            .filter_map(|read| {
                 let id = read.id;
-                let cluster = components
-                    .iter()
-                    .map(|c| sim(c, read))
-                    .enumerate()
-                    .max_by_key(|x| x.1)
-                    .unwrap()
-                    .0;
-                *count.entry(cluster).or_default() += 1;
-                definitions::Assignment { id, cluster }
+                graph.assign_corrected_read(&read).map(|cluster| {
+                    *count.entry(cluster).or_default() += 1;
+                    definitions::Assignment { id, cluster }
+                })
             })
             .collect();
+        // let assignments: Vec<_> = self
+        //     .encoded_reads
+        //     .iter()
+        //     .map(|read| {
+        //         let id = read.id;
+        //         let cluster = components
+        //             .iter()
+        //             .map(|c| sim(c, read))
+        //             .enumerate()
+        //             .max_by_key(|x| x.1)
+        //             .unwrap()
+        //             .0;
+        //         *count.entry(cluster).or_default() += 1;
+        //         definitions::Assignment { id, cluster }
+        //     })
+        //     .collect();
         self.assignments = assignments;
         if log_enabled!(log::Level::Debug) {
             eprintln!("Cluster\tCount");
@@ -401,8 +534,13 @@ mod tests {
             } else {
                 w.iter().rev().copied().collect()
             };
-            let (edges, occ) = (vec![], 0);
-            Self { kmer, edges, occ }
+            let (edges, occ, cluster) = (vec![], 0, 0);
+            Self {
+                kmer,
+                edges,
+                occ,
+                cluster,
+            }
         }
     }
     impl DeBruijnGraph {
