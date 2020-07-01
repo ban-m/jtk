@@ -1,6 +1,30 @@
 #!/bin/bash
-qsub -o ./logfiles/sim_read.out -e ./logfiles/sim_read.log\
-        ./script/pipeline.sh \
-        ${PWD}/result/CCS_reads.15000.1M.fa \
-        ${PWD}/result/CCS_reads.15000.1M
+qsub -o ./logfiles/CCS_reads.15000.1M.out -e ./logfiles/CCS_reads.15000.1M.log\
+     ./script/pipeline.sh \
+     ${PWD}/result/CCS_reads.15000.1M.fa \
+     ${PWD}/result/CCS_reads.15000.1M
 
+qsub -o ./logfiles/CCS_reads.6000.1M.out -e ./logfiles/CCS_reads.6000.1M.log\
+     ./script/pipeline.sh \
+     /data/hacone/randseq/mut6000/CCS_reads.6000.1M.fa\
+     ${PWD}/result/CCS_reads.6000.1M
+
+qsub -o ./logfiles/CCS_reads.3000.1M.out -e ./logfiles/CCS_reads.3000.1M.log\
+     ./script/pipeline.sh \
+     /data/hacone/randseq/mut3000/CCS_reads.3000.1M.fa\
+     ${PWD}/result/CCS_reads.3000.1M
+
+qsub -o ./logfiles/CCS_reads.1500.1M.out -e ./logfiles/CCS_reads.1500.1M.log\
+     ./script/pipeline.sh \
+     /data/hacone/randseq/mut1500/CCS_reads.1500.1M.fa\
+     ${PWD}/result/CCS_reads.1500.1M
+
+qsub -o ./logfiles/CCS_reads.600.1M.out -e ./logfiles/CCS_reads.600.1M.log\
+     ./script/pipeline.sh \
+     /data/hacone/randseq/mut600/CCS_reads.600.1M.fa\
+     ${PWD}/result/CCS_reads.600.1M
+
+qsub -o ./logfiles/CCS_reads.300.1M.out -e ./logfiles/CCS_reads.300.1M.log\
+     ./script/pipeline.sh \
+     /data/hacone/randseq/mut300/CCS_reads.300.1M.fa\
+     ${PWD}/result/CCS_reads.300.1M

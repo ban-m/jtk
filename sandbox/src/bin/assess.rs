@@ -116,6 +116,12 @@ fn global_assess(answer: &HashMap<u64, usize>, dataset: &DataSet) -> std::io::Re
         let mut preds: Vec<_> = preds.into_iter().collect();
         preds.sort_by_key(|x| x.0);
         for (pred, count) in preds {
+            let ans = match ans {
+                0 => "hapA",
+                1 => "hapB",
+                2 => "hapC",
+                _ => unreachable!(),
+            };
             writeln!(&mut out, "{}\t{}\t{}", ans, pred, count)?;
         }
     }

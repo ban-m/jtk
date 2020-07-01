@@ -631,11 +631,11 @@ impl GlobalClustering for definitions::DataSet {
             eprintln!("Degree Count\n{:?}", count);
         }
         graph.coloring(c);
-        let mapping = PlugGraph::from_corrected_reads(&graph, &reads).clustering();
-        graph
-            .nodes
-            .iter_mut()
-            .for_each(|n| n.cluster = mapping[&n.cluster]);
+        // let mapping = PlugGraph::from_corrected_reads(&graph, &reads).clustering();
+        // graph
+        //     .nodes
+        //     .iter_mut()
+        //     .for_each(|n| n.cluster = mapping[&n.cluster]);
         let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
         debug!("Resulting in {} clusters.", component_num);
         let components: Vec<HashSet<_>> = (0..component_num)
