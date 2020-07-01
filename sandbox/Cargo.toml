@@ -16,3 +16,5 @@ serde_json = "*"
 definitions = {path = "../definitions"}
 histgram_viz = {path = "../histgram_viz"}
 haplotyper = {path = "../haplotyper"}
+env_logger = "*"
+log = "*"

@@ -572,8 +572,10 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "definitions",
+ "env_logger",
  "haplotyper",
  "histgram_viz",
+ "log",
  "poa_hmm",
  "rand",
  "rand_distr",

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 /// ```bash
 /// cargo run --release --bin assess -- ${JSON encoded file}
 /// ```
-/// would create local.tsv, global.tsv, and local_path.tsv
+/// would create local.tsv, global.tsv
 fn main() -> std::io::Result<()> {
     use std::io::BufReader;
     let args: Vec<_> = std::env::args().collect();

@@ -182,7 +182,7 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let id = ref_unit;
     let mut beta = c.initial_beta;
     let mut count = 0;
-    let mut lk; // = std::f64::NEG_INFINITY;
+    let mut lk;
     let rng = &mut rng;
     let start = std::time::Instant::now();
     let stable_thr = (data.len() as f64 * c.sample_rate / 2.).max(2.) as u32;

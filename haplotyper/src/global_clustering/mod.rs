@@ -28,7 +28,7 @@ pub trait GlobalClustering {
 }
 
 #[derive(Clone)]
-struct DeBruijnGraph {
+pub struct DeBruijnGraph {
     k: usize,
     nodes: Vec<Node>,
     indexer: HashMap<Node, usize>,
@@ -174,7 +174,7 @@ impl std::cmp::PartialEq for Node {
 impl std::cmp::Eq for Node {}
 
 impl DeBruijnGraph {
-    fn from_encoded_reads(reads: &[definitions::EncodedRead], k: usize) -> Self {
+    pub fn from_encoded_reads(reads: &[definitions::EncodedRead], k: usize) -> Self {
         let (mut nodes, mut indexer) = (vec![], HashMap::new());
         for read in reads {
             for w in read.nodes.windows(k + 1) {
@@ -236,7 +236,6 @@ impl DeBruijnGraph {
 
         Self { k, nodes, indexer }
     }
-
     fn calc_thr(&self) -> usize {
         let counts: Vec<_> = self.nodes.iter().map(|n| n.occ).collect();
         let mean = counts.iter().sum::<usize>() / counts.len();
@@ -250,7 +249,7 @@ impl DeBruijnGraph {
             .map(|n| n.edges.iter().fold(0, |x, w| x + w.weight))
             .sum::<u64>();
         let len: usize = self.nodes.iter().map(|n| n.edges.len()).sum::<usize>();
-        counts / len as u64 / 2
+        counts / len as u64 / 3
     }
     fn clean_up_auto(self) -> Self {
         // let thr = self.calc_thr();
@@ -343,7 +342,56 @@ impl DeBruijnGraph {
             current_component += 1;
         }
     }
-    fn clustering(&self, thr: usize) -> Vec<HashSet<(u64, u64)>> {
+    fn connections(
+        &self,
+        i: usize,
+        j: usize,
+        reads: &[CorrectedRead],
+        _c: &GlobalClusteringConfig,
+    ) -> usize {
+        let set_i: HashSet<_> = self
+            .nodes
+            .iter()
+            .filter(|n| n.cluster == i)
+            .flat_map(|n| n.kmer.iter())
+            .copied()
+            .collect();
+        let set_j: HashSet<_> = self
+            .nodes
+            .iter()
+            .filter(|n| n.cluster == j)
+            .flat_map(|n| n.kmer.iter())
+            .copied()
+            .collect();
+        let connections: Vec<_> = reads
+            .iter()
+            .filter(|read| {
+                let (mut is_i, mut is_j) = (false, false);
+                for node in read.nodes.iter() {
+                    let unit = (node.unit, node.cluster);
+                    is_i |= set_i.contains(&unit);
+                    is_j |= set_j.contains(&unit);
+                }
+                is_i && is_j
+            })
+            .filter_map(|read| {
+                let last = read.nodes.last().unwrap();
+                let last = (last.unit, last.cluster);
+                let first = read.nodes.first().unwrap();
+                let first = (first.unit, first.cluster);
+                if set_i.contains(&last) && set_j.contains(&first) {
+                    Some((last, first))
+                } else if set_i.contains(&first) && set_j.contains(&last) {
+                    Some((last, first))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        debug!("{},{}=>{:?}", i, j, connections);
+        connections.len()
+    }
+    pub fn clustering(&self, thr: usize) -> Vec<HashSet<(u64, u64)>> {
         // Clustering de Bruijn graph.
         // As a first try, I implement very naive conneceted component analysis.
         // To this end, I use naive FindUnion Tree. In other words,
@@ -414,6 +462,134 @@ impl DeBruijnGraph {
     }
 }
 
+#[derive(Clone)]
+struct PlugGraph {
+    nodes: usize,
+    edges: Vec<Vec<PlugEdge>>,
+}
+
+impl std::fmt::Debug for PlugGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "Nodes:{}", self.nodes)?;
+        let lines: Vec<_> = self.edges.iter().map(|e| format!("{:?}", e)).collect();
+        write!(f, "{}", lines.join("\n"))
+    }
+}
+
+#[derive(Clone, Default)]
+struct PlugEdge {
+    to: usize,
+    weight: u32,
+}
+
+impl std::fmt::Debug for PlugEdge {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "(->{}:{})", self.to, self.weight)
+    }
+}
+
+impl PlugGraph {
+    fn from_corrected_reads(dbg: &DeBruijnGraph, reads: &[CorrectedRead]) -> Self {
+        let nodes = dbg.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
+        debug!("Nodes: {}", nodes);
+        // let mut plugs: Vec<HashSet<(u64, u64)>> = (0..nodes).map(|_| HashSet::new()).collect();
+        let plugs: Vec<HashSet<_>> = (0..nodes)
+            .map(|c| {
+                dbg.nodes
+                    .iter()
+                    .filter(|n| n.cluster == c)
+                    .flat_map(|n| n.kmer.iter())
+                    .copied()
+                    .collect()
+            })
+            .collect();
+        let edges: Vec<Vec<PlugEdge>> = (0..nodes)
+            .map(|from| {
+                (0..nodes)
+                    .filter(|&to| to != from)
+                    .filter_map(|to| {
+                        eprintln!("PlugEdds of {}->{}", from, to);
+                        let weight = reads
+                            .iter()
+                            .filter(|read| read.nodes.len() > 2)
+                            .filter(|read| {
+                                let start = {
+                                    let s = &read.nodes.first().unwrap();
+                                    (s.unit, s.cluster)
+                                };
+                                let end = {
+                                    let e = &read.nodes.last().unwrap();
+                                    (e.unit, e.cluster)
+                                };
+                                let to = &plugs[to];
+                                let from = &plugs[from];
+                                let connected = (to.contains(&start) && from.contains(&end))
+                                    || (to.contains(&end) && from.contains(&start));
+                                if connected {
+                                    let nodes: String = read
+                                        .nodes
+                                        .iter()
+                                        .map(|u| {
+                                            let u = (u.unit, u.cluster);
+                                            match (from.contains(&u), to.contains(&u)) {
+                                                (true, true) => 'B',
+                                                (true, false) => 'F',
+                                                (false, true) => 'T',
+                                                (false, false) => 'X',
+                                            }
+                                        })
+                                        .collect();
+                                    eprintln!("{}", nodes);
+                                    let nodes: Vec<_> =
+                                        read.nodes.iter().map(|u| (u.unit, u.cluster)).collect();
+                                    eprintln!("{:?}", nodes);
+                                }
+                                connected
+                            })
+                            .count() as u32;
+                        if weight == 0 {
+                            None
+                        } else {
+                            Some(PlugEdge { to, weight })
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        Self { nodes, edges }
+    }
+    // Mapping: de Bruijn graph component -> Aggregated cluster.
+    fn clustering(&self) -> HashMap<usize, usize> {
+        debug!("Clustering {:?}", self);
+        let mut fu = FindUnion::new(self.nodes);
+        for (from, edges) in self.edges.iter().enumerate() {
+            for edge in edges.iter().filter(|e| e.weight > 1) {
+                fu.unite(from, edge.to).unwrap();
+            }
+        }
+        let mut mapping = HashMap::new();
+        let mut current_component = 0;
+        for cluster in 0..self.nodes {
+            if fu.find(cluster).unwrap() != cluster {
+                continue;
+            }
+            let count = (0..self.nodes)
+                .filter(|&x| fu.find(x).unwrap() == cluster)
+                .count();
+            debug!("Find cluster. Containing {} de Bruijn SCC.", count);
+            for node in 0..self.nodes {
+                if fu.find(node).unwrap() == cluster {
+                    mapping.insert(node, current_component);
+                }
+            }
+            current_component += 1;
+        }
+        debug!("Resulting in {} clusters", current_component);
+        debug!("{:?}", mapping);
+        mapping
+    }
+}
+
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
         if log_enabled!(log::Level::Debug) {
@@ -429,27 +605,56 @@ impl GlobalClustering for definitions::DataSet {
             eprintln!("Read({})\n{}", length.len(), hist.format(20, 40));
         }
         //let graph = DeBruijnGraph::from_encoded_reads(&self.encoded_reads, c.k_mer);
-        let mut graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
+        let graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
             let hist = histgram_viz::Histgram::new(&count);
             eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
         }
-        // let graph = graph.clean_up_auto();
-        // if log_enabled!(log::Level::Debug) {
-        //     let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
-        //     let hist = histgram_viz::Histgram::new(&count);
-        //     eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
-        // }
+        let mut graph = graph.clean_up_auto();
+        //let mut graph = graph;
+        if log_enabled!(log::Level::Debug) {
+            let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
+            let hist = histgram_viz::Histgram::new(&count);
+            eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
+        }
         // let mut components: Vec<HashSet<(u64, u64)>> = graph.clustering(0);
         // components.retain(|cmp| cmp.len() > c.min_cluster_size);
         // let components = graph.clustering_mcl(2, 2);
-        //let components = merge(components, &self.encoded_reads);
+        // let components = merge(components, &self.encoded_reads);
         // debug!("Resulting in {} clusters.", components.len());
+        if log_enabled!(log::Level::Debug) {
+            let mut count: HashMap<_, u32> = HashMap::new();
+            for n in graph.nodes.iter() {
+                *count.entry(n.edges.len()).or_default() += 1;
+            }
+            eprintln!("Degree Count\n{:?}", count);
+        }
         graph.coloring(c);
-        graph.merge_by(&reads);
-        let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap();
+        let mapping = PlugGraph::from_corrected_reads(&graph, &reads).clustering();
+        graph
+            .nodes
+            .iter_mut()
+            .for_each(|n| n.cluster = mapping[&n.cluster]);
+        let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
         debug!("Resulting in {} clusters.", component_num);
+        let components: Vec<HashSet<_>> = (0..component_num)
+            .map(|c| {
+                graph
+                    .nodes
+                    .iter()
+                    .filter(|n| n.cluster == c)
+                    .flat_map(|n| n.kmer.iter())
+                    .copied()
+                    .collect()
+            })
+            .collect();
+        for i in 0..component_num {
+            for j in i + 1..component_num {
+                let count = components[i].intersection(&components[j]).count();
+                debug!("{}\t{}\t{}", i, j, count);
+            }
+        }
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = reads
             .into_iter()

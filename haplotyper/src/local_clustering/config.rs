@@ -1,12 +1,12 @@
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 const SAMPLE_RATE: f64 = 0.02;
-const INITIAL_BETA: f64 = 0.001;
-const BETA_INCREASE: f64 = 1.02;
+const INITIAL_BETA: f64 = 0.01;
+const BETA_INCREASE: f64 = 1.05;
 const MAX_BETA: f64 = 0.8;
 const REPEAT_NUM: usize = 1;
 const GIBBS_PRIOR: f64 = 0.02;
-const STABLE_LIMIT: u32 = 4;
+const STABLE_LIMIT: u32 = 6;
 const VARIANT_FRACTION: f64 = 0.1;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]

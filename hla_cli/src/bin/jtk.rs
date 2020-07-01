@@ -85,7 +85,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("chunk_num")
                 .takes_value(true)
-                .default_value(&"1000")
+                .default_value(&"2000")
                 .help("Number of chunks"),
         )
         .arg(
@@ -93,7 +93,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("s")
                 .long("skip_len")
                 .takes_value(true)
-                .default_value(&"3000")
+                .default_value(&"2000")
                 .help("Margin between units"),
         )
         .arg(
