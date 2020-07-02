@@ -130,8 +130,8 @@ impl Edge {
         self.label.as_bytes()
     }
     pub fn from_nodes(ns: &[Node], seq: &[u8]) -> Self {
-        let (from, to) = match ns {
-            &[ref from, ref to] => (from, to),
+        let (from, to) = match *ns {
+            [ref from, ref to] => (from, to),
             _ => unreachable!(),
         };
         let end = from.position_from_start + from.query_length();
@@ -145,7 +145,7 @@ impl Edge {
             from: from.unit,
             to: to.unit,
             offset: start as i64 - end as i64,
-            label: label,
+            label,
         }
     }
 }

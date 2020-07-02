@@ -46,7 +46,7 @@ impl Graph {
         self
     }
     fn score(&self, path: &[usize]) -> f64 {
-        if path.len() == 0 {
+        if path.is_empty() {
             1.
         } else if path.len() == 1 {
             self.nodes[path[0]].total
@@ -68,7 +68,7 @@ impl Graph {
 impl std::fmt::Display for Graph {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let node_num = self.nodes.len();
-        let edge_num = self.nodes.iter().map(|n| n.edges.len()).count();
+        let edge_num = self.nodes.iter().map(|n| n.edges.len()).sum::<usize>();
         write!(f, "NodeNum:{}\tEdgeNum:{}", node_num, edge_num)
     }
 }

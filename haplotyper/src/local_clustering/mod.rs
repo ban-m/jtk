@@ -73,7 +73,7 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         ref_unit.seq().len() / c.subchunk_length + 1
     };
     let mut data: Vec<ChunkedUnit> = units
-        .into_iter()
+        .iter()
         .map(|(_, _, node)| node_to_subchunks(node, c.subchunk_length))
         .map(|chunks| ChunkedUnit { cluster: 0, chunks })
         .collect();
@@ -159,12 +159,9 @@ fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
     chunk_position
         .windows(2)
         .enumerate()
-        .filter_map(|(idx, w)| {
-            let chunk = Chunk {
-                pos: idx,
-                seq: node.seq()[w[0]..w[1]].to_vec(),
-            };
-            Some(chunk)
+        .map(|(idx, w)| Chunk {
+            pos: idx,
+            seq: node.seq()[w[0]..w[1]].to_vec(),
         })
         .collect()
 }

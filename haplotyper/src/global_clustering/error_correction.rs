@@ -1,5 +1,6 @@
 use super::definitions::DataSet;
 use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug)]
 pub struct CorrectedRead {
     pub id: u64,
@@ -30,7 +31,7 @@ const DEL: i32 = -2;
 // And Cigar::Ins is a insertion to the reference.
 // Also, the alignment is "semi-global" one. See the initialization step.
 // TODO: faster!
-fn alignment(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> Option<Vec<Cigar>> {
+fn alignment(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> Option<(i32, Vec<Cigar>)> {
     let mut dp = vec![vec![0; rfr.len() + 1]; qry.len() + 1];
     for (i, &q) in qry.iter().enumerate() {
         for (j, &r) in rfr.iter().enumerate() {
@@ -47,7 +48,8 @@ fn alignment(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> Option<Vec<Cigar>> {
         .filter_map(|x| x.last())
         .enumerate()
         .max_by_key(|x| x.1)?;
-    if *column_max <= 0 && *row_max <= 0 {
+    let score = *column_max.max(row_max);
+    if score <= 0 {
         return None;
     }
     let (mut q_pos, mut r_pos) = if row_max < column_max {
@@ -92,7 +94,7 @@ fn alignment(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> Option<Vec<Cigar>> {
         r_pos -= 1;
     }
     cigar.reverse();
-    Some(cigar)
+    Some((score, cigar))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,7 +169,6 @@ impl Column {
         }
     }
     fn generate(&self, node: &mut Vec<Unit>) {
-        use std::collections::HashMap;
         if self.i.len() > self.c / 2 {
             let mut counts: HashMap<_, u32> = HashMap::new();
             for &x in self.i.iter() {
@@ -216,12 +217,88 @@ fn correct(
     let pileup = reads
         .iter()
         .filter_map(|&(_, ref query)| alignment(query, nodes))
-        .fold(Pileup::new(nodes), |x, y| x.add(y));
+        .filter(|&(score, _)| score > 2)
+        .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
     for column in pileup.column {
         column.generate(&mut nodes);
     }
     CorrectedRead { id, nodes }
+}
+
+pub fn remove_collupsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRead> {
+    let unit_counts = {
+        let mut counts: HashMap<_, usize> = HashMap::new();
+        for read in reads.iter() {
+            for node in read.nodes.iter() {
+                *counts.entry(node.unit).or_default() += 1;
+            }
+        }
+        counts
+    };
+    if log_enabled!(log::Level::Debug) {
+        let counts: Vec<_> = unit_counts.values().copied().collect();
+        let hist = histgram_viz::Histgram::new(&counts);
+        eprintln!("Unit Histgram:{}\n{}", counts.len(), hist.format(20, 40));
+    }
+    let mean = unit_counts.values().copied().sum::<usize>() / unit_counts.len();
+    // let sqmean = unit_counts.values().map(|x| x * x).sum::<usize>() / unit_counts.len();
+    // let sd = ((sqmean - mean * mean) as f64).sqrt().ceil() as usize;
+    // let thr = {
+    //     let (mean, sd) = (mean / 3, sd / 9);
+    //     debug!("Mean:SD={}:{}", mean, sd);
+    //     mean.max(sd * 6) - sd * 6
+    // };
+    debug!("Removing units having occurence more than {}", mean / 2);
+    debug!("And single component.");
+    // debug!("And having 2nd-biggest cluster less than {}", thr);
+    let mut char_count: HashMap<u64, HashMap<u64, usize>> = HashMap::new();
+    for read in reads.iter() {
+        for node in read.nodes.iter() {
+            *char_count
+                .entry(node.unit)
+                .or_default()
+                .entry(node.cluster)
+                .or_default() += 1;
+        }
+    }
+    // Determine the units to be discarded.
+    let discarded: HashSet<u64> = char_count
+        .iter()
+        .filter_map(|(unit, counts)| {
+            let sum = counts.values().copied().sum::<usize>();
+            let num: Vec<_> = counts.values().collect();
+            debug!("{:?}->{}", num, counts.len() <= 1 && sum > mean / 2);
+            if counts.len() <= 1 && sum > mean / 2 {
+                Some(*unit)
+            } else {
+                None
+            }
+        })
+        .collect();
+    debug!(
+        "Discarding {} units out of {}.",
+        discarded.len(),
+        char_count.len()
+    );
+    let count = reads
+        .iter()
+        .map(|read| {
+            read.nodes
+                .iter()
+                .filter(|n| discarded.contains(&n.unit))
+                .count()
+        })
+        .sum::<usize>();
+    debug!("Dropping {} units in the dataset in total", count);
+    // Discard collupsed units.
+    let total = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
+    reads
+        .iter_mut()
+        .for_each(|read| read.nodes.retain(|n| !discarded.contains(&n.unit)));
+    let total_after = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
+    debug!("{}->{}", total, total_after);
+    reads
 }
 
 #[cfg(test)]

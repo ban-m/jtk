@@ -113,7 +113,7 @@ fn global_assess(answer: &HashMap<u64, usize>, dataset: &DataSet) -> std::io::Re
     let mut out = BufWriter::new(std::fs::File::create("global.tsv")?);
     writeln!(&mut out, "Answer\tPred\tCount")?;
     for (ans, preds) in counts.iter().enumerate() {
-        let mut preds: Vec<_> = preds.into_iter().collect();
+        let mut preds: Vec<_> = preds.iter().collect();
         preds.sort_by_key(|x| x.0);
         for (pred, count) in preds {
             let ans = match ans {

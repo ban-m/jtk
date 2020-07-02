@@ -61,7 +61,7 @@ fn main() -> std::io::Result<()> {
     let (nodes, graph) = {
         use std::collections::HashSet;
         let nodes = dataset.selected_chunks.iter().map(|e| e.id).max().unwrap();
-        let mut edges: Vec<_> = (0..(nodes as usize + 1)).map(|_| HashSet::new()).collect();
+        let mut edges: Vec<_> = (0..=nodes).map(|_| HashSet::new()).collect();
         for read in ereads.iter() {
             for w in read.path.windows(2) {
                 let from = w[0].unit as usize;

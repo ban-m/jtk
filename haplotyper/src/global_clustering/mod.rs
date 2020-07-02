@@ -4,8 +4,8 @@ use definitions;
 use std::collections::HashMap;
 use std::collections::HashSet;
 mod error_correction;
-use error_correction::local_correction;
 use error_correction::CorrectedRead;
+use error_correction::{local_correction, remove_collupsed_units};
 pub mod path_clustering;
 pub use path_clustering::path_clustering;
 #[derive(Debug, Clone, Copy)]
@@ -239,8 +239,7 @@ impl DeBruijnGraph {
     fn calc_thr(&self) -> usize {
         let counts: Vec<_> = self.nodes.iter().map(|n| n.occ).collect();
         let mean = counts.iter().sum::<usize>() / counts.len();
-        let thr = mean / 2;
-        return thr;
+        mean / 2
     }
     fn calc_thr_edge(&self) -> u64 {
         let counts = self
@@ -325,7 +324,7 @@ impl DeBruijnGraph {
                 fu.unite(from, edge.to);
             }
         }
-        let mut current_component = 0;
+        let mut current_component = 1;
         for cluster in 0..self.nodes.len() {
             if fu.find(cluster).unwrap() != cluster {
                 continue;
@@ -334,6 +333,9 @@ impl DeBruijnGraph {
                 .filter(|&x| fu.find(x).unwrap() == cluster)
                 .count();
             debug!("Find cluster. Containing {} k-mers.", count);
+            if count < 10 {
+                continue;
+            }
             for (idx, node) in self.nodes.iter_mut().enumerate() {
                 if fu.find(idx).unwrap() == cluster {
                     node.cluster = current_component;
@@ -379,9 +381,9 @@ impl DeBruijnGraph {
                 let last = (last.unit, last.cluster);
                 let first = read.nodes.first().unwrap();
                 let first = (first.unit, first.cluster);
-                if set_i.contains(&last) && set_j.contains(&first) {
-                    Some((last, first))
-                } else if set_i.contains(&first) && set_j.contains(&last) {
+                if (set_i.contains(&last) && set_j.contains(&first))
+                    || set_i.contains(&first) && set_j.contains(&last)
+                {
                     Some((last, first))
                 } else {
                     None
@@ -454,7 +456,7 @@ impl DeBruijnGraph {
                                 None => false,
                             })
                             .map(|n| n.kmer.clone())
-                            .unwrap_or_else(|| Vec::new())
+                            .unwrap_or_else(Vec::new)
                     })
                     .collect()
             })
@@ -595,16 +597,17 @@ impl GlobalClustering for definitions::DataSet {
         if log_enabled!(log::Level::Debug) {
             let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&length);
-            eprintln!("Read({})\n{}", length.len(), hist.format(20, 40));
+            let tot = length.iter().sum::<usize>();
+            eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
         }
         let reads = local_correction(&self);
         debug!("Corrected reads.");
         if log_enabled!(log::Level::Debug) {
-            let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
+            let length: Vec<_> = reads.iter().map(|r| r.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&length);
-            eprintln!("Read({})\n{}", length.len(), hist.format(20, 40));
+            let tot = length.iter().sum::<usize>();
+            eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
         }
-        //let graph = DeBruijnGraph::from_encoded_reads(&self.encoded_reads, c.k_mer);
         let graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
@@ -628,6 +631,8 @@ impl GlobalClustering for definitions::DataSet {
             for n in graph.nodes.iter() {
                 *count.entry(n.edges.len()).or_default() += 1;
             }
+            let mut count: Vec<_> = count.into_iter().collect();
+            count.sort_by_key(|x| x.0);
             eprintln!("Degree Count\n{:?}", count);
         }
         graph.coloring(c);
@@ -697,7 +702,7 @@ fn merge(
     mut components: Vec<HashSet<(u64, u64)>>,
     reads: &[definitions::EncodedRead],
 ) -> Vec<HashSet<(u64, u64)>> {
-    loop {
+    'outer: loop {
         let len = components.len();
         for i in 0..len {
             for j in (i + 1)..len {
@@ -712,7 +717,7 @@ fn merge(
                     );
                     let c: Vec<_> = components[j].drain().collect();
                     components[i].extend(c);
-                    continue;
+                    continue 'outer;
                 }
             }
         }

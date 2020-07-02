@@ -42,9 +42,12 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .iter()
                 .zip(seeds.iter())
                 .zip(use_position.iter())
-                .map(|((cs, &s), &b)| match b {
-                    true => POA::generate_banded(cs, param, 10, s),
-                    false => POA::default(),
+                .map(|((cs, &s), &b)| {
+                    if b {
+                        POA::generate_banded(cs, param, 10, s)
+                    } else {
+                        POA::default()
+                    }
                 })
                 .collect()
         })
