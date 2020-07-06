@@ -27,8 +27,8 @@ cd ${PWD}/result
 REFNAME=${RANDOM}
 echo ${REFNAME} 1>&2
 lastdb -R00 -Q0 ${REFNAME} ${UNITS}
-last-train -P12 -Q0 ${REFNAME} ${TARGET} > ${REFNAME}.matrix
-lastal -f maf -P12 -R00 -Q0 -p ${REFNAME}.matrix ${REFNAME} ${TARGET}|\
+last-train -P23 -Q0 ${REFNAME} ${TARGET} > ${REFNAME}.matrix
+lastal -f maf -P23 -R00 -Q0 -p ${REFNAME}.matrix ${REFNAME} ${TARGET}|\
     maf-convert tab --join 500 > ${2}.alignment.tab
 rm ${REFNAME}*
 cd ../
