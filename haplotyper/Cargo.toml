@@ -15,7 +15,7 @@ serde = {version = "1.0", features = ["derive"]}
 rayon = "*"
 rand = "*"
 rand_xoshiro = "*"
-poa_hmm = {path = "../partial_order_alignment"}
+poa_hmm = {path = "../partial_order_alignment", features = ["poa_simd"]}
 nalgebra  = "*"
 serde_json = "*"
 histgram_viz = {path = "../histgram_viz"}

@@ -1,10 +1,8 @@
 use super::ChunkedUnit;
 use super::ClusteringConfig;
 use poa_hmm::POA;
-use rand::distributions::Standard;
 use rand::seq::SliceRandom;
 use rand::Rng;
-//use rayon::prelude::*;
 
 fn select<R: Rng>(choises: &[usize], rng: &mut R, cl: usize, pick: f64) -> usize {
     *choises
@@ -28,7 +26,6 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
             chunks[chosen][chunk.pos].push(chunk.seq.as_slice());
         }
     }
-    let seeds: Vec<_> = rng.sample_iter(Standard).take(chain_len).collect();
     let &super::AlignmentParameters {
         ins,
         del,
@@ -36,15 +33,15 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     } = &c.alnparam;
     let param = (ins, del, score);
     chunks
-        .iter()
+        .iter_mut()
         .map(|cluster| {
             cluster
-                .iter()
-                .zip(seeds.iter())
+                .iter_mut()
                 .zip(use_position.iter())
-                .map(|((cs, &s), &b)| {
+                .map(|(cs, &b)| {
+                    cs.shuffle(rng);
                     if b {
-                        POA::generate_banded(cs, param, 10, s)
+                        POA::from_slice_banded(cs, param, 10)
                     } else {
                         POA::default()
                     }

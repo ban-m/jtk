@@ -4,8 +4,8 @@ use definitions;
 use std::collections::HashMap;
 use std::collections::HashSet;
 mod error_correction;
+use error_correction::local_correction;
 use error_correction::CorrectedRead;
-use error_correction::{local_correction, remove_collupsed_units};
 pub mod path_clustering;
 pub use path_clustering::path_clustering;
 #[derive(Debug, Clone, Copy)]

@@ -1,5 +1,6 @@
 #!/bin/bash
+data=/grid/yoshimura/HG002/PacBio_CCS_15kb_20kb_chemistry2/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.fasta
 qsub -o ./logfiles/real_read.out -e ./logfiles/real_read.log\
      ./script/pipeline.sh \
-     ${PWD}/result/HG002_MHC.fa \
-     ${PWD}/result/HG002_MHC.1M
+     ${data} \
+     ${PWD}/result/HG002_HLA
