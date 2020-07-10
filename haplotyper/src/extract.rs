@@ -8,21 +8,25 @@ pub enum ExtractTarget {
 
 pub trait Extract {
     fn extract_fasta(&self, target: ExtractTarget) -> Vec<fasta::Record>;
-    fn extract_assignments(&self) -> Vec<(usize, String)>;
+    fn extract_assignments(&self) -> Vec<(usize, String, String)>;
 }
 
 use bio_utils::fasta;
 impl Extract for definitions::DataSet {
-    fn extract_assignments(&self) -> Vec<(usize, String)> {
+    fn extract_assignments(&self) -> Vec<(usize, String, String)> {
         use std::collections::HashMap;
         let id2name: HashMap<_, _> = self
             .raw_reads
             .iter()
-            .map(|r| (r.id, r.name.clone()))
+            .map(|r| (r.id, (r.name.clone(), r.desc.clone())))
             .collect();
         self.assignments
             .iter()
-            .filter_map(|asn| id2name.get(&asn.id).map(|name| (asn.cluster, name.clone())))
+            .filter_map(|asn| {
+                id2name
+                    .get(&asn.id)
+                    .map(|(n, d)| (asn.cluster, n.clone(), d.clone()))
+            })
             .collect()
     }
     fn extract_fasta(&self, target: ExtractTarget) -> Vec<fasta::Record> {

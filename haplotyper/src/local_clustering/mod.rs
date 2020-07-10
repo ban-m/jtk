@@ -39,6 +39,7 @@ impl LocalClustering for DataSet {
         }
         let selected_chunks = self.selected_chunks.clone();
         let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+        let id_to_desc: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
         pileups
             .par_iter_mut()
             .enumerate()
@@ -53,7 +54,11 @@ impl LocalClustering for DataSet {
                     for cl in 0..c.cluster_num {
                         let cl = cl as u64;
                         for (id, _, _) in units.iter().filter(|&(_, _, n)| n.cluster == cl) {
-                            debug!("{}\t{}\t{}", cl, id, id_to_name[&id]);
+                            let name = id_to_name[&id];
+                            match id_to_desc.get(&id) {
+                                Some(d) => debug!("{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, d),
+                                None => debug!("{}\t{}\t{}\t{}", unit_id, cl, id, name),
+                            }
                         }
                     }
                 }

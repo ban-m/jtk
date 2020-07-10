@@ -19,6 +19,9 @@ impl Stats for definitions::DataSet {
                 sum, len, ave,
             )?;
             writeln!(&mut wtr, "Max Length:{}\nMin Length:{}", max, min)?;
+            let lens: Vec<_> = lens.collect();
+            let hist = histgram_viz::Histgram::new(&lens);
+            writeln!(&mut wtr, "{}", hist.format(20, 40))?;
         }
         // hic pairs
         if !self.hic_pairs.is_empty() {
@@ -57,7 +60,7 @@ impl Stats for definitions::DataSet {
                 .raw_reads
                 .iter()
                 .filter(|e| !reads.contains(&e.id))
-                .inspect(|e| writeln!(&mut wtr, "Gaped:{}", e.name).unwrap())
+                //.inspect(|e| writeln!(&mut wtr, "Gaped:{}", e.name).unwrap())
                 .count();
             let gap_mean = self
                 .raw_reads
@@ -80,6 +83,9 @@ impl Stats for definitions::DataSet {
             writeln!(&mut wtr, "EncodedRead")?;
             writeln!(&mut wtr, "Gappy read:{}\nGapMean:{}", gap_read, gap_mean)?;
             writeln!(&mut wtr, "EncodedRate:{:.4}(%)", cover_rate)?;
+            let lens: Vec<_> = self.encoded_reads.iter().map(|e| e.nodes.len()).collect();
+            let hist = histgram_viz::Histgram::new(&lens);
+            writeln!(&mut wtr, "{}", hist.format(20, 40))?;
         }
         // Unit statistics
         if !self.encoded_reads.is_empty() {
@@ -96,18 +102,19 @@ impl Stats for definitions::DataSet {
                 count
             };
             let max = units.iter().map(|e| e.1).max().unwrap();
-            let min = units.iter().map(|e| e.1).max().unwrap();
+            let min = units.iter().map(|e| e.1).min().unwrap();
             let sum = units.iter().map(|e| e.1).sum::<usize>();
             let ave = sum as f64 / units.len() as f64;
             writeln!(&mut wtr, "Encoding summary")?;
-            writeln!(&mut wtr, "Min:{}\tMax:{}\tAve:{:.2}", max, min, ave)?;
-            let units: Vec<usize> = self
-                .encoded_reads
-                .iter()
-                .flat_map(|read| read.nodes.iter().map(|node| node.unit as usize))
-                .collect();
+            writeln!(&mut wtr, "Min:{}\tMax:{}\tAve:{:.2}", min, max, ave)?;
+            let mut units: Vec<usize> = units.iter().map(|x| x.1).collect();
+            units.sort();
+            let top_20: Vec<_> = units.iter().rev().take(20).copied().collect();
+            let last = *top_20.last().unwrap();
+            let units: Vec<_> = units.into_iter().filter(|&x| x < last).collect();
             let hist = histgram_viz::Histgram::new(&units);
-            writeln!(&mut wtr, "Unit Histgram\n{}", hist.format(20, 20))?;
+            writeln!(&mut wtr, "Top 20 Occurences:{:?}", top_20)?;
+            writeln!(&mut wtr, "The rest of the Units\n{}", hist.format(20, 20))?;
         }
         Ok(())
     }

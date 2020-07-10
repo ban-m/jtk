@@ -325,6 +325,8 @@ impl DeBruijnGraph {
             }
         }
         let mut current_component = 1;
+        debug!("ClusterID\tNumberOfKmer");
+        let mut ignored = 0;
         for cluster in 0..self.nodes.len() {
             if fu.find(cluster).unwrap() != cluster {
                 continue;
@@ -332,10 +334,11 @@ impl DeBruijnGraph {
             let count = (0..self.nodes.len())
                 .filter(|&x| fu.find(x).unwrap() == cluster)
                 .count();
-            debug!("Find cluster. Containing {} k-mers.", count);
             if count < 10 {
+                ignored += 1;
                 continue;
             }
+            debug!("{}\t{}", current_component, count);
             for (idx, node) in self.nodes.iter_mut().enumerate() {
                 if fu.find(idx).unwrap() == cluster {
                     node.cluster = current_component;
@@ -343,6 +346,7 @@ impl DeBruijnGraph {
             }
             current_component += 1;
         }
+        debug!("Ignored small component (<10 kmer):{}", ignored);
     }
     fn connections(
         &self,
@@ -610,9 +614,14 @@ impl GlobalClustering for definitions::DataSet {
         }
         let graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
-            let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
+            let mut count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
+            count.sort();
+            let top_15: Vec<_> = count.iter().rev().take(15).collect();
+            debug!("Top 15 Occurences:{:?}", top_15);
+            let last = **top_15.last().unwrap();
+            let count: Vec<_> = count.into_iter().filter(|&x| x < last).collect();
             let hist = histgram_viz::Histgram::new(&count);
-            eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
+            eprintln!("The rest({}-mer) nodes\n{}", c.k_mer, hist.format(20, 40));
         }
         let mut graph = graph.clean_up_auto();
         //let mut graph = graph;
@@ -643,23 +652,23 @@ impl GlobalClustering for definitions::DataSet {
         //     .for_each(|n| n.cluster = mapping[&n.cluster]);
         let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
         debug!("Resulting in {} clusters.", component_num);
-        let components: Vec<HashSet<_>> = (0..component_num)
-            .map(|c| {
-                graph
-                    .nodes
-                    .iter()
-                    .filter(|n| n.cluster == c)
-                    .flat_map(|n| n.kmer.iter())
-                    .copied()
-                    .collect()
-            })
-            .collect();
-        for i in 0..component_num {
-            for j in i + 1..component_num {
-                let count = components[i].intersection(&components[j]).count();
-                debug!("{}\t{}\t{}", i, j, count);
-            }
-        }
+        // let components: Vec<HashSet<_>> = (0..component_num)
+        //     .map(|c| {
+        //         graph
+        //             .nodes
+        //             .iter()
+        //             .filter(|n| n.cluster == c)
+        //             .flat_map(|n| n.kmer.iter())
+        //             .copied()
+        //             .collect()
+        //     })
+        //     .collect();
+        // for i in 0..component_num {
+        //     for j in i + 1..component_num {
+        //         let count = components[i].intersection(&components[j]).count();
+        //         debug!("{}\t{}\t{}", i, j, count);
+        //     }
+        // }
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = reads
             .into_iter()
@@ -671,27 +680,13 @@ impl GlobalClustering for definitions::DataSet {
                 })
             })
             .collect();
-        // let assignments: Vec<_> = self
-        //     .encoded_reads
-        //     .iter()
-        //     .map(|read| {
-        //         let id = read.id;
-        //         let cluster = components
-        //             .iter()
-        //             .map(|c| sim(c, read))
-        //             .enumerate()
-        //             .max_by_key(|x| x.1)
-        //             .unwrap()
-        //             .0;
-        //         *count.entry(cluster).or_default() += 1;
-        //         definitions::Assignment { id, cluster }
-        //     })
-        //     .collect();
         self.assignments = assignments;
         if log_enabled!(log::Level::Debug) {
-            eprintln!("Cluster\tCount");
+            let mut count: Vec<_> = count.into_iter().collect();
+            count.sort_by_key(|x| x.0);
+            debug!("Cluster\tCount");
             for (cl, count) in count {
-                eprintln!("{}\t{}", cl, count);
+                debug!("{}\t{}", cl, count);
             }
         }
         self

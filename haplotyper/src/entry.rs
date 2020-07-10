@@ -11,7 +11,11 @@ impl Entry for definitions::DataSet {
                 name: read.id().to_string(),
                 desc: read.desc().unwrap_or(&String::new()).clone(),
                 id: idx as u64,
-                seq: String::from_utf8_lossy(read.seq()).to_string(),
+                seq: read
+                    .seq()
+                    .iter()
+                    .map(|&x| (x as char).to_ascii_uppercase())
+                    .collect::<String>(),
             })
             .collect();
         definitions::DataSet::with_param(raw_reads, vec![], vec![], vec![], vec![], vec![])

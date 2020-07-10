@@ -325,11 +325,11 @@ fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
             }
         }
         "assignments" => {
-            let asn_and_name = dataset.extract_assignments();
+            let asn_name_desc = dataset.extract_assignments();
             let stdout = std::io::stdout();
             let mut wtr = std::io::BufWriter::new(stdout.lock());
-            for (asn, name) in asn_and_name {
-                writeln!(&mut wtr, "{}\t{}", asn, name)?;
+            for (asn, name, desc) in asn_name_desc {
+                writeln!(&mut wtr, "{}\t{}\t{}", asn, name, desc)?;
             }
         }
         &_ => unreachable!(),

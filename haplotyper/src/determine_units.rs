@@ -29,7 +29,11 @@ impl DetermineUnit for definitions::DataSet {
                 Unit { id, seq }
             })
             .collect();
-        debug!("Units collected. {} units.", selected_chunks.len());
+        debug!(
+            "Units collected. {}/{} units.",
+            selected_chunks.len(),
+            config.chunk_num
+        );
         self.selected_chunks = selected_chunks;
         self
     }
