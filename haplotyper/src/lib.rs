@@ -1,3 +1,4 @@
+mod assemble;
 mod determine_units;
 mod encode;
 mod entry;
@@ -8,6 +9,7 @@ mod local_clustering;
 mod view;
 #[macro_use]
 extern crate log;
+pub use assemble::*;
 pub use encode::Encode;
 pub use entry::Entry;
 pub use extract::Extract;

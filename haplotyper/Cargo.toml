@@ -20,3 +20,4 @@ nalgebra  = "*"
 serde_json = "*"
 histgram_viz = {path = "../histgram_viz"}
 mcl = {path = "../mcl"}
+gfa = {path = "../gfa_rust"}

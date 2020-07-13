@@ -8,4 +8,5 @@ members = [
         "sandbox",
         "histgram_viz",
         "mcl",
+        "gfa_rust",
 ]

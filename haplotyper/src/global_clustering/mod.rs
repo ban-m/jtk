@@ -13,13 +13,26 @@ pub struct GlobalClusteringConfig {
     pub threads: usize,
     pub k_mer: usize,
     pub min_cluster_size: usize,
+    pub mat_score: i32,
+    pub mismat_score: i32,
+    pub gap_score: i32,
 }
 impl GlobalClusteringConfig {
-    pub fn new(threads: usize, k_mer: usize, min_cluster_size: usize) -> Self {
+    pub fn new(
+        threads: usize,
+        k_mer: usize,
+        min_cluster_size: usize,
+        mat_score: i32,
+        mismat_score: i32,
+        gap_score: i32,
+    ) -> Self {
         Self {
             threads,
             k_mer,
             min_cluster_size,
+            mat_score,
+            mismat_score,
+            gap_score,
         }
     }
 }

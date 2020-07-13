@@ -19,6 +19,7 @@ fn subcommand_entry() -> App<'static, 'static> {
 }
 
 fn subcommand_extract() -> App<'static, 'static> {
+    let targets = ["raw_reads", "hic_reads", "units", "assignments", "contigs"];
     SubCommand::with_name("extract")
         .version("0.1")
         .author("Bansho Masutani")
@@ -36,7 +37,7 @@ fn subcommand_extract() -> App<'static, 'static> {
                 .takes_value(true)
                 .value_name("TARGET")
                 .required(true)
-                .possible_values(&["raw_reads", "hic_reads", "units", "assignments"]),
+                .possible_values(&targets),
         )
 }
 
@@ -253,6 +254,36 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .default_value(&"50")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("mat_score")
+                .short("p")
+                .long("match_score")
+                .required(false)
+                .value_name("MATCH_SCORE")
+                .help("The match score")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("mismat_score")
+                .short("q")
+                .long("mismatch_score")
+                .required(false)
+                .value_name("MISMATCH_SCORE")
+                .help("The mismatch score")
+                .default_value(&"-1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("gap_score")
+                .short("g")
+                .long("gap_score")
+                .required(false)
+                .value_name("GAP_SCORE")
+                .help("The gap penalty(< 0)")
+                .default_value(&"-2")
+                .takes_value(true),
+        )
 }
 
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -330,6 +361,14 @@ fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
             let mut wtr = std::io::BufWriter::new(stdout.lock());
             for (asn, name, desc) in asn_name_desc {
                 writeln!(&mut wtr, "{}\t{}\t{}", asn, name, desc)?;
+            }
+        }
+        "contigs" => {
+            let gfa = dataset.assemble_as_gfa();
+            let stdout = std::io::stdout();
+            let mut wtr = std::io::BufWriter::new(stdout.lock());
+            for record in gfa {
+                writeln!(&mut wtr, "{}", record)?;
             }
         }
         &_ => unreachable!(),
@@ -578,6 +617,18 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("min_cluster_size")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let mat_score: i32 = matches
+        .value_of("mat_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let mismat_score: i32 = matches
+        .value_of("mismat_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let gap_score: i32 = matches
+        .value_of("gap_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     use std::io::BufReader;
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
@@ -590,7 +641,14 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         Ok(res) => res,
     };
     debug!("Parsed Dataset.");
-    let config = haplotyper::GlobalClusteringConfig::new(threads, kmer, min_cluster_size);
+    let config = haplotyper::GlobalClusteringConfig::new(
+        threads,
+        kmer,
+        min_cluster_size,
+        mat_score,
+        mismat_score,
+        gap_score,
+    );
     let dataset = dataset.global_clustering(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());

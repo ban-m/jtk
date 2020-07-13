@@ -18,3 +18,4 @@ histgram_viz = {path = "../histgram_viz"}
 haplotyper = {path = "../haplotyper"}
 env_logger = "*"
 log = "*"
+gfa = {path = "../gfa_rust"}

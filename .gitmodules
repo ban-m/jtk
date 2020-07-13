@@ -7,3 +7,6 @@
 [submodule "histgram_viz"]
 	path = histgram_viz
 	url = git@github.com:ban-m/histgram_viz.git
+[submodule "gfa_rust"]
+	path = gfa_rust
+	url = git@github.com:ban-m/gfa_rust.git

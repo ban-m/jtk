@@ -183,12 +183,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gfa"
+version = "0.1.0"
+
+[[package]]
 name = "haplotyper"
 version = "0.1.0"
 dependencies = [
  "bio_utils",
  "definitions",
  "env_logger",
+ "gfa",
  "histgram_viz",
  "log",
  "mcl",
@@ -572,6 +577,7 @@ version = "0.1.0"
 dependencies = [
  "definitions",
  "env_logger",
+ "gfa",
  "haplotyper",
  "histgram_viz",
  "log",

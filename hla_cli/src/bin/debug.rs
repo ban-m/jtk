@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
     let rdr = BufReader::new(std::fs::File::open(&args[1])?);
     let dataset: definitions::DataSet = serde_json::de::from_reader(rdr).unwrap();
     use haplotyper::GlobalClustering;
-    let config = haplotyper::GlobalClusteringConfig::new(2, 3, 50);
+    let config = haplotyper::GlobalClusteringConfig::new(2, 3, 50, 1, -1, -2);
     let dataset = dataset.global_clustering(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());
