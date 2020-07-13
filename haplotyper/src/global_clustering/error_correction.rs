@@ -1,4 +1,4 @@
-use super::definitions::DataSet;
+use definitions::DataSet;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug)]
@@ -13,31 +13,33 @@ pub struct Unit {
     pub cluster: u64,
 }
 
-fn score((q_u, q_c): (u64, u64), (r_u, r_c): (u64, u64)) -> i32 {
+fn score((q_u, q_c): (u64, u64), (r_u, r_c): (u64, u64), mat: i32, mism: i32) -> i32 {
     if q_u == r_u && q_c == r_c {
-        1
+        mat
     } else if q_u == r_u {
-        -1
+        mism
     } else {
         -100
     }
 }
 
-const INS: i32 = -2;
-const DEL: i32 = -2;
 // Align the query to the reference and
 // return the edit operations. Note that
 // A Cigar::Match(x,y) mean the query sequence at that point is (x,y)
 // And Cigar::Ins is a insertion to the reference.
 // Also, the alignment is "semi-global" one. See the initialization step.
 // TODO: faster!
-fn alignment(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> Option<(i32, Vec<Cigar>)> {
+fn alignment(
+    qry: &[(u64, u64)],
+    rfr: &[(u64, u64)],
+    (mat, mism, gap): (i32, i32, i32),
+) -> Option<(i32, Vec<Cigar>)> {
     let mut dp = vec![vec![0; rfr.len() + 1]; qry.len() + 1];
     for (i, &q) in qry.iter().enumerate() {
         for (j, &r) in rfr.iter().enumerate() {
-            let mat = dp[i][j] + score(q, r);
-            let ins = dp[i][j + 1] + INS;
-            let del = dp[i + 1][j] + DEL;
+            let mat = dp[i][j] + score(q, r, mat, mism);
+            let ins = dp[i][j + 1] + gap;
+            let del = dp[i + 1][j] + gap;
             dp[i + 1][j + 1] = mat.max(ins).max(del);
         }
     }
@@ -69,11 +71,11 @@ fn alignment(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> Option<(i32, Vec<Cigar>)
     // Traceback.
     while q_pos > 0 && r_pos > 0 {
         let current = dp[q_pos][r_pos];
-        let op = if current == dp[q_pos - 1][r_pos] + INS {
+        let op = if current == dp[q_pos - 1][r_pos] + gap {
             let (unit, cluster) = qry[q_pos - 1];
             q_pos -= 1;
             Cigar::Ins(unit, cluster)
-        } else if current == dp[q_pos][r_pos - 1] + DEL {
+        } else if current == dp[q_pos][r_pos - 1] + gap {
             r_pos -= 1;
             Cigar::Del
         } else {
@@ -189,8 +191,8 @@ impl Column {
         }
     }
 }
-
-pub fn local_correction(ds: &DataSet) -> Vec<CorrectedRead> {
+use super::GlobalClusteringConfig;
+pub fn local_correction(ds: &DataSet, c: &GlobalClusteringConfig) -> Vec<CorrectedRead> {
     let reads: Vec<_> = ds
         .encoded_reads
         .iter()
@@ -204,19 +206,26 @@ pub fn local_correction(ds: &DataSet) -> Vec<CorrectedRead> {
         })
         .collect();
     debug!("Correcting {} reads...", reads.len());
-    local_correction_inner(reads)
+    local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score))
 }
-fn local_correction_inner(reads: Vec<(u64, Vec<(u64, u64)>)>) -> Vec<CorrectedRead> {
-    reads.par_iter().map(|read| correct(read, &reads)).collect()
+fn local_correction_inner(
+    reads: Vec<(u64, Vec<(u64, u64)>)>,
+    param: (i32, i32, i32),
+) -> Vec<CorrectedRead> {
+    reads
+        .par_iter()
+        .map(|read| correct(read, &reads, param))
+        .collect()
 }
 
 fn correct(
     &(id, ref nodes): &(u64, Vec<(u64, u64)>),
     reads: &[(u64, Vec<(u64, u64)>)],
+    param: (i32, i32, i32),
 ) -> CorrectedRead {
     let pileup = reads
         .iter()
-        .filter_map(|&(_, ref query)| alignment(query, nodes))
+        .filter_map(|&(_, ref query)| alignment(query, nodes, param))
         .filter(|&(score, _)| score > 2)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];

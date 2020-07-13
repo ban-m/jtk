@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use super::find_union::FindUnion;
-use definitions;
 use std::collections::HashMap;
 use std::collections::HashSet;
 mod error_correction;
@@ -17,6 +16,7 @@ pub struct GlobalClusteringConfig {
     pub mismat_score: i32,
     pub gap_score: i32,
 }
+
 impl GlobalClusteringConfig {
     pub fn new(
         threads: usize,
@@ -617,7 +617,7 @@ impl GlobalClustering for definitions::DataSet {
             let tot = length.iter().sum::<usize>();
             eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
         }
-        let reads = local_correction(&self);
+        let reads = local_correction(&self, c);
         debug!("Corrected reads.");
         if log_enabled!(log::Level::Debug) {
             let length: Vec<_> = reads.iter().map(|r| r.nodes.len()).collect();

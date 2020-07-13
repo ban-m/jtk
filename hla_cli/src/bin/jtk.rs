@@ -19,7 +19,7 @@ fn subcommand_entry() -> App<'static, 'static> {
 }
 
 fn subcommand_extract() -> App<'static, 'static> {
-    let targets = ["raw_reads", "hic_reads", "units", "assignments", "contigs"];
+    let targets = ["raw_reads", "hic_reads", "units", "assignments"];
     SubCommand::with_name("extract")
         .version("0.1")
         .author("Bansho Masutani")
@@ -285,6 +285,28 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .takes_value(true),
         )
 }
+fn subcommand_assembly() -> App<'static, 'static> {
+    SubCommand::with_name("assemble")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Assemble reads.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+}
 
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
@@ -361,14 +383,6 @@ fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
             let mut wtr = std::io::BufWriter::new(stdout.lock());
             for (asn, name, desc) in asn_name_desc {
                 writeln!(&mut wtr, "{}\t{}\t{}", asn, name, desc)?;
-            }
-        }
-        "contigs" => {
-            let gfa = dataset.assemble_as_gfa();
-            let stdout = std::io::stdout();
-            let mut wtr = std::io::BufWriter::new(stdout.lock());
-            for record in gfa {
-                writeln!(&mut wtr, "{}", record)?;
             }
         }
         &_ => unreachable!(),
@@ -664,6 +678,37 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
     }
 }
 
+fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let level = match matches.occurrences_of("verbose") {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        3 | _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    debug!("Start Assembly step");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let dataset: DataSet = match serde_json::de::from_reader(reader) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid Input from STDIN.");
+            std::process::exit(1);
+        }
+        Ok(res) => res,
+    };
+    debug!("Parsed Dataset.");
+    let gfa = dataset.assemble_as_gfa();
+    let stdout = std::io::stdout();
+    let mut wtr = std::io::BufWriter::new(stdout.lock());
+    writeln!(&mut wtr, "{}", gfa)
+}
+
 fn main() -> std::io::Result<()> {
     let matches = App::new("jtk")
         .version("0.1")
@@ -678,6 +723,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_view())
         .subcommand(subcommand_local_clustering())
         .subcommand(subcommand_global_clustering())
+        .subcommand(subcommand_assembly())
         .get_matches();
     match matches.subcommand() {
         ("entry", Some(sub_m)) => entry(sub_m),
@@ -688,6 +734,7 @@ fn main() -> std::io::Result<()> {
         ("view", Some(sub_m)) => view(sub_m),
         ("local_clustering", Some(sub_m)) => local_clustering(sub_m),
         ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
+        ("assemble", Some(sub_m)) => assembly(sub_m),
         _ => Ok(()),
     }
 }
