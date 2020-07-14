@@ -24,9 +24,9 @@ pub struct Elm {
 }
 
 impl Elm {
-    pub fn new(unit: u64, cluster: usize) -> Self {
-        Elm { unit, cluster }
-    }
+    // pub fn new(unit: u64, cluster: usize) -> Self {
+    //     Elm { unit, cluster }
+    // }
 }
 
 pub struct ChunkedUnit {

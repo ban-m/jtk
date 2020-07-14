@@ -1,5 +1,5 @@
 #!/bin/bash
-for NAME in DBB_QBL_CCS_15Kbp_50x
+for NAME in DBB_QBL_CCS_15Kbp_10x
 do
     data=~/work/hla_haplotyper/result/${NAME}.fastq
     cat ${data} | \

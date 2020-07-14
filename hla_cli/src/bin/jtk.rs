@@ -687,7 +687,7 @@ fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Assembly step");
-    let threads: usize = matches
+    let _threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
@@ -703,7 +703,8 @@ fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
         Ok(res) => res,
     };
     debug!("Parsed Dataset.");
-    let gfa = dataset.assemble_as_gfa();
+    let config = AssembleConfig::default();
+    let gfa = dataset.assemble_as_gfa(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());
     writeln!(&mut wtr, "{}", gfa)

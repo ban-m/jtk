@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use super::find_union::FindUnion;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -249,11 +248,6 @@ impl DeBruijnGraph {
 
         Self { k, nodes, indexer }
     }
-    fn calc_thr(&self) -> usize {
-        let counts: Vec<_> = self.nodes.iter().map(|n| n.occ).collect();
-        let mean = counts.iter().sum::<usize>() / counts.len();
-        mean / 2
-    }
     fn calc_thr_edge(&self) -> u64 {
         let counts = self
             .nodes
@@ -287,6 +281,7 @@ impl DeBruijnGraph {
             });
         self
     }
+    #[allow(dead_code)]
     fn clean_up(self, thr: usize) -> Self {
         let mut resulting_node = vec![];
         let Self {
@@ -361,55 +356,55 @@ impl DeBruijnGraph {
         }
         debug!("Ignored small component (<10 kmer):{}", ignored);
     }
-    fn connections(
-        &self,
-        i: usize,
-        j: usize,
-        reads: &[CorrectedRead],
-        _c: &GlobalClusteringConfig,
-    ) -> usize {
-        let set_i: HashSet<_> = self
-            .nodes
-            .iter()
-            .filter(|n| n.cluster == i)
-            .flat_map(|n| n.kmer.iter())
-            .copied()
-            .collect();
-        let set_j: HashSet<_> = self
-            .nodes
-            .iter()
-            .filter(|n| n.cluster == j)
-            .flat_map(|n| n.kmer.iter())
-            .copied()
-            .collect();
-        let connections: Vec<_> = reads
-            .iter()
-            .filter(|read| {
-                let (mut is_i, mut is_j) = (false, false);
-                for node in read.nodes.iter() {
-                    let unit = (node.unit, node.cluster);
-                    is_i |= set_i.contains(&unit);
-                    is_j |= set_j.contains(&unit);
-                }
-                is_i && is_j
-            })
-            .filter_map(|read| {
-                let last = read.nodes.last().unwrap();
-                let last = (last.unit, last.cluster);
-                let first = read.nodes.first().unwrap();
-                let first = (first.unit, first.cluster);
-                if (set_i.contains(&last) && set_j.contains(&first))
-                    || set_i.contains(&first) && set_j.contains(&last)
-                {
-                    Some((last, first))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        debug!("{},{}=>{:?}", i, j, connections);
-        connections.len()
-    }
+    // fn connections(
+    //     &self,
+    //     i: usize,
+    //     j: usize,
+    //     reads: &[CorrectedRead],
+    //     _c: &GlobalClusteringConfig,
+    // ) -> usize {
+    //     let set_i: HashSet<_> = self
+    //         .nodes
+    //         .iter()
+    //         .filter(|n| n.cluster == i)
+    //         .flat_map(|n| n.kmer.iter())
+    //         .copied()
+    //         .collect();
+    //     let set_j: HashSet<_> = self
+    //         .nodes
+    //         .iter()
+    //         .filter(|n| n.cluster == j)
+    //         .flat_map(|n| n.kmer.iter())
+    //         .copied()
+    //         .collect();
+    //     let connections: Vec<_> = reads
+    //         .iter()
+    //         .filter(|read| {
+    //             let (mut is_i, mut is_j) = (false, false);
+    //             for node in read.nodes.iter() {
+    //                 let unit = (node.unit, node.cluster);
+    //                 is_i |= set_i.contains(&unit);
+    //                 is_j |= set_j.contains(&unit);
+    //             }
+    //             is_i && is_j
+    //         })
+    //         .filter_map(|read| {
+    //             let last = read.nodes.last().unwrap();
+    //             let last = (last.unit, last.cluster);
+    //             let first = read.nodes.first().unwrap();
+    //             let first = (first.unit, first.cluster);
+    //             if (set_i.contains(&last) && set_j.contains(&first))
+    //                 || set_i.contains(&first) && set_j.contains(&last)
+    //             {
+    //                 Some((last, first))
+    //             } else {
+    //                 None
+    //             }
+    //         })
+    //         .collect();
+    //     debug!("{},{}=>{:?}", i, j, connections);
+    //     connections.len()
+    // }
     pub fn clustering(&self, thr: usize) -> Vec<HashSet<(u64, u64)>> {
         // Clustering de Bruijn graph.
         // As a first try, I implement very naive conneceted component analysis.
@@ -443,6 +438,7 @@ impl DeBruijnGraph {
         }
         components
     }
+    #[allow(dead_code)]
     fn clustering_mcl(&self, e: i32, r: i32) -> Vec<HashSet<(u64, u64)>> {
         // Convert de Bruijn graph into an usual node-edge graph.
         let nodes = self.nodes.len();
@@ -495,6 +491,7 @@ impl std::fmt::Debug for PlugGraph {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Default)]
 struct PlugEdge {
     to: usize,
@@ -506,7 +503,7 @@ impl std::fmt::Debug for PlugEdge {
         write!(f, "(->{}:{})", self.to, self.weight)
     }
 }
-
+#[allow(dead_code)]
 impl PlugGraph {
     fn from_corrected_reads(dbg: &DeBruijnGraph, reads: &[CorrectedRead]) -> Self {
         let nodes = dbg.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
@@ -706,39 +703,106 @@ impl GlobalClustering for definitions::DataSet {
     }
 }
 
-fn merge(
-    mut components: Vec<HashSet<(u64, u64)>>,
-    reads: &[definitions::EncodedRead],
-) -> Vec<HashSet<(u64, u64)>> {
-    'outer: loop {
-        let len = components.len();
-        for i in 0..len {
-            for j in (i + 1)..len {
-                let int_reads = reads
-                    .iter()
-                    .filter(|r| sim(&components[i], r) > 0 && sim(&components[j], r) > 0)
-                    .count();
-                if int_reads > 3 {
-                    debug!(
-                        "Merge {} and {} as they share {} reads in common.",
-                        i, j, int_reads
-                    );
-                    let c: Vec<_> = components[j].drain().collect();
-                    components[i].extend(c);
-                    continue 'outer;
-                }
+// fn merge(
+//     mut components: Vec<HashSet<(u64, u64)>>,
+//     reads: &[definitions::EncodedRead],
+// ) -> Vec<HashSet<(u64, u64)>> {
+//     'outer: loop {
+//         let len = components.len();
+//         for i in 0..len {
+//             for j in (i + 1)..len {
+//                 let int_reads = reads
+//                     .iter()
+//                     .filter(|r| sim(&components[i], r) > 0 && sim(&components[j], r) > 0)
+//                     .count();
+//                 if int_reads > 3 {
+//                     debug!(
+//                         "Merge {} and {} as they share {} reads in common.",
+//                         i, j, int_reads
+//                     );
+//                     let c: Vec<_> = components[j].drain().collect();
+//                     components[i].extend(c);
+//                     continue 'outer;
+//                 }
+//             }
+//         }
+//         break;
+//     }
+//     components.into_iter().filter(|c| !c.is_empty()).collect()
+// }
+
+// fn sim(cluster: &HashSet<(u64, u64)>, read: &definitions::EncodedRead) -> u32 {
+//     read.nodes
+//         .iter()
+//         .filter(|n| cluster.contains(&(n.unit, n.cluster)))
+//         .count() as u32
+// }
+
+pub fn remove_collupsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRead> {
+    let unit_counts = {
+        let mut counts: HashMap<_, usize> = HashMap::new();
+        for read in reads.iter() {
+            for node in read.nodes.iter() {
+                *counts.entry(node.unit).or_default() += 1;
             }
         }
-        break;
+        counts
+    };
+    if log_enabled!(log::Level::Debug) {
+        let counts: Vec<_> = unit_counts.values().copied().collect();
+        let hist = histgram_viz::Histgram::new(&counts);
+        eprintln!("Unit Histgram:{}\n{}", counts.len(), hist.format(20, 40));
     }
-    components.into_iter().filter(|c| !c.is_empty()).collect()
-}
-
-fn sim(cluster: &HashSet<(u64, u64)>, read: &definitions::EncodedRead) -> u32 {
-    read.nodes
+    let mean = unit_counts.values().copied().sum::<usize>() / unit_counts.len();
+    debug!("Removing units having occurence more than {}", mean / 2);
+    debug!("And single component.");
+    let mut char_count: HashMap<u64, HashMap<u64, usize>> = HashMap::new();
+    for read in reads.iter() {
+        for node in read.nodes.iter() {
+            *char_count
+                .entry(node.unit)
+                .or_default()
+                .entry(node.cluster)
+                .or_default() += 1;
+        }
+    }
+    // Determine the units to be discarded.
+    let discarded: HashSet<u64> = char_count
         .iter()
-        .filter(|n| cluster.contains(&(n.unit, n.cluster)))
-        .count() as u32
+        .filter_map(|(unit, counts)| {
+            let sum = counts.values().copied().sum::<usize>();
+            let num: Vec<_> = counts.values().collect();
+            debug!("{:?}->{}", num, counts.len() <= 1 && sum > mean / 2);
+            if counts.len() <= 1 && sum > mean / 2 {
+                Some(*unit)
+            } else {
+                None
+            }
+        })
+        .collect();
+    debug!(
+        "Discarding {} units out of {}.",
+        discarded.len(),
+        char_count.len()
+    );
+    let count = reads
+        .iter()
+        .map(|read| {
+            read.nodes
+                .iter()
+                .filter(|n| discarded.contains(&n.unit))
+                .count()
+        })
+        .sum::<usize>();
+    debug!("Dropping {} units in the dataset in total", count);
+    // Discard collupsed units.
+    let total = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
+    reads
+        .iter_mut()
+        .for_each(|read| read.nodes.retain(|n| !discarded.contains(&n.unit)));
+    let total_after = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
+    debug!("{}->{}", total, total_after);
+    reads
 }
 
 #[cfg(test)]

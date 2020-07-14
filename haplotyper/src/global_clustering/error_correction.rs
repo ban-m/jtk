@@ -1,6 +1,6 @@
 use definitions::DataSet;
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[derive(Clone, Debug)]
 pub struct CorrectedRead {
     pub id: u64,
@@ -226,88 +226,13 @@ fn correct(
     let pileup = reads
         .iter()
         .filter_map(|&(_, ref query)| alignment(query, nodes, param))
-        .filter(|&(score, _)| score > 2)
+    //.filter(|&(score, _)| score > 2)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
     for column in pileup.column {
         column.generate(&mut nodes);
     }
     CorrectedRead { id, nodes }
-}
-
-pub fn remove_collupsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRead> {
-    let unit_counts = {
-        let mut counts: HashMap<_, usize> = HashMap::new();
-        for read in reads.iter() {
-            for node in read.nodes.iter() {
-                *counts.entry(node.unit).or_default() += 1;
-            }
-        }
-        counts
-    };
-    if log_enabled!(log::Level::Debug) {
-        let counts: Vec<_> = unit_counts.values().copied().collect();
-        let hist = histgram_viz::Histgram::new(&counts);
-        eprintln!("Unit Histgram:{}\n{}", counts.len(), hist.format(20, 40));
-    }
-    let mean = unit_counts.values().copied().sum::<usize>() / unit_counts.len();
-    // let sqmean = unit_counts.values().map(|x| x * x).sum::<usize>() / unit_counts.len();
-    // let sd = ((sqmean - mean * mean) as f64).sqrt().ceil() as usize;
-    // let thr = {
-    //     let (mean, sd) = (mean / 3, sd / 9);
-    //     debug!("Mean:SD={}:{}", mean, sd);
-    //     mean.max(sd * 6) - sd * 6
-    // };
-    debug!("Removing units having occurence more than {}", mean / 2);
-    debug!("And single component.");
-    // debug!("And having 2nd-biggest cluster less than {}", thr);
-    let mut char_count: HashMap<u64, HashMap<u64, usize>> = HashMap::new();
-    for read in reads.iter() {
-        for node in read.nodes.iter() {
-            *char_count
-                .entry(node.unit)
-                .or_default()
-                .entry(node.cluster)
-                .or_default() += 1;
-        }
-    }
-    // Determine the units to be discarded.
-    let discarded: HashSet<u64> = char_count
-        .iter()
-        .filter_map(|(unit, counts)| {
-            let sum = counts.values().copied().sum::<usize>();
-            let num: Vec<_> = counts.values().collect();
-            debug!("{:?}->{}", num, counts.len() <= 1 && sum > mean / 2);
-            if counts.len() <= 1 && sum > mean / 2 {
-                Some(*unit)
-            } else {
-                None
-            }
-        })
-        .collect();
-    debug!(
-        "Discarding {} units out of {}.",
-        discarded.len(),
-        char_count.len()
-    );
-    let count = reads
-        .iter()
-        .map(|read| {
-            read.nodes
-                .iter()
-                .filter(|n| discarded.contains(&n.unit))
-                .count()
-        })
-        .sum::<usize>();
-    debug!("Dropping {} units in the dataset in total", count);
-    // Discard collupsed units.
-    let total = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
-    reads
-        .iter_mut()
-        .for_each(|read| read.nodes.retain(|n| !discarded.contains(&n.unit)));
-    let total_after = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
-    debug!("{}->{}", total, total_after);
-    reads
 }
 
 #[cfg(test)]
@@ -375,7 +300,7 @@ mod tests {
             .enumerate()
             .map(|(idx, seq)| (idx as u64, seq))
             .collect();
-        let result = local_correction_inner(reads);
+        let result = local_correction_inner(reads, (1, -1, -2));
         for res in result {
             let units: Vec<_> = res.nodes.iter().map(|u| (u.unit, u.cluster)).collect();
             assert_eq!(units, seq, "{}", res.id);
@@ -397,7 +322,7 @@ mod tests {
         for read in reads.iter() {
             let prev = read.1.len();
             eprintln!("Correcting:{:?}", read);
-            let res = correct(read, &reads);
+            let res = correct(read, &reads, (1, -1, -2));
             let seq: Vec<_> = res.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
             let after = seq.len();
             eprintln!("Corrected:{:?}", seq);
@@ -416,7 +341,7 @@ mod tests {
     fn unit_alignment() {
         let refr = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
         let query = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![
@@ -428,7 +353,7 @@ mod tests {
         );
         let refr = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
         let query = vec![(0, 0), (1, 1), (2, 0), (3, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![
@@ -440,7 +365,7 @@ mod tests {
         );
         let refr = vec![(1, 0), (2, 0), (3, 0)];
         let query = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![
@@ -452,7 +377,7 @@ mod tests {
         );
         let refr = vec![(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)];
         let query = vec![(0, 0), (2, 0), (3, 0), (4, 0), (5, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![
@@ -466,7 +391,7 @@ mod tests {
         );
         let refr = vec![(0, 0), (1, 0), (3, 0), (4, 0), (5, 0)];
         let query = vec![(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![
@@ -480,7 +405,7 @@ mod tests {
         );
         let refr = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
         let query = vec![(0, 0), (1, 0), (2, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![
@@ -492,7 +417,7 @@ mod tests {
         );
         let refr = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
         let query = vec![(1, 0), (2, 0), (3, 0), (4, 0)];
-        let cigar = alignment(&query, &refr).unwrap();
+        let (_, cigar) = alignment(&query, &refr, (1, -1, -2)).unwrap();
         assert_eq!(
             cigar,
             vec![

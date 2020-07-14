@@ -76,13 +76,14 @@ pub struct Unit {
     pub id: u64,
     pub seq: String,
 }
+
 impl Unit {
     pub fn seq(&self) -> &[u8] {
         self.seq.as_bytes()
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EncodedRead {
     pub original_length: usize,
     pub leading_gap: usize,
@@ -117,7 +118,7 @@ impl EncodedRead {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Edge {
     pub from: u64,
     pub to: u64,
@@ -150,7 +151,7 @@ impl Edge {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Node {
     /// 0-index.
     pub position_from_start: usize,
