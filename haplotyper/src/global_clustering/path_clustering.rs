@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rand::Rng;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
