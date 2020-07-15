@@ -285,6 +285,60 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .takes_value(true),
         )
 }
+
+fn subcommand_polish_clustering() -> App<'static, 'static> {
+    SubCommand::with_name("polish_clustering")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Polish local clustering.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("mat_score")
+                .short("p")
+                .long("match_score")
+                .required(false)
+                .value_name("MATCH_SCORE")
+                .help("The match score")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("mismat_score")
+                .short("q")
+                .long("mismatch_score")
+                .required(false)
+                .value_name("MISMATCH_SCORE")
+                .help("The mismatch score")
+                .default_value(&"-1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("gap_score")
+                .short("g")
+                .long("gap_score")
+                .required(false)
+                .value_name("GAP_SCORE")
+                .help("The gap penalty(< 0)")
+                .default_value(&"-2")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_assembly() -> App<'static, 'static> {
     SubCommand::with_name("assemble")
         .version("0.1")
@@ -678,6 +732,60 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
     }
 }
 
+fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let level = match matches.occurrences_of("verbose") {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        3 | _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    debug!("Start Polish Clustering step");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let mat_score: i32 = matches
+        .value_of("mat_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let mismat_score: i32 = matches
+        .value_of("mismat_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let gap_score: i32 = matches
+        .value_of("gap_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let dataset: DataSet = match serde_json::de::from_reader(reader) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid Input from STDIN.");
+            std::process::exit(1);
+        }
+        Ok(res) => res,
+    };
+    debug!("Parsed Dataset.");
+    let config =
+        haplotyper::PolishClusteringConfig::new(threads, mat_score, mismat_score, gap_score);
+    let dataset = dataset.polish_clustering(&config);
+    let stdout = std::io::stdout();
+    let mut wtr = std::io::BufWriter::new(stdout.lock());
+    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            std::process::exit(1);
+        }
+        Ok(()) => {
+            debug!("Finish Polish Clustering Step");
+            Ok(())
+        }
+    }
+}
+
 fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
@@ -724,6 +832,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_view())
         .subcommand(subcommand_local_clustering())
         .subcommand(subcommand_global_clustering())
+        .subcommand(subcommand_polish_clustering())
         .subcommand(subcommand_assembly())
         .get_matches();
     match matches.subcommand() {
@@ -735,6 +844,7 @@ fn main() -> std::io::Result<()> {
         ("view", Some(sub_m)) => view(sub_m),
         ("local_clustering", Some(sub_m)) => local_clustering(sub_m),
         ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
+        ("polish_clustering", Some(sub_m)) => polish_clustering(sub_m),
         ("assemble", Some(sub_m)) => assembly(sub_m),
         _ => Ok(()),
     }

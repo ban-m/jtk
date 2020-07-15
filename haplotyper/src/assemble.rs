@@ -976,6 +976,5 @@ mod tests {
         // Assertion.
         assert_eq!(edges.len(), 6);
         assert_eq!(segments.len(), 6);
-        assert!(false);
     }
 }

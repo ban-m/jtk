@@ -608,6 +608,10 @@ impl PlugGraph {
 
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(c.threads)
+            .build_global()
+            .unwrap();
         if log_enabled!(log::Level::Debug) {
             let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&length);
