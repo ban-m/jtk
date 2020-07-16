@@ -43,7 +43,8 @@ impl Assemble for DataSet {
 
 fn cluster_to_gfa(cl: usize, reads: Vec<&EncodedRead>, c: &AssembleConfig) -> Vec<gfa::Record> {
     debug!("Constructing the {}-th ditch graph", cl);
-    let graph = DitchGraph::new(&reads, c);
+    let mut graph = DitchGraph::new(&reads, c);
+    graph.collapse_buddle(c);
     debug!("{}", graph);
     let mut records = vec![];
     let (nodes, edges, group) = graph.spell(c, cl);
@@ -135,6 +136,7 @@ impl<'a, 'b> std::fmt::Debug for DitchGraph<'a, 'b> {
 pub struct DitchNode<'a, 'b> {
     unit: u64,
     cluster: u64,
+    // CAUTION!!!!!! The `unit` and `cluster` members should not be look-upped!
     nodes: Vec<&'a definitions::Node>,
     edges: Vec<DitchEdge<'b>>,
 }
@@ -341,66 +343,51 @@ impl<'a> DitchGraph<'a, 'a> {
         let mut selected = vec![false; self.nodes.len()];
         let mut primary_candidates: Vec<_> = (0..self.nodes.len())
             .filter_map(|i| {
-                let h_edge_num = self.nodes[i]
-                    .edges
-                    .iter()
-                    .filter(|e| e.from_position == Position::Head)
-                    .count();
-                let t_edge_num = self.nodes[i]
-                    .edges
-                    .iter()
-                    .filter(|e| e.from_position == Position::Tail)
-                    .count();
-                if h_edge_num != 1 {
-                    selected[i] = true;
-                    Some((i, Position::Head))
-                } else if t_edge_num != 1 {
-                    selected[i] = true;
-                    Some((i, Position::Tail))
-                } else {
-                    None
+                for position in vec![Position::Head, Position::Tail] {
+                    if self.nodes[i]
+                        .edges
+                        .iter()
+                        .filter(|e| e.from_position == position)
+                        .count()
+                        != 1
+                    {
+                        selected[i] = true;
+                        return Some((i, position));
+                    }
                 }
+                None
             })
             .collect();
         let secondary_candidates =
             (0..self.nodes.len())
                 .filter(|&i| !selected[i])
                 .filter_map(|i| {
-                    // There is only one edge from (i, Position::Head).
-                    // Thus, the unwrap() never panics.
-                    let head_grand_child = self.nodes[i]
-                        .edges
-                        .iter()
-                        .find(|e| e.from_position == Position::Head)
-                        .map(|e| {
-                            let (next, next_position) = (e.to, e.to_position);
-                            self.nodes[next]
-                                .edges
-                                .iter()
-                                .filter(|e| e.from_position == next_position)
-                                .count()
-                        })
-                        .unwrap();
-                    assert!(head_grand_child != 0);
-                    if head_grand_child > 1 {
-                        return Some((i, Position::Head));
-                    }
-                    let tail_grand_child = self.nodes[i]
-                        .edges
-                        .iter()
-                        .find(|e| e.from_position == Position::Tail)
-                        .map(|e| {
-                            let (next, next_position) = (e.to, e.to_position);
-                            self.nodes[next]
-                                .edges
-                                .iter()
-                                .filter(|e| e.from_position == next_position)
-                                .count()
-                        })
-                        .unwrap();
-                    assert!(tail_grand_child != 0);
-                    if tail_grand_child > 1 {
-                        return Some((i, Position::Tail));
+                    for position in vec![Position::Head, Position::Tail] {
+                        // The unwrap() never panics.
+                        let grand_child = self.nodes[i]
+                            .edges
+                            .iter()
+                            .find(|e| e.from_position == position)
+                            .map(|e| {
+                                let count = self.nodes[e.to]
+                                    .edges
+                                    .iter()
+                                    .filter(|f| f.from_position == e.to_position)
+                                    .count();
+                                if count == 0 {
+                                    debug!("{},{}", i, position);
+                                    debug!("Edge:{}", e);
+                                    for edge in &self.nodes[e.to].edges {
+                                        debug!("Child:{}", edge)
+                                    }
+                                    panic!()
+                                }
+                                count
+                            })
+                            .unwrap();
+                        if grand_child > 1 {
+                            return Some((i, position));
+                        }
                     }
                     None
                 });
@@ -422,7 +409,7 @@ impl<'a> DitchGraph<'a, 'a> {
             if arrived[i] {
                 continue;
             }
-            eprintln!("First loop:{}", i);
+            debug!("First loop:{}", i);
             let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
             let (contig, edges) = self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
             g_segs.push(contig);
@@ -432,7 +419,7 @@ impl<'a> DitchGraph<'a, 'a> {
             if arrived[i] {
                 continue;
             }
-            eprintln!("Second loop:{}", i);
+            debug!("Second loop:{}", i);
             let p = Position::Head;
             let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
             let (contig, edges) = self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
@@ -447,6 +434,176 @@ impl<'a> DitchGraph<'a, 'a> {
         let uid = Some(format!("group-{}", cl));
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
         (g_segs, g_edges, group)
+    }
+    // Removing nodes and re-map all of the indices.
+    fn remove_nodes(&mut self, to_remove: &[bool]) {
+        let mapping = {
+            let mut mapping = vec![];
+            let mut index = 0;
+            for &b in to_remove {
+                mapping.push(index);
+                index += !b as usize;
+            }
+            mapping
+        };
+        self.index.iter_mut().for_each(|(_, v)| *v = mapping[*v]);
+        {
+            let mut idx = 0;
+            self.nodes.retain(|_| {
+                idx += 1;
+                !to_remove[idx - 1]
+            });
+        }
+        self.nodes.iter_mut().for_each(|node| {
+            node.edges.iter_mut().for_each(|e| {
+                e.from = mapping[e.from];
+                e.to = mapping[e.to];
+            })
+        });
+    }
+    fn collapse_buddle(&mut self, c: &AssembleConfig) {
+        let mut to_remove = vec![false; self.nodes.len()];
+        for i in 0..self.nodes.len() {
+            for position in vec![Position::Head, Position::Tail] {
+                let edges: Vec<_> = self.nodes[i]
+                    .edges
+                    .iter()
+                    .filter(|e| e.from_position == position && e.from == i)
+                    .collect();
+                if edges.len() > 1 {
+                    // Never panic.
+                    let pos = edges[0].to_position;
+                    let unit = self.nodes[edges[0].to].unit;
+                    if edges
+                        .iter()
+                        .all(|n| n.to_position == pos && unit == self.nodes[n.to].unit)
+                    {
+                        // The head side of the i-th node has two or mode cluster,
+                        // which has the same distination.
+                        // Check the collaption criteria, and collapse if possible.
+                        eprintln!(
+                            "Removing a bubble starting from {}-{}-{:?}",
+                            self.nodes[i].unit, self.nodes[i].cluster, position
+                        );
+                        for i in self.collapse_bubble_from(i, position, c) {
+                            // eprintln!("Removing {}", i);
+                            to_remove[i] = true;
+                        }
+                    }
+                }
+            }
+        }
+        self.remove_nodes(&to_remove);
+    }
+    fn collapse_bubble_from(
+        &mut self,
+        i: usize,
+        position: Position,
+        _c: &AssembleConfig,
+    ) -> Vec<usize> {
+        // Check the collapsing condition.
+        let edges: Vec<_> = self.nodes[i]
+            .edges
+            .iter()
+            .filter(|e| e.from_position == position)
+            .inspect(|e| assert!(e.from == i))
+            .collect();
+        // Check.
+        assert!(edges.len() > 1);
+        let (first_id, first_pos, first_unit) = {
+            let first = edges.first().unwrap();
+            let first_unit = self.nodes[first.to].unit;
+            (first.to, first.to_position, first_unit)
+        };
+        let merged_nodes_ids: Vec<_> = edges.iter().map(|e| e.to).collect();
+        assert!(edges
+            .iter()
+            .all(|e| e.to_position == first_pos && first_unit == self.nodes[e.to].unit));
+        // Get the candidate child.
+        let pos = !first_pos;
+        let (child_id, child_pos) = match self.nodes[first_id]
+            .edges
+            .iter()
+            .find(|e| e.from_position == pos && e.from == first_id)
+        {
+            Some(child) => (child.to, child.to_position),
+            None => return vec![],
+        };
+        // Check all distinations of `i` has only one parent, `i`.
+        // Check all otherside of the distinations of `i` has only one child.
+        let is_collapsable_bubble = edges.iter().all(|e| {
+            let res = self.nodes[e.to].edges.iter().all(|f| {
+                (f.to_position == position && f.to == i)
+                    || (f.to_position == child_pos && f.to == child_id)
+            });
+            res && self.nodes[e.to].edges.len() == 2
+        });
+        if !is_collapsable_bubble {
+            vec![]
+        } else {
+            // Add to the `first_id` from other edges.
+            let remove_nodes: Vec<_> = edges.into_iter().skip(1).map(|e| e.to).collect();
+            let mut node_result = vec![];
+            let mut edge_result: Vec<(&definitions::Edge, bool)> = vec![];
+            for &remove_node in remove_nodes.iter() {
+                node_result.append(&mut self.nodes[remove_node].nodes);
+                self.nodes[remove_node]
+                    .edges
+                    .iter_mut()
+                    .for_each(|ditch_edge| {
+                        edge_result.append(&mut ditch_edge.edges);
+                    });
+            }
+            self.nodes[first_id].nodes.extend(node_result);
+            self.nodes[first_id]
+                .edges
+                .iter_mut()
+                .find(|ditch_edge| ditch_edge.to == i && ditch_edge.to_position == position)
+                .unwrap()
+                .edges
+                .extend(edge_result);
+            // Change edges from nodes[i]
+            let edge_result = self.nodes[i]
+                .edges
+                .iter_mut()
+                .filter(|e| e.from_position == position)
+                .skip(1)
+                .fold(vec![], |mut x, ditch_edge| {
+                    x.append(&mut ditch_edge.edges);
+                    x
+                });
+            self.nodes[i]
+                .edges
+                .iter_mut()
+                .find(|e| e.from_position == position)
+                .unwrap()
+                .edges
+                .extend(edge_result);
+            self.nodes[i]
+                .edges
+                .retain(|ditch_edge| !ditch_edge.edges.is_empty());
+            let edge_result = self.nodes[child_id]
+                .edges
+                .iter_mut()
+                .filter(|e| merged_nodes_ids.contains(&e.to))
+                .skip(1)
+                .fold(vec![], |mut x, d_edge| {
+                    x.append(&mut d_edge.edges);
+                    x
+                });
+            // Never panic.
+            self.nodes[child_id]
+                .edges
+                .iter_mut()
+                .find(|e| merged_nodes_ids.contains(&e.to))
+                .unwrap()
+                .edges
+                .extend(edge_result);
+            self.nodes[child_id]
+                .edges
+                .retain(|ditch_edge| !ditch_edge.edges.is_empty());
+            remove_nodes
+        }
     }
     // Traverse from the given `start` node.
     fn traverse_from(
@@ -877,6 +1034,218 @@ mod tests {
         circle.extend(complex);
         (circle_reads, circle)
     }
+    fn gen_remove_test_1() -> DataPack {
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
+        let units: Vec<String> = (0..3)
+            .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
+            .collect();
+        let edge = String::new();
+        let read = EncodedRead::default();
+        let (mut read0, mut read1) = (read.clone(), read.clone());
+        for unit in 0..3 {
+            let seq = units[unit].clone();
+            let unit = unit as u64;
+            let (cl0, cl1) = if unit == 1 { (0, 1) } else { (0, 0) };
+            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
+            read1.nodes.push(gen_node(unit, cl1, true, seq));
+        }
+        for unit in 0..2 {
+            read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+            read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+        }
+        let (mut read2, mut read3) = (read.clone(), read.clone());
+        for unit in (0..3).rev() {
+            let seq: Vec<_> = units[unit].chars().collect();
+            let seq: String = revcmp(&seq).iter().collect();
+            let unit = unit as u64;
+            let (cl2, cl3) = if unit == 1 { (0, 1) } else { (0, 0) };
+            read2.nodes.push(gen_node(unit, cl2, false, seq.clone()));
+            read3.nodes.push(gen_node(unit, cl3, false, seq));
+        }
+        for unit in (0..2).rev() {
+            read2.edges.push(gen_edge(unit + 1, unit, 0, edge.clone()));
+            read3.edges.push(gen_edge(unit + 1, unit, 0, edge.clone()));
+        }
+        let answer = units.iter().fold(String::new(), |x, y| x + y);
+        (vec![read0, read1, read2, read3], vec![answer])
+    }
+    fn gen_remove_test_2() -> DataPack {
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
+        let units: Vec<String> = (0..4)
+            .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
+            .collect();
+        let edge = String::new();
+        let read = EncodedRead::default();
+        let (mut read0, mut read1) = (read.clone(), read.clone());
+        for unit in 0..3 {
+            let seq = units[unit].clone();
+            let unit = unit as u64;
+            let (cl0, cl1) = if unit == 1 { (0, 1) } else { (0, 0) };
+            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
+            read1.nodes.push(gen_node(unit, cl1, true, seq));
+        }
+        for unit in 0..2 {
+            read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+            read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+        }
+        let (mut read2, mut read3) = (read.clone(), read.clone());
+        for unit in (0..3).rev() {
+            let seq: Vec<_> = units[unit].chars().collect();
+            let seq: String = revcmp(&seq).iter().collect();
+            let unit = unit as u64;
+            let (cl2, cl3) = if unit == 1 { (0, 1) } else { (0, 0) };
+            read2.nodes.push(gen_node(unit, cl2, false, seq.clone()));
+            read3.nodes.push(gen_node(unit, cl3, false, seq));
+        }
+        for unit in (0..2).rev() {
+            read2.edges.push(gen_edge(unit + 1, unit, 0, edge.clone()));
+            read3.edges.push(gen_edge(unit + 1, unit, 0, edge.clone()));
+        }
+        let (mut read4, mut read5) = (read.clone(), read.clone());
+        for unit in 1..4 {
+            let cl = if unit == 1 { 1 } else { 2 };
+            let seq = units[unit].clone();
+            let unit = unit as u64;
+            read4.nodes.push(gen_node(unit, cl, true, seq));
+            if unit < 3 {
+                read5.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+            }
+        }
+        for unit in (1..4).rev() {
+            let cl = if unit == 1 { 1 } else { 2 };
+            let seq: Vec<_> = units[unit].chars().collect();
+            let seq: String = revcmp(&seq).iter().collect();
+            let unit = unit as u64;
+            read5.nodes.push(gen_node(unit, cl, false, seq));
+            if 0 < unit {
+                read5.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+            }
+        }
+        let reads = vec![read0, read1, read2, read3, read4, read5];
+        let mut answers = units[0..3].to_vec();
+        answers.push(units[2].clone() + &units[3]);
+        (reads, answers)
+    }
+    fn gen_remove_test_3() -> DataPack {
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
+        let units: Vec<String> = (0..3)
+            .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
+            .collect();
+        let edge = String::new();
+        let read = EncodedRead::default();
+        let (mut read0, mut read1, mut read2) = (read.clone(), read.clone(), read.clone());
+        for unit in 0..3 {
+            let seq = units[unit].clone();
+            let unit = unit as u64;
+            let (cl0, cl1, cl2) = if unit == 1 { (0, 1, 2) } else { (0, 0, 0) };
+            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
+            read1.nodes.push(gen_node(unit, cl1, true, seq.clone()));
+            read2.nodes.push(gen_node(unit, cl2, true, seq));
+            if unit < 2 {
+                read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+                read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+                read2.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+            }
+        }
+        let (mut read3, mut read4, mut read5) = (read.clone(), read.clone(), read.clone());
+        for unit in (0..3).rev() {
+            let seq: Vec<_> = units[unit].chars().collect();
+            let seq: String = revcmp(&seq).iter().collect();
+            let unit = unit as u64;
+            let (cl3, cl4, cl5) = if unit == 1 { (0, 1, 2) } else { (0, 0, 0) };
+            read3.nodes.push(gen_node(unit, cl3, false, seq.clone()));
+            read4.nodes.push(gen_node(unit, cl4, false, seq.clone()));
+            read5.nodes.push(gen_node(unit, cl5, false, seq.clone()));
+            if 0 < unit {
+                read3.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+                read4.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+                read5.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+            }
+        }
+        let reads = vec![read0, read1, read2, read3, read4, read5];
+        let answers = units.into_iter().fold(String::new(), |x, y| x + &y);
+        (reads, vec![answers])
+    }
+    fn gen_remove_test_4() -> DataPack {
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
+        let units: Vec<String> = (0..3)
+            .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
+            .collect();
+        let edge = String::new();
+        let read = EncodedRead::default();
+        let (mut read0, mut read1, mut read2) = (read.clone(), read.clone(), read.clone());
+        for unit in 0..3 {
+            let seq = units[unit].clone();
+            let unit = unit as u64;
+            let (cl0, cl1) = if unit == 1 { (0, 1) } else { (0, 0) };
+            let cl2 = if unit == 0 { 0 } else { 2 };
+            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
+            read1.nodes.push(gen_node(unit, cl1, true, seq.clone()));
+            read2.nodes.push(gen_node(unit, cl2, true, seq));
+            if unit < 2 {
+                read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+                read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+                read2.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+            }
+        }
+        let (mut read3, mut read4, mut read5) = (read.clone(), read.clone(), read.clone());
+        for unit in (0..3).rev() {
+            let seq: Vec<_> = units[unit].chars().collect();
+            let seq: String = revcmp(&seq).iter().collect();
+            let unit = unit as u64;
+            let (cl3, cl4) = if unit == 1 { (0, 1) } else { (0, 0) };
+            let cl5 = if unit == 0 { 0 } else { 2 };
+            read3.nodes.push(gen_node(unit, cl3, false, seq.clone()));
+            read4.nodes.push(gen_node(unit, cl4, false, seq.clone()));
+            read5.nodes.push(gen_node(unit, cl5, false, seq.clone()));
+            if 0 < unit {
+                read3.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+                read4.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+                read5.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+            }
+        }
+        let reads = vec![read0, read1, read2, read3, read4, read5];
+        let mut answers = vec![];
+        answers.push(units[0].clone());
+        answers.push(units[1].clone() + &units[2]);
+        (reads, answers)
+    }
+    fn gen_remove_test_5() -> DataPack {
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
+        let units: Vec<String> = (0..5)
+            .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
+            .collect();
+        let edge = String::new();
+        let read = EncodedRead::default();
+        let (mut read0, mut read1) = (read.clone(), read.clone());
+        for unit in 0..5 {
+            let seq = units[unit].clone();
+            let unit = unit as u64;
+            let (cl0, cl1) = if unit == 1 { (0, 1) } else { (0, 0) };
+            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
+            read1.nodes.push(gen_node(unit, cl1, true, seq));
+            if unit < 4 {
+                read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+                read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
+            }
+        }
+        let (mut read2, mut read3) = (read.clone(), read.clone());
+        for unit in (0..5).rev() {
+            let seq: Vec<_> = units[unit].chars().collect();
+            let seq: String = revcmp(&seq).iter().collect();
+            let unit = unit as u64;
+            let (cl2, cl3) = if unit == 1 { (0, 1) } else { (0, 0) };
+            read2.nodes.push(gen_node(unit, cl2, false, seq.clone()));
+            read3.nodes.push(gen_node(unit, cl3, false, seq));
+            if 0 < unit {
+                read2.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+                read3.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
+            }
+        }
+        let answer = units.iter().fold(String::new(), |x, y| x + y);
+        (vec![read0, read1, read2, read3], vec![answer])
+    }
+
     use super::*;
     #[test]
     fn create() {
@@ -1018,5 +1387,225 @@ mod tests {
         // Assertion.
         assert_eq!(edges.len(), 6);
         assert_eq!(segments.len(), 6);
+    }
+    #[test]
+    fn validate_remove_1() {
+        let c = AssembleConfig::default();
+        let (reads, answer) = gen_remove_test_1();
+        let reads: Vec<_> = reads.iter().collect();
+        let mut graph = DitchGraph::new(&reads, &c);
+        eprintln!("{:?}", graph);
+        graph.collapse_buddle(&c);
+        eprintln!("{:?}", graph);
+        let (segments, edges, group) = graph.spell(&c, 0);
+        let mut records = vec![];
+        let nodes = segments
+            .clone()
+            .into_iter()
+            .map(gfa::Content::Seg)
+            .map(|n| gfa::Record::from_contents(n, vec![]));
+        records.extend(nodes);
+        {
+            let edges = edges
+                .clone()
+                .into_iter()
+                .map(gfa::Content::Edge)
+                .map(|n| gfa::Record::from_contents(n, vec![]));
+            records.extend(edges);
+        }
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        records.push(group);
+        eprintln!("=============Assembly================");
+        eprintln!("{}", gfa::GFA::from_records(records));
+        // Assertion.
+        assert_eq!(edges.len(), 0);
+        assert_eq!(segments.len(), 1);
+        for ans in answer {
+            let forward = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &ans);
+            let rev_ans: Vec<_> = ans.chars().collect();
+            let rev_ans: String = revcmp(&rev_ans).into_iter().collect();
+            let reverse = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &rev_ans);
+            assert!(forward || reverse, "Couldn't find {}", ans);
+        }
+    }
+    #[test]
+    fn validate_remove_2() {
+        let c = AssembleConfig::default();
+        let (reads, answer) = gen_remove_test_2();
+        let reads: Vec<_> = reads.iter().collect();
+        let mut graph = DitchGraph::new(&reads, &c);
+        eprintln!("{:?}", graph);
+        graph.collapse_buddle(&c);
+        eprintln!("{:?}", graph);
+        let (segments, edges, group) = graph.spell(&c, 0);
+        let mut records = vec![];
+        let nodes = segments
+            .clone()
+            .into_iter()
+            .map(gfa::Content::Seg)
+            .map(|n| gfa::Record::from_contents(n, vec![]));
+        records.extend(nodes);
+        {
+            let edges = edges
+                .clone()
+                .into_iter()
+                .map(gfa::Content::Edge)
+                .map(|n| gfa::Record::from_contents(n, vec![]));
+            records.extend(edges);
+        }
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        records.push(group);
+        eprintln!("=============Assembly================");
+        eprintln!("{}", gfa::GFA::from_records(records));
+        // Assertion.
+        assert_eq!(edges.len(), 5);
+        assert_eq!(segments.len(), 5);
+        for ans in answer {
+            let forward = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &ans);
+            let rev_ans: Vec<_> = ans.chars().collect();
+            let rev_ans: String = revcmp(&rev_ans).into_iter().collect();
+            let reverse = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &rev_ans);
+            assert!(forward || reverse, "Couldn't find {}", ans);
+        }
+    }
+    #[test]
+    fn validate_remove_3() {
+        let c = AssembleConfig::default();
+        let (reads, answer) = gen_remove_test_3();
+        let reads: Vec<_> = reads.iter().collect();
+        let mut graph = DitchGraph::new(&reads, &c);
+        eprintln!("{:?}", graph);
+        graph.collapse_buddle(&c);
+        eprintln!("{:?}", graph);
+        let (segments, edges, group) = graph.spell(&c, 0);
+        let mut records = vec![];
+        let nodes = segments
+            .clone()
+            .into_iter()
+            .map(gfa::Content::Seg)
+            .map(|n| gfa::Record::from_contents(n, vec![]));
+        records.extend(nodes);
+        {
+            let edges = edges
+                .clone()
+                .into_iter()
+                .map(gfa::Content::Edge)
+                .map(|n| gfa::Record::from_contents(n, vec![]));
+            records.extend(edges);
+        }
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        records.push(group);
+        eprintln!("=============Assembly================");
+        eprintln!("{}", gfa::GFA::from_records(records));
+        // Assertion.
+        assert_eq!(edges.len(), 0);
+        assert_eq!(segments.len(), 1);
+        for ans in answer {
+            let forward = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &ans);
+            let rev_ans: Vec<_> = ans.chars().collect();
+            let rev_ans: String = revcmp(&rev_ans).into_iter().collect();
+            let reverse = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &rev_ans);
+            assert!(forward || reverse, "Couldn't find {}", ans);
+        }
+    }
+    #[test]
+    fn validate_remove_4() {
+        let c = AssembleConfig::default();
+        let (reads, answer) = gen_remove_test_4();
+        let reads: Vec<_> = reads.iter().collect();
+        let mut graph = DitchGraph::new(&reads, &c);
+        eprintln!("{:?}", graph);
+        graph.collapse_buddle(&c);
+        eprintln!("{:?}", graph);
+        let (segments, edges, group) = graph.spell(&c, 0);
+        let mut records = vec![];
+        let nodes = segments
+            .clone()
+            .into_iter()
+            .map(gfa::Content::Seg)
+            .map(|n| gfa::Record::from_contents(n, vec![]));
+        records.extend(nodes);
+        {
+            let edges = edges
+                .clone()
+                .into_iter()
+                .map(gfa::Content::Edge)
+                .map(|n| gfa::Record::from_contents(n, vec![]));
+            records.extend(edges);
+        }
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        records.push(group);
+        eprintln!("=============Assembly================");
+        eprintln!("{}", gfa::GFA::from_records(records));
+        // Assertion.
+        assert_eq!(edges.len(), 2);
+        assert_eq!(segments.len(), 3);
+        for ans in answer {
+            let forward = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &ans);
+            let rev_ans: Vec<_> = ans.chars().collect();
+            let rev_ans: String = revcmp(&rev_ans).into_iter().collect();
+            let reverse = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &rev_ans);
+            assert!(forward || reverse, "Couldn't find {}", ans);
+        }
+    }
+    #[test]
+    fn validate_remove_5() {
+        let c = AssembleConfig::default();
+        let (reads, answer) = gen_remove_test_5();
+        let reads: Vec<_> = reads.iter().collect();
+        let mut graph = DitchGraph::new(&reads, &c);
+        eprintln!("{:?}", graph);
+        graph.collapse_buddle(&c);
+        eprintln!("{:?}", graph);
+        let (segments, edges, group) = graph.spell(&c, 0);
+        let mut records = vec![];
+        let nodes = segments
+            .clone()
+            .into_iter()
+            .map(gfa::Content::Seg)
+            .map(|n| gfa::Record::from_contents(n, vec![]));
+        records.extend(nodes);
+        {
+            let edges = edges
+                .clone()
+                .into_iter()
+                .map(gfa::Content::Edge)
+                .map(|n| gfa::Record::from_contents(n, vec![]));
+            records.extend(edges);
+        }
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        records.push(group);
+        eprintln!("=============Assembly================");
+        eprintln!("{}", gfa::GFA::from_records(records));
+        // Assertion.
+        assert_eq!(edges.len(), 0);
+        assert_eq!(segments.len(), 1);
+        for ans in answer {
+            let forward = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &ans);
+            let rev_ans: Vec<_> = ans.chars().collect();
+            let rev_ans: String = revcmp(&rev_ans).into_iter().collect();
+            let reverse = segments
+                .iter()
+                .any(|seg| seg.sequence.as_ref().unwrap() == &rev_ans);
+            assert!(forward || reverse, "Couldn't find {}", ans);
+        }
     }
 }

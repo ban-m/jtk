@@ -873,6 +873,7 @@ mod tests {
     }
     use super::*;
     use rand::Rng;
+    #[allow(dead_code)]
     fn gen_dataset<R: Rng>(r: &mut R, conf: TestConfig) -> (Vec<Vec<(u64, u64)>>, Vec<usize>) {
         let TestConfig {
             cl,
@@ -1184,6 +1185,7 @@ mod tests {
         let correct = correct.max(reads.len() - correct);
         assert!(correct > reads.len() * 8 / 10);
     }
+    #[allow(dead_code)]
     fn path_clustering_test_mcl() {
         use rand::SeedableRng;
         use rand_xoshiro::Xoshiro256StarStar;
@@ -1233,6 +1235,7 @@ mod tests {
         let correct = correct.max(reads.len() - correct);
         assert!(correct > reads.len() * 8 / 10);
     }
+    #[allow(dead_code)]
     fn path_clustering_test_mcl_with() {
         use rand::SeedableRng;
         use rand_xoshiro::Xoshiro256StarStar;

@@ -85,7 +85,7 @@ fn alignment(
         .enumerate()
         .max_by_key(|x| x.1)?;
     let score = *column_max.max(row_max);
-    if score <= 0 {
+    if score <= mat * 2 {
         return None;
     }
     let (mut q_pos, mut r_pos) = if row_max < column_max {

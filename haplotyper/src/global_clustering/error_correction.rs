@@ -206,11 +206,12 @@ pub fn local_correction(ds: &DataSet, c: &GlobalClusteringConfig) -> Vec<Correct
         })
         .collect();
     debug!("Correcting {} reads...", reads.len());
-    local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score))
+    local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score), 2)
 }
 fn local_correction_inner(
     reads: Vec<(u64, Vec<(u64, u64)>)>,
     param: (i32, i32, i32),
+    thr: i32,
 ) -> Vec<CorrectedRead> {
     let rev_for: Vec<_> = {
         let mut temp = reads.clone();
@@ -222,7 +223,7 @@ fn local_correction_inner(
     };
     reads
         .par_iter()
-        .map(|read| correct(read, &rev_for, param))
+        .map(|read| correct(read, &rev_for, param, thr))
         .collect()
 }
 
@@ -230,11 +231,12 @@ fn correct(
     &(id, ref nodes): &(u64, Vec<(u64, u64)>),
     reads: &[(u64, Vec<(u64, u64)>)],
     param: (i32, i32, i32),
+    thr: i32,
 ) -> CorrectedRead {
     let pileup = reads
         .iter()
         .filter_map(|&(_, ref query)| alignment(query, nodes, param))
-        //.filter(|&(score, _)| score > 2)
+        .filter(|&(score, _)| score > param.0 * thr)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
     for column in pileup.column {
@@ -308,7 +310,7 @@ mod tests {
             .enumerate()
             .map(|(idx, seq)| (idx as u64, seq))
             .collect();
-        let result = local_correction_inner(reads, (1, -1, -2));
+        let result = local_correction_inner(reads, (1, -1, -2), 0);
         for res in result {
             let units: Vec<_> = res.nodes.iter().map(|u| (u.unit, u.cluster)).collect();
             assert_eq!(units, seq, "{}", res.id);
@@ -330,7 +332,7 @@ mod tests {
         for read in reads.iter() {
             let prev = read.1.len();
             eprintln!("Correcting:{:?}", read);
-            let res = correct(read, &reads, (1, -1, -2));
+            let res = correct(read, &reads, (1, -1, -2), 0);
             let seq: Vec<_> = res.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
             let after = seq.len();
             eprintln!("Corrected:{:?}", seq);

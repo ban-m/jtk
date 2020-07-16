@@ -105,6 +105,22 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .default_value(&"500")
                 .help("Margin at the both end of a read."),
         )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .takes_value(true)
+                .default_value(&"1")
+                .help("number of threads"),
+        )
+        .arg(
+            Arg::with_name("kmer_size")
+                .short("k")
+                .long("kmer_size")
+                .takes_value(true)
+                .default_value(&"7")
+                .help("size of k-mer"),
+        )
 }
 
 fn subcommand_encode() -> App<'static, 'static> {
@@ -516,11 +532,21 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("skip_len")
         .and_then(|e| e.parse().ok())
         .expect("Skip Len");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse().ok())
+        .expect("threads");
+    let k: usize = matches
+        .value_of("kmer_size")
+        .and_then(|e| e.parse().ok())
+        .expect("kmer_size");
     let config = UnitConfig {
         chunk_len,
         chunk_num,
         margin,
         skip_len,
+        threads,
+        k,
     };
     let dataset = dataset.select_chunks(&config);
     let stdout = std::io::stdout();

@@ -331,6 +331,7 @@ mod tests {
     use super::*;
     #[test]
     fn works() {}
+    #[allow(dead_code)]
     fn gen_dataset<R: Rng>(r: &mut R, conf: TestConfig) -> Vec<ERead> {
         let TestConfig {
             cl,

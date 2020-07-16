@@ -15,11 +15,12 @@ ENTRY=${2}.entry.units.json
 UNITS=${2}.units.fa
 ENCODED=${2}.entry.units.encode.json
 CLUSTERED=${2}.entry.units.encode.clustered.json
+GFA=${2}.gfa
 LOG=${2}.log
 
 # cargo build --release
 cat ${TARGET} | ${JTK} entry |\
-    ${JTK} select_unit -vv |\
+    ${JTK} select_unit -vv -t 23 |\
     tee ${ENTRY} |\
     ${JTK} extract -t units > ${UNITS}
 
@@ -38,3 +39,6 @@ cat ${ENTRY} |\
     ${JTK} local_clustering -vv --threads 23 --cluster_num 3 |\
     ${JTK} stats -vv -f ${LOG} |\
     ${JTK} global_clustering -vv --threads 2 > ${CLUSTERED}
+cat ${CLUSTERED} | \
+    ${JTK} polish_clustering -t23 -vv |\
+    ${JTK} assemble -t2 -vv > ${GFA}
