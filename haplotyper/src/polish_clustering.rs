@@ -191,12 +191,21 @@ fn correct(mut reads: Vec<&mut EncodedRead>, config: &PolishClusteringConfig) {
         .iter()
         .map(|read| read.nodes.iter().map(|n| (n.unit, n.cluster)).collect())
         .collect();
+    let rev_for_reads = {
+        let mut temp = reads_summary.clone();
+        let rev = reads_summary
+            .iter()
+            .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
+        temp.extend(rev);
+        temp
+    };
     let corrected_reads: Vec<_> = reads_summary
         .par_iter()
-        .map(|read| correct_read(read, &reads_summary, config))
+        .map(|read| correct_read(read, &rev_for_reads, config))
         .collect();
     assert_eq!(reads.len(), corrected_reads.len());
     for (read, corrected) in reads.iter_mut().zip(corrected_reads) {
+        assert_eq!(read.nodes.len(), corrected.len());
         for (node, (unit, cluster)) in read.nodes.iter_mut().zip(corrected) {
             node.unit = unit;
             node.cluster = cluster;
@@ -214,7 +223,6 @@ fn correct_read(
         .iter()
         .filter_map(|query| alignment(query, read, param))
         .fold(Pileup::new(read), |x, (_, y)| x.add(y));
-    eprintln!("{:?}", pileup);
     pileup
         .column
         .into_iter()

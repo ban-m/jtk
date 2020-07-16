@@ -31,6 +31,7 @@ impl Assemble for DataSet {
         }
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![]);
+        debug!("Start assembly");
         let records: Vec<_> = clusters
             .into_iter()
             .flat_map(|(cl, reads)| cluster_to_gfa(cl, reads, c))
@@ -41,7 +42,9 @@ impl Assemble for DataSet {
 }
 
 fn cluster_to_gfa(cl: usize, reads: Vec<&EncodedRead>, c: &AssembleConfig) -> Vec<gfa::Record> {
+    debug!("Constructing the {}-th ditch graph", cl);
     let graph = DitchGraph::new(&reads, c);
+    debug!("{}", graph);
     let mut records = vec![];
     let (nodes, edges, group) = graph.spell(c, cl);
     let nodes = nodes
@@ -64,13 +67,45 @@ fn cluster_to_gfa(cl: usize, reads: Vec<&EncodedRead>, c: &AssembleConfig) -> Ve
 /// tail-node and head-node, and it is represented as a 'node'in a
 /// Ditch graph.
 /// Each node has several edges, induced by the connection inside reads.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DitchGraph<'a, 'b> {
     nodes: Vec<DitchNode<'a, 'b>>,
     index: HashMap<NodeIndex, usize>,
 }
 
 impl<'a, 'b> std::fmt::Display for DitchGraph<'a, 'b> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use histgram_viz::Histgram;
+        let nodes = self.nodes.len();
+        let edges = self.nodes.iter().map(|n| n.edges.len()).sum::<usize>();
+        writeln!(f, "Node:{}, Edges:{}", nodes, edges)?;
+        let occs: Vec<_> = self.nodes.iter().map(|n| n.nodes.len()).collect();
+        let hist = Histgram::new(&occs);
+        writeln!(f, "Node Occs:{}", hist.format(20, 20))?;
+        let occs: Vec<_> = self
+            .nodes
+            .iter()
+            .flat_map(|n| n.edges.iter().map(|e| e.edges.len()))
+            .collect();
+        let hist = Histgram::new(&occs);
+        writeln!(f, "Edge Occs:{}", hist.format(20, 20))?;
+        let degrees = {
+            let mut degs: HashMap<usize, usize> = HashMap::new();
+            for node in self.nodes.iter() {
+                let degree = node.edges.len();
+                *degs.entry(degree).or_default() += 1;
+            }
+            let mut degs = degs.into_iter().collect::<Vec<_>>();
+            degs.sort_by_key(|x| x.0);
+            degs.into_iter()
+                .map(|(deg, count)| format!("{}:{}", deg, count))
+                .collect::<Vec<_>>()
+        };
+        write!(f, "[{}]", degrees.join(","))
+    }
+}
+
+impl<'a, 'b> std::fmt::Debug for DitchGraph<'a, 'b> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let edge = self.nodes.iter().map(|e| e.edges.len()).sum::<usize>();
         writeln!(f, "Nodes:{}\tEdges:{}\n", self.nodes.len(), edge)?;
@@ -263,9 +298,9 @@ impl<'a> DitchGraph<'a, 'a> {
             }
             (index, nodes)
         };
-        // Append edge.
+        // Append edges.
         for read in reads.iter() {
-            if read.nodes.len() != read.edges.len() {
+            if read.nodes.len() != read.edges.len() + 1 {
                 debug!("{}\t{}\t{}", read.id, read.nodes.len(), read.edges.len());
             }
             for (pairs, edge) in read.nodes.windows(2).zip(read.edges.iter()) {
@@ -455,7 +490,9 @@ impl<'a> DitchGraph<'a, 'a> {
         let (mut node, mut position) = (start, start_position);
         let mut seq = String::new();
         // Start traveresing.
+        let mut unit_names = vec![];
         loop {
+            unit_names.push((self.nodes[node].unit, self.nodes[node].cluster));
             arrived[node] = true;
             // Move forward.
             match position {
@@ -511,6 +548,11 @@ impl<'a> DitchGraph<'a, 'a> {
             node = next;
             position = next_position;
         }
+        let unit_names: Vec<_> = unit_names
+            .iter()
+            .map(|(u, c)| format!("{}:{}", u, c))
+            .collect();
+        debug!("{}\t{}", seqname, unit_names.join("\t"));
         // Register start and tail node.
         if start == node {
             sids[node] = ContigTag::Both(seqname.clone(), start_position, position, seq.len());
@@ -857,7 +899,7 @@ mod tests {
         let (reads, answer) = gen_mock1();
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
-        eprintln!("{}", graph);
+        eprintln!("{:?}", graph);
         let (segment, _edge, _group) = graph.spell(&c, 0);
         eprintln!("{:?}", segment);
         eprintln!("{:?}", answer);
@@ -870,7 +912,7 @@ mod tests {
         let (reads, answer) = gen_mock_large();
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
-        eprintln!("{}", graph);
+        eprintln!("{:?}", graph);
         let (segments, edges, group) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
@@ -911,7 +953,7 @@ mod tests {
         let (reads, answer) = gen_mock_large_2();
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
-        eprintln!("{}", graph);
+        eprintln!("{:?}", graph);
         let (segments, edges, group) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
@@ -952,7 +994,7 @@ mod tests {
         let (reads, _answer) = gen_mock_complex();
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
-        eprintln!("{}", graph);
+        eprintln!("{:?}", graph);
         let (segments, edges, group) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments

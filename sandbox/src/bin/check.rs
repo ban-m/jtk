@@ -1,5 +1,4 @@
 use definitions::*;
-use std::collections::HashMap;
 #[macro_use]
 extern crate log;
 fn main() -> std::io::Result<()> {
@@ -9,22 +8,31 @@ fn main() -> std::io::Result<()> {
     let ds = BufReader::new(std::fs::File::open(&args[1])?);
     debug!("Started");
     let dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
-    let id2name: HashMap<_, _> = dataset
-        .raw_reads
+    use std::collections::HashMap;
+    let id_to_asn: HashMap<_, _> = dataset
+        .assignments
         .iter()
-        .map(|r| (r.id, r.name.clone()))
+        .map(|asn| (asn.id, asn.cluster))
         .collect();
-    let reads: Vec<_> = dataset
+    let (unit, cluster, group) = (648, 2, 0);
+    for read in dataset
         .encoded_reads
-        .into_iter()
-        .filter(|r| id2name[&r.id].starts_with("hapA"))
-        .map(|mut r| {
-            r.nodes.iter_mut().for_each(|n| n.cluster = 0);
-            r
+        .iter()
+        .filter(|read| match id_to_asn.get(&read.id) {
+            Some(&asn) if asn == group => read
+                .nodes
+                .iter()
+                .any(|n| n.unit == unit && n.cluster == cluster),
+            _ => false,
         })
-        .collect();
-    let graph = haplotyper::DeBruijnGraph::from_encoded_reads(&reads, 3);
-    let components = graph.clustering(0);
-    eprintln!("{}", components.len());
+    {
+        let units: Vec<_> = read
+            .nodes
+            .iter()
+            .map(|n| format!("{}:{}", n.unit, n.cluster))
+            .collect();
+        println!("{}\t{}", read.id, units.join(" "));
+    }
+
     Ok(())
 }

@@ -1,5 +1,7 @@
 pub trait View {
+    // Show reads with specified name. (name, ID, length, and alignemnts informations.)
     fn view(&self, name: &str) -> Option<()>;
+    // Show unit (unit itself and the segments of the reads aligned to it.)
     fn view_unit(&self, name: &str) -> Option<()>;
 }
 

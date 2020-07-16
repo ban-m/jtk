@@ -212,9 +212,17 @@ fn local_correction_inner(
     reads: Vec<(u64, Vec<(u64, u64)>)>,
     param: (i32, i32, i32),
 ) -> Vec<CorrectedRead> {
+    let rev_for: Vec<_> = {
+        let mut temp = reads.clone();
+        let rev = reads
+            .iter()
+            .map(|&(id, ref read)| (id, read.iter().rev().copied().collect()));
+        temp.extend(rev);
+        temp
+    };
     reads
         .par_iter()
-        .map(|read| correct(read, &reads, param))
+        .map(|read| correct(read, &rev_for, param))
         .collect()
 }
 
@@ -226,7 +234,7 @@ fn correct(
     let pileup = reads
         .iter()
         .filter_map(|&(_, ref query)| alignment(query, nodes, param))
-    //.filter(|&(score, _)| score > 2)
+        //.filter(|&(score, _)| score > 2)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
     for column in pileup.column {
