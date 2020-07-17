@@ -18,9 +18,15 @@ CLUSTERED=${2}.entry.units.encode.clustered.json
 GFA=${2}.gfa
 LOG=${2}.log
 
+if [ $# -gt 2 ];then
+CHUNK_NUM=$3
+else
+CHUNK_NUM=2000
+fi
+
 # cargo build --release
 cat ${TARGET} | ${JTK} entry |\
-    ${JTK} select_unit -vv -t 23 |\
+    ${JTK} select_unit -vv -t 23 --chunk_num ${CHUNK_NUM} |\
     tee ${ENTRY} |\
     ${JTK} extract -t units > ${UNITS}
 

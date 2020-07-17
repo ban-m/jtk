@@ -85,7 +85,7 @@ fn alignment(
         .enumerate()
         .max_by_key(|x| x.1)?;
     let score = *column_max.max(row_max);
-    if score <= mat * 2 {
+    if score <= mat {
         return None;
     }
     let (mut q_pos, mut r_pos) = if row_max < column_max {
@@ -191,13 +191,11 @@ fn correct(mut reads: Vec<&mut EncodedRead>, config: &PolishClusteringConfig) {
         .iter()
         .map(|read| read.nodes.iter().map(|n| (n.unit, n.cluster)).collect())
         .collect();
-    let rev_for_reads = {
-        let mut temp = reads_summary.clone();
+    let rev_for_reads: Vec<_> = {
         let rev = reads_summary
             .iter()
             .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
-        temp.extend(rev);
-        temp
+        reads_summary.iter().cloned().zip(rev).collect()
     };
     let corrected_reads: Vec<_> = reads_summary
         .par_iter()
@@ -215,13 +213,16 @@ fn correct(mut reads: Vec<&mut EncodedRead>, config: &PolishClusteringConfig) {
 
 fn correct_read(
     read: &Vec<(u64, u64)>,
-    reads: &[Vec<(u64, u64)>],
+    reads: &[(Vec<(u64, u64)>, Vec<(u64, u64)>)],
     c: &PolishClusteringConfig,
 ) -> Vec<(u64, u64)> {
     let param = (c.mat_score, c.mismat_score, c.gap_score);
     let pileup = reads
         .iter()
-        .filter_map(|query| alignment(query, read, param))
+        .filter_map(|(forward, rev)| match alignment(forward, read, param) {
+            Some(res) => Some(res),
+            None => alignment(rev, read, param),
+        })
         .fold(Pileup::new(read), |x, (_, y)| x.add(y));
     pileup
         .column
@@ -290,10 +291,16 @@ mod tests {
             unit_len: 40,
         };
         let reads = gen_dataset(&mut rng, conf);
+        let rev_for_reads: Vec<_> = {
+            let rev = reads
+                .iter()
+                .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
+            reads.iter().cloned().zip(rev).collect()
+        };
         let config = PolishClusteringConfig::new(1, 1, -1, -2);
         for read in reads.iter() {
             eprintln!("Correcting:{:?}", read);
-            let res = correct_read(&read, &reads, &config);
+            let res = correct_read(&read, &rev_for_reads, &config);
             eprintln!("Corrected:{:?}", res);
             assert_eq!(read.len(), res.len());
             let cl = res[0].1;

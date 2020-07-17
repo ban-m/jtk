@@ -666,23 +666,6 @@ impl GlobalClustering for definitions::DataSet {
         //     .for_each(|n| n.cluster = mapping[&n.cluster]);
         let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
         debug!("Resulting in {} clusters.", component_num);
-        // let components: Vec<HashSet<_>> = (0..component_num)
-        //     .map(|c| {
-        //         graph
-        //             .nodes
-        //             .iter()
-        //             .filter(|n| n.cluster == c)
-        //             .flat_map(|n| n.kmer.iter())
-        //             .copied()
-        //             .collect()
-        //     })
-        //     .collect();
-        // for i in 0..component_num {
-        //     for j in i + 1..component_num {
-        //         let count = components[i].intersection(&components[j]).count();
-        //         debug!("{}\t{}\t{}", i, j, count);
-        //     }
-        // }
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = reads
             .into_iter()

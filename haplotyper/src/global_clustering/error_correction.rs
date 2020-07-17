@@ -206,7 +206,7 @@ pub fn local_correction(ds: &DataSet, c: &GlobalClusteringConfig) -> Vec<Correct
         })
         .collect();
     debug!("Correcting {} reads...", reads.len());
-    local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score), 2)
+    local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score), 1)
 }
 fn local_correction_inner(
     reads: Vec<(u64, Vec<(u64, u64)>)>,
@@ -214,12 +214,15 @@ fn local_correction_inner(
     thr: i32,
 ) -> Vec<CorrectedRead> {
     let rev_for: Vec<_> = {
-        let mut temp = reads.clone();
         let rev = reads
             .iter()
-            .map(|&(id, ref read)| (id, read.iter().rev().copied().collect()));
-        temp.extend(rev);
-        temp
+            .map(|(_, read)| read.iter().rev().copied().collect());
+        reads
+            .iter()
+            .cloned()
+            .zip(rev)
+            .map(|((id, seq), rev)| (id, seq, rev))
+            .collect()
     };
     reads
         .par_iter()
@@ -229,13 +232,18 @@ fn local_correction_inner(
 
 fn correct(
     &(id, ref nodes): &(u64, Vec<(u64, u64)>),
-    reads: &[(u64, Vec<(u64, u64)>)],
+    reads: &[(u64, Vec<(u64, u64)>, Vec<(u64, u64)>)],
     param: (i32, i32, i32),
     thr: i32,
 ) -> CorrectedRead {
     let pileup = reads
         .iter()
-        .filter_map(|&(_, ref query)| alignment(query, nodes, param))
+        .filter_map(
+            |&(_, ref query, ref rev)| match alignment(query, nodes, param) {
+                Some(res) => Some(res),
+                None => alignment(rev, nodes, param),
+            },
+        )
         .filter(|&(score, _)| score > param.0 * thr)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
@@ -329,10 +337,21 @@ mod tests {
             unit_len: 40,
         };
         let reads = gen_dataset(&mut rng, conf);
+        let rev_for: Vec<_> = {
+            let rev = reads
+                .iter()
+                .map(|(id, read)| read.iter().rev().copied().collect());
+            reads
+                .iter()
+                .cloned()
+                .zip(rev)
+                .map(|((id, seq), rev)| (id, seq, rev))
+                .collect()
+        };
         for read in reads.iter() {
             let prev = read.1.len();
             eprintln!("Correcting:{:?}", read);
-            let res = correct(read, &reads, (1, -1, -2), 0);
+            let res = correct(read, &rev_for, (1, -1, -2), 0);
             let seq: Vec<_> = res.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
             let after = seq.len();
             eprintln!("Corrected:{:?}", seq);

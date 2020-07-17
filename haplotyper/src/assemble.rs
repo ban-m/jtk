@@ -43,6 +43,15 @@ impl Assemble for DataSet {
 
 fn cluster_to_gfa(cl: usize, reads: Vec<&EncodedRead>, c: &AssembleConfig) -> Vec<gfa::Record> {
     debug!("Constructing the {}-th ditch graph", cl);
+    if reads.len() < 10 {
+        debug!("Detected small group:{}", reads.len());
+        debug!("The reads below are discarded.");
+        debug!("ID:Length:Nodes");
+        for read in reads.iter() {
+            debug!("{}:{}:{}", read.id, read.original_length, read.nodes.len());
+        }
+        return vec![];
+    }
     let mut graph = DitchGraph::new(&reads, c);
     graph.collapse_buddle(c);
     debug!("{}", graph);
