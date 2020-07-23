@@ -25,10 +25,6 @@ impl LocalClustering for DataSet {
         mut self,
         c: &ClusteringConfig<F>,
     ) -> Self {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(c.threads)
-            .build_global()
-            .unwrap();
         let max_unit = self.selected_chunks.iter().map(|u| u.id).max().unwrap() + 1;
         let mut pileups: Vec<Vec<(_, _, &mut Node)>> = (0..max_unit).map(|_| Vec::new()).collect();
         for read in self.encoded_reads.iter_mut() {

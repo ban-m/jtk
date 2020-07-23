@@ -11,7 +11,6 @@ const VARIANT_FRACTION: f64 = 0.1;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
-    pub threads: usize,
     pub cluster_num: usize,
     pub subchunk_length: usize,
     pub limit: u64,
@@ -27,17 +26,24 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub gibbs_prior: f64,
     pub stable_limit: u32,
     pub variant_fraction: f64,
+    pub read_type: ReadType,
+}
+
+#[derive(Debug, Clone)]
+pub enum ReadType {
+    CCS,
+    CLR,
+    ONT,
 }
 
 impl ClusteringConfig<fn(u8, u8) -> i32> {
     pub fn with_default(
         dataset: &definitions::DataSet,
-        threads: usize,
         cluster_num: usize,
         subchunk_length: usize,
         limit: u64,
     ) -> Self {
-        let seed = ((threads << cluster_num) * subchunk_length / 17) as u64 * limit;
+        let seed = ((subchunk_length << cluster_num) / 17) as u64 * limit;
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
         let bf = base_freq(&dataset.raw_reads);
         let units: HashMap<u64, &definitions::Unit> =
@@ -51,7 +57,6 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         let config = summarize_operations(opss, bf);
         debug!("Config:{}", config);
         Self {
-            threads,
             cluster_num,
             subchunk_length,
             limit,
@@ -67,6 +72,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             gibbs_prior: GIBBS_PRIOR,
             stable_limit: STABLE_LIMIT,
             variant_fraction: VARIANT_FRACTION,
+            read_type: ReadType::CCS,
         }
     }
     pub fn default() -> Self {
@@ -74,7 +80,6 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         let config = poa_hmm::PACBIO_CONFIG;
         debug!("Config:{}", config);
         Self {
-            threads: 12,
             cluster_num: 3,
             subchunk_length: 100,
             limit: 1000,
@@ -90,7 +95,36 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             gibbs_prior: GIBBS_PRIOR,
             stable_limit: STABLE_LIMIT,
             variant_fraction: VARIANT_FRACTION,
+            read_type: ReadType::CCS,
         }
+    }
+    pub fn ccs(
+        dataset: &definitions::DataSet,
+        cluster_num: usize,
+        subchunk_length: usize,
+        limit: u64,
+    ) -> Self {
+        Self::with_default(dataset, cluster_num, subchunk_length, limit)
+    }
+    pub fn clr(
+        dataset: &definitions::DataSet,
+        cluster_num: usize,
+        subchunk_length: usize,
+        limit: u64,
+    ) -> Self {
+        let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit);
+        c.read_type = ReadType::CLR;
+        c
+    }
+    pub fn ont(
+        dataset: &definitions::DataSet,
+        cluster_num: usize,
+        subchunk_length: usize,
+        limit: u64,
+    ) -> Self {
+        let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit);
+        c.read_type = ReadType::ONT;
+        c
     }
 }
 

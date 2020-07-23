@@ -3,16 +3,14 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 #[derive(Debug, Clone, Copy)]
 pub struct PolishClusteringConfig {
-    pub threads: usize,
     pub mat_score: i32,
     pub mismat_score: i32,
     pub gap_score: i32,
 }
 
 impl PolishClusteringConfig {
-    pub fn new(threads: usize, mat_score: i32, mismat_score: i32, gap_score: i32) -> Self {
+    pub fn new(mat_score: i32, mismat_score: i32, gap_score: i32) -> Self {
         Self {
-            threads,
             mat_score,
             mismat_score,
             gap_score,
@@ -25,10 +23,6 @@ pub trait PolishClustering {
 
 impl PolishClustering for DataSet {
     fn polish_clustering(mut self, c: &PolishClusteringConfig) -> Self {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(c.threads)
-            .build_global()
-            .unwrap();
         let id_to_cluster: HashMap<_, _> = self
             .assignments
             .iter()

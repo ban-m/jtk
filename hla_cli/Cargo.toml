@@ -14,3 +14,4 @@ env_logger = "*"
 serde_json = "*"
 bio_utils = {path = "../bio_utils"}
 haplotyper = {path = "../haplotyper"}
+rayon = "*"

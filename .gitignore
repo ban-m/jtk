@@ -12,6 +12,7 @@
 **/pdf
 **/png
 **/pics
+script/*.sh
 .*
 !.gitignore
 venv

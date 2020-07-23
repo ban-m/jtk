@@ -1,8 +1,9 @@
-use bio_utils::lasttab::LastTAB;
+// use bio_utils::lasttab::LastTAB;
 use clap::{App, Arg, SubCommand};
 use definitions::*;
 use haplotyper::*;
 use std::io::Write;
+use std::io::{BufReader, BufWriter};
 #[macro_use]
 extern crate log;
 fn subcommand_entry() -> App<'static, 'static> {
@@ -82,14 +83,6 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .help("Length of a chunk"),
         )
         .arg(
-            Arg::with_name("chunk_num")
-                .short("n")
-                .long("chunk_num")
-                .takes_value(true)
-                .default_value(&"2000")
-                .help("Number of chunks"),
-        )
-        .arg(
             Arg::with_name("skip_len")
                 .short("s")
                 .long("skip_len")
@@ -114,12 +107,12 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .help("number of threads"),
         )
         .arg(
-            Arg::with_name("kmer_size")
-                .short("k")
-                .long("kmer_size")
+            Arg::with_name("read_type")
+                .long("read_type")
                 .takes_value(true)
-                .default_value(&"7")
-                .help("size of k-mer"),
+                .default_value(&"CCS")
+                .possible_values(&["CCS", "CLR", "ONT"])
+                .help("Read type. CCS, CLR, or ONT."),
         )
 }
 
@@ -127,7 +120,7 @@ fn subcommand_encode() -> App<'static, 'static> {
     SubCommand::with_name("encode")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Encode reads by alignments.")
+        .about("Encode reads by alignments (Internally invoke `LAST` tools).")
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -135,13 +128,12 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("alignment")
-                .short("a")
+            Arg::with_name("threads")
+                .long("threads")
+                .short("t")
+                .help("Number of threads")
                 .takes_value(true)
-                .required(true)
-                .long("alignment")
-                .value_name("ALIGNMENT<LastTAB>")
-                .help("alignment between units and reads (units are references)."),
+                .default_value(&"1"),
         )
 }
 
@@ -226,6 +218,13 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .help("The length of sub-chunks")
                 .default_value(&"100")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("read_type")
+                .long("read_type")
+                .takes_value(true)
+                .default_value(&"CCS")
+                .help("Read type. CCS, CLR, or ONT."),
         )
 }
 
@@ -378,6 +377,137 @@ fn subcommand_assembly() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_pipeline() -> App<'static, 'static> {
+    SubCommand::with_name("pipeline")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Exec JTK pipeline.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("chunk_len")
+                .long("chunk_len")
+                .takes_value(true)
+                .default_value(&"2000")
+                .help("Length of a chunk"),
+        )
+        .arg(
+            Arg::with_name("skip_len")
+                .long("skip_len")
+                .takes_value(true)
+                .default_value(&"2000")
+                .help("Margin between units"),
+        )
+        .arg(
+            Arg::with_name("margin")
+                .long("margin")
+                .takes_value(true)
+                .default_value(&"500")
+                .help("Margin at the both end of a read."),
+        )
+        .arg(
+            Arg::with_name("read_type")
+                .long("read_type")
+                .takes_value(true)
+                .default_value(&"CCS")
+                .possible_values(&["CCS", "CLR", "ONT"])
+                .help("Read type. CCS, CLR, or ONT."),
+        )
+        .arg(
+            Arg::with_name("limit")
+                .long("limit")
+                .required(false)
+                .value_name("LIMIT")
+                .help("Maximum Execution time(sec)")
+                .default_value(&"3000")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("cluster_num")
+                .long("cluster_num")
+                .required(false)
+                .value_name("CLUSTER_NUM")
+                .help("Minimum cluster number.")
+                .default_value(&"2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("subchunk_len")
+                .long("subchunk_len")
+                .required(false)
+                .value_name("SubChunkLength")
+                .help("The length of sub-chunks")
+                .default_value(&"100")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("k")
+                .long("kmer_size")
+                .required(false)
+                .value_name("KMER_SIZE")
+                .help("The size of the kmer")
+                .default_value(&"3")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("min_cluster_size")
+                .long("min_cluster_size")
+                .required(false)
+                .value_name("MIN_CLUSTER_SIZE")
+                .help("The minimum size of a cluster")
+                .default_value(&"50")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("mat_score")
+                .long("match_score")
+                .required(false)
+                .value_name("MATCH_SCORE")
+                .help("The match score")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("mismat_score")
+                .long("mismatch_score")
+                .required(false)
+                .value_name("MISMATCH_SCORE")
+                .help("The mismatch score")
+                .default_value(&"-1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("gap_score")
+                .long("gap_score")
+                .required(false)
+                .value_name("GAP_SCORE")
+                .help("The gap penalty(< 0)")
+                .default_value(&"-2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("gfa")
+                .long("gfa_output_path")
+                .required(true)
+                .value_name("PATH")
+                .help("path to the output gfa file")
+                .takes_value(true),
+        )
+}
+
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
@@ -387,23 +517,14 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Entry");
-    use std::io::BufReader;
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
     debug!("Encoding {} reads", seqs.len());
     let dataset: DataSet = DataSet::new(seqs);
-    use std::io::BufWriter;
-    let stdout = std::io::stdout();
-    let mut wtr = BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            Err(std::io::Error::from(std::io::ErrorKind::Other))
-        }
-        Ok(()) => Ok(()),
-    }
+    flush_file(&dataset)
 }
+
 fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
@@ -412,18 +533,8 @@ fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
         3 | _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    use std::io::BufReader;
     debug!("Extract");
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
+    let dataset = get_input_file()?;
     debug!("Target is {}", matches.value_of("target").unwrap());
     match matches.value_of("target").unwrap() {
         "raw_reads" => {
@@ -468,32 +579,11 @@ fn stats(matches: &clap::ArgMatches) -> std::io::Result<()> {
         3 | _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    use std::io::BufReader;
     debug!("Start Stats step");
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
+    let dataset = get_input_file()?;
     let wtr = std::io::BufWriter::new(std::fs::File::create(matches.value_of("file").unwrap())?);
     dataset.stats(wtr)?;
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            std::process::exit(1);
-        }
-        Ok(()) => {
-            debug!("Finish Stats");
-            Ok(())
-        }
-    }
+    flush_file(&dataset)
 }
 
 fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -504,22 +594,7 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         3 | _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    use std::io::BufReader;
     debug!("Start Selecting Units");
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
-    let chunk_num: usize = matches
-        .value_of("chunk_num")
-        .and_then(|e| e.parse().ok())
-        .expect("Chunk Num");
     let chunk_len: usize = matches
         .value_of("chunk_len")
         .and_then(|e| e.parse().ok())
@@ -536,40 +611,18 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .expect("threads");
-    let k: usize = matches
-        .value_of("kmer_size")
-        .and_then(|e| e.parse().ok())
-        .expect("kmer_size");
-    let config = UnitConfig {
-        chunk_len,
-        chunk_num,
-        margin,
-        skip_len,
-        threads,
-        k,
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    let config = match matches.value_of("read_type").unwrap() {
+        "CCS" => UnitConfig::new_ccs(chunk_len, skip_len, margin),
+        "CLR" => UnitConfig::new_clr(chunk_len, skip_len, margin),
+        "ONT" => UnitConfig::new_ont(chunk_len, skip_len, margin),
+        _ => unreachable!(),
     };
-    let dataset = dataset.select_chunks(&config);
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            std::process::exit(1);
-        }
-        Ok(()) => {
-            debug!("Finish selecting units");
-            Ok(())
-        }
-    }
-}
-
-fn parse_tab_file<P: AsRef<std::path::Path>>(tab_file: P) -> std::io::Result<Vec<LastTAB>> {
-    let lines = std::fs::read_to_string(tab_file)?;
-    Ok(lines
-        .lines()
-        .filter(|e| !e.starts_with('#'))
-        .filter_map(LastTAB::from_line)
-        .collect())
+    let dataset = get_input_file()?.select_chunks_freq(&config);
+    flush_file(&dataset)
 }
 
 fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -581,31 +634,16 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Encoding step");
-    use std::io::BufReader;
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
-    let alignment = parse_tab_file(matches.value_of("alignment").unwrap())?;
-    let dataset = dataset.encode(&alignment);
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            std::process::exit(1);
-        }
-        Ok(()) => {
-            debug!("Finish Encoding step");
-            Ok(())
-        }
-    }
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    let dataset = get_input_file()?.encode(threads);
+    flush_file(&dataset)
 }
 
 fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -617,17 +655,7 @@ fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("View");
-    use std::io::BufReader;
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
+    let dataset = get_input_file()?;
     let name = matches.value_of("name").unwrap();
     match matches.value_of("type") {
         Some(x) if x == "read" => dataset.view(name),
@@ -662,32 +690,19 @@ fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("subchunk_len")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    use std::io::BufReader;
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    let dataset = get_input_file()?;
+    let config = match matches.value_of("read_type").unwrap() {
+        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit),
+        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit),
+        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit),
+        _ => unreachable!(),
     };
-    debug!("Parsed Dataset.");
-    let config = ClusteringConfig::with_default(&dataset, threads, cluster_num, length, limit);
     let dataset = dataset.local_clustering(&config);
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            std::process::exit(1);
-        }
-        Ok(()) => {
-            debug!("Finish Clustering Step");
-            Ok(())
-        }
-    }
+    flush_file(&dataset)
 }
 
 fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -723,39 +738,19 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("gap_score")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    use std::io::BufReader;
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
-    debug!("Parsed Dataset.");
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
     let config = haplotyper::GlobalClusteringConfig::new(
-        threads,
         kmer,
         min_cluster_size,
         mat_score,
         mismat_score,
         gap_score,
     );
-    let dataset = dataset.global_clustering(&config);
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            std::process::exit(1);
-        }
-        Ok(()) => {
-            debug!("Finish Clustering Step");
-            Ok(())
-        }
-    }
+    let dataset = get_input_file()?.global_clustering(&config);
+    flush_file(&dataset)
 }
 
 fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -783,33 +778,13 @@ fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("gap_score")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    use std::io::BufReader;
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
-    debug!("Parsed Dataset.");
-    let config =
-        haplotyper::PolishClusteringConfig::new(threads, mat_score, mismat_score, gap_score);
-    let dataset = dataset.polish_clustering(&config);
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, &dataset) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            std::process::exit(1);
-        }
-        Ok(()) => {
-            debug!("Finish Polish Clustering Step");
-            Ok(())
-        }
-    }
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    let config = haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score);
+    let dataset = get_input_file()?.polish_clustering(&config);
+    flush_file(&dataset)
 }
 
 fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
@@ -821,27 +796,145 @@ fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Assembly step");
-    let _threads: usize = matches
+    let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    use std::io::BufReader;
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let dataset: DataSet = match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            std::process::exit(1);
-        }
-        Ok(res) => res,
-    };
-    debug!("Parsed Dataset.");
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
     let config = AssembleConfig::default();
-    let gfa = dataset.assemble_as_gfa(&config);
+    let gfa = get_input_file()?.assemble_as_gfa(&config);
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());
     writeln!(&mut wtr, "{}", gfa)
+}
+
+fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
+    debug!("Encoding {} reads", seqs.len());
+    let dataset: DataSet = DataSet::new(seqs);
+    debug!("Start Selecting Units");
+    let chunk_len: usize = matches
+        .value_of("chunk_len")
+        .and_then(|e| e.parse().ok())
+        .expect("Chunk len");
+    let margin: usize = matches
+        .value_of("margin")
+        .and_then(|e| e.parse().ok())
+        .expect("Margin");
+    let skip_len: usize = matches
+        .value_of("skip_len")
+        .and_then(|e| e.parse().ok())
+        .expect("Skip Len");
+    let unit_config = match matches.value_of("read_type").unwrap() {
+        "CCS" => UnitConfig::new_ccs(chunk_len, skip_len, margin),
+        "CLR" => UnitConfig::new_clr(chunk_len, skip_len, margin),
+        "ONT" => UnitConfig::new_ont(chunk_len, skip_len, margin),
+        _ => unreachable!(),
+    };
+    let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);
+    debug!("Start Local Clustering step");
+    let cluster_num: usize = matches
+        .value_of("cluster_num")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let limit: u64 = matches
+        .value_of("limit")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let length: usize = matches
+        .value_of("subchunk_len")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let local_config = match matches.value_of("read_type").unwrap() {
+        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit),
+        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit),
+        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit),
+        _ => unreachable!(),
+    };
+    let kmer: usize = matches
+        .value_of("k")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let min_cluster_size = matches
+        .value_of("min_cluster_size")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let mat_score: i32 = matches
+        .value_of("mat_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let mismat_score: i32 = matches
+        .value_of("mismat_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let gap_score: i32 = matches
+        .value_of("gap_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let global_config = haplotyper::GlobalClusteringConfig::new(
+        kmer,
+        min_cluster_size,
+        mat_score,
+        mismat_score,
+        gap_score,
+    );
+    let config = haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score);
+    let dataset = dataset
+        .local_clustering(&local_config)
+        .global_clustering(&global_config)
+        .polish_clustering(&config);
+    let config = AssembleConfig::default();
+    let gfa = dataset.assemble_as_gfa(&config);
+    let gfa_file = matches.value_of("gfa").unwrap();
+    let mut gfa_path = std::path::PathBuf::from(&gfa_file);
+    gfa_path.pop();
+    match std::fs::create_dir_all(gfa_path) {
+        Err(why) => error!("{:?}. Please check gfa path.", why),
+        Ok(_) => match std::fs::File::create(gfa_file).map(BufWriter::new) {
+            Ok(mut wtr) => writeln!(&mut wtr, "{}", gfa)?,
+            _ => {}
+        },
+    }
+    flush_file(&dataset)
+}
+
+fn get_input_file() -> std::io::Result<DataSet> {
+    let stdin = std::io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    match serde_json::de::from_reader(reader) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid Input from STDIN.");
+            Err(std::io::Error::from(std::io::ErrorKind::Other))
+        }
+        Ok(res) => Ok(res),
+    }
+}
+
+fn flush_file(dataset: &DataSet) -> std::io::Result<()> {
+    let stdout = std::io::stdout();
+    let mut wtr = std::io::BufWriter::new(stdout.lock());
+    match serde_json::ser::to_writer_pretty(&mut wtr, dataset) {
+        Err(why) => {
+            eprintln!("{:?}", why);
+            eprintln!("Invalid output to the STDOUT.");
+            std::process::exit(1);
+        }
+        _ => Ok(()),
+    }
 }
 
 fn main() -> std::io::Result<()> {
@@ -860,6 +953,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_global_clustering())
         .subcommand(subcommand_polish_clustering())
         .subcommand(subcommand_assembly())
+        .subcommand(subcommand_pipeline())
         .get_matches();
     match matches.subcommand() {
         ("entry", Some(sub_m)) => entry(sub_m),
@@ -872,6 +966,7 @@ fn main() -> std::io::Result<()> {
         ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
         ("polish_clustering", Some(sub_m)) => polish_clustering(sub_m),
         ("assemble", Some(sub_m)) => assembly(sub_m),
+        ("pipeline", Some(sub_m)) => pipeline(sub_m),
         _ => Ok(()),
     }
 }

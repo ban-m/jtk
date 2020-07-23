@@ -2,12 +2,16 @@ use bio_utils::lasttab;
 use bio_utils::lasttab::LastTAB;
 use std::collections::HashMap;
 pub trait Encode {
-    fn encode(self, alignmnets: &[LastTAB]) -> Self;
+    fn encode(self, threads: usize) -> Self;
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(mut self, alignments: &[LastTAB]) -> Self {
-        let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(alignments);
+    fn encode(mut self, threads: usize) -> Self {
+        let alignments = match last_alignment(&self, threads) {
+            Ok(res) => res,
+            Err(why) => panic!("{:?}:Encoding step", why),
+        };
+        let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(&alignments);
         let encoded_reads: Vec<_> = self
             .raw_reads
             .iter()
@@ -20,6 +24,84 @@ impl Encode for definitions::DataSet {
         self.encoded_reads = encoded_reads;
         self
     }
+}
+fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
+    use rand::{thread_rng, Rng};
+    let mut rng = thread_rng();
+    let id: u64 = rng.gen::<u64>() % 10_000;
+    let mut c_dir = std::env::current_dir()?;
+    use std::io::{BufWriter, Write};
+    c_dir.push(format!("{}", id));
+    debug!("Creating {:?}.", c_dir);
+    std::fs::create_dir(&c_dir)?;
+    // Create reference and reads.
+    let (reference, reads) = {
+        use bio_utils::fasta;
+        let mut reference = c_dir.clone();
+        reference.push("units.fa");
+        let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
+        for unit in ds.selected_chunks.iter() {
+            let id = format!("{}", unit.id);
+            let record = fasta::Record::with_data(&id, &None, unit.seq.as_bytes());
+            wtr.write_record(&record)?;
+        }
+        let mut reads = c_dir.clone();
+        reads.push("reads.fa");
+        let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
+        for read in ds.raw_reads.iter() {
+            let id = format!("{}", read.name);
+            let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
+            wtr.write_record(&record)?;
+        }
+        let reference = reference.into_os_string().into_string().unwrap();
+        let reads = reads.into_os_string().into_string().unwrap();
+        (reference, reads)
+    };
+    let db_name = {
+        let mut temp = c_dir.clone();
+        temp.push("reference");
+        temp.into_os_string().into_string().unwrap()
+    };
+    // Create database - train - align
+    let lastdb = std::process::Command::new("lastdb")
+        .args(&["-R", "00", "-Q", "0", &db_name, &reference])
+        .output()?;
+    if !lastdb.status.success() {
+        panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
+    }
+    let p = format!("{}", p);
+    let last_train = std::process::Command::new("last-train")
+        .args(&["-P", &p, "-Q", "0", &db_name, &reads])
+        .output()
+        .unwrap();
+    if !last_train.status.success() {
+        panic!("last-train-{}", String::from_utf8_lossy(&last_train.stderr));
+    }
+    let param = {
+        let mut param = c_dir.clone();
+        param.push("param.par");
+        let mut wtr = BufWriter::new(std::fs::File::create(&param).unwrap());
+        wtr.write_all(&last_train.stdout).unwrap();
+        wtr.flush().unwrap();
+        param.into_os_string().into_string().unwrap()
+    };
+    let lastal = std::process::Command::new("lastal")
+        .args(&[
+            "-f", "tab", "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name, &reads,
+        ])
+        .output()
+        .unwrap();
+    if !lastal.status.success() {
+        panic!("lastal-{:?}", String::from_utf8_lossy(&lastal.stderr));
+    }
+    let alignments: Vec<_> = String::from_utf8_lossy(&lastal.stdout)
+        .lines()
+        .filter(|e| !e.starts_with("#"))
+        .filter_map(|e| LastTAB::from_line(&e))
+        .collect();
+    debug!("Removing {:?}", c_dir);
+    std::fs::remove_dir_all(c_dir)?;
+    Ok(alignments)
 }
 
 fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>> {

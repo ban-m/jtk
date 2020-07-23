@@ -229,6 +229,7 @@ dependencies = [
  "env_logger",
  "haplotyper",
  "log",
+ "rayon",
  "serde_json",
 ]
 

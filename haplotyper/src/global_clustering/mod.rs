@@ -8,7 +8,6 @@ pub mod path_clustering;
 pub use path_clustering::path_clustering;
 #[derive(Debug, Clone, Copy)]
 pub struct GlobalClusteringConfig {
-    pub threads: usize,
     pub k_mer: usize,
     pub min_cluster_size: usize,
     pub mat_score: i32,
@@ -18,7 +17,6 @@ pub struct GlobalClusteringConfig {
 
 impl GlobalClusteringConfig {
     pub fn new(
-        threads: usize,
         k_mer: usize,
         min_cluster_size: usize,
         mat_score: i32,
@@ -26,7 +24,6 @@ impl GlobalClusteringConfig {
         gap_score: i32,
     ) -> Self {
         Self {
-            threads,
             k_mer,
             min_cluster_size,
             mat_score,
@@ -608,10 +605,6 @@ impl PlugGraph {
 
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(c.threads)
-            .build_global()
-            .unwrap();
         if log_enabled!(log::Level::Debug) {
             let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&length);
