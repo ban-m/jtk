@@ -340,7 +340,7 @@ mod tests {
         let rev_for: Vec<_> = {
             let rev = reads
                 .iter()
-                .map(|(id, read)| read.iter().rev().copied().collect());
+                .map(|(_id, read)| read.iter().rev().copied().collect());
             reads
                 .iter()
                 .cloned()

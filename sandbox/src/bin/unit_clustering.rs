@@ -10,7 +10,7 @@ fn main() -> std::io::Result<()> {
     debug!("Started");
     let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
     debug!("Configuring...");
-    let config = haplotyper::ClusteringConfig::with_default(&dataset, 1, 3, 100, 1000);
+    let config = haplotyper::ClusteringConfig::with_default(&dataset, 1, 100, 1000);
     debug!("Configured.");
     let ref_unit = dataset
         .selected_chunks

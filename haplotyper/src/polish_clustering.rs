@@ -291,7 +291,7 @@ mod tests {
                 .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
             reads.iter().cloned().zip(rev).collect()
         };
-        let config = PolishClusteringConfig::new(1, 1, -1, -2);
+        let config = PolishClusteringConfig::new(1, -1, -2);
         for read in reads.iter() {
             eprintln!("Correcting:{:?}", read);
             let res = correct_read(&read, &rev_for_reads, &config);
