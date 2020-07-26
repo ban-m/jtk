@@ -17,6 +17,7 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     c: &ClusteringConfig<F>,
     use_position: &[bool],
     update_data: &[bool],
+    d: usize,
 ) -> Vec<Vec<POA>> {
     let mut chunks: Vec<_> = vec![vec![vec![]; chain_len]; c.cluster_num];
     let choises: Vec<usize> = (0..c.cluster_num).collect();
@@ -41,7 +42,7 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .map(|(cs, &b)| {
                     cs.shuffle(rng);
                     if b {
-                        POA::from_slice_banded(cs, param, 10)
+                        POA::from_slice_banded(cs, param, d)
                     } else {
                         POA::default()
                     }

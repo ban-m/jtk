@@ -13,12 +13,17 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     c: &ClusteringConfig<F>,
     max_value: f64,
 ) -> (Vec<Vec<Vec<f64>>>, Vec<bool>, f64) {
+    let d = match c.read_type {
+        super::ReadType::CCS => 10,
+        super::ReadType::ONT => 60,
+        super::ReadType::CLR => 60,
+    };
     let update_data = vec![false; data.len()];
     let usepos = vec![true; chain_len];
     let ws = get_cluster_fraction(data, &update_data, c.cluster_num);
     let (betas, lks) = (0..c.repeat_num)
         .map(|_| {
-            let ms = get_models(data, chain_len, rng, c, &usepos, &update_data);
+            let ms = get_models(data, chain_len, rng, c, &usepos, &update_data, d);
             variant_calling(&data, &c.poa_config, &ws, &ms)
         })
         .fold(

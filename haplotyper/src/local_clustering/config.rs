@@ -29,7 +29,7 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub read_type: ReadType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ReadType {
     CCS,
     CLR,

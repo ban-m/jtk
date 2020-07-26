@@ -176,6 +176,11 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     data.iter_mut().for_each(|cs| {
         cs.cluster = rng.gen_range(0, c.cluster_num);
     });
+    let d = match c.read_type {
+        super::ReadType::CCS => 10,
+        super::ReadType::ONT => 60,
+        super::ReadType::CLR => 60,
+    };
     let id = ref_unit;
     let mut beta = c.initial_beta;
     let mut count = 0;
@@ -192,7 +197,7 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                 let update_data: Vec<_> = (0..data.len())
                     .map(|_| rng.gen_bool(c.sample_rate))
                     .collect::<Vec<_>>();
-                let ms = get_models(&data, chain_len, rng, c, &pos, &update_data);
+                let ms = get_models(&data, chain_len, rng, c, &pos, &update_data, d);
                 update_assignment(data, chain_len, c, &update_data, &betas, beta, &ms)
             })
             .sum::<u32>();
