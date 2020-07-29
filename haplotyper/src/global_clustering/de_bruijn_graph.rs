@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
@@ -9,6 +10,7 @@ pub struct DeBruijnGraph {
 
 impl std::fmt::Debug for DeBruijnGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "NumOfNodes:{}", self.nodes.len())?;
         for (idx, node) in self.nodes.iter().enumerate() {
             writeln!(f, "{}\t{:?}", idx, node)?;
         }
@@ -48,7 +50,6 @@ impl std::fmt::Debug for Node {
 }
 
 impl Node {
-    #[allow(dead_code)]
     pub fn new(w: &[definitions::Node]) -> Self {
         let first = {
             let f = w.first().unwrap();
@@ -93,7 +94,6 @@ impl Node {
             cluster,
         }
     }
-
     pub fn push(&mut self, to: usize) {
         match self.edges.iter_mut().find(|e| e.to == to) {
             Some(x) => {
@@ -101,6 +101,9 @@ impl Node {
             }
             None => self.edges.push(Edge { to, weight: 1 }),
         }
+    }
+    fn remove_edge(&mut self, to: usize) {
+        self.edges.retain(|x| x.to != to);
     }
 }
 
@@ -149,11 +152,10 @@ impl std::cmp::PartialEq for Node {
 impl std::cmp::Eq for Node {}
 
 impl DeBruijnGraph {
-    #[allow(dead_code)]
     pub fn from_encoded_reads(reads: &[definitions::EncodedRead], k: usize) -> Self {
         let (mut nodes, mut indexer) = (vec![], HashMap::new());
         for read in reads {
-            for w in read.nodes.windows(k + 1) {
+            for (idx, w) in read.nodes.windows(k + 1).enumerate() {
                 // Calc kmer
                 let from = Node::new(&w[..k]);
                 let to = Node::new(&w[1..]);
@@ -172,10 +174,12 @@ impl DeBruijnGraph {
                 } else {
                     *indexer.get(&to).unwrap()
                 };
-                nodes[from].occ += 1;
-                nodes[to].occ += 1;
                 nodes[from].push(to);
                 nodes[to].push(from);
+                if idx == 0 {
+                    nodes[from].occ += 1;
+                }
+                nodes[to].occ += 1;
             }
         }
 
@@ -252,6 +256,17 @@ impl DeBruijnGraph {
         }
         count.into_iter().max_by_key(|x| x.1).map(|x| x.0)
     }
+    pub fn assign_encoded_read(&self, read: &definitions::EncodedRead) -> Option<usize> {
+        let mut count = HashMap::<_, u32>::new();
+        for w in read.nodes.windows(self.k) {
+            let node = Node::new(w);
+            if let Some(&idx) = self.indexer.get(&node) {
+                *count.entry(self.nodes[idx].cluster).or_default() += 1;
+            }
+        }
+        count.into_iter().max_by_key(|x| x.1).map(|x| x.0)
+    }
+
     pub fn coloring(&mut self, _c: &super::GlobalClusteringConfig) {
         // Coloring node of the de Bruijn graph.
         // As a first try, I just color de Bruijn graph by its connected components.
@@ -319,7 +334,286 @@ impl DeBruijnGraph {
         }
         components
     }
+    pub fn resolve_crossings(&mut self, _reads: &[definitions::EncodedRead]) {}
+    pub fn resolve_bubbles(&mut self, reads: &[definitions::EncodedRead]) {
+        let mut bubble_spec = self.enumerate_bubbles(reads);
+        let mut queue_and_parent: std::collections::VecDeque<_> = bubble_spec
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, e)| e.map(|_| (idx, idx)))
+            .collect();
+        let mut to_be_removed = vec![false; self.nodes.len()];
+        while let Some((idx, parent)) = queue_and_parent.pop_back() {
+            let bubble = match bubble_spec[idx] {
+                Some(x) => x,
+                None => continue,
+            };
+            // search nearest bubble.
+            eprintln!("{:?}", bubble);
+            let pair_pos = match self.search_nearest_bubble(bubble.root, bubble.shoot, &bubble_spec)
+            {
+                Ok(res) => res,
+                Err(ReachedNodeType::Root) => {
+                    // We cut the bubble arbitrary.
+                    let branch = bubble.branches.0;
+                    self.nodes[branch].remove_edge(bubble.shoot);
+                    self.nodes[bubble.shoot].remove_edge(branch);
+                    continue;
+                }
+                Err(ReachedNodeType::BubbleBranch(p)) if parent == p => {
+                    // We reached the same parent again.
+                    // I think this bubble could not be resolved. Just abandon.
+                    continue;
+                }
+                Err(ReachedNodeType::BubbleBranch(p)) => {
+                    // We reached a branch of a bubble. However, thre is
+                    // some progress.
+                    // Hope we can resolve this bubble in the next time.
+                    queue_and_parent.push_front((idx, p));
+                    continue;
+                }
+                Err(ReachedNodeType::ComplexNode) => continue,
+            };
+            // Never panic.
+            let pair = bubble_spec[pair_pos].unwrap();
+            // Resolve node.
+            bubble_spec[idx] = None;
+            bubble_spec[pair_pos] = None;
+            let resolved_pairs = self.resolve_bubble(reads, bubble, pair);
+            // First, remove all the edges from branches to the root.
+            for bbl in &[pair, bubble] {
+                let ((b0, b1), shoot) = (bbl.branches, bbl.shoot);
+                self.nodes[b0].remove_edge(shoot);
+                self.nodes[b1].remove_edge(shoot);
+                self.nodes[shoot].remove_edge(b0);
+                self.nodes[shoot].remove_edge(b1);
+            }
+            // Then, connect anchored pairs.
+            for &(n0, n1) in resolved_pairs.iter() {
+                self.nodes[n0].push(n1);
+                self.nodes[n1].push(n0);
+            }
+            // Then, remove bubbles if the node is branch-free.
+            for &(n0, n1) in resolved_pairs.iter() {
+                if self.nodes[n0].edges.len() <= 2 {
+                    bubble_spec[n0] = None;
+                }
+                if self.nodes[n1].edges.len() <= 2 {
+                    bubble_spec[n1] = None;
+                }
+            }
+            // Then, check bubbles at anchored positions,
+            for &(n0, n1) in resolved_pairs.iter() {
+                if let Some(b) = bubble_spec.get_mut(n0).unwrap().as_mut() {
+                    if b.branches.0 == bubble.shoot || b.branches.0 == pair.shoot {
+                        b.branches.0 = n1;
+                    } else if b.branches.1 == bubble.shoot || b.branches.1 == pair.shoot {
+                        b.branches.1 = n1;
+                    } else if b.root == bubble.shoot || b.root == pair.shoot {
+                        b.root = n1;
+                    }
+                }
+                if let Some(b) = bubble_spec.get_mut(n1).unwrap().as_mut() {
+                    if b.branches.0 == bubble.shoot || b.branches.0 == pair.shoot {
+                        b.branches.0 = n0;
+                    } else if b.branches.1 == bubble.shoot || b.branches.1 == pair.shoot {
+                        b.branches.1 = n0;
+                    } else if b.root == bubble.shoot || b.root == pair.shoot {
+                        b.root = n0;
+                    }
+                }
+            }
+            // Lastly, register all the nodes between two shoots as `removed`
+            let (mut prev, mut current) = (bubble.shoot, bubble.root);
+            while current != pair.shoot {
+                to_be_removed[current] = true;
+                let next_nodes = &self.nodes[current].edges;
+                assert!(next_nodes.len() == 2);
+                let next = next_nodes.iter().find(|e| e.to != prev).unwrap().to;
+                prev = current;
+                current = next;
+            }
+            to_be_removed[bubble.shoot] = true;
+            to_be_removed[pair.shoot] = true;
+        }
+        // Removing nodes.
+        self.remove_nodes(&to_be_removed);
+    }
+    fn resolve_bubble(
+        &self,
+        reads: &[definitions::EncodedRead],
+        bubble0: Bubble,
+        bubble1: Bubble,
+    ) -> Vec<(usize, usize)> {
+        eprintln!("Resolving {:?} {:?}", bubble0, bubble1);
+        // [00->10, 01->10, 00->11, 01->11];
+        let mut connection_counts = [0; 4];
+        // TODO:Need faster algorithm here.
+        for read in reads.iter() {
+            let (mut b00, mut b01) = (false, false);
+            let (mut b10, mut b11) = (false, false);
+            for &node in read
+                .nodes
+                .windows(self.k)
+                .filter_map(|w| self.indexer.get(&Node::new(&w)))
+            {
+                b00 |= node == bubble0.branches.0;
+                b01 |= node == bubble0.branches.1;
+                b10 |= node == bubble1.branches.0;
+                b11 |= node == bubble1.branches.1;
+            }
+            assert!(!b00 || !b01);
+            assert!(!b10 || !b11);
+            if (b00 || b01) && (b10 || b11) {
+                let b0 = if b00 { 0 } else { 1 };
+                let b1 = if b10 { 0 } else { 1 };
+                connection_counts[(b1 << 1) + b0] += 1;
+            }
+        }
+        // TODO: parametrize here.
+        connection_counts.iter_mut().for_each(|x| {
+            if *x <= 1 {
+                *x = 0;
+            }
+        });
+        // Case0: bubble0.0 -> bubble1.0 and bubble0.1 -> bubble1.1
+        let case0 = connection_counts[0] + connection_counts[3];
+        // Case1: bubble0.0 -> bubble1.1 and bubble0.0 -> bubble1.0
+        let case1 = connection_counts[1] + connection_counts[2];
+        let mut pairs = vec![];
+        // TODO: parametrize here.
+        if case0 > case1 {
+            if connection_counts[0] > 0 {
+                pairs.push((bubble0.branches.0, bubble1.branches.0));
+            }
+            if connection_counts[3] > 0 {
+                pairs.push((bubble0.branches.1, bubble1.branches.1));
+            }
+        } else {
+            if connection_counts[1] > 0 {
+                pairs.push((bubble0.branches.1, bubble1.branches.0));
+            }
+            if connection_counts[2] > 0 {
+                pairs.push((bubble0.branches.0, bubble1.branches.1));
+            }
+        }
+        pairs
+    }
+    fn enumerate_bubbles(&self, reads: &[definitions::EncodedRead]) -> Vec<Option<Bubble>> {
+        // Enumerate bubble.
+        let mut edge_counts: Vec<_> = (0..self.nodes.len()).map(|idx| vec![0; idx]).collect();
+        for read in reads.iter() {
+            for w in read.nodes.windows(self.k + 2) {
+                let from = match self.indexer.get(&Node::new(&w[..self.k])) {
+                    Some(&res) => res,
+                    None => continue,
+                };
+                let to = match self.indexer.get(&Node::new(&w[2..])) {
+                    Some(&res) => res,
+                    None => continue,
+                };
+                edge_counts[from.max(to)][from.min(to)] += 1;
+            }
+        }
+        self.nodes
+            .iter()
+            .enumerate()
+            .map(|(shoot, node)| {
+                if node.edges.len() != 3 {
+                    return None;
+                }
+                let (to0, to1, to2) = (node.edges[0].to, node.edges[1].to, node.edges[2].to);
+                let bet0and1 = edge_counts[to0.max(to1)][to0.min(to1)];
+                let bet0and2 = edge_counts[to0.max(to2)][to0.min(to2)];
+                let bet1and2 = edge_counts[to1.max(to2)][to1.min(to2)];
+                let (branches, root) = if bet0and1 == 0 && bet0and2 > 0 && bet1and2 > 0 {
+                    ((to0, to1), to2)
+                } else if bet0and1 > 0 && bet0and2 == 0 && bet1and2 > 0 {
+                    ((to0, to2), to1)
+                } else if bet0and1 > 0 && bet0and2 > 0 && bet1and2 == 0 {
+                    ((to1, to2), to0)
+                } else {
+                    return None;
+                };
+                Some(Bubble {
+                    branches,
+                    shoot,
+                    root,
+                })
+            })
+            .collect()
+    }
+    fn remove_nodes(&mut self, to_be_removed: &[bool]) {
+        let mut next_index = vec![];
+        {
+            let mut index = 0;
+            for &b in to_be_removed.iter() {
+                next_index.push(index);
+                index += !b as usize;
+            }
+        }
+        let mut index = 0;
+        self.nodes.retain(|_| {
+            index += 1;
+            !to_be_removed[index - 1]
+        });
+        self.nodes.iter_mut().for_each(|n| {
+            n.edges.iter_mut().for_each(|x| x.to = next_index[x.to]);
+        });
+        self.indexer
+            .iter_mut()
+            .for_each(|(_, x)| *x = next_index[*x]);
+    }
+    fn search_nearest_bubble(
+        &self,
+        root: usize,
+        shoot: usize,
+        bubbles: &[Option<Bubble>],
+    ) -> Result<usize, ReachedNodeType> {
+        let (mut prev, mut current) = (shoot, root);
+        while bubbles[current].is_none() {
+            let next_nodes = &self.nodes[current].edges;
+            if next_nodes.len() == 1 {
+                // Fail to find pair. But this is bubble is terminating.
+                return Err(ReachedNodeType::Root);
+            } else if next_nodes.len() == 2 {
+                // Proceed.
+                let next = next_nodes.iter().find(|e| e.to != prev).unwrap().to;
+                prev = current;
+                current = next;
+            } else {
+                // Fail to find pair. We've reached very complex bubble.
+                return Err(ReachedNodeType::ComplexNode);
+            }
+        }
+        if bubbles[current].unwrap().root == prev {
+            // We entered current node from the root node. Well done!
+            Ok(current)
+        } else {
+            // We entered current node from either of branches.
+            let (b0, b1) = bubbles[current].unwrap().branches;
+            assert!(prev == b0 || prev == b1);
+            Err(ReachedNodeType::BubbleBranch(current))
+        }
+    }
 }
+
+#[derive(Debug, Clone, Copy)]
+struct Bubble {
+    // Index of bubble.
+    branches: (usize, usize),
+    shoot: usize,
+    // Root. Where this bubble collapse.
+    root: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReachedNodeType {
+    Root,
+    BubbleBranch(usize),
+    ComplexNode,
+}
+
 #[cfg(test)]
 mod tests {
     impl Node {
@@ -371,6 +665,34 @@ mod tests {
             }
             Self { k, nodes, indexer }
         }
+    }
+    fn to_encoded_reads(reads: &[Vec<(u64, u64)>]) -> Vec<definitions::EncodedRead> {
+        reads
+            .iter()
+            .enumerate()
+            .map(|(idx, units)| {
+                let edges = vec![];
+                let nodes: Vec<_> = units
+                    .iter()
+                    .map(|&(unit, cluster)| definitions::Node {
+                        position_from_start: 0,
+                        unit: unit,
+                        cluster: cluster,
+                        seq: String::new(),
+                        is_forward: true,
+                        cigar: vec![],
+                    })
+                    .collect();
+                definitions::EncodedRead {
+                    original_length: 0,
+                    leading_gap: 0,
+                    trailing_gap: 0,
+                    id: idx as u64,
+                    edges: edges,
+                    nodes: nodes,
+                }
+            })
+            .collect()
     }
     #[derive(Clone, Copy, Debug)]
     struct TestConfig {
@@ -696,129 +1018,193 @@ mod tests {
         let correct = correct.max(reads.len() - correct);
         assert!(correct > reads.len() * 8 / 10);
     }
-    // #[allow(dead_code)]
-    // fn path_clustering_test_mcl() {
-    //     use rand::SeedableRng;
-    //     use rand_xoshiro::Xoshiro256StarStar;
-    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
-    //     let conf = TestConfig {
-    //         cl: 2,
-    //         num: 100,
-    //         fail: 0.05,
-    //         skip: 0.05,
-    //         max_len: 15,
-    //         min_len: 8,
-    //         unit_len: 50,
-    //     };
-    //     let (reads, answer) = gen_dataset(&mut rng, conf);
-    //     let graph = DeBruijnGraph::new(&reads, 3);
-    //     let components = graph.clustering_mcl(10, 2);
-    //     assert_eq!(components.len(), 2, "{:?}", components,);
-    //     {
-    //         for c in components.iter() {
-    //             let mut c: Vec<_> = c.iter().copied().collect();
-    //             c.sort();
-    //             eprintln!("{:?}", c);
-    //         }
-    //     }
-
-    //     let preds: Vec<_> = reads
-    //         .iter()
-    //         .filter_map(|read| {
-    //             components
-    //                 .iter()
-    //                 .map(|c| read.iter().filter(|x| c.contains(x)).count())
-    //                 .enumerate()
-    //                 .max_by_key(|x| x.1)
-    //         })
-    //         .map(|x| x.0)
-    //         .collect();
-    //     assert_eq!(preds.len(), answer.len());
-    //     let correct = answer
-    //         .iter()
-    //         .zip(preds.iter())
-    //         .filter(|&(ans, pred)| {
-    //             eprintln!("{}\t{}", ans, pred);
-    //             ans == pred
-    //         })
-    //         .count();
-    //     eprintln!("{}/{}", correct, reads.len());
-    //     let correct = correct.max(reads.len() - correct);
-    //     assert!(correct > reads.len() * 8 / 10);
-    // }
-    // #[allow(dead_code)]
-    // fn path_clustering_test_mcl_with() {
-    //     use rand::SeedableRng;
-    //     use rand_xoshiro::Xoshiro256StarStar;
-    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3205);
-    //     let conf = TestConfig {
-    //         cl: 2,
-    //         num: 200,
-    //         fail: 0.05,
-    //         skip: 0.05,
-    //         max_len: 20,
-    //         min_len: 10,
-    //         unit_len: 50,
-    //     };
-    //     let (reads, answer) = gen_dataset(&mut rng, conf);
-    //     let graph = DeBruijnGraph::new(&reads, 3);
-    //     let components = graph.clustering_mcl(10, 2);
-    //     assert_eq!(components.len(), 2, "{:?}", components,);
-    //     {
-    //         for c in components.iter() {
-    //             let mut c: Vec<_> = c.iter().copied().collect();
-    //             c.sort();
-    //             eprintln!("{:?}", c);
-    //         }
-    //     }
-    //     let init: Vec<_> = reads
-    //         .iter()
-    //         .filter_map(|read| {
-    //             let counts: Vec<_> = components
-    //                 .iter()
-    //                 .map(|c| read.iter().filter(|x| c.contains(x)).count())
-    //                 .collect();
-    //             counts.into_iter().enumerate().max_by_key(|x| x.1)
-    //         })
-    //         .map(|x| x.0)
-    //         .collect();
-    //     assert_eq!(init.len(), answer.len());
-    //     let preds = {
-    //         let units: HashSet<_> = reads.iter().flat_map(|e| e).copied().collect();
-    //         let map: HashMap<(u64, u64), usize> =
-    //             units.into_iter().enumerate().map(|(x, y)| (y, x)).collect();
-    //         let reads: Vec<Vec<_>> = reads
-    //             .iter()
-    //             .map(|read| read.iter().map(|u| map[u]).collect())
-    //             .collect();
-    //         path_clustering::path_clustering(&reads, &init)
-    //     };
-    //     eprintln!("------------------");
-    //     {
-    //         let max = *preds.iter().max().unwrap();
-    //         for cl in 0..=max {
-    //             let mut component: Vec<_> = reads
-    //                 .iter()
-    //                 .zip(preds.iter())
-    //                 .filter(|&(_, &x)| x == cl)
-    //                 .flat_map(|(p, _)| p.iter())
-    //                 .collect::<HashSet<_>>()
-    //                 .into_iter()
-    //                 .collect();
-    //             component.sort();
-    //             eprintln!("{:?}", component);
-    //         }
-    //     }
-    //     let correct = answer
-    //         .iter()
-    //         .zip(preds.iter())
-    //         .filter(|&(ans, pred)| ans == pred)
-    //         .count();
-    //     eprintln!("{}/{}", correct, reads.len());
-    //     for ((read, assign), ans) in reads.iter().zip(preds.iter()).zip(answer.iter()) {
-    //         eprintln!("{}\t{}\t{}", ans, assign, read.len());
-    //     }
-    //     let correct = correct.max(reads.len() - correct);
-    //     assert!(correct > reads.len() * 8 / 10);
-    // }
+    // Bubble resolving functionality.
+    #[test]
+    fn bubble_works() {
+        let reads = vec![vec![(0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        graph.resolve_bubbles(&reads)
+    }
+    fn sample_from_to(
+        template: &[(u64, u64)],
+        from: usize,
+        to: usize,
+        rev: bool,
+    ) -> Vec<(u64, u64)> {
+        if rev {
+            template[from..to].iter().rev().copied().collect()
+        } else {
+            template[from..to].to_vec()
+        }
+    }
+    #[test]
+    fn bubble_case_0() {
+        let templates: Vec<_> = vec![vec![0; 8], vec![1, 1, 0, 0, 0, 0, 1, 0]];
+        let templates: Vec<Vec<(u64, u64)>> = templates
+            .iter()
+            .map(|ts| {
+                ts.iter()
+                    .enumerate()
+                    .map(|(idx, &x)| (idx as u64, x as u64))
+                    .collect()
+            })
+            .collect();
+        let reads = vec![
+            sample_from_to(&templates[0], 0, 8, false),
+            sample_from_to(&templates[1], 0, 8, false),
+            sample_from_to(&templates[0], 0, 8, true),
+            sample_from_to(&templates[1], 0, 8, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        let bubbles = graph.enumerate_bubbles(&reads);
+        let num_bubbles = bubbles.iter().filter(|e| e.is_some()).count();
+        assert_eq!(num_bubbles, 2, "{:?}", graph);
+        let pair_idx = graph.search_nearest_bubble(3, 2, &bubbles).unwrap();
+        let bubble = bubbles[pair_idx].unwrap();
+        assert_eq!(bubble.shoot, 3);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 2, "{:?}", graph);
+    }
+    #[test]
+    fn bubble_case_1() {
+        let templates: Vec<_> = vec![
+            vec![0; 9],
+            vec![0, 1, 0, 0, 0, 0, 1, 1, 0],
+            vec![0, 1, 0, 0, 0, 0, 1, 1, 2],
+        ];
+        let templates: Vec<Vec<(u64, u64)>> = templates
+            .iter()
+            .map(|ts| {
+                ts.iter()
+                    .enumerate()
+                    .map(|(idx, &x)| (idx as u64, x as u64))
+                    .collect()
+            })
+            .collect();
+        let reads = vec![
+            sample_from_to(&templates[0], 0, 9, false),
+            sample_from_to(&templates[1], 0, 9, false),
+            sample_from_to(&templates[2], 0, 9, false),
+            sample_from_to(&templates[0], 0, 9, true),
+            sample_from_to(&templates[1], 0, 9, true),
+            sample_from_to(&templates[2], 0, 9, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        let bubbles = graph.enumerate_bubbles(&reads);
+        let num_bubbles = bubbles.iter().filter(|e| e.is_some()).count();
+        assert_eq!(num_bubbles, 3, "{:?}", graph);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
+    #[test]
+    fn bubble_case_2() {
+        let template_a: Vec<(u64, u64)> = (0..11).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let template_c: Vec<(u64, u64)> = vec![1, 1, 0, 0, 1, 1, 2, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64 + 3, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 11, false),
+            sample_from_to(&template_a, 0, 11, true),
+            sample_from_to(&template_b, 0, 11, false),
+            sample_from_to(&template_b, 0, 11, true),
+            sample_from_to(&template_c, 0, 8, false),
+            sample_from_to(&template_c, 0, 8, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        let bubbles = graph.enumerate_bubbles(&reads);
+        let num_bubbles = bubbles.iter().filter(|e| e.is_some()).count();
+        assert_eq!(num_bubbles, 4, "{:?}", graph);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
+    #[test]
+    fn bubble_case_3() {
+        let template_a: Vec<(u64, u64)> = (0..13).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 13, false),
+            sample_from_to(&template_a, 0, 13, true),
+            sample_from_to(&template_b, 0, 13, false),
+            sample_from_to(&template_b, 0, 13, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        let bubbles = graph.enumerate_bubbles(&reads);
+        let num_bubbles = bubbles.iter().filter(|e| e.is_some()).count();
+        assert_eq!(num_bubbles, 4, "{:?}", graph);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 2, "{:?}", graph);
+    }
+    #[test]
+    fn bubble_case_4() {
+        let template_a: Vec<(u64, u64)> = (0..12).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 12, false),
+            sample_from_to(&template_a, 0, 12, true),
+            sample_from_to(&template_b, 0, 12, false),
+            sample_from_to(&template_b, 0, 12, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        let bubbles = graph.enumerate_bubbles(&reads);
+        let num_bubbles = bubbles.iter().filter(|e| e.is_some()).count();
+        assert_eq!(num_bubbles, 3, "{:?}", graph);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 2, "{:?}", graph);
+    }
+    #[test]
+    fn bubble_case_5() {
+        let template_a: Vec<(u64, u64)> = (0..9).map(|idx| (idx + 2, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let template_c: Vec<(u64, u64)> = vec![2, 2, 1, 1, 0, 0, 0, 0, 0, 1, 1, 2, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 9, false),
+            sample_from_to(&template_a, 0, 9, true),
+            sample_from_to(&template_b, 0, 13, false),
+            sample_from_to(&template_b, 0, 13, true),
+            sample_from_to(&template_c, 0, 13, false),
+            sample_from_to(&template_c, 0, 13, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        let bubbles = graph.enumerate_bubbles(&reads);
+        let num_bubbles = bubbles.iter().filter(|e| e.is_some()).count();
+        assert_eq!(num_bubbles, 4, "{:?}", graph);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
 }

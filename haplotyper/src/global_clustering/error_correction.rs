@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use definitions::DataSet;
 use rayon::prelude::*;
 use std::collections::HashMap;

@@ -1,10 +1,10 @@
 use super::find_union::FindUnion;
 use std::collections::HashMap;
 use std::collections::HashSet;
-mod error_correction;
 mod de_bruijn_graph;
+mod error_correction;
 use de_bruijn_graph::*;
-use error_correction::local_correction;
+// use error_correction::local_correction;
 use error_correction::CorrectedRead;
 pub mod path_clustering;
 pub use path_clustering::path_clustering;
@@ -38,7 +38,6 @@ pub trait GlobalClustering {
     fn global_clustering(self, c: &GlobalClusteringConfig) -> Self;
 }
 
-
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
         if log_enabled!(log::Level::Debug) {
@@ -47,15 +46,16 @@ impl GlobalClustering for definitions::DataSet {
             let tot = length.iter().sum::<usize>();
             eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
         }
-        let reads = local_correction(&self, c);
-        debug!("Corrected reads.");
-        if log_enabled!(log::Level::Debug) {
-            let length: Vec<_> = reads.iter().map(|r| r.nodes.len()).collect();
-            let hist = histgram_viz::Histgram::new(&length);
-            let tot = length.iter().sum::<usize>();
-            eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
-        }
-        let graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
+        // let reads = local_correction(&self, c);
+        // debug!("Corrected reads.");
+        // if log_enabled!(log::Level::Debug) {
+        //     let length: Vec<_> = reads.iter().map(|r| r.nodes.len()).collect();
+        //     let hist = histgram_viz::Histgram::new(&length);
+        //     let tot = length.iter().sum::<usize>();
+        //     eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
+        // }
+        //let graph = DeBruijnGraph::from_corrected_reads(&reads, c.k_mer);
+        let graph = DeBruijnGraph::from_encoded_reads(&self.encoded_reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             let mut count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
             count.sort();
@@ -86,11 +86,12 @@ impl GlobalClustering for definitions::DataSet {
         let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
         debug!("Resulting in {} clusters.", component_num);
         let mut count: HashMap<_, usize> = HashMap::new();
-        let assignments: Vec<_> = reads
-            .into_iter()
+        let assignments: Vec<_> = self
+            .encoded_reads
+            .iter()
             .filter_map(|read| {
                 let id = read.id;
-                graph.assign_corrected_read(&read).map(|cluster| {
+                graph.assign_encoded_read(&read).map(|cluster| {
                     *count.entry(cluster).or_default() += 1;
                     definitions::Assignment { id, cluster }
                 })
@@ -109,8 +110,7 @@ impl GlobalClustering for definitions::DataSet {
     }
 }
 
-
-pub fn remove_collupsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRead> {
+pub fn remove_collapsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRead> {
     let unit_counts = {
         let mut counts: HashMap<_, usize> = HashMap::new();
         for read in reads.iter() {
@@ -176,4 +176,3 @@ pub fn remove_collupsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRea
     debug!("{}->{}", total, total_after);
     reads
 }
-
