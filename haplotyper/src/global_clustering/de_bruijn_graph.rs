@@ -49,51 +49,61 @@ impl std::fmt::Debug for Node {
     }
 }
 
+pub trait AsDeBruijnNode: std::marker::Sized {
+    fn as_node(w: &[Self]) -> Node;
+}
+
+impl AsDeBruijnNode for definitions::Node {
+    fn as_node(w: &[definitions::Node]) -> Node {
+        let first = {
+            let f = w.first().unwrap();
+            (f.unit, f.cluster)
+        };
+        let last = {
+            let l = w.last().unwrap();
+            (l.unit, l.cluster)
+        };
+        let kmer: Vec<_> = if first < last {
+            w.iter().map(|n| (n.unit, n.cluster)).collect()
+        } else {
+            w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
+        };
+        let (edges, occ, cluster) = (vec![], 0, 0);
+        Node {
+            kmer,
+            edges,
+            occ,
+            cluster,
+        }
+    }
+}
+
+impl AsDeBruijnNode for super::error_correction::Unit {
+    fn as_node(w: &[super::error_correction::Unit]) -> Node {
+        let first = {
+            let f = w.first().unwrap();
+            (f.unit, f.cluster)
+        };
+        let last = {
+            let l = w.last().unwrap();
+            (l.unit, l.cluster)
+        };
+        let kmer: Vec<_> = if first < last {
+            w.iter().map(|n| (n.unit, n.cluster)).collect()
+        } else {
+            w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
+        };
+        let (edges, occ, cluster) = (vec![], 0, 0);
+        Node {
+            kmer,
+            edges,
+            occ,
+            cluster,
+        }
+    }
+}
+
 impl Node {
-    pub fn new(w: &[definitions::Node]) -> Self {
-        let first = {
-            let f = w.first().unwrap();
-            (f.unit, f.cluster)
-        };
-        let last = {
-            let l = w.last().unwrap();
-            (l.unit, l.cluster)
-        };
-        let kmer: Vec<_> = if first < last {
-            w.iter().map(|n| (n.unit, n.cluster)).collect()
-        } else {
-            w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
-        };
-        let (edges, occ, cluster) = (vec![], 0, 0);
-        Self {
-            kmer,
-            edges,
-            occ,
-            cluster,
-        }
-    }
-    pub fn from_corrected(w: &[super::error_correction::Unit]) -> Self {
-        let first = {
-            let f = w.first().unwrap();
-            (f.unit, f.cluster)
-        };
-        let last = {
-            let l = w.last().unwrap();
-            (l.unit, l.cluster)
-        };
-        let kmer: Vec<_> = if first < last {
-            w.iter().map(|n| (n.unit, n.cluster)).collect()
-        } else {
-            w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
-        };
-        let (edges, occ, cluster) = (vec![], 0, 0);
-        Self {
-            kmer,
-            edges,
-            occ,
-            cluster,
-        }
-    }
     pub fn push(&mut self, to: usize) {
         match self.edges.iter_mut().find(|e| e.to == to) {
             Some(x) => {
@@ -151,28 +161,37 @@ impl std::cmp::PartialEq for Node {
 }
 impl std::cmp::Eq for Node {}
 
+pub trait IntoDeBruijnNodes {
+    fn into_de_bruijn_nodes(&self, k: usize) -> Vec<Node>;
+}
+
+impl IntoDeBruijnNodes for definitions::EncodedRead {
+    fn into_de_bruijn_nodes(&self, k: usize) -> Vec<Node> {
+        self.nodes.windows(k).map(AsDeBruijnNode::as_node).collect()
+    }
+}
+
 impl DeBruijnGraph {
-    pub fn from_encoded_reads(reads: &[definitions::EncodedRead], k: usize) -> Self {
+    pub fn from<T: IntoDeBruijnNodes>(reads: &[T], k: usize) -> Self {
         let (mut nodes, mut indexer) = (vec![], HashMap::new());
         for read in reads {
-            for (idx, w) in read.nodes.windows(k + 1).enumerate() {
-                // Calc kmer
-                let from = Node::new(&w[..k]);
-                let to = Node::new(&w[1..]);
+            let read = read.into_de_bruijn_nodes(k);
+            for (idx, w) in read.windows(2).enumerate() {
+                let (from, to) = (&w[0], &w[1]);
                 // Check entry.
-                let from = if !indexer.contains_key(&from) {
+                let from = if !indexer.contains_key(from) {
                     indexer.insert(from.clone(), nodes.len());
-                    nodes.push(from);
+                    nodes.push(from.clone());
                     nodes.len() - 1
                 } else {
-                    *indexer.get(&from).unwrap()
+                    *indexer.get(from).unwrap()
                 };
-                let to = if !indexer.contains_key(&to) {
+                let to = if !indexer.contains_key(to) {
                     indexer.insert(to.clone(), nodes.len());
-                    nodes.push(to);
+                    nodes.push(to.clone());
                     nodes.len() - 1
                 } else {
-                    *indexer.get(&to).unwrap()
+                    *indexer.get(to).unwrap()
                 };
                 nodes[from].push(to);
                 nodes[to].push(from);
@@ -182,16 +201,21 @@ impl DeBruijnGraph {
                 nodes[to].occ += 1;
             }
         }
-
         Self { k, nodes, indexer }
+    }
+}
+
+impl DeBruijnGraph {
+    pub fn from_encoded_reads(reads: &[definitions::EncodedRead], k: usize) -> Self {
+        DeBruijnGraph::from(reads, k)
     }
     pub fn from_corrected_reads(reads: &[super::CorrectedRead], k: usize) -> Self {
         let (mut nodes, mut indexer) = (vec![], HashMap::new());
         for read in reads {
             for w in read.nodes.windows(k + 1) {
                 // Calc kmer
-                let from = Node::from_corrected(&w[..k]);
-                let to = Node::from_corrected(&w[1..]);
+                let from = AsDeBruijnNode::as_node(&w[..k]);
+                let to = AsDeBruijnNode::as_node(&w[1..]);
                 // Check entry.
                 let from = if !indexer.contains_key(&from) {
                     indexer.insert(from.clone(), nodes.len());
@@ -249,7 +273,7 @@ impl DeBruijnGraph {
     pub fn assign_corrected_read(&self, read: &super::CorrectedRead) -> Option<usize> {
         let mut count = HashMap::<_, u32>::new();
         for w in read.nodes.windows(self.k) {
-            let node = Node::from_corrected(w);
+            let node = AsDeBruijnNode::as_node(w);
             if let Some(&idx) = self.indexer.get(&node) {
                 *count.entry(self.nodes[idx].cluster).or_default() += 1;
             }
@@ -259,7 +283,7 @@ impl DeBruijnGraph {
     pub fn assign_encoded_read(&self, read: &definitions::EncodedRead) -> Option<usize> {
         let mut count = HashMap::<_, u32>::new();
         for w in read.nodes.windows(self.k) {
-            let node = Node::new(w);
+            let node = AsDeBruijnNode::as_node(w);
             if let Some(&idx) = self.indexer.get(&node) {
                 *count.entry(self.nodes[idx].cluster).or_default() += 1;
             }
@@ -334,7 +358,10 @@ impl DeBruijnGraph {
         }
         components
     }
-    pub fn resolve_crossings(&mut self, _reads: &[definitions::EncodedRead]) {}
+    /// Resolve bubbles in this graph. Note that after calling this function,
+    /// Some internal nodes would be removed, and thus the connection
+    /// between two k-mers might be invalid. Specifically, all node between
+    /// two bubbles would be removed if the bubble can be merged.
     pub fn resolve_bubbles(&mut self, reads: &[definitions::EncodedRead]) {
         let mut bubble_spec = self.enumerate_bubbles(reads);
         let mut queue_and_parent: std::collections::VecDeque<_> = bubble_spec
@@ -349,7 +376,7 @@ impl DeBruijnGraph {
                 None => continue,
             };
             // search nearest bubble.
-            eprintln!("{:?}", bubble);
+            // eprintln!("{:?}", bubble);
             let pair_pos = match self.search_nearest_bubble(bubble.root, bubble.shoot, &bubble_spec)
             {
                 Ok(res) => res,
@@ -445,7 +472,7 @@ impl DeBruijnGraph {
         bubble0: Bubble,
         bubble1: Bubble,
     ) -> Vec<(usize, usize)> {
-        eprintln!("Resolving {:?} {:?}", bubble0, bubble1);
+        // eprintln!("Resolving {:?} {:?}", bubble0, bubble1);
         // [00->10, 01->10, 00->11, 01->11];
         let mut connection_counts = [0; 4];
         // TODO:Need faster algorithm here.
@@ -455,7 +482,7 @@ impl DeBruijnGraph {
             for &node in read
                 .nodes
                 .windows(self.k)
-                .filter_map(|w| self.indexer.get(&Node::new(&w)))
+                .filter_map(|w| self.indexer.get(&AsDeBruijnNode::as_node(&w)))
             {
                 b00 |= node == bubble0.branches.0;
                 b01 |= node == bubble0.branches.1;
@@ -504,11 +531,11 @@ impl DeBruijnGraph {
         let mut edge_counts: Vec<_> = (0..self.nodes.len()).map(|idx| vec![0; idx]).collect();
         for read in reads.iter() {
             for w in read.nodes.windows(self.k + 2) {
-                let from = match self.indexer.get(&Node::new(&w[..self.k])) {
+                let from = match self.indexer.get(&AsDeBruijnNode::as_node(&w[..self.k])) {
                     Some(&res) => res,
                     None => continue,
                 };
-                let to = match self.indexer.get(&Node::new(&w[2..])) {
+                let to = match self.indexer.get(&AsDeBruijnNode::as_node(&w[2..])) {
                     Some(&res) => res,
                     None => continue,
                 };
@@ -552,17 +579,23 @@ impl DeBruijnGraph {
                 index += !b as usize;
             }
         }
+        eprint!("{}->", self.indexer.len());
+        self.indexer.retain(|_, x| {
+            let old_idx = *x;
+            *x = next_index[*x];
+            !to_be_removed[old_idx]
+        });
+        eprintln!("{}", self.indexer.len());
+        eprint!("{}->", self.nodes.len());
         let mut index = 0;
         self.nodes.retain(|_| {
             index += 1;
             !to_be_removed[index - 1]
         });
+        eprintln!("{}", self.nodes.len());
         self.nodes.iter_mut().for_each(|n| {
             n.edges.iter_mut().for_each(|x| x.to = next_index[x.to]);
         });
-        self.indexer
-            .iter_mut()
-            .for_each(|(_, x)| *x = next_index[*x]);
     }
     fn search_nearest_bubble(
         &self,
@@ -596,6 +629,194 @@ impl DeBruijnGraph {
             Err(ReachedNodeType::BubbleBranch(current))
         }
     }
+    /// Resolve crossings in this graph.
+    /// The topology of this graph would be changed, and some
+    /// of the nodes would be removed.
+    pub fn resolve_crossings(&mut self, reads: &[definitions::EncodedRead]) {
+        let mut queue: std::collections::VecDeque<_> = (0..self.nodes.len()).collect();
+        let mut to_be_removed = vec![false; self.nodes.len()];
+        while let Some(idx) = queue.pop_back() {
+            if self.nodes[idx].edges.len() < 4 {
+                continue;
+            }
+            eprintln!("{}", idx);
+            let merged_nodes = match self.resolve_crossing(idx, reads) {
+                Some(res) => res,
+                None => continue,
+            };
+            // for &(contract, ref children) in merged_nodes.iter() {
+            //     eprintln!("{:?}->{}", children, contract);
+            // }
+            // Success resolving.
+            {
+                let children: Vec<_> = self.nodes[idx].edges.iter().map(|e| e.to).collect();
+                for child in children {
+                    self.nodes[child].remove_edge(idx);
+                }
+            }
+            self.nodes[idx].edges.clear();
+            to_be_removed[idx] = true;
+            for (contract, members) in merged_nodes {
+                for member in members {
+                    self.nodes[member].push(contract);
+                    self.nodes[contract].push(member);
+                }
+                queue.push_front(contract);
+            }
+        }
+        eprintln!("{:?}", to_be_removed);
+        self.remove_nodes(&to_be_removed);
+    }
+    fn resolve_crossing(
+        &mut self,
+        center: usize,
+        reads: &[definitions::EncodedRead],
+    ) -> Option<Vec<(usize, Vec<usize>)>> {
+        let neighbors: HashMap<_, _> = self.nodes[center]
+            .edges
+            .iter()
+            .map(|e| e.to)
+            .enumerate()
+            .map(|(idx, orig)| (orig, idx))
+            .collect();
+        // eprintln!("Resolving {}", center);
+        // eprintln!("Mapping:{:?}", neighbors);
+        // Construct the graph
+        let mut counts: HashMap<(usize, usize), u32> = HashMap::new();
+        for read in reads.iter() {
+            let mut occs = vec![false; neighbors.len()];
+            for node in read.nodes.windows(self.k) {
+                if let Some(&res) = self
+                    .indexer
+                    .get(&AsDeBruijnNode::as_node(&node))
+                    .and_then(|idx| neighbors.get(idx))
+                {
+                    occs[res] = true;
+                }
+            }
+            for i in 0..neighbors.len() {
+                for j in (i + 1)..neighbors.len() {
+                    if occs[i] && occs[j] {
+                        *counts.entry((i, j)).or_default() += 1;
+                    }
+                }
+            }
+        }
+        let edges: Vec<_> = counts.into_iter().map(|((x, y), z)| (x, y, z)).collect();
+        eprintln!("Edges:{:?}", edges);
+        let (_, used_edges) = maximum_weight_matching(&edges, neighbors.len());
+        if used_edges.len() <= 1 {
+            return None;
+        }
+        let mut used_node = vec![false; neighbors.len()];
+        for &(n0, n1) in used_edges.iter() {
+            used_node[n0] = true;
+            used_node[n1] = true;
+        }
+        let mut cluseters: Vec<_> = used_edges.into_iter().map(|x| vec![x]).collect();
+        for (node, _) in used_node.iter().enumerate().filter(|x| !x.1) {
+            let (to, _) = match edges
+                .iter()
+                .filter_map(|&(x, y, w)| {
+                    if x == node {
+                        Some((y, w))
+                    } else if y == node {
+                        Some((x, w))
+                    } else {
+                        None
+                    }
+                })
+                .max_by_key(|x| x.1)
+            {
+                Some(res) => res,
+                None => continue,
+            };
+            cluseters
+                .iter_mut()
+                .find(|cl| cl.iter().any(|&(x, y)| x == to || y == to))
+                .unwrap()
+                .push((to, node));
+        }
+        // Reverse index.
+        let to_original_node_index: HashMap<_, _> = neighbors
+            .into_iter()
+            .map(|(orig, idx)| (idx, orig))
+            .collect();
+        Some(
+            cluseters
+                .into_iter()
+                .map(|cl| {
+                    let mut degrees: HashMap<usize, u32> = HashMap::new();
+                    for (n0, n1) in cl {
+                        *degrees.entry(n0).or_default() += 1;
+                        *degrees.entry(n1).or_default() += 1;
+                    }
+                    let (&argmax, _) = degrees.iter().max_by_key(|x| x.1).unwrap();
+                    let contract = to_original_node_index[&argmax];
+                    degrees.remove(&argmax).unwrap();
+                    let members: Vec<_> = degrees
+                        .keys()
+                        .map(|idx| to_original_node_index[idx])
+                        .collect();
+                    (contract, members)
+                })
+                .collect(),
+        )
+    }
+}
+
+fn maximum_weight_matching(
+    edges: &[(usize, usize, u32)],
+    nodes: usize,
+) -> (u32, Vec<(usize, usize)>) {
+    let mut status = vec![0; edges.len()];
+    let (mut max, mut argmax) = (0, vec![]);
+    let mut available = vec![true; nodes];
+    let mut score = 0;
+    let mut stack = vec![0];
+    while !stack.is_empty() {
+        let current = *stack.last().unwrap();
+        if current == edges.len() {
+            if max <= score {
+                max = score;
+                argmax = status.clone();
+            }
+        } else if status[current] == 0 {
+            let (n0, n1, w) = edges[current];
+            if available[n0] && available[n1] {
+                status[current] = 1;
+                stack.push(current + 1);
+                score += w;
+                available[n0] = false;
+                available[n1] = false;
+                continue;
+            } else {
+                status[current] = 2;
+                stack.push(current + 1);
+                continue;
+            }
+        } else if status[current] == 1 {
+            let (n0, n1, w) = edges[current];
+            assert!(!available[n0] && !available[n1]);
+            score -= w;
+            available[n0] = true;
+            available[n1] = true;
+            status[current] = 2;
+            stack.push(current + 1);
+            continue;
+        } else {
+            assert_eq!(status[current], 2);
+            status[current] = 0;
+        }
+        stack.pop();
+    }
+    assert_eq!(argmax.len(), edges.len());
+    let edges: Vec<_> = edges
+        .iter()
+        .zip(argmax)
+        .filter_map(|(&(n0, n1, _), status)| if status == 1 { Some((n0, n1)) } else { None })
+        .collect();
+    (max, edges)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1206,5 +1427,212 @@ mod tests {
         assert_eq!(num_bubbles, 4, "{:?}", graph);
         graph.resolve_bubbles(&reads);
         assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
+    #[test]
+    fn maximum_weight_matching_test() {
+        let nodes = 4;
+        let edges = vec![(0, 1, 2), (2, 3, 2)];
+        let (score, result) = maximum_weight_matching(&edges, nodes);
+        assert_eq!(result.len(), 2);
+        assert_eq!(score, 4);
+        let nodes = 4;
+        let edges = vec![
+            (0, 1, 1),
+            (1, 2, 1),
+            (2, 3, 1),
+            (3, 0, 1),
+            (0, 2, 3),
+            (1, 3, 3),
+        ];
+        let (score, result) = maximum_weight_matching(&edges, nodes);
+        assert_eq!(result.len(), 2);
+        assert_eq!(score, 6);
+        let nodes = 6;
+        let edges = vec![
+            (0, 1, 4),
+            (0, 2, 2),
+            (1, 2, 2),
+            (2, 3, 8),
+            (3, 4, 2),
+            (4, 5, 5),
+            (3, 5, 2),
+        ];
+        let (score, result) = maximum_weight_matching(&edges, nodes);
+        assert_eq!(result.len(), 3);
+        assert_eq!(score, 17);
+    }
+    #[test]
+    fn resolve_crossing_0() {
+        let template_a: Vec<(u64, u64)> = (0..7).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![0, 1, 0, 0, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 7, false),
+            sample_from_to(&template_a, 0, 7, true),
+            sample_from_to(&template_b, 0, 7, false),
+            sample_from_to(&template_b, 0, 7, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        graph.resolve_crossings(&reads);
+        assert_eq!(graph.clustering(0).len(), 2, "{:?}", graph);
+    }
+    #[test]
+    fn resolve_crossing_1() {
+        let template_a: Vec<(u64, u64)> = (0..7).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![0, 1, 0, 0, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let template_c: Vec<(u64, u64)> = vec![0, 2, 0, 0, 0, 2, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 7, false),
+            sample_from_to(&template_a, 0, 7, true),
+            sample_from_to(&template_b, 0, 7, false),
+            sample_from_to(&template_b, 0, 7, true),
+            sample_from_to(&template_c, 0, 7, false),
+            sample_from_to(&template_c, 0, 7, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        graph.resolve_crossings(&reads);
+        assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
+    #[test]
+    fn resolve_crossing_2() {
+        let template_a: Vec<(u64, u64)> = (0..7).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![0, 1, 0, 0, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let template_c: Vec<(u64, u64)> = vec![0, 1, 0, 0, 0, 2, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 7, false),
+            sample_from_to(&template_a, 0, 7, true),
+            sample_from_to(&template_b, 0, 7, false),
+            sample_from_to(&template_b, 0, 7, true),
+            sample_from_to(&template_c, 0, 7, false),
+            sample_from_to(&template_c, 0, 7, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        graph.resolve_crossings(&reads);
+        assert_eq!(graph.clustering(0).len(), 2, "{:?}", graph);
+    }
+    #[test]
+    fn resolve_crossing_3() {
+        let template_a: Vec<(u64, u64)> = (0..7).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![0, 1, 0, 0, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let template_c: Vec<(u64, u64)> = vec![0, 2, 0, 0, 0, 2, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let templates: Vec<Vec<(u64, u64)>> = vec![
+            vec![0, 0, 0, 0, 0, 1, 0],
+            vec![0, 2, 0, 0, 0, 1, 0],
+            vec![0, 0, 0, 0, 0, 2, 0],
+            vec![0, 1, 0, 0, 0, 0, 0],
+        ]
+        .into_iter()
+        .map(|template| {
+            template
+                .into_iter()
+                .enumerate()
+                .map(|(idx, c)| (idx as u64, c))
+                .collect()
+        })
+        .collect();
+        let mut reads = vec![
+            sample_from_to(&template_a, 0, 7, false),
+            sample_from_to(&template_a, 0, 7, true),
+            sample_from_to(&template_b, 0, 7, false),
+            sample_from_to(&template_b, 0, 7, true),
+            sample_from_to(&template_c, 0, 7, false),
+            sample_from_to(&template_c, 0, 7, true),
+            sample_from_to(&template_a, 0, 7, false),
+            sample_from_to(&template_a, 0, 7, true),
+            sample_from_to(&template_b, 0, 7, false),
+            sample_from_to(&template_b, 0, 7, true),
+            sample_from_to(&template_c, 0, 7, false),
+            sample_from_to(&template_c, 0, 7, true),
+        ];
+        for template in templates {
+            reads.push(sample_from_to(&template, 0, 7, true));
+            reads.push(sample_from_to(&template, 0, 7, false));
+        }
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        graph.resolve_crossings(&reads);
+        assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
+    #[test]
+    fn resolve_crossing_4() {
+        let template_a: Vec<(u64, u64)> = (0..7).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![0, 1, 0, 0, 0, 0, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let template_c: Vec<(u64, u64)> = vec![0, 2, 0, 0, 0, 2, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 7, false),
+            sample_from_to(&template_a, 0, 7, true),
+            sample_from_to(&template_b, 0, 7, false),
+            sample_from_to(&template_b, 0, 7, true),
+            sample_from_to(&template_c, 0, 7, false),
+            sample_from_to(&template_c, 0, 7, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("{:?}", graph);
+        graph.resolve_crossings(&reads);
+        assert_eq!(graph.clustering(0).len(), 3, "{:?}", graph);
+    }
+    #[test]
+    fn bubble_resolve_and_crossing_resolve() {
+        let template_a: Vec<(u64, u64)> = (0..12).map(|idx| (idx, 0)).collect();
+        let template_b: Vec<(u64, u64)> = vec![1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| (idx as u64, c))
+            .collect();
+        let reads = vec![
+            sample_from_to(&template_a, 0, 11, false),
+            sample_from_to(&template_a, 0, 11, true),
+            sample_from_to(&template_b, 0, 11, false),
+            sample_from_to(&template_b, 0, 11, true),
+        ];
+        let reads = to_encoded_reads(&reads);
+        let mut graph = DeBruijnGraph::from_encoded_reads(&reads, 3);
+        eprintln!("Before:{:?}", graph);
+        graph.resolve_crossings(&reads);
+        graph.resolve_bubbles(&reads);
+        assert_eq!(graph.clustering(0).len(), 2, "{:?}", graph);
     }
 }
