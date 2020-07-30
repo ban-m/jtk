@@ -17,6 +17,7 @@ impl PolishClusteringConfig {
         }
     }
 }
+/// Polishing local clustering by all vs all alignment.
 pub trait PolishClustering {
     fn polish_clustering(self, c: &PolishClusteringConfig) -> Self;
 }

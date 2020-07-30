@@ -1,12 +1,5 @@
 use de_bruijn_graph::*;
 use std::collections::HashMap;
-use std::collections::HashSet;
-mod error_correction;
-// use error_correction::local_correction;
-use error_correction::CorrectedRead;
-pub mod path_clustering;
-pub use path_clustering::path_clustering;
-
 struct ReadWrapper<'a>(&'a definitions::EncodedRead);
 
 impl<'a> ReadWrapper<'a> {
@@ -40,31 +33,6 @@ impl<'a> IntoDeBruijnNodes for ReadWrapper<'a> {
                 Node::new(kmer)
             })
             .collect()
-    }
-}
-
-impl IntoDeBruijnNodes for CorrectedRead {
-    fn into_de_bruijn_nodes(&self, k: usize) -> Vec<Node> {
-        self.nodes.windows(k).map(AsDeBruijnNode::as_node).collect()
-    }
-}
-
-impl AsDeBruijnNode for error_correction::Unit {
-    fn as_node(w: &[error_correction::Unit]) -> Node {
-        let first = {
-            let f = w.first().unwrap();
-            (f.unit, f.cluster)
-        };
-        let last = {
-            let l = w.last().unwrap();
-            (l.unit, l.cluster)
-        };
-        let kmer: Vec<_> = if first < last {
-            w.iter().map(|n| (n.unit, n.cluster)).collect()
-        } else {
-            w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
-        };
-        Node::new(kmer)
     }
 }
 
@@ -119,13 +87,17 @@ impl GlobalClustering for definitions::DataSet {
             eprintln!("The rest({}-mer) nodes\n{}", c.k_mer, hist.format(20, 40));
         }
         let mut graph = graph.clean_up_auto();
-        //let mut graph = graph;
+        graph.resolve_crossings(&reads);
+        graph.resolve_bubbles(&reads);
         if log_enabled!(log::Level::Debug) {
-            let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
+            let mut count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
+            count.sort();
+            let top_15: Vec<_> = count.iter().rev().take(15).collect();
+            debug!("Top 15 Occurences:{:?}", top_15);
+            let last = **top_15.last().unwrap();
+            let count: Vec<_> = count.into_iter().filter(|&x| x < last).collect();
             let hist = histgram_viz::Histgram::new(&count);
-            eprintln!("Node({}-mer) occurences\n{}", c.k_mer, hist.format(20, 40));
-        }
-        if log_enabled!(log::Level::Debug) {
+            eprintln!("The rest({}-mer) nodes\n{}", c.k_mer, hist.format(20, 40));
             let mut count: HashMap<_, u32> = HashMap::new();
             for n in graph.nodes.iter() {
                 *count.entry(n.edges.len()).or_default() += 1;
@@ -135,7 +107,7 @@ impl GlobalClustering for definitions::DataSet {
             eprintln!("Degree Count\n{:?}", count);
         }
         graph.coloring();
-        let component_num = graph.nodes.iter().map(|n| n.cluster).max().unwrap() + 1;
+        let component_num = graph.nodes.iter().filter_map(|n| n.cluster).max().unwrap() + 1;
         debug!("Resulting in {} clusters.", component_num);
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = reads
@@ -159,71 +131,4 @@ impl GlobalClustering for definitions::DataSet {
         }
         self
     }
-}
-
-pub fn remove_collapsed_units(mut reads: Vec<CorrectedRead>) -> Vec<CorrectedRead> {
-    let unit_counts = {
-        let mut counts: HashMap<_, usize> = HashMap::new();
-        for read in reads.iter() {
-            for node in read.nodes.iter() {
-                *counts.entry(node.unit).or_default() += 1;
-            }
-        }
-        counts
-    };
-    if log_enabled!(log::Level::Debug) {
-        let counts: Vec<_> = unit_counts.values().copied().collect();
-        let hist = histgram_viz::Histgram::new(&counts);
-        eprintln!("Unit Histgram:{}\n{}", counts.len(), hist.format(20, 40));
-    }
-    let mean = unit_counts.values().copied().sum::<usize>() / unit_counts.len();
-    debug!("Removing units having occurence more than {}", mean / 2);
-    debug!("And single component.");
-    let mut char_count: HashMap<u64, HashMap<u64, usize>> = HashMap::new();
-    for read in reads.iter() {
-        for node in read.nodes.iter() {
-            *char_count
-                .entry(node.unit)
-                .or_default()
-                .entry(node.cluster)
-                .or_default() += 1;
-        }
-    }
-    // Determine the units to be discarded.
-    let discarded: HashSet<u64> = char_count
-        .iter()
-        .filter_map(|(unit, counts)| {
-            let sum = counts.values().copied().sum::<usize>();
-            let num: Vec<_> = counts.values().collect();
-            debug!("{:?}->{}", num, counts.len() <= 1 && sum > mean / 2);
-            if counts.len() <= 1 && sum > mean / 2 {
-                Some(*unit)
-            } else {
-                None
-            }
-        })
-        .collect();
-    debug!(
-        "Discarding {} units out of {}.",
-        discarded.len(),
-        char_count.len()
-    );
-    let count = reads
-        .iter()
-        .map(|read| {
-            read.nodes
-                .iter()
-                .filter(|n| discarded.contains(&n.unit))
-                .count()
-        })
-        .sum::<usize>();
-    debug!("Dropping {} units in the dataset in total", count);
-    // Discard collupsed units.
-    let total = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
-    reads
-        .iter_mut()
-        .for_each(|read| read.nodes.retain(|n| !discarded.contains(&n.unit)));
-    let total_after = reads.iter().map(|r| r.nodes.len()).sum::<usize>();
-    debug!("{}->{}", total, total_after);
-    reads
 }

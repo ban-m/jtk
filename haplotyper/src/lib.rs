@@ -7,6 +7,7 @@ mod find_union;
 mod global_clustering;
 mod local_clustering;
 mod polish_clustering;
+mod polish_units;
 mod view;
 #[macro_use]
 extern crate log;
@@ -21,6 +22,7 @@ pub use determine_units::*;
 pub use global_clustering::*;
 pub use local_clustering::*;
 pub use polish_clustering::*;
+pub use polish_units::*;
 pub use stats::Stats;
 #[cfg(test)]
 mod tests {

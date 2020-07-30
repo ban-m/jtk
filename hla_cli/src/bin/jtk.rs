@@ -116,6 +116,42 @@ fn subcommand_select_unit() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_polish_units() -> App<'static, 'static> {
+    SubCommand::with_name("polish_units")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Polishing units by consuming encoded reads")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .takes_value(true)
+                .default_value(&"1")
+                .help("number of threads"),
+        )
+        .arg(
+            Arg::with_name("read_type")
+                .long("read_type")
+                .takes_value(true)
+                .default_value(&"CCS")
+                .possible_values(&["CCS", "CLR", "ONT"])
+                .help("Read type. CCS, CLR, or ONT."),
+        )
+        .arg(
+            Arg::with_name("consensus_size")
+                .long("consensus_size")
+                .takes_value(true)
+                .default_value(&"10")
+                .help("The number of string to take consensus"),
+        )
+}
+
 fn subcommand_encode() -> App<'static, 'static> {
     SubCommand::with_name("encode")
         .version("0.1")
@@ -419,6 +455,18 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .help("Margin at the both end of a read."),
         )
         .arg(
+            Arg::with_name("polish_units")
+                .long("polish_units")
+                .help("If given, polish units."),
+        )
+        .arg(
+            Arg::with_name("consensus_size")
+                .long("consensus_size")
+                .takes_value(true)
+                .default_value(&"10")
+                .help("The number of string to take consensus"),
+        )
+        .arg(
             Arg::with_name("read_type")
                 .long("read_type")
                 .takes_value(true)
@@ -646,6 +694,33 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
     flush_file(&dataset)
 }
 
+fn polish_units(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    let level = match matches.occurrences_of("verbose") {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        3 | _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    debug!("Start polishing units");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    let consensus_size: usize = matches
+        .value_of("consensus_size")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    let readtype = matches.value_of("read_type").unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    let config = PolishUnitConfig::new(readtype, consensus_size);
+    let dataset = get_input_file()?.polish_units(&config);
+    flush_file(&dataset)
+}
+
 fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
@@ -845,6 +920,17 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         _ => unreachable!(),
     };
     let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);
+    let dataset = if matches.is_present("polish_units") {
+        let read_type = matches.value_of("read_type").unwrap();
+        let consensus_size: usize = matches
+            .value_of("consensus_size")
+            .and_then(|e| e.parse().ok())
+            .expect("Skip Len");
+        let polish_config = PolishUnitConfig::new(read_type, consensus_size);
+        dataset.polish_units(&polish_config).encode(threads)
+    } else {
+        dataset
+    };
     debug!("Start Local Clustering step");
     let cluster_num: usize = matches
         .value_of("cluster_num")
@@ -947,6 +1033,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_extract())
         .subcommand(subcommand_stats())
         .subcommand(subcommand_select_unit())
+        .subcommand(subcommand_polish_units())
         .subcommand(subcommand_encode())
         .subcommand(subcommand_view())
         .subcommand(subcommand_local_clustering())
@@ -960,6 +1047,7 @@ fn main() -> std::io::Result<()> {
         ("extract", Some(sub_m)) => extract(sub_m),
         ("stats", Some(sub_m)) => stats(sub_m),
         ("select_unit", Some(sub_m)) => select_unit(sub_m),
+        ("polish_units", Some(sub_m)) => polish_units(sub_m),
         ("encode", Some(sub_m)) => encode(sub_m),
         ("view", Some(sub_m)) => view(sub_m),
         ("local_clustering", Some(sub_m)) => local_clustering(sub_m),

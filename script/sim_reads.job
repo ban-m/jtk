@@ -5,6 +5,10 @@ for mut_rate in 15000 6000 3000 1500 600 300
 do
     read=/data/hacone/randseq/mut${mut_rate}/CCS_reads.${mut_rate}.1M.fa
     output=${ROOT}/result/mut${mut_rate}/jtk
+    if [ -d ${output} ]
+    then
+        rm -r ${output}
+    fi
     mkdir -p ${output}
     qsub -o ${output}/CCS.${mut_rate}.1M.out -e ${output}/CCS.${mut_rate}.1M.log\
          ./script/pipeline.sh \
