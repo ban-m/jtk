@@ -5,6 +5,7 @@ members = [
         "bio_utils",
         "haplotyper",
         "partial_order_alignment",
+        "de_bruijn_graph",
         "sandbox",
         "histgram_viz",
         "mcl",

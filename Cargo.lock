@@ -137,6 +137,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "de_bruijn_graph"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rand",
+ "rand_xoshiro",
+]
+
+[[package]]
 name = "definitions"
 version = "0.1.0"
 dependencies = [
@@ -191,6 +200,7 @@ name = "haplotyper"
 version = "0.1.0"
 dependencies = [
  "bio_utils",
+ "de_bruijn_graph",
  "definitions",
  "env_logger",
  "gfa",

@@ -16,6 +16,7 @@ rayon = "*"
 rand = "*"
 rand_xoshiro = "*"
 poa_hmm = {path = "../partial_order_alignment", features = ["poa_simd"]}
+de_bruijn_graph = {path = "../de_bruijn_graph"}
 nalgebra  = "*"
 serde_json = "*"
 histgram_viz = {path = "../histgram_viz"}
