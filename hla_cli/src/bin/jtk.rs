@@ -91,6 +91,14 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .help("Margin between units"),
         )
         .arg(
+            Arg::with_name("take_num")
+                .short("n")
+                .long("take_num")
+                .takes_value(true)
+                .default_value(&"2000")
+                .help("Number of units. 2*Genome size / chunk_len would be nice."),
+        )
+        .arg(
             Arg::with_name("margin")
                 .short("m")
                 .long("margin")
@@ -455,6 +463,13 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .help("Margin at the both end of a read."),
         )
         .arg(
+            Arg::with_name("take_num")
+                .long("take_num")
+                .takes_value(true)
+                .default_value(&"2000")
+                .help("Number of units. 2*Genome size / chunk_len would be nice."),
+        )
+        .arg(
             Arg::with_name("polish_units")
                 .long("polish_units")
                 .help("If given, polish units."),
@@ -655,6 +670,10 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("skip_len")
         .and_then(|e| e.parse().ok())
         .expect("Skip Len");
+    let take_num: usize = matches
+        .value_of("take_num")
+        .and_then(|e| e.parse().ok())
+        .expect("Take num");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse().ok())
@@ -664,12 +683,12 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .build_global()
         .unwrap();
     let config = match matches.value_of("read_type").unwrap() {
-        "CCS" => UnitConfig::new_ccs(chunk_len, skip_len, margin),
-        "CLR" => UnitConfig::new_clr(chunk_len, skip_len, margin),
-        "ONT" => UnitConfig::new_ont(chunk_len, skip_len, margin),
+        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin),
+        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin),
+        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin),
         _ => unreachable!(),
     };
-    let dataset = get_input_file()?.select_chunks_freq(&config);
+    let dataset = get_input_file()?.select_chunks(&config);
     flush_file(&dataset)
 }
 
@@ -913,10 +932,14 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("skip_len")
         .and_then(|e| e.parse().ok())
         .expect("Skip Len");
+    let take_num: usize = matches
+        .value_of("take_num")
+        .and_then(|e| e.parse().ok())
+        .expect("take num");
     let unit_config = match matches.value_of("read_type").unwrap() {
-        "CCS" => UnitConfig::new_ccs(chunk_len, skip_len, margin),
-        "CLR" => UnitConfig::new_clr(chunk_len, skip_len, margin),
-        "ONT" => UnitConfig::new_ont(chunk_len, skip_len, margin),
+        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin),
+        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin),
+        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin),
         _ => unreachable!(),
     };
     let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);

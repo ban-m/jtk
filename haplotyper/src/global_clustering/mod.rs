@@ -106,8 +106,7 @@ impl GlobalClustering for definitions::DataSet {
             count.sort_by_key(|x| x.0);
             eprintln!("Degree Count\n{:?}", count);
         }
-        graph.coloring();
-        let component_num = graph.nodes.iter().filter_map(|n| n.cluster).max().unwrap() + 1;
+        let component_num = graph.coloring();
         debug!("Resulting in {} clusters.", component_num);
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = reads

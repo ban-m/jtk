@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct UnitConfig {
     pub chunk_len: usize,
     pub skip_len: usize,
+    pub unit_num: usize,
     pub margin: usize,
     pub k: usize,
     pub jaccard_thr: f64,
@@ -11,46 +12,45 @@ pub struct UnitConfig {
     pub hits_thr: f64,
     pub hits_range: usize,
 }
-
-const DEFAULT_JCD: f64 = 0.7;
-const DEFAULT_ALN: f64 = 0.95;
 const DEFAULT_RNG: usize = 200;
-const DEFAULT_HITS: f64 = 0.8;
 impl UnitConfig {
-    pub fn new_ccs(chunk_len: usize, skip_len: usize, margin: usize) -> Self {
+    pub fn new_ccs(chunk_len: usize, unit_num: usize, skip_len: usize, margin: usize) -> Self {
         Self {
             chunk_len,
             skip_len,
             margin,
             k: 7,
-            jaccard_thr: DEFAULT_JCD,
-            alignment_thr: DEFAULT_ALN,
+            unit_num,
+            jaccard_thr: 0.8,
+            alignment_thr: 0.90,
             hits_range: DEFAULT_RNG,
-            hits_thr: DEFAULT_HITS,
+            hits_thr: 0.3,
         }
     }
-    pub fn new_clr(chunk_len: usize, skip_len: usize, margin: usize) -> Self {
+    pub fn new_clr(chunk_len: usize, unit_num: usize, skip_len: usize, margin: usize) -> Self {
         Self {
             chunk_len,
             skip_len,
             margin,
-            k: 4,
-            jaccard_thr: 0.5,
+            k: 6,
+            unit_num,
+            jaccard_thr: 0.35,
             alignment_thr: 0.8,
             hits_range: DEFAULT_RNG,
-            hits_thr: 0.6,
+            hits_thr: 0.3,
         }
     }
-    pub fn new_ont(chunk_len: usize, skip_len: usize, margin: usize) -> Self {
+    pub fn new_ont(chunk_len: usize, unit_num: usize, skip_len: usize, margin: usize) -> Self {
         Self {
             chunk_len,
             skip_len,
             margin,
-            k: 4,
-            jaccard_thr: 0.5,
+            k: 6,
+            unit_num,
+            jaccard_thr: 0.35,
             alignment_thr: 0.8,
             hits_range: DEFAULT_RNG,
-            hits_thr: 0.6,
+            hits_thr: 0.3,
         }
     }
 }
@@ -58,45 +58,67 @@ impl UnitConfig {
 pub trait DetermineUnit {
     // fn select_chunks_num(self, config: &UnitConfig) -> Self;
     fn select_chunks_freq(self, config: &UnitConfig) -> Self;
+    fn select_chunks(self, config: &UnitConfig) -> Self;
 }
 
 use definitions::*;
 impl DetermineUnit for definitions::DataSet {
-    // fn select_chunks_num(mut self, config: &UnitConfig) -> Self {
-    //     rayon::ThreadPoolBuilder::new()
-    //         .num_threads(config.threads)
-    //         .build_global()
-    //         .unwrap();
-    //     let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
-    //     reads.sort_by_key(|r| r.seq().len());
-    //     reads.reverse();
-    //     debug!("Reads are sorted. {} reads.", reads.len());
-    //     let selected_chunks: Vec<Vec<u8>> = reads
-    //         .iter()
-    //         .flat_map(|r| split_into(r, config))
-    //         .take(config.chunk_num)
-    //         .map(|e| e.to_vec())
-    //         .collect();
-    //     debug!(
-    //         "Units collected. {}/{} units.",
-    //         selected_chunks.len(),
-    //         config.chunk_num
-    //     );
-    //     debug!("Removing overlapping units");
-    //     let selected_chunks = remove_overlapped_units(selected_chunks, config.k);
-    //     debug!("Resulting {} units.", selected_chunks.len());
-    //     self.selected_chunks = selected_chunks
-    //         .into_iter()
-    //         .enumerate()
-    //         .map(|(idx, seq)| {
-    //             let id = idx as u64;
-    //             let seq = String::from_utf8(seq).unwrap();
-    //             Unit { id, seq }
-    //         })
-    //         .collect();
-    //     self
-    // }
+    fn select_chunks(mut self, config: &UnitConfig) -> Self {
+        let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
+        reads.sort_by_key(|r| r.seq().len());
+        reads.reverse();
+        let mut units: Vec<_> = reads
+            .iter()
+            .flat_map(|r| split_into(r, config))
+            .take(config.unit_num)
+            .collect();
+        debug!("Collected {} units", units.len());
+        let k = config.k;
+        let kmer_vec: Vec<_> = units
+            .par_iter()
+            .map(|unit| {
+                let mut forward_finger = vec![false; 4usize.pow(k as u32)];
+                for kmer in unit.windows(k) {
+                    forward_finger[to_index(kmer)] = true;
+                }
+                let mut reverse_finger = vec![false; 4usize.pow(k as u32)];
+                let unit = bio_utils::revcmp(unit);
+                for kmer in unit.windows(k) {
+                    reverse_finger[to_index(kmer)] = true;
+                }
+                (forward_finger, reverse_finger)
+            })
+            .collect();
+        let to_be_removed: Vec<_> = kmer_vec
+            .par_iter()
+            .enumerate()
+            .map(|(idx, &(ref f, _))| {
+                kmer_vec[..idx].iter().any(|(f1, r1)| {
+                    compute_jaccard(f, f1, config.jaccard_thr)
+                        || compute_jaccard(f, r1, config.jaccard_thr)
+                })
+            })
+            .collect();
+        let mut idx = 0;
+        units.retain(|_| {
+            idx += 1;
+            !to_be_removed[idx - 1]
+        });
+        debug!("Resulting {} units.", units.len());
+        self.selected_chunks = units
+            .into_iter()
+            .enumerate()
+            .map(|(idx, seq)| {
+                let id = idx as u64;
+                let seq = String::from_utf8_lossy(seq).to_string();
+                Unit { id, seq }
+            })
+            .collect();
+        self
+    }
     fn select_chunks_freq(mut self, config: &UnitConfig) -> Self {
+        debug!("{:?}", config);
+        debug!("{} raw reads.", self.raw_reads.len());
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
@@ -114,27 +136,20 @@ impl DetermineUnit for definitions::DataSet {
             for kmer in unit.windows(k) {
                 reverse_finger[to_index(kmer)] = true;
             }
-            let is_unique =
+            let is_duplicate =
                 units
                     .par_iter()
                     .zip(forward_kmer_vec.par_iter())
-                    .all(|(unit2, finger)| {
-                        let forward_jaccard = compute_jaccard(finger, &forward_finger);
-                        let reverse_jaccard = compute_jaccard(finger, &reverse_finger);
-                        if forward_jaccard > config.jaccard_thr {
-                            alignment(&unit, unit2) < config.alignment_thr
-                        } else if reverse_jaccard > config.jaccard_thr {
-                            let unit2 = bio_utils::revcmp(unit2);
-                            alignment(&unit, &unit2) < config.alignment_thr
-                        } else {
-                            true
-                        }
+                    .any(|(_unit2, finger)| {
+                        let thr = config.jaccard_thr;
+                        compute_jaccard(finger, &forward_finger, thr)
+                            || compute_jaccard(finger, &reverse_finger, thr)
                     });
-            hits.push_back(is_unique);
+            hits.push_back(!is_duplicate);
             if hits.len() > config.hits_range {
                 hits.pop_front();
             }
-            if is_unique {
+            if !is_duplicate {
                 units.push(unit.to_vec());
                 forward_kmer_vec.push(forward_finger);
             }
@@ -157,85 +172,13 @@ impl DetermineUnit for definitions::DataSet {
     }
 }
 
-// fn remove_overlapped_units(mut units: Vec<Vec<u8>>, k: usize) -> Vec<Vec<u8>> {
-//     let forward_kmer_vec: Vec<_> = units
-//         .iter()
-//         .map(|unit| {
-//             let mut fingerprint = vec![false; 4usize.pow(k as u32)];
-//             for kmer in unit.windows(k) {
-//                 fingerprint[to_index(kmer)] = true;
-//             }
-//             fingerprint
-//         })
-//         .collect();
-//     let reverse_kmer_vec: Vec<_> = units
-//         .iter()
-//         .map(|unit| {
-//             let mut fingerprint = vec![false; 4usize.pow(k as u32)];
-//             let unit = bio_utils::revcmp(unit);
-//             for kmer in unit.windows(k) {
-//                 fingerprint[to_index(kmer)] = true;
-//             }
-//             fingerprint
-//         })
-//         .collect();
-//     let result: Vec<_> = units
-//         .par_iter()
-//         .enumerate()
-//         .flat_map(|(idx, unit1)| {
-//             units
-//                 .iter()
-//                 .enumerate()
-//                 .skip(idx + 1)
-//                 .filter_map(|(jdx, unit2)| {
-//                     let forward_jaccard =
-//                         compute_jaccard(&forward_kmer_vec[idx], &forward_kmer_vec[jdx]);
-//                     let reverse_jaccard =
-//                         compute_jaccard(&forward_kmer_vec[idx], &reverse_kmer_vec[jdx]);
-//                     if forward_jaccard > 0.7 {
-//                         let aln = alignment(unit1, unit2);
-//                         Some((idx, jdx, aln))
-//                     } else if reverse_jaccard > 0.7 {
-//                         let unit2 = bio_utils::revcmp(unit2);
-//                         let aln = alignment(unit1, &unit2);
-//                         Some((idx, jdx, aln))
-//                     } else {
-//                         None
-//                     }
-//                 })
-//                 .collect::<Vec<_>>()
-//         })
-//         .collect();
-
-//     let retain_nodes = {
-//         let mut temp = vec![true; units.len()];
-//         for (idx, jdx, aln) in result.into_iter() {
-//             debug!("ALN\t{}\t{}\t{}", idx, jdx, aln);
-//             if aln > 0.95 {
-//                 temp[idx.max(jdx)] = false;
-//             }
-//         }
-//         temp
-//     };
-//     let mut idx = 0;
-//     units.retain(|_| {
-//         idx += 1;
-//         retain_nodes[idx - 1]
-//     });
-//     units
-// }
-
-fn compute_jaccard(kmer_vec1: &[bool], kmer_vec2: &[bool]) -> f64 {
-    let (union, intersection) =
-        kmer_vec1
-            .iter()
-            .zip(kmer_vec2.iter())
-            .fold((0, 0), |(union, inter), (&x, &y)| match (x, y) {
-                (true, true) => (union + 1, inter + 1),
-                (false, true) | (true, false) => (union + 1, inter),
-                (false, false) => (union, inter),
-            });
-    intersection as f64 / union as f64
+fn compute_jaccard(kmer_vec1: &[bool], kmer_vec2: &[bool], thr: f64) -> bool {
+    let (mut union, mut intersection) = (0, 0);
+    for (x, y) in kmer_vec1.iter().zip(kmer_vec2.iter()) {
+        union += (x | y) as u32;
+        intersection += (x & y) as u32;
+    }
+    intersection as f64 / union as f64 > thr
 }
 
 fn to_index(kmer: &[u8]) -> usize {
@@ -248,6 +191,7 @@ fn to_index(kmer: &[u8]) -> usize {
     })
 }
 
+#[allow(dead_code)]
 fn alignment(seq1: &[u8], seq2: &[u8]) -> f64 {
     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
     for i in 1..seq1.len() + 1 {
