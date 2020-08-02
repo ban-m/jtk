@@ -68,27 +68,11 @@ pub trait GlobalClustering {
 
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
-        if log_enabled!(log::Level::Debug) {
-            let length: Vec<_> = self.encoded_reads.iter().map(|r| r.nodes.len()).collect();
-            let hist = histgram_viz::Histgram::new(&length);
-            let tot = length.iter().sum::<usize>();
-            eprintln!("Read({}){}\n{}", length.len(), tot, hist.format(20, 40));
-        }
         let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
         let graph = DeBruijnGraph::from(&reads, c.k_mer);
-        if log_enabled!(log::Level::Debug) {
-            let mut count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
-            count.sort();
-            let top_15: Vec<_> = count.iter().rev().take(15).collect();
-            debug!("Top 15 Occurences:{:?}", top_15);
-            let last = **top_15.last().unwrap();
-            let count: Vec<_> = count.into_iter().filter(|&x| x < last).collect();
-            let hist = histgram_viz::Histgram::new(&count);
-            eprintln!("The rest({}-mer) nodes\n{}", c.k_mer, hist.format(20, 40));
-        }
         let mut graph = graph.clean_up_auto();
-        graph.resolve_crossings(&reads);
-        graph.resolve_bubbles(&reads);
+        // graph.resolve_crossings(&reads);
+        // graph.resolve_bubbles(&reads);
         if log_enabled!(log::Level::Debug) {
             let mut count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
             count.sort();
@@ -113,7 +97,10 @@ impl GlobalClustering for definitions::DataSet {
             .iter()
             .filter_map(|read| {
                 let id = read.id();
-                graph.assign_read(read).map(|cluster| {
+                let cluster = graph
+                    .assign_read(read)
+                    .or_else(|| graph.assign_read_by_unit(read));
+                cluster.map(|cluster| {
                     *count.entry(cluster).or_default() += 1;
                     definitions::Assignment { id, cluster }
                 })

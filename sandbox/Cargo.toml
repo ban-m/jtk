@@ -16,6 +16,7 @@ serde_json = "*"
 definitions = {path = "../definitions"}
 histgram_viz = {path = "../histgram_viz"}
 haplotyper = {path = "../haplotyper"}
+de_bruijn_graph = {path = "../de_bruijn_graph"}
 env_logger = "*"
 log = "*"
 gfa = {path = "../gfa_rust"}

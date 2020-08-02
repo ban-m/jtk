@@ -1,6 +1,7 @@
 use super::AssembleConfig;
 use definitions::{Edge, EncodedRead};
 use std::collections::HashMap;
+use std::collections::HashSet;
 /// Ditch Graph
 /// Each unit of the dataset consists of a pair of node, named
 /// tail-node and head-node, and it is represented as a 'node'in a
@@ -84,7 +85,7 @@ impl<'a, 'b> std::fmt::Display for DitchNode<'a, 'b> {
         writeln!(f, "---------{}:{}---------", self.unit, self.cluster)?;
         writeln!(f, "Seq:")?;
         for (idx, n) in self.nodes.iter().enumerate() {
-            writeln!(f, "{:3}:{}", idx, n.seq)?;
+            writeln!(f, "{:3}:{}:{}", idx, n.seq, n.is_forward)?;
         }
         let lines: Vec<_> = self.edges.iter().map(|e| format!("{}", e)).collect();
         write!(f, "Edges:\n{}", lines.join("\n"))
@@ -154,7 +155,7 @@ impl<'a> DitchEdge<'a> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, Hash)]
 pub enum Position {
     Head,
     Tail,
@@ -191,7 +192,7 @@ impl NodeIndex {
     }
 }
 
-fn revcmp(seq: &str) -> String {
+fn revcmp_str(seq: &str) -> String {
     seq.chars()
         .rev()
         .map(|c| match c {
@@ -347,7 +348,6 @@ impl<'a> DitchGraph<'a, 'a> {
             if arrived[i] {
                 continue;
             }
-            debug!("First loop:{}", i);
             let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
             let (contig, edges) = self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
             g_segs.push(contig);
@@ -357,7 +357,6 @@ impl<'a> DitchGraph<'a, 'a> {
             if arrived[i] {
                 continue;
             }
-            debug!("Second loop:{}", i);
             let p = Position::Head;
             let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
             let (contig, edges) = self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
@@ -373,175 +372,182 @@ impl<'a> DitchGraph<'a, 'a> {
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
         (g_segs, g_edges, group)
     }
+    pub fn remove_tips(&mut self) {
+        let sum = self.nodes.iter().map(|e| e.nodes.len()).sum::<usize>();
+        let mean = sum / self.nodes.len();
+        let thr = mean / 8;
+        debug!("Removing nodes less than {} occ.", thr);
+        let to_remove: Vec<_> = self.nodes.iter().map(|e| e.nodes.len() < thr).collect();
+        assert_eq!(*self.index.values().max().unwrap() + 1, self.nodes.len());
+        self.remove_nodes(&to_remove);
+        assert_eq!(*self.index.values().max().unwrap() + 1, self.nodes.len());
+    }
     // Removing nodes and re-map all of the indices.
     fn remove_nodes(&mut self, to_remove: &[bool]) {
+        assert_eq!(self.nodes.len(), to_remove.len());
+        assert_eq!(*self.index.values().max().unwrap() + 1, self.nodes.len());
         let mapping = {
             let mut mapping = vec![];
             let mut index = 0;
-            for &b in to_remove {
+            for &b in to_remove.iter() {
                 mapping.push(index);
                 index += !b as usize;
             }
             mapping
         };
-        self.index.iter_mut().for_each(|(_, v)| *v = mapping[*v]);
-        {
-            let mut idx = 0;
-            self.nodes.retain(|_| {
-                idx += 1;
-                !to_remove[idx - 1]
-            });
-        }
+        self.index.retain(|_, v| {
+            if to_remove[*v] {
+                false
+            } else {
+                *v = mapping[*v];
+                true
+            }
+        });
+        let mut idx = 0;
+        self.nodes.retain(|_| {
+            idx += 1;
+            !to_remove[idx - 1]
+        });
+        assert_eq!(self.index.len(), self.nodes.len());
         self.nodes.iter_mut().for_each(|node| {
+            node.edges.retain(|e| !to_remove[e.to]);
             node.edges.iter_mut().for_each(|e| {
                 e.from = mapping[e.from];
                 e.to = mapping[e.to];
-            })
+            });
         });
+        for node in self.nodes.iter() {
+            for edge in node.edges.iter() {
+                assert!(self.nodes[edge.to].edges.iter().any(|f| f.to == edge.from));
+            }
+        }
     }
     pub fn collapse_buddle(&mut self, c: &AssembleConfig) {
         let mut to_remove = vec![false; self.nodes.len()];
-        for i in 0..self.nodes.len() {
-            for position in vec![Position::Head, Position::Tail] {
-                let edges: Vec<_> = self.nodes[i]
+        let mut queue = std::collections::VecDeque::new();
+        for idx in 0..self.nodes.len() {
+            queue.push_back((idx, Position::Head));
+            queue.push_back((idx, Position::Tail));
+        }
+        while let Some((idx, position)) = queue.pop_front() {
+            let edges: Vec<_> = self.nodes[idx]
+                .edges
+                .iter()
+                .filter(|e| e.from_position == position && e.from == idx)
+                .collect();
+            if edges.len() <= 1 {
+                continue;
+            }
+            let pos = edges[0].to_position;
+            let unit = self.nodes[edges[0].to].unit;
+            let is_the_same_unit = edges
+                .iter()
+                .all(|e| e.to_position == pos && unit == self.nodes[e.to].unit);
+            let idx_is_the_unique_parent = edges.iter().all(|e| {
+                self.nodes[e.to]
                     .edges
                     .iter()
-                    .filter(|e| e.from_position == position && e.from == i)
-                    .collect();
-                if edges.len() > 1 {
-                    // Never panic.
-                    let pos = edges[0].to_position;
-                    let unit = self.nodes[edges[0].to].unit;
-                    if edges
-                        .iter()
-                        .all(|n| n.to_position == pos && unit == self.nodes[n.to].unit)
-                    {
-                        // The head side of the i-th node has two or mode cluster,
-                        // which has the same distination.
-                        // Check the collaption criteria, and collapse if possible.
-                        eprintln!(
-                            "Removing a bubble starting from {}-{}-{:?}",
-                            self.nodes[i].unit, self.nodes[i].cluster, position
-                        );
-                        for i in self.collapse_bubble_from(i, position, c) {
-                            // eprintln!("Removing {}", i);
-                            to_remove[i] = true;
-                        }
-                    }
+                    .filter(|f| f.from_position == pos)
+                    .all(|f| f.to == idx)
+            });
+            if is_the_same_unit && idx_is_the_unique_parent {
+                let (new_terminal, removed_nodes) = self.collapse_bubble_from(idx, position, c);
+                for i in removed_nodes {
+                    to_remove[i] = true;
                 }
+                queue.push_back(new_terminal)
             }
         }
         self.remove_nodes(&to_remove);
     }
+    // Collapse bubble from the given root.
     fn collapse_bubble_from(
         &mut self,
-        i: usize,
+        root: usize,
         position: Position,
         _c: &AssembleConfig,
-    ) -> Vec<usize> {
+    ) -> ((usize, Position), Vec<usize>) {
         // Check the collapsing condition.
-        let edges: Vec<_> = self.nodes[i]
+        let edges: Vec<_> = self.nodes[root]
             .edges
             .iter()
             .filter(|e| e.from_position == position)
-            .inspect(|e| assert!(e.from == i))
             .collect();
         // Check.
         assert!(edges.len() > 1);
-        let (first_id, first_pos, first_unit) = {
+        let (first_id, first_pos, first_unit, first_cluster) = {
             let first = edges.first().unwrap();
             let first_unit = self.nodes[first.to].unit;
-            (first.to, first.to_position, first_unit)
+            let first_cluster = self.nodes[first.to].cluster;
+            (first.to, first.to_position, first_unit, first_cluster)
         };
+        assert!(edges.iter().all(|e| e.to_position == first_pos));
+        assert!(edges.iter().all(|e| self.nodes[e.to].unit == first_unit));
         let merged_nodes_ids: Vec<_> = edges.iter().map(|e| e.to).collect();
-        assert!(edges
+        let mut new_node = DitchNode::new(first_unit, first_cluster);
+        let mut edge_to_root = DitchEdge::new(first_pos, first_id, position, root);
+        // All of these edges should start from (first_id, !first_pos).
+        let mut edges_otherside: HashMap<(usize, Position), Vec<_>> = HashMap::new();
+        let node_otherside: HashSet<_> = merged_nodes_ids
             .iter()
-            .all(|e| e.to_position == first_pos && first_unit == self.nodes[e.to].unit));
-        // Get the candidate child.
-        let pos = !first_pos;
-        let (child_id, child_pos) = match self.nodes[first_id]
-            .edges
-            .iter()
-            .find(|e| e.from_position == pos && e.from == first_id)
-        {
-            Some(child) => (child.to, child.to_position),
-            None => return vec![],
-        };
-        // Check all distinations of `i` has only one parent, `i`.
-        // Check all otherside of the distinations of `i` has only one child.
-        let is_collapsable_bubble = edges.iter().all(|e| {
-            let res = self.nodes[e.to].edges.iter().all(|f| {
-                (f.to_position == position && f.to == i)
-                    || (f.to_position == child_pos && f.to == child_id)
-            });
-            res && self.nodes[e.to].edges.len() == 2
-        });
-        if !is_collapsable_bubble {
-            vec![]
-        } else {
-            // Add to the `first_id` from other edges.
-            let remove_nodes: Vec<_> = edges.into_iter().skip(1).map(|e| e.to).collect();
-            let mut node_result = vec![];
-            let mut edge_result: Vec<(&definitions::Edge, bool)> = vec![];
-            for &remove_node in remove_nodes.iter() {
-                node_result.append(&mut self.nodes[remove_node].nodes);
-                self.nodes[remove_node]
-                    .edges
-                    .iter_mut()
-                    .for_each(|ditch_edge| {
-                        edge_result.append(&mut ditch_edge.edges);
-                    });
+            .flat_map(|&idx| self.nodes[idx].edges.iter())
+            .filter(|e| !(e.to == root && e.to_position == position))
+            .map(|e| (e.to, e.to_position))
+            .collect();
+        for &node in merged_nodes_ids.iter() {
+            new_node.nodes.append(&mut self.nodes[node].nodes);
+            while let Some(edge) = self.nodes[node].edges.pop() {
+                if edge.to == root {
+                    assert!(edge.to_position == position);
+                    assert!(edge.from_position == first_pos);
+                    edge_to_root.edges.extend(edge.edges);
+                } else {
+                    assert!(edge.from_position == !first_pos);
+                    edges_otherside
+                        .entry((edge.to, edge.to_position))
+                        .or_default()
+                        .extend(edge.edges);
+                }
             }
-            self.nodes[first_id].nodes.extend(node_result);
-            self.nodes[first_id]
-                .edges
-                .iter_mut()
-                .find(|ditch_edge| ditch_edge.to == i && ditch_edge.to_position == position)
-                .unwrap()
-                .edges
-                .extend(edge_result);
-            // Change edges from nodes[i]
-            let edge_result = self.nodes[i]
+        }
+        new_node.edges.push(edge_to_root);
+        for ((to, to_pos), edges) in edges_otherside {
+            let mut edge = DitchEdge::new(!first_pos, first_id, to_pos, to);
+            edge.edges.extend(edges);
+            new_node.edges.push(edge);
+        }
+        self.nodes[first_id] = new_node;
+        {
+            let mut edge_to_removednodes = vec![];
+            self.nodes[root]
                 .edges
                 .iter_mut()
                 .filter(|e| e.from_position == position)
-                .skip(1)
-                .fold(vec![], |mut x, ditch_edge| {
-                    x.append(&mut ditch_edge.edges);
-                    x
+                .for_each(|edge| {
+                    edge_to_removednodes.append(&mut edge.edges);
                 });
-            self.nodes[i]
-                .edges
-                .iter_mut()
-                .find(|e| e.from_position == position)
-                .unwrap()
-                .edges
-                .extend(edge_result);
-            self.nodes[i]
-                .edges
-                .retain(|ditch_edge| !ditch_edge.edges.is_empty());
-            let edge_result = self.nodes[child_id]
+            self.nodes[root].edges.retain(|e| !e.edges.is_empty());
+            let mut new_edge = DitchEdge::new(position, root, first_pos, first_id);
+            new_edge.edges = edge_to_removednodes;
+            self.nodes[root].edges.push(new_edge);
+        }
+        for (other, other_position) in node_otherside {
+            let mut edge_to_removednodes = vec![];
+            self.nodes[other]
                 .edges
                 .iter_mut()
                 .filter(|e| merged_nodes_ids.contains(&e.to))
-                .skip(1)
-                .fold(vec![], |mut x, d_edge| {
-                    x.append(&mut d_edge.edges);
-                    x
+                .for_each(|edge| {
+                    edge_to_removednodes.append(&mut edge.edges);
                 });
-            // Never panic.
-            self.nodes[child_id]
-                .edges
-                .iter_mut()
-                .find(|e| merged_nodes_ids.contains(&e.to))
-                .unwrap()
-                .edges
-                .extend(edge_result);
-            self.nodes[child_id]
-                .edges
-                .retain(|ditch_edge| !ditch_edge.edges.is_empty());
-            remove_nodes
+            self.nodes[other].edges.retain(|e| !e.edges.is_empty());
+            let mut new_edge = DitchEdge::new(other_position, other, !first_pos, first_id);
+            new_edge.edges = edge_to_removednodes;
+            self.nodes[other].edges.push(new_edge);
         }
+        let mut merged_nodes_ids = merged_nodes_ids;
+        merged_nodes_ids.retain(|&x| x != first_id);
+        ((first_id, !first_pos), merged_nodes_ids)
     }
     // Traverse from the given `start` node.
     fn traverse_from(
@@ -594,7 +600,7 @@ impl<'a> DitchGraph<'a, 'a> {
                 Position::Head => seq += &self.nodes[node].nodes[0].seq,
                 Position::Tail => {
                     let s = &self.nodes[node].nodes[0].seq;
-                    seq += &revcmp(s);
+                    seq += &revcmp_str(s);
                 }
             };
             position = !position;
@@ -622,7 +628,7 @@ impl<'a> DitchGraph<'a, 'a> {
                 if is_forward {
                     seq += &edge.label;
                 } else {
-                    seq += &revcmp(&edge.label);
+                    seq += &revcmp_str(&edge.label);
                 }
             } else {
                 assert!(-edge.offset > 0);
@@ -692,8 +698,8 @@ impl<'a> DitchGraph<'a, 'a> {
 #[cfg(test)]
 mod tests {
     #![allow(dead_code)]
-    use rand::SeedableRng;
     use definitions::Node;
+    use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128StarStar;
     // Raw data, expected result.
     type DataPack = (Vec<EncodedRead>, Vec<String>);
@@ -1008,61 +1014,46 @@ mod tests {
         let answer = units.iter().fold(String::new(), |x, y| x + y);
         (vec![read0, read1, read2, read3], vec![answer])
     }
+    fn gen_by_units(units: &[String], read: &[(u64, u64, bool)]) -> EncodedRead {
+        let edge = String::new();
+        let mut eread = EncodedRead::default();
+        for &(u, c, b) in read.iter() {
+            let seq = units[u as usize].clone();
+            if b {
+                eread.nodes.push(gen_node(u, c, b, seq));
+            } else {
+                let seq: Vec<char> = seq.chars().collect();
+                let seq: String = seq.into_iter().collect();
+                eread.nodes.push(gen_node(u, c, b, seq));
+            }
+        }
+        for w in read.windows(2) {
+            eread.edges.push(gen_edge(w[0].0, w[1].0, 0, edge.clone()));
+        }
+        eread
+    }
     fn gen_remove_test_2() -> DataPack {
         let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
-        let units: Vec<String> = (0..4)
+        let units: Vec<String> = (0..5)
             .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
             .collect();
-        let edge = String::new();
-        let read = EncodedRead::default();
-        let (mut read0, mut read1) = (read.clone(), read.clone());
-        for unit in 0..3 {
-            let seq = units[unit].clone();
-            let unit = unit as u64;
-            let (cl0, cl1) = if unit == 1 { (0, 1) } else { (0, 0) };
-            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
-            read1.nodes.push(gen_node(unit, cl1, true, seq));
-        }
-        for unit in 0..2 {
-            read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
-            read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
-        }
-        let (mut read2, mut read3) = (read.clone(), read.clone());
-        for unit in (0..3).rev() {
-            let seq: Vec<_> = units[unit].chars().collect();
-            let seq: String = revcmp(&seq).iter().collect();
-            let unit = unit as u64;
-            let (cl2, cl3) = if unit == 1 { (0, 1) } else { (0, 0) };
-            read2.nodes.push(gen_node(unit, cl2, false, seq.clone()));
-            read3.nodes.push(gen_node(unit, cl3, false, seq));
-        }
-        for unit in (0..2).rev() {
-            read2.edges.push(gen_edge(unit + 1, unit, 0, edge.clone()));
-            read3.edges.push(gen_edge(unit + 1, unit, 0, edge.clone()));
-        }
-        let (mut read4, mut read5) = (read.clone(), read.clone());
-        for unit in 1..4 {
-            let cl = if unit == 1 { 1 } else { 2 };
-            let seq = units[unit].clone();
-            let unit = unit as u64;
-            read4.nodes.push(gen_node(unit, cl, true, seq));
-            if unit < 3 {
-                read5.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
-            }
-        }
-        for unit in (1..4).rev() {
-            let cl = if unit == 1 { 1 } else { 2 };
-            let seq: Vec<_> = units[unit].chars().collect();
-            let seq: String = revcmp(&seq).iter().collect();
-            let unit = unit as u64;
-            read5.nodes.push(gen_node(unit, cl, false, seq));
-            if 0 < unit {
-                read5.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
-            }
-        }
-        let reads = vec![read0, read1, read2, read3, read4, read5];
-        let mut answers = units[0..3].to_vec();
-        answers.push(units[2].clone() + &units[3]);
+        let reads = vec![
+            vec![(0, 0, true), (1, 0, true), (2, 0, true)],
+            vec![(2, 0, false), (1, 0, false), (0, 0, false)],
+            vec![(0, 0, true), (1, 1, true), (2, 0, true)],
+            vec![(2, 0, false), (1, 1, false), (0, 0, false)],
+            vec![(1, 1, true), (4, 0, true), (3, 0, true)],
+            vec![(3, 0, false), (4, 0, false), (1, 1, false)],
+        ];
+        let reads: Vec<_> = reads
+            .into_iter()
+            .map(|r| gen_by_units(&units, &r))
+            .collect();
+        let answers = vec![
+            units[0..2].iter().flat_map(|e| e.chars()).collect(),
+            units[2].clone(),
+            units[4].clone() + &units[3],
+        ];
         (reads, answers)
     }
     fn gen_remove_test_3() -> DataPack {
@@ -1107,46 +1098,22 @@ mod tests {
     }
     fn gen_remove_test_4() -> DataPack {
         let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(129180);
-        let units: Vec<String> = (0..3)
+        let units: Vec<String> = (0..5)
             .map(|_| (0..100).filter_map(|_| BASES.choose(&mut rng)).collect())
             .collect();
-        let edge = String::new();
-        let read = EncodedRead::default();
-        let (mut read0, mut read1, mut read2) = (read.clone(), read.clone(), read.clone());
-        for unit in 0..3 {
-            let seq = units[unit].clone();
-            let unit = unit as u64;
-            let (cl0, cl1) = if unit == 1 { (0, 1) } else { (0, 0) };
-            let cl2 = if unit == 0 { 0 } else { 2 };
-            read0.nodes.push(gen_node(unit, cl0, true, seq.clone()));
-            read1.nodes.push(gen_node(unit, cl1, true, seq.clone()));
-            read2.nodes.push(gen_node(unit, cl2, true, seq));
-            if unit < 2 {
-                read0.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
-                read1.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
-                read2.edges.push(gen_edge(unit, unit + 1, 0, edge.clone()));
-            }
-        }
-        let (mut read3, mut read4, mut read5) = (read.clone(), read.clone(), read.clone());
-        for unit in (0..3).rev() {
-            let seq: Vec<_> = units[unit].chars().collect();
-            let seq: String = revcmp(&seq).iter().collect();
-            let unit = unit as u64;
-            let (cl3, cl4) = if unit == 1 { (0, 1) } else { (0, 0) };
-            let cl5 = if unit == 0 { 0 } else { 2 };
-            read3.nodes.push(gen_node(unit, cl3, false, seq.clone()));
-            read4.nodes.push(gen_node(unit, cl4, false, seq.clone()));
-            read5.nodes.push(gen_node(unit, cl5, false, seq.clone()));
-            if 0 < unit {
-                read3.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
-                read4.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
-                read5.edges.push(gen_edge(unit, unit - 1, 0, edge.clone()));
-            }
-        }
-        let reads = vec![read0, read1, read2, read3, read4, read5];
-        let mut answers = vec![];
-        answers.push(units[0].clone());
-        answers.push(units[1].clone() + &units[2]);
+        let reads = vec![
+            vec![(0, 0, true), (1, 0, true), (2, 0, true)],
+            vec![(0, 0, true), (1, 1, true), (2, 0, true)],
+            vec![(0, 0, true), (3, 0, true), (4, 0, true)],
+            vec![(4, 0, false), (3, 0, false), (0, 0, false)],
+            vec![(2, 0, false), (1, 0, false), (0, 0, false)],
+        ];
+        let reads: Vec<_> = reads.iter().map(|r| gen_by_units(&units, r)).collect();
+        let answers = vec![
+            units[0].clone(),
+            units[1].clone() + &units[2],
+            units[3].clone() + &units[4],
+        ];
         (reads, answers)
     }
     fn gen_remove_test_5() -> DataPack {
@@ -1401,8 +1368,8 @@ mod tests {
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
         // Assertion.
-        assert_eq!(edges.len(), 5);
-        assert_eq!(segments.len(), 5);
+        assert_eq!(edges.len(), 2);
+        assert_eq!(segments.len(), 3);
         for ans in answer {
             let forward = segments
                 .iter()

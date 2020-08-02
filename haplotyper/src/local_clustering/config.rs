@@ -7,7 +7,7 @@ const MAX_BETA: f64 = 0.8;
 const REPEAT_NUM: usize = 1;
 const GIBBS_PRIOR: f64 = 0.02;
 const STABLE_LIMIT: u32 = 6;
-const VARIANT_FRACTION: f64 = 0.1;
+const VARIANT_NUMBER: usize = 10;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
@@ -25,7 +25,7 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub repeat_num: usize,
     pub gibbs_prior: f64,
     pub stable_limit: u32,
-    pub variant_fraction: f64,
+    pub variant_num: usize,
     pub read_type: ReadType,
 }
 
@@ -71,7 +71,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             repeat_num: REPEAT_NUM,
             gibbs_prior: GIBBS_PRIOR,
             stable_limit: STABLE_LIMIT,
-            variant_fraction: VARIANT_FRACTION,
+            variant_num: VARIANT_NUMBER,
             read_type: ReadType::CCS,
         }
     }
@@ -94,7 +94,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             repeat_num: REPEAT_NUM,
             gibbs_prior: GIBBS_PRIOR,
             stable_limit: STABLE_LIMIT,
-            variant_fraction: VARIANT_FRACTION,
+            variant_num: VARIANT_NUMBER,
             read_type: ReadType::CCS,
         }
     }
@@ -114,6 +114,10 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
     ) -> Self {
         let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit);
         c.read_type = ReadType::CLR;
+        c.sample_rate = 0.01;
+        c.initial_beta = 0.0005;
+        c.max_beta = 0.8;
+        c.beta_increase = 1.02;
         c
     }
     pub fn ont(
@@ -122,7 +126,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
         limit: u64,
     ) -> Self {
-        let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit);
+        let mut c = Self::clr(dataset, cluster_num, subchunk_length, limit);
         c.read_type = ReadType::ONT;
         c
     }

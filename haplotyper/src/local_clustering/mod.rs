@@ -8,7 +8,7 @@ const SMALL_WEIGHT: f64 = 0.000_000_001;
 mod config;
 pub use config::*;
 mod create_model;
-mod eread;
+pub mod eread;
 mod variant_calling;
 use create_model::*;
 use eread::*;
@@ -166,7 +166,7 @@ fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
         .collect()
 }
 
-fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     data: &mut Vec<ChunkedUnit>,
     chain_len: usize,
     c: &ClusteringConfig<F>,
@@ -189,7 +189,7 @@ fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let start = std::time::Instant::now();
     let stable_thr = (data.len() as f64 * c.sample_rate / 2.).max(2.) as u32;
     while count < c.stable_limit {
-        let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c, 1.);
+        let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c, 2.);
         beta = (beta * c.beta_increase).min(c.max_beta);
         lk = next_lk;
         let changed_num = (0..c.sample_rate.recip().ceil() as usize / 2)
@@ -310,11 +310,14 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                 })
                 .collect();
             let argmax = get_argmax(&weights).unwrap_or(0);
-            let is_the_same = if read.cluster == argmax { 0 } else { 1 };
-            read.cluster = argmax;
-            is_the_same
+            if read.cluster == argmax {
+                0
+            } else {
+                read.cluster = argmax;
+                1
+            }
         })
-        .sum::<u32>()
+        .sum()
 }
 
 #[cfg(test)]

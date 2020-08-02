@@ -5,7 +5,6 @@ use super::SMALL_WEIGHT;
 use nalgebra::DMatrix;
 use poa_hmm::POA;
 use rand::Rng;
-// use rayon::prelude::*;
 pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     data: &[ChunkedUnit],
     chain_len: usize,
@@ -34,7 +33,7 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
             },
         );
     let lk = logsumexp(&lks) - (c.repeat_num as f64).ln();
-    let (betas, position_in_use) = select_variants(betas, chain_len, c.variant_fraction);
+    let (betas, position_in_use) = select_variants(betas, chain_len, c.variant_num);
     let betas = normalize_weights(betas, max_value);
     (betas, position_in_use, lk)
 }
@@ -247,7 +246,7 @@ fn initial_variants(cluster_num: usize, chain_len: usize) -> Vec<Vec<Vec<f64>>> 
 fn select_variants(
     mut variants: Vec<Vec<Vec<f64>>>,
     chain_len: usize,
-    variant_fraction: f64,
+    variant_number: usize,
 ) -> (Vec<Vec<Vec<f64>>>, Vec<bool>) {
     let mut position = vec![false; chain_len];
     for bss in variants.iter_mut() {
@@ -255,7 +254,7 @@ fn select_variants(
             let thr = {
                 let mut var = bs.clone();
                 var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                let pos = (var.len() as f64 * (1. - variant_fraction)).floor() as usize;
+                let pos = variant_number.min(var.len() - 1);
                 var[pos]
             };
             for (idx, b) in bs.iter_mut().enumerate() {

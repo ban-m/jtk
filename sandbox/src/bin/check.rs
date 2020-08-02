@@ -1,103 +1,86 @@
-extern crate log;
+use haplotyper::clustering_by_kmeans;
+use haplotyper::eread::*;
+use haplotyper::ClusteringConfig;
+use poa_hmm::*;
+use rand_xoshiro::Xoroshiro128PlusPlus;
 fn main() -> std::io::Result<()> {
+    env_logger::init();
+    let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(322321);
+    let chain_len = 20;
+    let ref_unit = 0;
+    let mut c = ClusteringConfig::default();
+    // c.read_type = haplotyper::ReadType::CLR;
+    c.read_type = haplotyper::ReadType::CCS;
+    c.cluster_num = 2;
+    let template: Vec<_> = (0..chain_len)
+        .map(|_| gen_sample::generate_seq(&mut rng, 100))
+        .collect();
+    let template2: Vec<_> = template
+        .iter()
+        .enumerate()
+        .map(|(idx, x)| {
+            if idx == 5 {
+                gen_sample::introduce_errors(x, &mut rng, 1, 0, 0)
+            } else {
+                x.clone()
+            }
+        })
+        .collect();
+    let template3 = template.clone();
+    // let profile = &gen_sample::PROFILE;
+    let profile = &gen_sample::CCS_PROFILE;
+    let seq1: Vec<_> = (0..30)
+        .map(|_| {
+            let chunks: Vec<_> = template
+                .iter()
+                .enumerate()
+                .map(|(pos, seq)| {
+                    let seq = gen_sample::introduce_randomness(seq, &mut rng, profile);
+                    Chunk { pos, seq }
+                })
+                .collect();
+            let cluster = 0;
+            ChunkedUnit { cluster, chunks }
+        })
+        .collect();
+    let seq2: Vec<_> = (0..30)
+        .map(|_| {
+            let chunks: Vec<_> = template2
+                .iter()
+                .enumerate()
+                .map(|(pos, seq)| {
+                    let seq = gen_sample::introduce_randomness(seq, &mut rng, profile);
+                    Chunk { pos, seq }
+                })
+                .collect();
+            let cluster = 0;
+            ChunkedUnit { cluster, chunks }
+        })
+        .collect();
+    let seq3: Vec<_> = (0..30)
+        .map(|_| {
+            let chunks: Vec<_> = template3
+                .iter()
+                .enumerate()
+                .map(|(pos, seq)| {
+                    let seq = gen_sample::introduce_randomness(seq, &mut rng, profile);
+                    Chunk { pos, seq }
+                })
+                .collect();
+            let cluster = 0;
+            ChunkedUnit { cluster, chunks }
+        })
+        .collect();
+    c.seed = 121;
+    let mut data = vec![seq1.clone(), seq2.clone()].concat();
+    clustering_by_kmeans(&mut data, chain_len, &c, ref_unit);
+    for (idx, d) in data.iter().enumerate() {
+        eprintln!("{}\t{}", idx, d.cluster);
+    }
+    let mut data = vec![seq1.clone(), seq3.clone()].concat();
+    clustering_by_kmeans(&mut data, chain_len, &c, ref_unit);
+    for (idx, d) in data.iter().enumerate() {
+        eprintln!("{}\t{}", idx, d.cluster);
+    }
     Ok(())
 }
-//     let kmer_vec: Vec<_> = units
-
-//         .iter()
-//         .map(|unit| {
-//             let mut fingerprint = vec![false; 4usize.pow(k)];
-//             for kmer in unit.seq.as_bytes().windows(k as usize) {
-//                 fingerprint[to_index(kmer)] = true;
-//             }
-//             fingerprint
-//         })
-//         .collect();
-//     println!("Finger:{:?}", Instant::now() - start);
-//     let result: Vec<_> = units
-//         .par_iter()
-//         .enumerate()
-//         .flat_map(|(idx, unit1)| {
-//             units
-//                 .iter()
-//                 .enumerate()
-//                 .skip(idx + 1)
-//                 .filter_map(|(jdx, unit2)| {
-//                     let share_k_mer = kmer_vec[idx]
-//                         .iter()
-//                         .zip(kmer_vec[jdx].iter())
-//                         .filter(|(&x, &y)| x && y)
-//                         .count();
-//                     let tot_k_mer = kmer_vec[idx]
-//                         .iter()
-//                         .zip(kmer_vec[jdx].iter())
-//                         .filter(|(&x, &y)| x || y)
-//                         .count();
-//                     let jaccard = share_k_mer as f64 / tot_k_mer as f64;
-//                     if jaccard > 0.7 {
-//                         let aln = alignment(unit1.seq.as_bytes(), unit2.seq.as_bytes());
-//                         Some((unit1.id, unit2.id, aln))
-//                     } else {
-//                         None
-//                     }
-//                 })
-//                 .collect::<Vec<_>>()
-//         })
-//         .collect();
-//     let end = Instant::now();
-//     println!("{}/{}", result.len(), units.len() * units.len());
-//     println!("{:?}", end - start);
-//     for (id1, id2, score) in result {
-//         println!("{}\t{}\t{}", id1, id2, score);
-//     }
-//     // use std::collections::HashMap;
-//     // let id_to_asn: HashMap<_, _> = dataset
-//     //     .assignments
-//     //     .iter()
-//     //     .map(|asn| (asn.id, asn.cluster))
-//     //     .collect();
-//     // let (unit, cluster, group) = (1517, 1, 1);
-//     // for read in dataset
-//     //     .encoded_reads
-//     //     .iter()
-//     //     .filter(|read| match id_to_asn.get(&read.id) {
-//     //         Some(&asn) if asn == group => read
-//     //             .nodes
-//     //             .iter()
-//     //             .any(|n| n.unit == unit && n.cluster == cluster),
-//     //         _ => false,
-//     //     })
-//     // {
-//     //     let units: Vec<_> = read
-//     //         .nodes
-//     //         .windows(2)
-//     //         .zip(read.edges.iter())
-//     //         .map(|(n, e)| format!("{}:{}-({})-", n[0].unit, n[0].cluster, e.offset))
-//     //         .collect();
-//     //     println!("{}", units.join(""));
-//     // }
-//     Ok(())
-// }
-
-// fn to_index(kmer: &[u8]) -> usize {
-//     kmer.iter().fold(0, |x, y| match y {
-//         b'A' => (x << 2),
-//         b'C' => (x << 2) + 1,
-//         b'G' => (x << 2) + 2,
-//         b'T' => (x << 2) + 3,
-//         _ => panic!(),
-//     })
-// }
-
-// fn alignment(seq1: &[u8], seq2: &[u8]) -> i32 {
-//     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
-//     for i in 1..seq1.len() + 1 {
-//         for j in 1..seq2.len() + 1 {
-//             let m = if seq1[i - 1] == seq2[j - 1] { 1 } else { -1 };
-//             dp[i][j] = (dp[i - 1][j] - 1)
-//                 .max(dp[i][j - 1] - 1)
-//                 .max(dp[i - 1][j - 1] + m);
-//         }
-//     }
-//     dp[seq1.len()][seq2.len()].max(0)
-// }

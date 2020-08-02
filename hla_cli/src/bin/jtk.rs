@@ -95,8 +95,8 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("take_num")
                 .takes_value(true)
-                .default_value(&"2000")
-                .help("Number of units. 2*Genome size / chunk_len would be nice."),
+                .default_value(&"6000")
+                .help("Number of units;4*Genome size/chunk_len would be nice."),
         )
         .arg(
             Arg::with_name("margin")

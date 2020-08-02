@@ -21,8 +21,8 @@ impl UnitConfig {
             margin,
             k: 7,
             unit_num,
-            jaccard_thr: 0.8,
-            alignment_thr: 0.90,
+            jaccard_thr: 0.2,
+            alignment_thr: 0.4,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
         }
@@ -32,10 +32,10 @@ impl UnitConfig {
             chunk_len,
             skip_len,
             margin,
-            k: 6,
+            k: 7,
             unit_num,
-            jaccard_thr: 0.35,
-            alignment_thr: 0.8,
+            jaccard_thr: 0.1,
+            alignment_thr: 0.3,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
         }
@@ -45,10 +45,10 @@ impl UnitConfig {
             chunk_len,
             skip_len,
             margin,
-            k: 6,
+            k: 7,
             unit_num,
-            jaccard_thr: 0.35,
-            alignment_thr: 0.8,
+            jaccard_thr: 0.1,
+            alignment_thr: 0.3,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
         }
@@ -74,7 +74,7 @@ impl DetermineUnit for definitions::DataSet {
             .collect();
         debug!("Collected {} units", units.len());
         let k = config.k;
-        let kmer_vec: Vec<_> = units
+        let kmer_vec: Vec<(Vec<_>, Vec<_>)> = units
             .par_iter()
             .map(|unit| {
                 let mut forward_finger = vec![false; 4usize.pow(k as u32)];
@@ -89,13 +89,21 @@ impl DetermineUnit for definitions::DataSet {
                 (forward_finger, reverse_finger)
             })
             .collect();
-        let to_be_removed: Vec<_> = kmer_vec
+        let to_be_removed: Vec<_> = units
             .par_iter()
             .enumerate()
-            .map(|(idx, &(ref f, _))| {
-                kmer_vec[..idx].iter().any(|(f1, r1)| {
-                    compute_jaccard(f, f1, config.jaccard_thr)
-                        || compute_jaccard(f, r1, config.jaccard_thr)
+            .map(|(idx, unit)| {
+                let kmer = &kmer_vec[idx].0;
+                (0..idx).any(|jdx| {
+                    let &(ref f, ref r) = &kmer_vec[jdx];
+                    if compute_jaccard(kmer, f, config.jaccard_thr) {
+                        alignment(unit, units[jdx]) > config.alignment_thr
+                    } else if compute_jaccard(kmer, r, config.jaccard_thr) {
+                        let rev = bio_utils::revcmp(&units[jdx]);
+                        alignment(unit, &rev) > config.alignment_thr
+                    } else {
+                        false
+                    }
                 })
             })
             .collect();
@@ -117,8 +125,6 @@ impl DetermineUnit for definitions::DataSet {
         self
     }
     fn select_chunks_freq(mut self, config: &UnitConfig) -> Self {
-        debug!("{:?}", config);
-        debug!("{} raw reads.", self.raw_reads.len());
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
@@ -191,7 +197,6 @@ fn to_index(kmer: &[u8]) -> usize {
     })
 }
 
-#[allow(dead_code)]
 fn alignment(seq1: &[u8], seq2: &[u8]) -> f64 {
     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
     for i in 1..seq1.len() + 1 {

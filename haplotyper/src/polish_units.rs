@@ -7,6 +7,8 @@ use std::collections::HashMap;
 pub struct PolishUnitConfig {
     read_type: ReadType,
     consensus_size: usize,
+    rep_num: usize,
+    seed: u64,
 }
 
 impl PolishUnitConfig {
@@ -17,7 +19,10 @@ impl PolishUnitConfig {
             "CLR" => ReadType::CLR,
             _ => unreachable!(),
         };
+        let (rep_num, seed) = (3, 349309);
         Self {
+            rep_num,
+            seed,
             read_type,
             consensus_size,
         }
@@ -64,9 +69,22 @@ impl PolishUnits for DataSet {
 }
 
 fn consensus(pileup: &[&[u8]], c: &PolishUnitConfig) -> String {
-    let seqs: Vec<_> = pileup
-        .chunks(c.consensus_size)
-        .map(|cs| POA::from_slice_default(&cs).consensus())
-        .collect();
-    String::from_utf8_lossy(&POA::from_vec_default(&seqs).consensus()).to_string()
+    if pileup.len() <= c.consensus_size {
+        String::from_utf8_lossy(&POA::from_slice_default(&pileup).consensus()).to_string()
+    } else {
+        use rand::{seq::SliceRandom, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+        let subchunks = c.rep_num * pileup.len() / c.consensus_size;
+        let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(c.seed);
+        let subseq: Vec<_> = (0..subchunks)
+            .map(|_| {
+                let subchunk: Vec<_> = pileup
+                    .choose_multiple(&mut rng, c.consensus_size)
+                    .copied()
+                    .collect();
+                POA::from_slice_default(&subchunk).consensus()
+            })
+            .collect();
+        String::from_utf8_lossy(&POA::from_vec_default(&subseq).consensus()).to_string()
+    }
 }

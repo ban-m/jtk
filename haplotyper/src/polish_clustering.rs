@@ -24,20 +24,30 @@ pub trait PolishClustering {
 
 impl PolishClustering for DataSet {
     fn polish_clustering(mut self, c: &PolishClusteringConfig) -> Self {
-        let id_to_cluster: HashMap<_, _> = self
-            .assignments
+        let reads_summary: Vec<Vec<(u64, u64)>> = self
+            .encoded_reads
             .iter()
-            .map(|asn| (asn.id, asn.cluster))
+            .map(|read| read.nodes.iter().map(|n| (n.unit, n.cluster)).collect())
             .collect();
-        let mut buckets: HashMap<_, Vec<&mut EncodedRead>> = HashMap::new();
-        for read in self.encoded_reads.iter_mut() {
-            if let Some(cluster) = id_to_cluster.get(&read.id) {
-                buckets.entry(cluster).or_default().push(read);
+        let rev_for_reads: Vec<_> = {
+            let rev = reads_summary
+                .iter()
+                .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
+            reads_summary.iter().cloned().zip(rev).collect()
+        };
+        debug!("Correcting {} reads.", self.encoded_reads.len());
+        let corrected_reads: Vec<_> = reads_summary
+            .par_iter()
+            .map(|read| correct_read(read, &rev_for_reads, c))
+            .collect();
+        assert_eq!(self.encoded_reads.len(), corrected_reads.len());
+        for (read, corrected) in self.encoded_reads.iter_mut().zip(corrected_reads) {
+            assert_eq!(read.nodes.len(), corrected.len());
+            for (node, (unit, cluster)) in read.nodes.iter_mut().zip(corrected) {
+                node.unit = unit;
+                node.cluster = cluster;
             }
         }
-        buckets
-            .into_iter()
-            .for_each(|(_, bucket)| correct(bucket, c));
         self
     }
 }
@@ -52,6 +62,12 @@ fn score((q_u, q_c): (u64, u64), (r_u, r_c): (u64, u64), mat: i32, mism: i32) ->
     }
 }
 
+fn has_shared_unit(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> bool {
+    use std::collections::HashSet;
+    let units: HashSet<_> = qry.iter().copied().collect();
+    rfr.iter().any(|x| units.contains(x))
+}
+
 // Align the query to the reference and
 // return the edit operations. Note that
 // A Cigar::Match(x,y) mean the query sequence at that point is (x,y)
@@ -63,6 +79,10 @@ fn alignment(
     rfr: &[(u64, u64)],
     (mat, mism, gap): (i32, i32, i32),
 ) -> Option<(i32, Vec<Cigar>)> {
+    // Check if qry and rfr has same unit.
+    if !has_shared_unit(qry, rfr) {
+        return None;
+    }
     let mut dp = vec![vec![0; rfr.len() + 1]; qry.len() + 1];
     for (i, &q) in qry.iter().enumerate() {
         for (j, &r) in rfr.iter().enumerate() {
@@ -178,31 +198,6 @@ impl Column {
             *counts.entry(x).or_default() += 1;
         }
         counts.into_iter().max_by_key(|x| x.1).unwrap().0
-    }
-}
-
-fn correct(mut reads: Vec<&mut EncodedRead>, config: &PolishClusteringConfig) {
-    let reads_summary: Vec<Vec<(u64, u64)>> = reads
-        .iter()
-        .map(|read| read.nodes.iter().map(|n| (n.unit, n.cluster)).collect())
-        .collect();
-    let rev_for_reads: Vec<_> = {
-        let rev = reads_summary
-            .iter()
-            .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
-        reads_summary.iter().cloned().zip(rev).collect()
-    };
-    let corrected_reads: Vec<_> = reads_summary
-        .par_iter()
-        .map(|read| correct_read(read, &rev_for_reads, config))
-        .collect();
-    assert_eq!(reads.len(), corrected_reads.len());
-    for (read, corrected) in reads.iter_mut().zip(corrected_reads) {
-        assert_eq!(read.nodes.len(), corrected.len());
-        for (node, (unit, cluster)) in read.nodes.iter_mut().zip(corrected) {
-            node.unit = unit;
-            node.cluster = cluster;
-        }
     }
 }
 
