@@ -5,36 +5,51 @@ use super::SMALL_WEIGHT;
 use nalgebra::DMatrix;
 use poa_hmm::POA;
 use rand::Rng;
+use rayon::prelude::*;
 pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     data: &[ChunkedUnit],
     chain_len: usize,
     rng: &mut R,
     c: &ClusteringConfig<F>,
-    max_value: f64,
+    //_max_value: f64,
 ) -> (Vec<Vec<Vec<f64>>>, Vec<bool>, f64) {
-    let d = match c.read_type {
-        super::ReadType::CCS => 10,
-        super::ReadType::ONT => 60,
-        super::ReadType::CLR => 60,
-    };
     let update_data = vec![false; data.len()];
     let usepos = vec![true; chain_len];
     let ws = get_cluster_fraction(data, &update_data, c.cluster_num);
-    let (betas, lks) = (0..c.repeat_num)
-        .map(|_| {
-            let ms = get_models(data, chain_len, rng, c, &usepos, &update_data, d);
-            variant_calling(&data, &c.poa_config, &ws, &ms)
+    let (mut betas, mut lks) = {
+        let ms = get_models(data, chain_len, rng, c, &usepos, None);
+        let (vars, lk) = variant_calling(&data, &c.poa_config, &ws, &ms);
+        (vars, vec![lk])
+    };
+    for _ in 0..c.repeat_num - 1 {
+        let ms = get_models(data, chain_len, rng, c, &usepos, None);
+        let (vars, lk) = variant_calling(&data, &c.poa_config, &ws, &ms);
+        lks.push(lk);
+        betas.iter_mut().zip(vars).for_each(|(bss, vss)| {
+            bss.iter_mut().zip(vss).for_each(|(bs, vs)| {
+                bs.iter_mut().zip(vs).for_each(|(b, v)| *b += v);
+            })
+        });
+    }
+    betas.iter_mut().for_each(|bss| {
+        bss.iter_mut().for_each(|bs| {
+            let sum = bs.iter().map(|x| x * x).sum::<f64>().sqrt();
+            bs.iter_mut().for_each(|b| *b = *b / sum)
         })
-        .fold(
-            (initial_variants(c.cluster_num, chain_len), vec![]),
-            |(xs, mut ps), (y, q)| {
-                ps.push(q);
-                (add(xs, y, c.repeat_num), ps)
-            },
-        );
-    let lk = logsumexp(&lks) - (c.repeat_num as f64).ln();
+    });
+    let lk = logsumexp(&lks);
+    // for bss in betas.iter() {
+    //     for bs in bss.iter() {
+    //         let line: Vec<_> = bs
+    //             .iter()
+    //             .enumerate()
+    //             .map(|(i, b)| format!("{}:{:.3}", i, b))
+    //             .collect();
+    //         debug!("{:?}", line.join(","));
+    //     }
+    // }
     let (betas, position_in_use) = select_variants(betas, chain_len, c.variant_num);
-    let betas = normalize_weights(betas, max_value);
+    // let betas = normalize_weights(betas, max_value);
     (betas, position_in_use, lk)
 }
 
@@ -54,7 +69,7 @@ fn calc_matrices_poa(
     // To access the likelihood of the j-th position of the k-th cluster,
     // lk_matrix[i][chain_len * k + j] would work.
     let lk_matrices: Vec<Vec<f64>> = data
-        .iter()
+        .par_iter()
         .map(|read| lks_poa(models, read, c, chain_len))
         .collect();
     let lk = lk_matrices
@@ -196,10 +211,25 @@ fn variant_calling(
         .map(|i| {
             (0..i)
                 .map(|j| call_variants(i, j, &matrices, chain_len))
+                .map(normalize)
                 .collect()
         })
         .collect();
     (betas, lk)
+}
+
+fn normalize(mut xs: Vec<f64>) -> Vec<f64> {
+    let sign = xs
+        .iter()
+        .max_by(|a, b| {
+            a.abs()
+                .partial_cmp(&b.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|x| x.signum())
+        .unwrap_or(0.);
+    xs.iter_mut().for_each(|x| *x *= sign);
+    xs
 }
 
 // Call varinants between cluster i and cluster j.
@@ -237,26 +267,24 @@ fn logsumexp(xs: &[f64]) -> f64 {
     max + sum
 }
 
-fn initial_variants(cluster_num: usize, chain_len: usize) -> Vec<Vec<Vec<f64>>> {
-    (0..cluster_num)
-        .map(|i| (0..i).map(|_| vec![0.; chain_len]).collect())
-        .collect()
-}
-
 fn select_variants(
     mut variants: Vec<Vec<Vec<f64>>>,
     chain_len: usize,
     variant_number: usize,
 ) -> (Vec<Vec<Vec<f64>>>, Vec<bool>) {
     let mut position = vec![false; chain_len];
+    let thr = {
+        let mut var: Vec<_> = variants
+            .iter()
+            .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
+            .copied()
+            .collect();
+        var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pos = var.len() - variant_number;
+        var[pos].max(0.05)
+    };
     for bss in variants.iter_mut() {
         for bs in bss.iter_mut() {
-            let thr = {
-                let mut var = bs.clone();
-                var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                let pos = variant_number.min(var.len() - 1);
-                var[pos]
-            };
             for (idx, b) in bs.iter_mut().enumerate() {
                 if *b < thr {
                     *b = 0.;
@@ -286,27 +314,15 @@ fn get_cluster_fraction(
         .collect()
 }
 
-fn normalize_weights(mut betas: Vec<Vec<Vec<f64>>>, target: f64) -> Vec<Vec<Vec<f64>>> {
-    let max = betas
-        .iter()
-        .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
-        .fold(0., |x, &y| if x < y { y } else { x });
-    betas.iter_mut().for_each(|bss| {
-        bss.iter_mut().for_each(|betas| {
-            betas.iter_mut().for_each(|b| *b *= target / max);
-        })
-    });
-    betas
-}
-
-fn add(mut betas: Vec<Vec<Vec<f64>>>, y: Vec<Vec<Vec<f64>>>, rep: usize) -> Vec<Vec<Vec<f64>>> {
-    let rep = rep as f64;
-    for (clusters, clusters_y) in betas.iter_mut().zip(y) {
-        for (bs, bs_y) in clusters.iter_mut().zip(clusters_y) {
-            for (b, y) in bs.iter_mut().zip(bs_y) {
-                *b += y * y / rep;
-            }
-        }
-    }
-    betas
-}
+// fn normalize_weights(mut betas: Vec<Vec<Vec<f64>>>, target: f64) -> Vec<Vec<Vec<f64>>> {
+//     let max = betas
+//         .iter()
+//         .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
+//         .fold(0., |x, &y| if x < y { y } else { x });
+//     betas.iter_mut().for_each(|bss| {
+//         bss.iter_mut().for_each(|betas| {
+//             betas.iter_mut().for_each(|b| *b *= target / max);
+//         })
+//     });
+//     betas
+// }

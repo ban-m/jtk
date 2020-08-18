@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use de_bruijn_graph::IntoDeBruijnNodes;
 use definitions::DataSet;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -6,6 +7,24 @@ use std::collections::HashMap;
 pub struct CorrectedRead {
     pub id: u64,
     pub nodes: Vec<Unit>,
+}
+
+impl IntoDeBruijnNodes for CorrectedRead {
+    fn into_de_bruijn_nodes(&self, k: usize) -> Vec<de_bruijn_graph::Node> {
+        self.nodes
+            .windows(k)
+            .map(|w| {
+                let first = w.first().unwrap().unit;
+                let last = w.last().unwrap().unit;
+                let kmer: Vec<_> = if first < last {
+                    w.iter().map(|n| (n.unit, n.cluster)).collect()
+                } else {
+                    w.iter().rev().map(|n| (n.unit, n.cluster)).collect()
+                };
+                de_bruijn_graph::Node::new(kmer)
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,14 +116,29 @@ fn alignment(
         r_pos -= 1;
     }
     cigar.reverse();
+    // let qry: Vec<_> = qry.iter().map(|&(x, y)| format!("{}-{}", x, y)).collect();
+    // let rfr: Vec<_> = rfr.iter().map(|&(x, y)| format!("{}-{}", x, y)).collect();
+    // eprintln!("{}", qry.join(","));
+    // eprintln!("{}", rfr.join(","));
+    // eprintln!("{:?}\n", cigar);
     Some((score, cigar))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Cigar {
     Match(u64, u64),
     Ins(u64, u64),
     Del,
+}
+
+impl std::fmt::Debug for Cigar {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Cigar::Match(_, _) => write!(f, "M"),
+            Cigar::Ins(_, _) => write!(f, "I"),
+            Cigar::Del => write!(f, "D"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -143,7 +177,7 @@ impl Pileup {
                 }
                 Cigar::Del => {
                     if 0 < q_pos && q_pos < q_len {
-                        self.column[r_pos].c += 1;
+                        // self.column[r_pos].c += 1;
                         self.column[r_pos].d += 1;
                     }
                     r_pos += 1;
@@ -172,7 +206,10 @@ impl Column {
         }
     }
     fn generate(&self, node: &mut Vec<Unit>) {
-        if self.i.len() > self.c / 2 {
+        // eprintln!("M{:?}", self.m);
+        // eprintln!("I{:?}", self.i);
+        // eprintln!("d:{},c:{}", self.d, self.c);
+        if self.i.len() > self.c / 4 {
             let mut counts: HashMap<_, u32> = HashMap::new();
             for &x in self.i.iter() {
                 *counts.entry(x).or_default() += 1;
@@ -209,6 +246,23 @@ pub fn local_correction(ds: &DataSet, c: &GlobalClusteringConfig) -> Vec<Correct
     debug!("Correcting {} reads...", reads.len());
     local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score), 1)
 }
+
+pub fn polish_reads(reads: &[CorrectedRead], c: &GlobalClusteringConfig) -> Vec<CorrectedRead> {
+    let reads: Vec<_> = reads
+        .into_iter()
+        .map(|read| {
+            let nodes: Vec<_> = read
+                .nodes
+                .iter()
+                .map(|node| (node.unit, node.cluster))
+                .collect();
+            (read.id, nodes)
+        })
+        .collect();
+    debug!("Correcting {} reads...", reads.len());
+    local_correction_inner(reads, (c.mat_score, c.mismat_score, c.gap_score), 1)
+}
+
 fn local_correction_inner(
     reads: Vec<(u64, Vec<(u64, u64)>)>,
     param: (i32, i32, i32),
@@ -247,10 +301,16 @@ fn correct(
         )
         .filter(|&(score, _)| score > param.0 * thr)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
+    // let bf: Vec<_> = nodes.iter().map(|(x, y)| format!("{}-{}", x, y)).collect();
     let mut nodes = vec![];
     for column in pileup.column {
         column.generate(&mut nodes);
     }
+    // let af: Vec<_> = nodes
+    //     .iter()
+    //     .map(|u| format!("{}-{}", u.unit, u.cluster))
+    //     .collect();
+    // eprintln!("=======\n{}\n{}", bf.join(","), af.join(","));
     CorrectedRead { id, nodes }
 }
 
@@ -279,31 +339,31 @@ mod tests {
             min_len,
             unit_len,
         } = conf;
-        let mut reads = vec![];
-        for i in 0..num {
-            let cluster = (i % cl) as u64;
-            let len = r.gen::<usize>() % (max_len - min_len) + min_len;
-            let start = r.gen::<usize>() % (unit_len - len);
-            let units: Vec<_> = if r.gen_bool(0.5) {
-                (start..=start + len).collect()
-            } else {
-                let start = start + len;
-                (start - len..=start).rev().collect()
-            };
-            let mut read = vec![];
-            for unit in units {
-                if r.gen_bool(skip) {
-                    continue;
-                } else if r.gen_bool(fail) {
-                    let cluster = r.gen::<u64>() % cl as u64;
-                    read.push((unit as u64, cluster));
+        (0..num)
+            .map(|i| {
+                let cluster = r.gen_range(0, cl) as u64;
+                let len = r.gen::<usize>() % (max_len - min_len) + min_len;
+                let start = r.gen::<usize>() % (unit_len - len);
+                let units: Vec<_> = if r.gen_bool(0.5) {
+                    (start..=start + len).collect()
                 } else {
-                    read.push((unit as u64, cluster));
+                    let start = start + len;
+                    (start - len..=start).rev().collect()
+                };
+                let mut read = vec![];
+                for unit in units {
+                    if r.gen_bool(skip) {
+                        continue;
+                    } else if r.gen_bool(fail) {
+                        let cluster = r.gen::<u64>() % cl as u64;
+                        read.push((unit as u64, cluster));
+                    } else {
+                        read.push((unit as u64, cluster));
+                    }
                 }
-            }
-            reads.push((i as u64, read));
-        }
-        reads
+                (i as u64, read)
+            })
+            .collect()
     }
     #[test]
     fn error_correction_single() {
@@ -350,16 +410,13 @@ mod tests {
                 .collect()
         };
         for read in reads.iter() {
-            let prev = read.1.len();
-            eprintln!("Correcting:{:?}", read);
+            // let prev = read.1.len();
             let res = correct(read, &rev_for, (1, -1, -2), 0);
-            let seq: Vec<_> = res.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
-            let after = seq.len();
-            eprintln!("Corrected:{:?}", seq);
-            assert!(prev.max(4) - 4 < after || after < prev + 4);
+            // let seq: Vec<_> = res.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+            // let after = seq.len();
             let cl = res.nodes[0].cluster;
             let cluster = res.nodes.iter().all(|n| n.cluster == cl);
-            assert!(cluster, "{:?}", res);
+            assert!(cluster);
             let suc = res
                 .nodes
                 .windows(2)

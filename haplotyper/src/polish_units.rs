@@ -7,23 +7,25 @@ use std::collections::HashMap;
 pub struct PolishUnitConfig {
     read_type: ReadType,
     consensus_size: usize,
+    filter_size: usize,
     rep_num: usize,
     seed: u64,
 }
 
 impl PolishUnitConfig {
-    pub fn new(readtype: &str, consensus_size: usize) -> Self {
+    pub fn new(readtype: &str, consensus_size: usize, filter_size: usize) -> Self {
         let read_type = match readtype {
             "ONT" => ReadType::ONT,
             "CCS" => ReadType::CCS,
             "CLR" => ReadType::CLR,
             _ => unreachable!(),
         };
-        let (rep_num, seed) = (3, 349309);
+        let (rep_num, seed) = (5, 349309);
         Self {
             rep_num,
             seed,
             read_type,
+            filter_size,
             consensus_size,
         }
     }
@@ -47,44 +49,76 @@ impl PolishUnits for DataSet {
         for read in self.encoded_reads.iter() {
             for node in read.nodes.iter() {
                 if let Some(res) = pileups.get_mut(&node.unit) {
-                    res.push(node.seq.as_bytes());
+                    res.push(node);
                 }
             }
         }
         let result: HashMap<_, _> = pileups
             .par_iter()
-            .map(|(id, pileup)| {
-                let consensus = consensus(pileup, c);
-                (id, consensus)
-            })
+            .filter(|(_, pileup)| pileup.len() > c.filter_size)
+            .filter_map(|(id, pileup)| consensus(pileup, c).map(|c| (id, c)))
             .collect();
+        self.selected_chunks
+            .retain(|unit| result.contains_key(&unit.id));
         self.selected_chunks.iter_mut().for_each(|unit| {
-            if let Some(res) = result.get(&unit.id) {
-                unit.seq = res.clone();
-            }
+            unit.seq = result[&unit.id].clone();
         });
         self.encoded_reads.clear();
         self
     }
 }
 
-fn consensus(pileup: &[&[u8]], c: &PolishUnitConfig) -> String {
-    if pileup.len() <= c.consensus_size {
-        String::from_utf8_lossy(&POA::from_slice_default(&pileup).consensus()).to_string()
+use definitions::Node;
+fn consensus(pileup: &[&Node], c: &PolishUnitConfig) -> Option<String> {
+    let subchunks: Vec<_> = pileup
+        .iter()
+        .map(|n| super::local_clustering::node_to_subchunks(n, 100))
+        .collect();
+    let max_pos = subchunks
+        .iter()
+        .filter_map(|n| n.iter().map(|n| n.pos).max())
+        .max()
+        .unwrap();
+    let mut chunks = vec![vec![]; max_pos + 1];
+    for sc in subchunks.iter() {
+        for c in sc.iter() {
+            chunks[c.pos].push(c.seq.as_slice());
+        }
+    }
+    if chunks.iter().any(|cs| cs.len() < c.consensus_size) {
+        None
     } else {
-        use rand::{seq::SliceRandom, SeedableRng};
-        use rand_xoshiro::Xoshiro256PlusPlus;
-        let subchunks = c.rep_num * pileup.len() / c.consensus_size;
-        let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(c.seed);
-        let subseq: Vec<_> = (0..subchunks)
-            .map(|_| {
-                let subchunk: Vec<_> = pileup
-                    .choose_multiple(&mut rng, c.consensus_size)
-                    .copied()
-                    .collect();
-                POA::from_slice_default(&subchunk).consensus()
-            })
+        let consensus: String = chunks
+            .into_iter()
+            .flat_map(|cs| consensus_chunk(&cs, c))
+            .map(|n| n as char)
             .collect();
-        String::from_utf8_lossy(&POA::from_vec_default(&subseq).consensus()).to_string()
+        Some(consensus)
+    }
+}
+
+fn consensus_chunk(pileup: &[&[u8]], c: &PolishUnitConfig) -> Vec<u8> {
+    assert!(pileup.len() >= c.consensus_size);
+    use rand::{seq::SliceRandom, SeedableRng};
+    use rand_xoshiro::Xoshiro256PlusPlus;
+    let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(c.seed);
+    let subseq: Vec<_> = (0..c.rep_num)
+        .map(|_| {
+            let subchunk: Vec<_> = pileup
+                .choose_multiple(&mut rng, c.consensus_size)
+                .copied()
+                .collect();
+            POA::from_slice(&subchunk, &vec![1.; subchunk.len()], (-2, -2, &score)).consensus()
+        })
+        .collect();
+    let subseq: Vec<_> = subseq.iter().map(|e| e.as_slice()).collect();
+    POA::from_slice(&subseq, &vec![1.; subseq.len()], (-2, -2, &score)).consensus()
+}
+
+fn score(x: u8, y: u8) -> i32 {
+    if x == y {
+        1
+    } else {
+        -1
     }
 }

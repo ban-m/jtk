@@ -1,17 +1,15 @@
 use definitions::*;
 #[macro_use]
 extern crate log;
-const UNIT: u64 = 500;
+const UNIT: u64 = 30;
 fn main() -> std::io::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+    env_logger::init();
     use std::io::BufReader;
     let args: Vec<_> = std::env::args().collect();
     let ds = BufReader::new(std::fs::File::open(&args[1])?);
     debug!("Started");
     let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
-    debug!("Configuring...");
-    let config = haplotyper::ClusteringConfig::with_default(&dataset, 1, 100, 1000);
-    debug!("Configured.");
+    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000);
     let ref_unit = dataset
         .selected_chunks
         .iter()
@@ -37,10 +35,15 @@ fn main() -> std::io::Result<()> {
         })
         .collect();
     debug!("Clustering started.");
-    haplotyper::unit_clustering(&mut units, &config, &ref_unit);
+    haplotyper::unit_clustering(&mut units, &c, &ref_unit);
     debug!("Clustering ended.");
-    for (id, _, unit) in units {
-        eprintln!("{}\t{}", id2name[&id], unit.cluster);
+    let mut result: Vec<_> = units
+        .iter()
+        .map(|(id, _, unit)| (&id2name[&id], unit.cluster))
+        .collect();
+    result.sort_by_key(|x| x.1);
+    for (i, x) in result {
+        eprintln!("{}\t{}", x, i);
     }
     Ok(())
 }

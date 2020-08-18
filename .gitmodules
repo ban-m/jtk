@@ -13,3 +13,6 @@
 [submodule "de_bruijn_graph"]
 	path = de_bruijn_graph
 	url = git@github.com:ban-m/de_bruijn_graph.git
+[submodule "edlib-sys"]
+	path = edlib-sys
+	url = git@github.com:ban-m/edlib-sys.git

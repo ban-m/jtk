@@ -145,14 +145,29 @@ fn alignment(
         r_pos -= 1;
     }
     cigar.reverse();
+    // let qry: Vec<_> = qry.iter().map(|&(x, y)| format!("{}-{}", x, y)).collect();
+    // let rfr: Vec<_> = rfr.iter().map(|&(x, y)| format!("{}-{}", x, y)).collect();
+    // eprintln!("{}", qry.join(","));
+    // eprintln!("{}", rfr.join(","));
+    // eprintln!("{:?}\n", cigar);
     Some((score, cigar))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Cigar {
     Match(u64, u64),
     Ins(u64, u64),
     Del,
+}
+
+impl std::fmt::Debug for Cigar {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Cigar::Match(_, _) => write!(f, "M"),
+            Cigar::Ins(_, _) => write!(f, "I"),
+            Cigar::Del => write!(f, "D"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

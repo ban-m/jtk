@@ -1,44 +1,23 @@
 #!/bin/bash
 set -ue
 ROOT=${PWD}
-for mut_rate in 15000 6000 3000 1500 600 300
+for diploid in dip-A-D dip-A-C
 do
-    output=${ROOT}/result/mut${mut_rate}/jtk
-    if [ -d ${output} ]
-    then
-        rm -r ${output}
-    fi
-    mkdir -p ${output}
-    # CCS
-    read=/data/hacone/randseq/mut${mut_rate}/CCS_reads.${mut_rate}.1M.fa
-    qsub -j y -o ${output}/CCS_reads.${mut_rate}.1M.log\
-         ./script/pipeline.sh \
-         ${read} \
-         ${output}/CCS_reads.${mut_rate}.1M
-    # CLR
-    read=/data/hacone/randseq/mut${mut_rate}/CLR_reads.${mut_rate}.1M.fa
-    qsub -j y -o ${output}/CLR_reads.${mut_rate}.1M.log\
+    output=${ROOT}/result/${diploid}/jtk
+    # mkdir -p ${output}
+    # reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS.fa
+    # rm -f ${output}/${diploid}.CCS.log
+    # qsub -j y -o ${output}/${diploid}.CCS.log \
+    #      ./script/pipeline.sh \
+    #      ${reads} \
+    #      ${output}/${diploid}.CCS
+    reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CLR.fa
+    rm -f ${output}/${diploid}.CLR.log
+    qsub -j y -o ${output}/${diploid}.CLR.log \
          ./script/pipeline_clr.sh \
-         ${read} \
-         ${output}/CLR_reads.${mut_rate}.1M
+         ${reads} \
+         ${output}/${diploid}.CLR
 done
 
-read=/data/hacone/randseq/synthetic_diploids/diploids/dip-A-CS.CCS.fa
-output=${ROOT}/result/dip-A-CS/jtk
-if [ -d ${output} ]
-then
-    rm -r ${output}
-fi
-mkdir -p ${output}
-qsub -j y -o ${output}/dip-A-CS.CCS.log \
-     ./script/pipeline.sh \
-     ${read} \
-     ${output}/dip-A-CS.CCS
-
-read=/data/hacone/randseq/synthetic_diploids/diploids/dip-A-CS.CLR.fa
-qsub -j y -o ${output}/dip-A-CS.CLR.log \
-     ./script/pipeline_clr.sh \
-     ${read} \
-     ${output}/dip-A-CS.CLR
 
 

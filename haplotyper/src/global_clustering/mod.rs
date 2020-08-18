@@ -1,6 +1,51 @@
+#![allow(dead_code)]
+mod error_correction;
 use de_bruijn_graph::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 struct ReadWrapper<'a>(&'a definitions::EncodedRead);
+struct FilteredRead {
+    id: u64,
+    nodes: Vec<(u64, u64)>,
+}
+
+impl FilteredRead {
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn new(x: &definitions::EncodedRead, units: &HashSet<u64>) -> Self {
+        let nodes: Vec<_> = x
+            .nodes
+            .iter()
+            .filter_map(|n| {
+                if units.contains(&n.unit) {
+                    None
+                } else {
+                    Some((n.unit, n.cluster))
+                }
+            })
+            .collect();
+        let id = x.id;
+        Self { nodes, id }
+    }
+}
+
+impl IntoDeBruijnNodes for FilteredRead {
+    fn into_de_bruijn_nodes(&self, k: usize) -> Vec<Node> {
+        self.nodes
+            .windows(k)
+            .map(|w| {
+                let first = w.first().unwrap().0;
+                let last = w.last().unwrap().0;
+                let kmer: Vec<_> = if first < last {
+                    w.to_vec()
+                } else {
+                    w.iter().rev().copied().collect()
+                };
+                Node::new(kmer)
+            })
+            .collect()
+    }
+}
 
 impl<'a> ReadWrapper<'a> {
     fn new(x: &'a definitions::EncodedRead) -> Self {
@@ -17,14 +62,8 @@ impl<'a> IntoDeBruijnNodes for ReadWrapper<'a> {
             .nodes
             .windows(k)
             .map(|w| {
-                let first = {
-                    let f = w.first().unwrap();
-                    (f.unit, f.cluster)
-                };
-                let last = {
-                    let l = w.last().unwrap();
-                    (l.unit, l.cluster)
-                };
+                let first = w.first().unwrap().unit;
+                let last = w.last().unwrap().unit;
                 let kmer: Vec<_> = if first < last {
                     w.iter().map(|n| (n.unit, n.cluster)).collect()
                 } else {
@@ -68,20 +107,52 @@ pub trait GlobalClustering {
 
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
-        let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
-        let graph = DeBruijnGraph::from(&reads, c.k_mer);
-        let mut graph = graph.clean_up_auto();
-        // graph.resolve_crossings(&reads);
-        // graph.resolve_bubbles(&reads);
         if log_enabled!(log::Level::Debug) {
-            let mut count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
-            count.sort();
-            let top_15: Vec<_> = count.iter().rev().take(15).collect();
-            debug!("Top 15 Occurences:{:?}", top_15);
-            let last = **top_15.last().unwrap();
-            let count: Vec<_> = count.into_iter().filter(|&x| x < last).collect();
+            debug!("------Raw reads------");
+            let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
+            let graph = DeBruijnGraph::from(&reads, c.k_mer);
+            let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
+            for node in graph.nodes.iter() {
+                let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
+                *counts.entry(kmer).or_default() += node.occ;
+            }
+            let counts: Vec<_> = counts.values().copied().collect();
+            let hist = histgram_viz::Histgram::new(&counts);
+            eprintln!("Node occ:\n{}", hist.format(40, 20));
+            eprintln!("Max occ:{}", counts.iter().max().unwrap());
+        }
+        let reads = error_correction::local_correction(&self, c);
+        let graph = DeBruijnGraph::from(&reads, c.k_mer);
+        if log_enabled!(log::Level::Debug) {
+            debug!("------Corrected reads------");
+            let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
+            for node in graph.nodes.iter() {
+                let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
+                *counts.entry(kmer).or_default() += node.occ;
+            }
+            let counts: Vec<_> = counts.values().copied().collect();
+            let hist = histgram_viz::Histgram::new(&counts);
+            eprintln!("Node occ:\n{}", hist.format(40, 20));
+            eprintln!("Max occ:{}", counts.iter().max().unwrap());
+        }
+        let reads = error_correction::polish_reads(&reads, c);
+        let mut graph = DeBruijnGraph::from(&reads, c.k_mer);
+        graph.clean_up_auto();
+        if log_enabled!(log::Level::Debug) {
+            debug!("------After 2nd correction------");
+            let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
+            for node in graph.nodes.iter() {
+                let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
+                *counts.entry(kmer).or_default() += node.occ;
+            }
+            let counts: Vec<_> = counts.values().copied().collect();
+            let hist = histgram_viz::Histgram::new(&counts);
+            eprintln!("Node occ:\n{}", hist.format(40, 20));
+            eprintln!("Max occ:{}", counts.iter().max().unwrap());
+            let count: Vec<_> = graph.nodes.iter().map(|n| n.occ).collect();
             let hist = histgram_viz::Histgram::new(&count);
-            eprintln!("The rest({}-mer) nodes\n{}", c.k_mer, hist.format(20, 40));
+            eprintln!("The rest({}-mer) nodes\n{}", c.k_mer, hist.format(40, 20));
+            eprintln!("Max occ:{}", count.iter().max().unwrap());
             let mut count: HashMap<_, u32> = HashMap::new();
             for n in graph.nodes.iter() {
                 *count.entry(n.edges.len()).or_default() += 1;
@@ -90,13 +161,14 @@ impl GlobalClustering for definitions::DataSet {
             count.sort_by_key(|x| x.0);
             eprintln!("Degree Count\n{:?}", count);
         }
-        let component_num = graph.coloring();
+        let component_num = graph.coloring(10);
         debug!("Resulting in {} clusters.", component_num);
         let mut count: HashMap<_, usize> = HashMap::new();
         let assignments: Vec<_> = reads
             .iter()
             .filter_map(|read| {
-                let id = read.id();
+                //let id = read.id();
+                let id = read.id;
                 let cluster = graph
                     .assign_read(read)
                     .or_else(|| graph.assign_read_by_unit(read));
@@ -117,4 +189,23 @@ impl GlobalClustering for definitions::DataSet {
         }
         self
     }
+}
+
+fn detect_collapsed_units(reads: &[definitions::EncodedRead]) -> HashSet<u64> {
+    let mut res: HashMap<_, Vec<_>> = HashMap::new();
+    for read in reads.iter() {
+        for node in read.nodes.iter() {
+            res.entry(node.unit).or_default().push(node);
+        }
+    }
+    res.into_iter()
+        .filter_map(|(unit, nodes)| {
+            let count: HashSet<_> = nodes.iter().map(|n| n.cluster).collect();
+            if count.len() <= 1 {
+                Some(unit)
+            } else {
+                None
+            }
+        })
+        .collect()
 }

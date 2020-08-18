@@ -21,3 +21,4 @@ env_logger = "*"
 log = "*"
 gfa = {path = "../gfa_rust"}
 rayon = "*"
+bio_utils = {path = "../bio_utils"}

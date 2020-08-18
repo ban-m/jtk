@@ -1,5 +1,6 @@
 use bio_utils::lasttab;
 use bio_utils::lasttab::LastTAB;
+use rayon::prelude::*;
 use std::collections::HashMap;
 pub trait Encode {
     fn encode(self, threads: usize) -> Self;
@@ -14,7 +15,7 @@ impl Encode for definitions::DataSet {
         let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(&alignments);
         let encoded_reads: Vec<_> = self
             .raw_reads
-            .iter()
+            .par_iter()
             .filter_map(|read| {
                 let alns = alignments_each_reads.get(&read.name)?;
                 encode(read, alns, &self.selected_chunks)

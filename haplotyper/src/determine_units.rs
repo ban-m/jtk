@@ -1,6 +1,6 @@
+use super::ReadType;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnitConfig {
     pub chunk_len: usize,
     pub skip_len: usize,
@@ -11,10 +11,18 @@ pub struct UnitConfig {
     pub alignment_thr: f64,
     pub hits_thr: f64,
     pub hits_range: usize,
+    pub read_type: ReadType,
+    pub threads: usize,
 }
 const DEFAULT_RNG: usize = 200;
 impl UnitConfig {
-    pub fn new_ccs(chunk_len: usize, unit_num: usize, skip_len: usize, margin: usize) -> Self {
+    pub fn new_ccs(
+        chunk_len: usize,
+        unit_num: usize,
+        skip_len: usize,
+        margin: usize,
+        threads: usize,
+    ) -> Self {
         Self {
             chunk_len,
             skip_len,
@@ -25,38 +33,55 @@ impl UnitConfig {
             alignment_thr: 0.4,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
+            read_type: ReadType::CCS,
+            threads,
         }
     }
-    pub fn new_clr(chunk_len: usize, unit_num: usize, skip_len: usize, margin: usize) -> Self {
+    pub fn new_clr(
+        chunk_len: usize,
+        unit_num: usize,
+        skip_len: usize,
+        margin: usize,
+        threads: usize,
+    ) -> Self {
         Self {
             chunk_len,
             skip_len,
             margin,
             k: 7,
             unit_num,
-            jaccard_thr: 0.1,
-            alignment_thr: 0.3,
+            jaccard_thr: 0.2,
+            alignment_thr: 0.35,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
+            read_type: ReadType::CLR,
+            threads,
         }
     }
-    pub fn new_ont(chunk_len: usize, unit_num: usize, skip_len: usize, margin: usize) -> Self {
+    pub fn new_ont(
+        chunk_len: usize,
+        unit_num: usize,
+        skip_len: usize,
+        margin: usize,
+        threads: usize,
+    ) -> Self {
         Self {
             chunk_len,
             skip_len,
             margin,
-            k: 7,
+            k: 6,
             unit_num,
-            jaccard_thr: 0.1,
-            alignment_thr: 0.3,
+            jaccard_thr: 0.15,
+            alignment_thr: 0.1,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
+            read_type: ReadType::ONT,
+            threads,
         }
     }
 }
 
 pub trait DetermineUnit {
-    // fn select_chunks_num(self, config: &UnitConfig) -> Self;
     fn select_chunks_freq(self, config: &UnitConfig) -> Self;
     fn select_chunks(self, config: &UnitConfig) -> Self;
 }
@@ -67,11 +92,50 @@ impl DetermineUnit for definitions::DataSet {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
-        let mut units: Vec<_> = reads
-            .iter()
-            .flat_map(|r| split_into(r, config))
-            .take(config.unit_num)
-            .collect();
+        let mut units: Vec<_> = if config.read_type == ReadType::CCS {
+            reads
+                .iter()
+                .flat_map(|r| split_into(r, config))
+                .take(config.unit_num)
+                .map(|e| e.to_vec())
+                .collect()
+        } else {
+            let clr_config = {
+                let mut temp = config.clone();
+                temp.chunk_len = temp.chunk_len * 110 / 100;
+                debug!("Calib length {}->{}", config.chunk_len, temp.chunk_len);
+                temp
+            };
+            let units: Vec<_> = reads
+                .iter()
+                .flat_map(|r| split_into(r, &clr_config))
+                .take(clr_config.unit_num)
+                .map(|e| e.to_vec())
+                .collect();
+            self.selected_chunks = units
+                .iter()
+                .enumerate()
+                .map(|(idx, seq)| {
+                    let id = idx as u64;
+                    let seq = String::from_utf8_lossy(seq).to_string();
+                    Unit { id, seq }
+                })
+                .collect();
+            use super::Encode;
+            debug!("Encoding...");
+            self = self.encode(config.threads);
+            debug!("Polishing {} units.", units.len());
+            use super::polish_units::PolishUnitConfig;
+            use super::polish_units::PolishUnits;
+            let polish_config = PolishUnitConfig::new("CLR", 10, 20);
+            self = self.polish_units(&polish_config);
+            debug!("Polished.");
+            self.selected_chunks
+                .iter()
+                .filter(|e| e.seq.len() > config.chunk_len)
+                .map(|e| e.seq.as_bytes()[..config.chunk_len].to_vec())
+                .collect()
+        };
         debug!("Collected {} units", units.len());
         let k = config.k;
         let kmer_vec: Vec<(Vec<_>, Vec<_>)> = units
@@ -89,24 +153,34 @@ impl DetermineUnit for definitions::DataSet {
                 (forward_finger, reverse_finger)
             })
             .collect();
-        let to_be_removed: Vec<_> = units
-            .par_iter()
-            .enumerate()
-            .map(|(idx, unit)| {
-                let kmer = &kmer_vec[idx].0;
-                (0..idx).any(|jdx| {
-                    let &(ref f, ref r) = &kmer_vec[jdx];
-                    if compute_jaccard(kmer, f, config.jaccard_thr) {
-                        alignment(unit, units[jdx]) > config.alignment_thr
-                    } else if compute_jaccard(kmer, r, config.jaccard_thr) {
-                        let rev = bio_utils::revcmp(&units[jdx]);
-                        alignment(unit, &rev) > config.alignment_thr
-                    } else {
-                        false
-                    }
-                })
+        let edges: Vec<Vec<bool>> = (0..units.len())
+            .into_par_iter()
+            .map(|i| {
+                let kmer = &kmer_vec[i].0;
+                (0..i)
+                    .into_par_iter()
+                    .map(|j| {
+                        let &(ref f, ref r) = &kmer_vec[j];
+                        if compute_jaccard(kmer, f, config.jaccard_thr) {
+                            let aln = alignment(&units[i], &units[j]);
+                            aln > config.alignment_thr
+                        } else if compute_jaccard(kmer, r, config.jaccard_thr) {
+                            let rev = bio_utils::revcmp(&units[j]);
+                            let aln = alignment(&units[i], &rev);
+                            aln > config.alignment_thr
+                        } else {
+                            false
+                        }
+                    })
+                    .collect()
             })
             .collect();
+        let num_edges = edges
+            .iter()
+            .map(|e| e.iter().filter(|&&b| b).count())
+            .sum::<usize>();
+        debug!("Graph constructed. {} edges.", num_edges);
+        let to_be_removed = approx_vertex_cover(edges, units.len());
         let mut idx = 0;
         units.retain(|_| {
             idx += 1;
@@ -118,7 +192,7 @@ impl DetermineUnit for definitions::DataSet {
             .enumerate()
             .map(|(idx, seq)| {
                 let id = idx as u64;
-                let seq = String::from_utf8_lossy(seq).to_string();
+                let seq = String::from_utf8(seq).unwrap();
                 Unit { id, seq }
             })
             .collect();
@@ -226,4 +300,38 @@ fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
             .map(|(s, t)| &seq[s..t])
             .collect()
     }
+}
+
+fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
+    let mut degrees = vec![0; nodes];
+    for (i, es) in edges.iter().enumerate() {
+        for (j, _) in es.iter().enumerate().filter(|&(_, &b)| b) {
+            degrees[i] += 1;
+            degrees[j] += 1;
+        }
+    }
+    let mut to_be_removed = vec![false; nodes];
+    loop {
+        let (argmax, &max) = degrees.iter().enumerate().max_by_key(|x| x.1).unwrap();
+        if max == 0 {
+            break;
+        }
+        to_be_removed[argmax] = true;
+        degrees[argmax] = 0;
+        edges[argmax].iter_mut().enumerate().for_each(|(i, b)| {
+            degrees[i] -= *b as usize;
+            *b = false;
+        });
+        if argmax < nodes {
+            edges
+                .iter_mut()
+                .enumerate()
+                .skip(argmax + 1)
+                .for_each(|(i, es)| {
+                    degrees[i] -= es[argmax] as usize;
+                    es[argmax] = false;
+                });
+        }
+    }
+    to_be_removed
 }

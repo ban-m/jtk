@@ -240,7 +240,7 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("LIMIT")
                 .help("Maximum Execution time(sec)")
-                .default_value(&"3000")
+                .default_value(&"2000")
                 .takes_value(true),
         )
         .arg(
@@ -470,18 +470,6 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .help("Number of units. 2*Genome size / chunk_len would be nice."),
         )
         .arg(
-            Arg::with_name("polish_units")
-                .long("polish_units")
-                .help("If given, polish units."),
-        )
-        .arg(
-            Arg::with_name("consensus_size")
-                .long("consensus_size")
-                .takes_value(true)
-                .default_value(&"10")
-                .help("The number of string to take consensus"),
-        )
-        .arg(
             Arg::with_name("read_type")
                 .long("read_type")
                 .takes_value(true)
@@ -674,18 +662,18 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("take_num")
         .and_then(|e| e.parse().ok())
         .expect("Take num");
-    let threads: usize = matches
+    let thrds: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .expect("threads");
     rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
+        .num_threads(thrds)
         .build_global()
         .unwrap();
     let config = match matches.value_of("read_type").unwrap() {
-        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin),
-        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin),
-        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin),
+        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds),
+        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds),
+        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds),
         _ => unreachable!(),
     };
     let dataset = get_input_file()?.select_chunks(&config);
@@ -735,7 +723,7 @@ fn polish_units(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .num_threads(threads)
         .build_global()
         .unwrap();
-    let config = PolishUnitConfig::new(readtype, consensus_size);
+    let config = PolishUnitConfig::new(readtype, consensus_size, consensus_size);
     let dataset = get_input_file()?.polish_units(&config);
     flush_file(&dataset)
 }
@@ -937,23 +925,12 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .and_then(|e| e.parse().ok())
         .expect("take num");
     let unit_config = match matches.value_of("read_type").unwrap() {
-        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin),
-        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin),
-        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin),
+        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, threads),
+        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, threads),
+        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, threads),
         _ => unreachable!(),
     };
     let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);
-    let dataset = if matches.is_present("polish_units") {
-        let read_type = matches.value_of("read_type").unwrap();
-        let consensus_size: usize = matches
-            .value_of("consensus_size")
-            .and_then(|e| e.parse().ok())
-            .expect("Skip Len");
-        let polish_config = PolishUnitConfig::new(read_type, consensus_size);
-        dataset.polish_units(&polish_config).encode(threads)
-    } else {
-        dataset
-    };
     debug!("Start Local Clustering step");
     let cluster_num: usize = matches
         .value_of("cluster_num")
