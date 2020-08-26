@@ -1,6 +1,6 @@
 mod assemble;
 mod determine_units;
-mod encode;
+pub mod encode;
 mod entry;
 mod extract;
 mod find_union;

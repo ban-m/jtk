@@ -1,19 +1,21 @@
 use definitions::*;
 #[macro_use]
 extern crate log;
-const UNIT: u64 = 30;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     use std::io::BufReader;
     let args: Vec<_> = std::env::args().collect();
     let ds = BufReader::new(std::fs::File::open(&args[1])?);
+    let unit: u64 = args[2].parse().unwrap();
     debug!("Started");
     let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
-    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000);
+    let mut c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000);
+    c.limit = 3000;
+    c.seed = 100;
     let ref_unit = dataset
         .selected_chunks
         .iter()
-        .find(|u| u.id == UNIT)
+        .find(|u| u.id == unit)
         .unwrap()
         .clone();
     use std::collections::HashMap;
@@ -30,20 +32,34 @@ fn main() -> std::io::Result<()> {
             read.nodes
                 .iter_mut()
                 .enumerate()
-                .find(|(_, n)| n.unit == UNIT)
+                .find(|(_, n)| n.unit == unit)
                 .map(|(idx, n)| (id, idx, n))
         })
+        .enumerate()
+        .map(|(_, x)| x)
         .collect();
-    debug!("Clustering started.");
     haplotyper::unit_clustering(&mut units, &c, &ref_unit);
-    debug!("Clustering ended.");
     let mut result: Vec<_> = units
         .iter()
         .map(|(id, _, unit)| (&id2name[&id], unit.cluster))
         .collect();
     result.sort_by_key(|x| x.1);
+    let mut counts: HashMap<_, usize> = HashMap::new();
     for (i, x) in result {
-        eprintln!("{}\t{}", x, i);
+        // eprintln!("{}\t{}", x, i);
+        if i.contains("hapA") {
+            *counts.entry((x, 0)).or_default() += 1;
+        } else {
+            *counts.entry((x, 1)).or_default() += 1;
+        }
     }
+    //eprint!("{}\t", i);
+    for pred in 0..=1 {
+        for ans in 0..=1 {
+            eprint!("{}\t", counts.get(&(pred, ans)).unwrap_or(&0));
+        }
+    }
+    eprintln!();
+    // }
     Ok(())
 }

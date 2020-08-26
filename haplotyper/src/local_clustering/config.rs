@@ -9,7 +9,7 @@ const MAX_BETA: f64 = 0.8;
 const GIBBS_PRIOR: f64 = 0.01;
 const STABLE_LIMIT: u32 = 6;
 const VARIANT_NUMBER: usize = 2;
-const DEFAULT_SAMPLE_NUM: usize = 30;
+const DEFAULT_SAMPLE_NUM: usize = 50;
 #[derive(Debug, Clone)]
 pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub cluster_num: usize,
@@ -82,11 +82,11 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
     pub fn default() -> Self {
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
         let config = poa_hmm::PACBIO_CONFIG;
-        debug!("Config:{}", config);
+        // debug!("Config:{}", config);
         Self {
             cluster_num: 3,
             subchunk_length: 100,
-            limit: 1000,
+            limit: 2000,
             alnparam: DEFAULT_ALN,
             poa_config: config,
             sample_rate: SAMPLE_RATE,
@@ -120,10 +120,9 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit);
         c.initial_beta = 0.0001;
         c.max_beta = 0.3;
-        c.cluster_num = 2;
-        c.beta_increase = 1.03;
-        c.stable_limit = 6;
-        c.repeat_num = 3;
+        c.beta_increase = 1.01;
+        c.repeat_num = 1;
+        c.stable_limit = 8;
         c.read_type = ReadType::CLR;
         c
     }
@@ -153,7 +152,7 @@ fn score(x: u8, y: u8) -> i32 {
     if x == y {
         3
     } else {
-        -4
+        -7
     }
 }
 

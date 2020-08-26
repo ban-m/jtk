@@ -107,39 +107,40 @@ pub trait GlobalClustering {
 
 impl GlobalClustering for definitions::DataSet {
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
-        if log_enabled!(log::Level::Debug) {
-            debug!("------Raw reads------");
-            let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
-            let graph = DeBruijnGraph::from(&reads, c.k_mer);
-            let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
-            for node in graph.nodes.iter() {
-                let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
-                *counts.entry(kmer).or_default() += node.occ;
-            }
-            let counts: Vec<_> = counts.values().copied().collect();
-            let hist = histgram_viz::Histgram::new(&counts);
-            eprintln!("Node occ:\n{}", hist.format(40, 20));
-            eprintln!("Max occ:{}", counts.iter().max().unwrap());
-        }
+        // if log_enabled!(log::Level::Debug) {
+        //     debug!("------Raw reads------");
+        // let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect(
+        // );
+        // let graph = DeBruijnGraph::from(&reads, c.k_mer);
+        // let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
+        // for node in graph.nodes.iter() {
+        //     let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
+        //     *counts.entry(kmer).or_default() += node.occ;
+        // }
+        // let counts: Vec<_> = counts.values().copied().collect();
+        // let hist = histgram_viz::Histgram::new(&counts);
+        // eprintln!("Node occ:\n{}", hist.format(40, 20));
+        // eprintln!("Max occ:{}", counts.iter().max().unwrap());
+        // }
         let reads = error_correction::local_correction(&self, c);
-        let graph = DeBruijnGraph::from(&reads, c.k_mer);
-        if log_enabled!(log::Level::Debug) {
-            debug!("------Corrected reads------");
-            let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
-            for node in graph.nodes.iter() {
-                let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
-                *counts.entry(kmer).or_default() += node.occ;
-            }
-            let counts: Vec<_> = counts.values().copied().collect();
-            let hist = histgram_viz::Histgram::new(&counts);
-            eprintln!("Node occ:\n{}", hist.format(40, 20));
-            eprintln!("Max occ:{}", counts.iter().max().unwrap());
-        }
-        let reads = error_correction::polish_reads(&reads, c);
         let mut graph = DeBruijnGraph::from(&reads, c.k_mer);
+        // if log_enabled!(log::Level::Debug) {
+        //     debug!("------Corrected reads------");
+        //     let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
+        //     for node in graph.nodes.iter() {
+        //         let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
+        //         *counts.entry(kmer).or_default() += node.occ;
+        //     }
+        //     let counts: Vec<_> = counts.values().copied().collect();
+        //     let hist = histgram_viz::Histgram::new(&counts);
+        //     eprintln!("Node occ:\n{}", hist.format(40, 20));
+        //     eprintln!("Max occ:{}", counts.iter().max().unwrap());
+        // }
+        // let reads = error_correction::polish_reads(&reads, c);
+        // let mut graph = DeBruijnGraph::from(&reads, c.k_mer);
         graph.clean_up_auto();
         if log_enabled!(log::Level::Debug) {
-            debug!("------After 2nd correction------");
+            // debug!("------After 2nd correction------");
             let mut counts: HashMap<Vec<u64>, usize> = HashMap::new();
             for node in graph.nodes.iter() {
                 let kmer: Vec<_> = node.kmer.iter().map(|n| n.0).collect();
@@ -167,8 +168,7 @@ impl GlobalClustering for definitions::DataSet {
         let assignments: Vec<_> = reads
             .iter()
             .filter_map(|read| {
-                //let id = read.id();
-                let id = read.id;
+                let id = read.id();
                 let cluster = graph
                     .assign_read(read)
                     .or_else(|| graph.assign_read_by_unit(read));

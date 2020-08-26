@@ -1,15 +1,15 @@
 use definitions::*;
-use poa_hmm::*;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
 use std::collections::HashMap;
 const SMALL_WEIGHT: f64 = 0.000_000_001;
 mod config;
+pub mod naive_variant_calling;
 pub use config::*;
 mod create_model;
 pub mod eread;
-mod variant_calling;
+pub mod variant_calling;
 use create_model::*;
 use eread::*;
 use variant_calling::*;
@@ -68,39 +68,36 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     c: &ClusteringConfig<F>,
     ref_unit: &Unit,
 ) {
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit.id);
     let len = if ref_unit.seq().len() % c.subchunk_length == 0 {
         ref_unit.seq().len() / c.subchunk_length
     } else {
         ref_unit.seq().len() / c.subchunk_length + 1
     };
-    let p = gen_sample::Profile {
-        sub: 0.003,
-        ins: 0.003,
-        del: 0.003,
-    };
-    let mut data = vec![];
-    for i in 0..3 * units.len() {
-        if i < units.len() {
-            let &(_, _, ref node) = &units[i];
-            let chunks = node_to_subchunks(node, c.subchunk_length);
-            let d = ChunkedUnit { cluster: 0, chunks };
-            data.push(d);
-        } else {
-            let mut d = data[i % units.len()].clone();
-            d.chunks.iter_mut().for_each(|chunk| {
-                use gen_sample::introduce_randomness;
-                chunk.seq = introduce_randomness(&chunk.seq, &mut rng, &p);
-            });
-            data.push(d);
-        }
-    }
-    // let data: Vec<ChunkedUnit> = units
-    //     .iter()
-    //     .map(|(_, _, node)| node_to_subchunks(node, c.subchunk_length))
-    //     .map(|chunks| ChunkedUnit { cluster: 0, chunks })
-    //     .collect();
-    assert_eq!(data.len(), 3 * units.len());
+    let (min_length, max_length) = (c.subchunk_length * 9 / 10, c.subchunk_length * 11 / 10);
+    let mut data: Vec<_> = units
+        .iter()
+        .map(|&(_, _, ref node)| {
+            let mut chunks = node_to_subchunks(node, c.subchunk_length);
+            chunks.retain(|chunk| min_length < chunk.seq.len() && chunk.seq.len() < max_length);
+            ChunkedUnit { cluster: 0, chunks }
+        })
+        .collect();
+    // We need ... ?
+    // use poa_hmm::gen_sample;
+    // let p = gen_sample::Profile {
+    //     sub: 0.04,
+    //     ins: 0.04,
+    //     del: 0.04,
+    // };
+    // let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit.id);
+    // for &(_, _, ref u) in units.iter() {
+    //     let mut chunks = node_to_subchunks(u, c.subchunk_length);
+    //     chunks.retain(|chunk| min_length < chunk.seq.len() && chunk.seq.len() < max_length);
+    //     chunks.iter_mut().for_each(|chunk| {
+    //         chunk.seq = gen_sample::introduce_randomness(&chunk.seq, &mut rng, &p)
+    //     });
+    //     data.push(ChunkedUnit { cluster: 0, chunks });
+    // }
     clustering_by_kmeans(&mut data, len, c, ref_unit.id);
     for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
         n.cluster = d.cluster as u64;
@@ -113,23 +110,30 @@ pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
     let mut ops = node.cigar.clone();
     ops.reverse();
     let mut chunk_position = vec![0];
+    let mut scores = vec![0];
     loop {
         // Pop until target.
+        let mut score = 0;
         let last_op = {
             loop {
                 match ops.pop() {
                     Some(Op::Del(l)) => {
                         r_pos += l;
+                        score += -2 * l as i64;
                         if target <= r_pos {
                             break Op::Del(l);
                         }
                     }
                     Some(Op::Ins(l)) => {
+                        score += -2 * l as i64;
                         q_pos += l;
                     }
                     Some(Op::Match(l)) => {
                         r_pos += l;
                         q_pos += l;
+                        // This confuses match and mismatch.
+                        // Should be tuned.
+                        score += l as i64;
                         if target <= r_pos {
                             break Op::Match(l);
                         }
@@ -145,16 +149,19 @@ pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
                 Op::Del(_) => {
                     ops.push(Op::Del(overflow));
                     r_pos -= overflow;
+                    score += 2 * overflow as i64;
                 }
                 Op::Match(_) => {
                     ops.push(Op::Match(overflow));
                     r_pos -= overflow;
                     q_pos -= overflow;
+                    score -= overflow as i64;
                 }
                 _ => unreachable!(),
             }
         }
         chunk_position.push(q_pos);
+        scores.push(score);
         // Move to next iteration
         let rest = ops
             .iter()
@@ -171,6 +178,14 @@ pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
             })
             .sum::<usize>();
         if rest < len && query_rest > 0 {
+            let score = ops
+                .iter()
+                .map(|op| match op {
+                    Op::Ins(l) | Op::Del(l) => -2 * *l as i64,
+                    Op::Match(l) => *l as i64,
+                })
+                .sum::<i64>();
+            scores.push(score);
             chunk_position.push(node.seq().len());
             break;
         } else if rest < len && query_rest == 0 {
@@ -179,10 +194,13 @@ pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
             target += len;
         }
     }
+    assert_eq!(scores.len(), chunk_position.len());
     chunk_position
         .windows(2)
+        .zip(scores.windows(2))
         .enumerate()
-        .map(|(idx, w)| Chunk {
+        .filter(|(_, (_, s))| s[1] > 0)
+        .map(|(idx, (w, _))| Chunk {
             pos: idx,
             seq: node.seq()[w[0]..w[1]].to_vec(),
         })
@@ -206,84 +224,37 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let rng = &mut rng;
     let start = std::time::Instant::now();
     let mut coef = 1.;
-    // datasize * error rate.
+    // datasize * error rate / 3.
     let stable_thr = match c.read_type {
         ReadType::CCS => (data.len() as f64 * 0.02).max(2.).floor() as u32,
-        ReadType::ONT => (data.len() as f64 * 0.15).max(5.).floor() as u32,
-        ReadType::CLR => (data.len() as f64 * 0.15).max(5.).floor() as u32,
+        ReadType::ONT => (data.len() as f64 * 0.08).max(3.).floor() as u32,
+        ReadType::CLR => (data.len() as f64 * 0.08).max(3.).floor() as u32,
     };
     while count < c.stable_limit {
         let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c);
         coef *= c.beta_increase;
         let beta = (beta * coef).min(c.max_beta);
         lk = next_lk;
-        let changed_num = rand::seq::index::sample(rng, data.len(), data.len() / 2)
+        let changed_num = rand::seq::index::sample(rng, data.len(), data.len() / 3)
             .iter()
-            .map(|picked| {
-                let ms = get_models(&data, chain_len, rng, c, &pos, Some(picked));
-                update_assignment(data, c, picked, &betas, beta, &ms, rng)
-            })
+            .map(|picked| update_assignment(data, c, picked, &betas, beta, &pos, chain_len, rng))
             .sum::<u32>();
-        report(id, &data, count, lk, beta, changed_num);
+        report(id, &data, count, lk, coef, changed_num);
         count += (changed_num <= stable_thr) as u32;
         count *= (changed_num <= stable_thr) as u32;
         let elapsed = (std::time::Instant::now() - start).as_secs();
         if elapsed > c.limit {
             info!("Break by timelimit:{:?}", elapsed);
-            //data.iter_mut().for_each(|e| e.cluster = 0);
             break;
         }
     }
 }
 
-// pub fn clustering_by_kmeans_errorprone<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-//     data: &mut Vec<ChunkedUnit>,
-//     chain_len: usize,
-//     c: &ClusteringConfig<F>,
-//     ref_unit: u64,
-// ) {
-//     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit * 101);
-//     data.iter_mut().for_each(|cs| {
-//         cs.cluster = rng.gen_range(0, c.cluster_num);
-//     });
-//     let d = 70;
-//     let id = ref_unit;
-//     let mut beta = c.initial_beta;
-//     let mut count = 0;
-//     let mut lk = f64::NEG_INFINITY;
-//     let rng = &mut rng;
-//     let per_cluster_coverage = data.len() / c.cluster_num;
-//     let pick_prob = if per_cluster_coverage < 40 {
-//         0.002
-//     } else if per_cluster_coverage < 100 {
-//         0.048 / 60. * (per_cluster_coverage - 40) as f64 + 0.002
-//     } else {
-//         0.05
-//     };
-//     let start = std::time::Instant::now();
-//     while count < c.stable_limit {
-//         let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c, 2.);
-//         if lk < next_lk {
-//             beta *= c.beta_increase;
-//             beta = beta.min(c.max_beta);
-//         }
-//         lk = next_lk;
-//         let changed_num = rand::seq::index::sample(rng, data.len(), data.len() / 2)
-//             .map(|picked| {
-//                 let ms = get_models(&data, chain_len, rng, c, &pos, Some(picked), d);
-//                 update_assignment(data, chain_len, c, picked & betas, beta, &ms)
-//             })
-//             .sum::<u32>();
-//         report(id, &data, count, lk, beta, changed_num);
-//         let has_changed = changed_num <= (data.len() as f64 * 0.01).max(2.) as u32;
-//         count += has_changed as u32;
-//         count *= has_changed as u32;
-//         let elapsed = (std::time::Instant::now() - start).as_secs();
-//         if elapsed > c.limit && count < c.stable_limit / 2 {
-//             info!("Break by timelimit:{:?}", elapsed);
-//             break;
-//         }
-//     }
+// fn scale_weights(betas: &mut [Vec<Vec<f64>>], x: f64) {
+//     betas.iter_mut().for_each(|bss| {
+//         bss.iter_mut()
+//             .for_each(|bs| bs.iter_mut().for_each(|b| *b *= x))
+//     })
 // }
 
 fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32) {
@@ -311,67 +282,108 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32)
     );
 }
 
-// fn get_fraction_on_position(
-//     data: &[ChunkedUnit],
-//     chain_len: usize,
-//     cluster_num: usize,
-// ) -> Vec<Vec<f64>> {
-//     let mut total_count = vec![0; chain_len];
-//     let mut counts = vec![vec![0; chain_len]; cluster_num];
-//     for read in data.iter() {
-//         for chunk in read.chunks.iter() {
-//             total_count[chunk.pos] += 1;
-//             counts[read.cluster][chunk.pos] += 1;
-//         }
-//     }
-//     counts
-//         .iter()
-//         .map(|cs| {
-//             cs.iter()
-//                 .zip(total_count.iter())
-//                 .map(|(&c, &t)| c as f64 / t as f64 + SMALL_WEIGHT)
-//                 .collect()
-//         })
-//         .collect()
-// }
-
-// fn get_argmax(ws: &[f64]) -> Option<usize> {
-//     ws.iter()
-//         .enumerate()
-//         .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Less))
-//         .map(|e| e.0)
-// }
-
 fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     data: &mut [ChunkedUnit],
     c: &ClusteringConfig<F>,
     picked: usize,
     betas: &[Vec<Vec<f64>>],
     beta: f64,
-    models: &[Vec<POA>],
+    pos: &[bool],
+    chain_len: usize,
     rng: &mut R,
 ) -> u32 {
+    let weights = get_weights(data, chain_len, rng, &pos, picked, beta, betas, c);
+    // use rand::seq::SliceRandom;
+    // let choices: Vec<_> = (0..c.cluster_num).collect();
+    // let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
+    let new_assignment = weights
+        .iter()
+        .enumerate()
+        .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|x| x.0)
+        .unwrap_or(0);
+    let read = data.get_mut(picked).unwrap();
+    trace!("{}\t{:.3}\t{:.3}", picked, weights[0], weights[1],);
+    if read.cluster != new_assignment {
+        read.cluster = new_assignment;
+        1
+    } else {
+        0
+    }
+}
+
+fn logsumexp(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.;
+    }
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
+    assert!(sum >= 0., "{:?}->{}", xs, sum);
+    max + sum
+}
+
+fn get_weights<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: rand::Rng>(
+    data: &[ChunkedUnit],
+    chain_len: usize,
+    rng: &mut R,
+    pos: &[bool],
+    picked: usize,
+    beta: f64,
+    betas: &[Vec<Vec<f64>>],
+    c: &ClusteringConfig<F>,
+) -> Vec<f64> {
     let fractions = {
-        let mut fractions = vec![0; models.len()];
+        let mut fractions = vec![1; c.cluster_num];
         for read in data.iter() {
             fractions[read.cluster as usize] += 1;
         }
         fractions
     };
-    let idx = picked;
-    let read = data.get_mut(idx).unwrap();
-    let likelihoods: Vec<(usize, Vec<_>)> = read
+    let rep_num = 5;
+    let models: Vec<_> = get_models(&data, chain_len, rng, c, &pos, Some(picked));
+    let mut likelihoods: Vec<(usize, Vec<_>)> = data[picked]
         .chunks
-        .par_iter()
+        .iter()
+        .filter(|chunk| pos[chunk.pos])
         .map(|chunk| {
-            let lks = models
+            let lks: Vec<_> = models
                 .iter()
-                .map(|ms| ms[chunk.pos].forward(&chunk.seq, &c.poa_config))
+                .map(|ms| vec![ms[chunk.pos].forward(&chunk.seq, &c.poa_config)])
                 .collect();
             (chunk.pos, lks)
         })
         .collect();
-    let weights: Vec<_> = (0..c.cluster_num)
+    for _ in 0..rep_num - 1 {
+        let models: Vec<_> = get_models(&data, chain_len, rng, c, &pos, Some(picked));
+        for (chunk, (pos, lks)) in data[picked]
+            .chunks
+            .iter()
+            .filter(|chunk| pos[chunk.pos])
+            .zip(likelihoods.iter_mut())
+        {
+            assert_eq!(*pos, chunk.pos);
+            lks.iter_mut()
+                .zip(models.iter())
+                .for_each(|(xs, ms)| xs.push(ms[chunk.pos].forward(&chunk.seq, &c.poa_config)));
+        }
+    }
+    let likelihoods: Vec<(usize, Vec<_>)> = likelihoods
+        .into_iter()
+        .map(|(pos, lks)| {
+            let lks: Vec<_> = lks
+                .iter()
+                .map(|lks| logsumexp(lks) - (rep_num as f64).ln())
+                .collect();
+            // let dump: Vec<_> = lks
+            //     .iter()
+            //     .map(|x| lks.iter().map(|y| (y - x).exp()).sum::<f64>().recip())
+            //     .map(|x| format!("{}", x))
+            //     .collect();
+            // debug!("DUMP\t{}\t{}", pos, dump.join("\t"));
+            (pos, lks)
+        })
+        .collect();
+    (0..c.cluster_num)
         .map(|l| {
             (0..c.cluster_num)
                 .map(|k| {
@@ -390,16 +402,7 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .sum::<f64>()
                 .recip()
         })
-        .collect();
-    use rand::seq::SliceRandom;
-    let choices: Vec<_> = (0..c.cluster_num).collect();
-    let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
-    if read.cluster != new_assignment {
-        read.cluster = new_assignment;
-        1
-    } else {
-        0
-    }
+        .collect()
 }
 
 #[cfg(test)]

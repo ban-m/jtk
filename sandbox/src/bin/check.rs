@@ -5,16 +5,16 @@ use rand_xoshiro::Xoroshiro128PlusPlus;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
-    c.initial_beta = 0.0001;
     c.max_beta = 0.3;
     c.cluster_num = 2;
     c.beta_increase = 1.03;
     c.stable_limit = 6;
-    c.repeat_num = 3;
+    c.repeat_num = 1;
+    c.variant_num = 2;
+    c.sample_num = 30;
     c.read_type = haplotyper::ReadType::CLR;
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     let profile = gen_sample::PROFILE.norm().mul(0.20);
-    //let profile = gen_sample::CCS_PROFILE;
     let args: Vec<_> = std::env::args().collect();
     let (seed, test_num, clusters, errors, probs) = {
         let seed: usize = args[1].parse().unwrap();
@@ -29,17 +29,38 @@ fn main() -> std::io::Result<()> {
     };
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(seed as u64);
     let chain_len = 20;
-    let mut templates = vec![];
     let len = 100;
-    let p = &gen_sample::Profile {
-        sub: errors / 6.,
-        ins: errors / 6.,
-        del: errors / 6.,
-    };
     let template: Vec<_> = (0..chain_len)
         .map(|_| gen_sample::generate_seq(&mut rng, len))
         .collect::<Vec<_>>();
-    for _ in 0..clusters {
+    let p = gen_sample::Profile {
+        sub: errors / 3.,
+        ins: errors / 3.,
+        del: errors / 3.,
+    };
+    // let mut templates = vec![];
+    let mut templates = vec![template.clone()];
+    assert!(clusters > 1);
+    for _ in 0..clusters - 1 {
+        // use log::debug;
+        // use rand::Rng;
+        // let var_pos = rng.gen_range(0, chain_len);
+        // let mut seq = template.clone();
+        // seq[var_pos] = match rng.gen::<u8>() % 3 {
+        //     0 => {
+        //         debug!("Ins");
+        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
+        //     }
+        //     1 => {
+        //         debug!("Del");
+        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
+        //     }
+        //     2 => {
+        //         debug!("Subs");
+        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
+        //     }
+        //     _ => panic!(),
+        // };
         let seq: Vec<_> = template
             .iter()
             .map(|e| gen_sample::introduce_randomness(e, &mut rng, &p))
@@ -47,29 +68,35 @@ fn main() -> std::io::Result<()> {
         templates.push(seq);
     }
     use sandbox::generate_mul_data;
-    let (dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
-    let p = gen_sample::Profile {
-        sub: 0.004,
-        del: 0.004,
-        ins: 0.004,
-    };
-    let mut dataset = (0..4 * dataset.len())
-        .map(|i| {
-            if i < dataset.len() {
-                dataset[i].clone()
-            } else {
-                let mut d = dataset[i % dataset.len()].clone();
-                d.chunks.iter_mut().for_each(|chunk| {
-                    chunk.seq = gen_sample::introduce_randomness(&chunk.seq, &mut rng, &p);
-                });
-                d
-            }
-        })
-        .collect();
-    clustering_by_kmeans(&mut dataset, chain_len, &c, 0);
+    let (mut dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
+    dataset
+        .iter_mut()
+        .zip(answer.iter())
+        .for_each(|(x, &ans)| x.cluster = ans as usize);
+    clustering_by_kmeans(&mut dataset, chain_len, &c, 121);
     use std::collections::HashMap;
     let mut result: HashMap<_, u32> = HashMap::new();
     for (data, answer) in dataset.iter().zip(answer) {
+        let ed0 = data
+            .chunks
+            .iter()
+            .zip(templates[0].iter())
+            .map(|(r, q)| bio_utils::alignments::edit_dist(&r.seq, q) as i32)
+            .sum::<i32>();
+        let diff: Vec<_> = templates
+            .iter()
+            .map(|template| {
+                data.chunks
+                    .iter()
+                    .zip(template.iter())
+                    .map(|(r, q)| bio_utils::alignments::edit_dist(&r.seq, q) as i32)
+                    .sum::<i32>()
+                    - ed0
+            })
+            .map(|e| format!("{}", e))
+            .collect();
+        let diff = diff.join("\t");
+        eprintln!("D\t{}\t{}\t{}", answer, data.cluster, diff);
         *result.entry((data.cluster, answer)).or_default() += 1;
     }
     let mut result: Vec<_> = result.into_iter().collect();

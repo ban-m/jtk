@@ -95,7 +95,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("take_num")
                 .takes_value(true)
-                .default_value(&"6000")
+                .default_value(&"3000")
                 .help("Number of units;4*Genome size/chunk_len would be nice."),
         )
         .arg(
@@ -124,8 +124,8 @@ fn subcommand_select_unit() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_polish_units() -> App<'static, 'static> {
-    SubCommand::with_name("polish_units")
+fn subcommand_polish_unit() -> App<'static, 'static> {
+    SubCommand::with_name("polish_unit")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Polishing units by consuming encoded reads")
@@ -155,8 +155,15 @@ fn subcommand_polish_units() -> App<'static, 'static> {
             Arg::with_name("consensus_size")
                 .long("consensus_size")
                 .takes_value(true)
-                .default_value(&"10")
+                .default_value(&"6")
                 .help("The number of string to take consensus"),
+        )
+        .arg(
+            Arg::with_name("iteration")
+                .long("iteration")
+                .takes_value(true)
+                .default_value(&"10")
+                .help("Iteration number"),
         )
 }
 
@@ -701,7 +708,7 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
     flush_file(&dataset)
 }
 
-fn polish_units(matches: &clap::ArgMatches) -> std::io::Result<()> {
+fn polish_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
         1 => "info",
@@ -718,13 +725,17 @@ fn polish_units(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("consensus_size")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
+    let iteration: usize = matches
+        .value_of("iteration")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
     let readtype = matches.value_of("read_type").unwrap();
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
         .unwrap();
-    let config = PolishUnitConfig::new(readtype, consensus_size, consensus_size);
-    let dataset = get_input_file()?.polish_units(&config);
+    let config = PolishUnitConfig::new(readtype, consensus_size, iteration);
+    let dataset = get_input_file()?.polish_unit(&config);
     flush_file(&dataset)
 }
 
@@ -1013,7 +1024,7 @@ fn get_input_file() -> std::io::Result<DataSet> {
 fn flush_file(dataset: &DataSet) -> std::io::Result<()> {
     let stdout = std::io::stdout();
     let mut wtr = std::io::BufWriter::new(stdout.lock());
-    match serde_json::ser::to_writer_pretty(&mut wtr, dataset) {
+    match serde_json::ser::to_writer(&mut wtr, dataset) {
         Err(why) => {
             eprintln!("{:?}", why);
             eprintln!("Invalid output to the STDOUT.");
@@ -1033,7 +1044,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_extract())
         .subcommand(subcommand_stats())
         .subcommand(subcommand_select_unit())
-        .subcommand(subcommand_polish_units())
+        .subcommand(subcommand_polish_unit())
         .subcommand(subcommand_encode())
         .subcommand(subcommand_view())
         .subcommand(subcommand_local_clustering())
@@ -1047,7 +1058,7 @@ fn main() -> std::io::Result<()> {
         ("extract", Some(sub_m)) => extract(sub_m),
         ("stats", Some(sub_m)) => stats(sub_m),
         ("select_unit", Some(sub_m)) => select_unit(sub_m),
-        ("polish_units", Some(sub_m)) => polish_units(sub_m),
+        ("polish_unit", Some(sub_m)) => polish_unit(sub_m),
         ("encode", Some(sub_m)) => encode(sub_m),
         ("view", Some(sub_m)) => view(sub_m),
         ("local_clustering", Some(sub_m)) => local_clustering(sub_m),

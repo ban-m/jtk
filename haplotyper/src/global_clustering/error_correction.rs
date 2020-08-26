@@ -8,6 +8,11 @@ pub struct CorrectedRead {
     pub id: u64,
     pub nodes: Vec<Unit>,
 }
+impl CorrectedRead {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
 
 impl IntoDeBruijnNodes for CorrectedRead {
     fn into_de_bruijn_nodes(&self, k: usize) -> Vec<de_bruijn_graph::Node> {
@@ -209,7 +214,7 @@ impl Column {
         // eprintln!("M{:?}", self.m);
         // eprintln!("I{:?}", self.i);
         // eprintln!("d:{},c:{}", self.d, self.c);
-        if self.i.len() > self.c / 4 {
+        if self.i.len() > self.c / 3 {
             let mut counts: HashMap<_, u32> = HashMap::new();
             for &x in self.i.iter() {
                 *counts.entry(x).or_default() += 1;
@@ -301,7 +306,6 @@ fn correct(
         )
         .filter(|&(score, _)| score > param.0 * thr)
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
-    // let bf: Vec<_> = nodes.iter().map(|(x, y)| format!("{}-{}", x, y)).collect();
     let mut nodes = vec![];
     for column in pileup.column {
         column.generate(&mut nodes);
@@ -371,7 +375,7 @@ mod tests {
         let num = 100;
         let mut reads: Vec<_> = (0..num).map(|_| seq.clone()).collect();
         // Introduce errors
-        reads[4].insert(2, (1, 0));
+        // reads[4].insert(2, (1, 0));
         reads[5].remove(3);
         reads[2][1] = (1, 1);
         let reads: Vec<_> = reads
@@ -390,7 +394,7 @@ mod tests {
         let mut rng: Xoshiro256Plus = rand::SeedableRng::seed_from_u64(100);
         let conf = TestConfig {
             cl: 2,
-            num: 100,
+            num: 200,
             fail: 0.01,
             skip: 0.01,
             max_len: 10,
@@ -410,10 +414,7 @@ mod tests {
                 .collect()
         };
         for read in reads.iter() {
-            // let prev = read.1.len();
-            let res = correct(read, &rev_for, (1, -1, -2), 0);
-            // let seq: Vec<_> = res.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
-            // let after = seq.len();
+            let res = correct(read, &rev_for, (1, -1, -3), 0);
             let cl = res.nodes[0].cluster;
             let cluster = res.nodes.iter().all(|n| n.cluster == cl);
             assert!(cluster);

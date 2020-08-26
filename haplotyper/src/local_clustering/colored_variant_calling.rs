@@ -1,9 +1,9 @@
-#![allow(dead_code)]
 use super::create_model::get_models;
 use super::ChunkedUnit;
 use super::ClusteringConfig;
 use super::SMALL_WEIGHT;
 use nalgebra::DMatrix;
+use poa_hmm::POA;
 use rand::Rng;
 use rayon::prelude::*;
 pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
@@ -12,36 +12,35 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     rng: &mut R,
     c: &ClusteringConfig<F>,
 ) -> (Vec<Vec<Vec<f64>>>, Vec<bool>, f64) {
-    let (betas, lk) = {
+    let (mut betas, lks) = {
         let (vars, lk) = variant_calling(data, chain_len, rng, c);
-        (vars, lk)
+        (vars, vec![lk])
     };
-    let (mut betas, position_in_use) = select_variants(betas, chain_len, c.variant_num);
     betas.iter_mut().for_each(|bss| {
         bss.iter_mut().for_each(|bs| {
             let sum = bs.iter().map(|x| x * x).sum::<f64>().sqrt();
             bs.iter_mut().for_each(|b| *b = *b / sum)
         })
     });
+    let lk = logsumexp(&lks);
     for bss in betas.iter() {
         for bs in bss.iter() {
             let line: Vec<_> = bs
                 .iter()
                 .enumerate()
-                .filter(|(_, b)| b.abs() > 0.001)
-                .map(|(i, b)| format!("{}:{:.2}", i, b))
+                .map(|(i, b)| format!("{}:{:.3}", i, b))
                 .collect();
-            trace!("{:?}", line.join(","));
+            debug!("{:?}", line.join(","));
         }
     }
-
+    let (betas, position_in_use) = select_variants(betas, chain_len, c.variant_num);
     let pos: Vec<_> = position_in_use
         .iter()
         .enumerate()
         .filter(|&(_, &b)| b)
         .map(|x| x.0)
         .collect();
-    trace!("{:?}", pos);
+    debug!("{:?}", pos);
     (betas, position_in_use, lk)
 }
 
@@ -64,23 +63,21 @@ where
     // To access the likelihood of the j-th position of the k-th cluster,
     // lk_matrix[i][chain_len * k + j] would work.
     let seed: Vec<u64> = (0..data.len()).map(|_| rng.gen()).collect();
-    use rand::SeedableRng;
-    use rand_xoshiro::Xoroshiro128PlusPlus;
-    let lk_matrices: Vec<Vec<f64>> = seed
-        .into_par_iter()
+    let poss = vec![true; chain_len];
+    // let models = get_models(data, chain_len, rng, c, &poss, None);
+    let lk_matrices: Vec<Vec<f64>> = data
+        .par_iter()
+        .zip(seed.into_par_iter())
         .enumerate()
-        .map(|(picked, seed)| {
+        .map(|(picked, (read, seed))| {
+            use rand::SeedableRng;
+            use rand_xoshiro::Xoroshiro128PlusPlus;
             let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
-            lks_poa(data, chain_len, &mut rng, c, picked)
+            let picked = Some(picked);
+            let models = get_models(data, chain_len, &mut rng, c, &poss, picked);
+            lks_poa(&models, read, &c.poa_config, chain_len)
         })
         .collect();
-    // for (idx, read) in lk_matrices.iter().enumerate() {
-    //     for pos in 0..chain_len {
-    //         let lk1 = read[pos];
-    //         let lk2 = read[pos + chain_len];
-    //         trace!("LK\t{}\t{}\t{}\t{}", idx, pos, lk1, lk2);
-    //     }
-    // }
     let ws = get_cluster_fraction(data, &vec![false; data.len()], c.cluster_num);
     let lk = lk_matrices
         .iter()
@@ -99,34 +96,19 @@ where
 
 // Return likelihoods of the read.
 // the cl * i + j -th element is the likelihood for the i-th cluster at the j-th position.
-fn lks_poa<F, R>(
-    data: &[ChunkedUnit],
-    chain_len: usize,
-    rng: &mut R,
-    c: &ClusteringConfig<F>,
-    picked: usize,
-) -> Vec<f64>
-where
-    F: Fn(u8, u8) -> i32 + std::marker::Sync,
-    R: Rng,
-{
-    let poss = vec![true; chain_len];
-    let config = &c.poa_config;
-    let rep_num = 4;
-    //let mut res = vec![0.; c.cluster_num * chain_len];
-    let mut res = vec![vec![]; c.cluster_num * chain_len];
-    for _ in 0..rep_num {
-        let models = get_models(data, chain_len, rng, c, &poss, Some(picked));
-        for (i, ms) in models.iter().enumerate() {
-            for c in data[picked].chunks.iter() {
-                res[i * chain_len + c.pos].push(ms[c.pos].forward(&c.seq, config));
-            }
+fn lks_poa(
+    models: &[Vec<POA>],
+    read: &ChunkedUnit,
+    config: &poa_hmm::Config,
+    cl: usize,
+) -> Vec<f64> {
+    let mut res = vec![0.; cl * models.len()];
+    for (i, ms) in models.iter().enumerate() {
+        for c in read.chunks.iter() {
+            res[i * cl + c.pos] = ms[c.pos].forward(&c.seq, config);
         }
     }
-    res.into_iter()
-        .map(|lk| logsumexp(&lk) - (rep_num as f64).ln())
-        .collect()
-    // res.iter().map(|lk| lk / rep_num as f64).collect()
+    res
 }
 
 fn centrize(mut matrices: Vec<Vec<f64>>, row: usize, column: usize) -> Vec<Vec<f64>> {
@@ -238,8 +220,8 @@ where
     let betas: Vec<Vec<Vec<f64>>> = (0..c.cluster_num)
         .map(|i| {
             (0..i)
-                .map(|j| call_variants(i, j, data, &matrices, chain_len))
-                // .map(normalize)
+                .map(|j| call_variants(i, j, &matrices, chain_len))
+                .map(normalize)
                 .collect()
         })
         .collect();
@@ -261,59 +243,43 @@ fn normalize(mut xs: Vec<f64>) -> Vec<f64> {
 }
 
 // Call varinants between cluster i and cluster j.
-fn call_variants(
-    i: usize,
-    j: usize,
-    data: &[ChunkedUnit],
-    matrices: &[Vec<f64>],
-    column: usize,
-) -> Vec<f64> {
+fn call_variants(i: usize, j: usize, matrices: &[Vec<f64>], column: usize) -> Vec<f64> {
     // Extract focal rows for each read.
-    // let matrices: Vec<Vec<_>> = matrices
-    //     .iter()
-    //     .zip(data.iter())
-    //     .filter(|(_, d)| d.cluster == i || d.cluster == j)
-    //     .map(|(matrix, _)| {
-    //         let class_i = matrix[i * column..(i + 1) * column].iter();
-    //         let class_j = matrix[j * column..(j + 1) * column].iter();
-    //         class_i.chain(class_j).copied().collect()
-    //     })
-    //     .collect();
-    // let matrices = centrize(matrices, 2, column);
-    let margins = matrices
+    let matrices: Vec<Vec<_>> = matrices
         .iter()
-        .zip(data.iter())
-        .filter(|(_, d)| d.cluster == i || d.cluster == j)
-        .fold(vec![vec![]; column], |mut margins, (matrix, d)| {
-            let cluster = if d.cluster == i { 1. } else { -1. };
-            for pos in 0..column {
-                if matrix[pos] < -0.001 || matrix[column + pos] < -0.001 {
-                    let diff = matrix[i * column + pos] - matrix[j * column + pos];
-                    margins[pos].push((cluster, diff));
-                }
-            }
-            margins
-        });
-    margins
-        .into_iter()
-        .map(|margin| {
-            let len = margin.len() as f64;
-            let mean = margin.iter().map(|x| x.1).sum::<f64>() / len;
-            margin
-                .iter()
-                .map(|(cluster, margin)| cluster * (margin - mean))
-                .sum::<f64>()
+        .map(|matrix| {
+            // let use_pos: Vec<_> = matrix[i * column..(i + 1) * column]
+            //     .iter()
+            //     .zip(matrix[j * column..(j + 1) * column].iter())
+            //     .map(|(&l1, &l2)| l1 > poa_hmm::DEFAULT_LK && l2 > poa_hmm::DEFAULT_LK)
+            //     .collect();
+            let class_i = matrix[i * column..(i + 1) * column].iter();
+            // .iter()
+            // .zip(use_pos.iter())
+            // .map(|(&lk, &b)| if b { lk } else { 0. });
+            let class_j = matrix[j * column..(j + 1) * column].iter();
+            // .iter()
+            // .zip(use_pos.iter())
+            // .map(|(&lk, &b)| if b { lk } else { 0. });
+            class_i.chain(class_j).copied().collect()
         })
-        .collect()
-    // match maximize_margin_of(&matrices, 2, column) {
-    //     Some(res) => res,
-    //     None => vec![0.; column],
+        .collect();
+    let matrices = centrize(matrices, 2, column);
+    // for (read, matrix) in matrices.iter().enumerate() {
+    //     for position in 0..column {
+    //         let line: Vec<_> = (0..2)
+    //             .map(|col| matrix[column * col + position])
+    //             .map(|x| format!("{}", x))
+    //             .collect();
+    //         debug!("LK\t{}\t{}\t{}", read, position, line.join("\t"));
+    //     }
     // }
+    match maximize_margin_of(&matrices, 2, column) {
+        Some(res) => res,
+        None => vec![0.; column],
+    }
 }
 fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
     let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
     let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
     assert!(sum >= 0., "{:?}->{}", xs, sum);
@@ -323,46 +289,30 @@ fn logsumexp(xs: &[f64]) -> f64 {
 fn select_variants(
     mut variants: Vec<Vec<Vec<f64>>>,
     chain_len: usize,
-    _variant_number: usize,
+    variant_number: usize,
 ) -> (Vec<Vec<Vec<f64>>>, Vec<bool>) {
     let mut position = vec![false; chain_len];
     let thr = {
-        // let mut var: Vec<_> = variants
-        //     .iter()
-        //     .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
-        //     .map(|x| x.abs())
-        //     .collect();
-        // var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        // let pos = var.len() - variant_number;
-        // var[pos].max(0.05)
-        let margin = 0.2;
-        let sum = variants
-            .iter()
-            .map(|bss| {
-                bss.iter()
-                    .map(|bs| bs.iter().map(|&x| x * x).sum::<f64>().sqrt())
-                    .sum::<f64>()
-            })
-            .sum::<f64>();
-        let num = variants.iter().map(|bss| bss.len()).sum::<usize>();
-        let mean = sum / num as f64;
-        let margin = mean * margin;
-        let max = variants
+        let mut var: Vec<_> = variants
             .iter()
             .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
-            .map(|x| x.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap_or(0.);
-        trace!("MAX:{:.3},MARGIN:{:.3}", max, margin);
-        (max - margin).max(0.05)
+            .copied()
+            .collect();
+        var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pos = var.len() - variant_number;
+        var[pos].max(0.05)
     };
     for bss in variants.iter_mut() {
         for bs in bss.iter_mut() {
             for (idx, b) in bs.iter_mut().enumerate() {
-                if b.abs() < thr {
+                // if idx == 4 || idx == 8 {
+                //     position[idx] = true;
+                // } else {
+                //     *b = 0.;
+                // }
+                if *b < thr {
                     *b = 0.;
                 } else {
-                    *b -= thr * b.signum();
                     position[idx] = true;
                 }
             }

@@ -177,8 +177,8 @@ impl Node {
     }
     pub fn recover(&self, unit: &Unit) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let (read, unit) = (self.seq(), unit.seq());
-        println!("R:{}", String::from_utf8_lossy(read));
-        println!("Q:{}", String::from_utf8_lossy(unit));
+        // println!("R:{}", String::from_utf8_lossy(read));
+        // println!("Q:{}", String::from_utf8_lossy(unit));
         let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
         let (mut q_pos, mut r_pos) = (0, 0);
         for op in self.cigar.iter() {
@@ -213,7 +213,7 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy, Eq, PartialEq)]
 pub enum Op {
     Match(usize),
     /// Deletion with respect to the reference.

@@ -20,9 +20,35 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
             }
         }
     }
-    chunks.iter_mut().for_each(|cluster| {
-        cluster.iter_mut().for_each(|cs| cs.shuffle(rng));
-    });
+    // use poa_hmm::gen_sample;
+    // let p = gen_sample::Profile {
+    //     sub: 0.004,
+    //     del: 0.004,
+    //     ins: 0.004,
+    // };
+    // TODO:Modify so that we need not to allocate unnessesary arraies.
+    let chunks: Vec<Vec<Vec<Vec<u8>>>> = chunks
+        .into_iter()
+        .map(|cluster| {
+            cluster
+                .into_iter()
+                .map(|mut cs| {
+                    cs.shuffle(rng);
+                    cs.iter().map(|e| e.to_vec()).collect()
+                    // let len = cs.len();
+                    // if 0 < len && len < c.sample_num {
+                    //     for i in len..c.sample_num {
+                    //         let seq = cs[i % len];
+                    //         cs.push(seq);
+                    //     }
+                    // }
+                    // cs.iter()
+                    //     .map(|c| gen_sample::introduce_randomness(&c, rng, &p))
+                    //     .collect()
+                })
+                .collect()
+        })
+        .collect();
     chunks
         .into_par_iter()
         .map(|cluster| {
@@ -31,8 +57,7 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .zip(use_position.iter())
                 .map(|(cs, &b)| {
                     if b && !cs.is_empty() {
-                        let cs = &cs[..c.sample_num.min(cs.len())];
-                        construct_poa(cs, c)
+                        construct_poa(&cs, c)
                     } else {
                         POA::default()
                     }
@@ -42,7 +67,7 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
         .collect()
 }
 
-fn construct_poa<F>(cs: &[&[u8]], c: &ClusteringConfig<F>) -> POA
+fn construct_poa<F>(cs: &[Vec<u8>], c: &ClusteringConfig<F>) -> POA
 where
     F: Fn(u8, u8) -> i32 + std::marker::Sync,
 {
@@ -52,16 +77,17 @@ where
         ref score,
     } = &c.alnparam;
     let param = (ins, del, score);
+    // let cs = &cs[..cs.len().min(c.sample_num)];
     use super::config::ReadType;
     match c.read_type {
-        ReadType::CCS => POA::from_slice(cs, &vec![1.; cs.len()], param),
+        ReadType::CCS => POA::from_vec(cs, &vec![1.; cs.len()], param),
         _ => {
             let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
             let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
-            cs.into_iter()
+            cs.iter()
                 .fold(POA::default(), |x, y| {
                     let res = if x.nodes().len() > node_num_thr {
-                        x.add(y, 1., param).remove_node(0.4)
+                        x.add(y, 1., param).remove_node(0.5)
                     } else {
                         x.add(y, 1., param)
                     };

@@ -1,6 +1,8 @@
 use super::local_clustering::ReadType;
 use definitions::*;
 use poa_hmm::POA;
+use rand::{seq::SliceRandom, SeedableRng};
+use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
 #[derive(Debug, Clone, Copy)]
@@ -13,19 +15,19 @@ pub struct PolishUnitConfig {
 }
 
 impl PolishUnitConfig {
-    pub fn new(readtype: &str, consensus_size: usize, filter_size: usize) -> Self {
+    pub fn new(readtype: &str, consensus_size: usize, iteration: usize) -> Self {
         let read_type = match readtype {
             "ONT" => ReadType::ONT,
             "CCS" => ReadType::CCS,
             "CLR" => ReadType::CLR,
             _ => unreachable!(),
         };
-        let (rep_num, seed) = (5, 349309);
+        let seed = 349309;
         Self {
-            rep_num,
+            rep_num: iteration,
             seed,
             read_type,
-            filter_size,
+            filter_size: consensus_size,
             consensus_size,
         }
     }
@@ -35,16 +37,21 @@ impl PolishUnitConfig {
 /// all the encoded reads would be removed.
 /// This removal is to force users to encode reads by aligning the
 /// newly poilished units again.
-pub trait PolishUnits {
-    fn polish_units(self, c: &PolishUnitConfig) -> Self;
+pub trait PolishUnit {
+    fn polish_unit(self, c: &PolishUnitConfig) -> Self;
 }
 
-impl PolishUnits for DataSet {
-    fn polish_units(mut self, c: &PolishUnitConfig) -> Self {
+impl PolishUnit for DataSet {
+    fn polish_unit(mut self, c: &PolishUnitConfig) -> Self {
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks
             .iter()
             .map(|unit| (unit.id, vec![]))
+            .collect();
+        let subchunk_len: HashMap<_, _> = self
+            .selected_chunks
+            .iter()
+            .map(|unit| (unit.id, unit.seq().len() / 100))
             .collect();
         for read in self.encoded_reads.iter() {
             for node in read.nodes.iter() {
@@ -56,8 +63,12 @@ impl PolishUnits for DataSet {
         let result: HashMap<_, _> = pileups
             .par_iter()
             .filter(|(_, pileup)| pileup.len() > c.filter_size)
-            .filter_map(|(id, pileup)| consensus(pileup, c).map(|c| (id, c)))
+            .filter_map(|(id, pileup)| {
+                let len = subchunk_len[id];
+                consensus(pileup, len, c).map(|c| (id, c))
+            })
             .collect();
+        debug!("{}=>{}", pileups.len(), result.len());
         self.selected_chunks
             .retain(|unit| result.contains_key(&unit.id));
         self.selected_chunks.iter_mut().for_each(|unit| {
@@ -69,38 +80,33 @@ impl PolishUnits for DataSet {
 }
 
 use definitions::Node;
-fn consensus(pileup: &[&Node], c: &PolishUnitConfig) -> Option<String> {
+fn consensus(pileup: &[&Node], len: usize, c: &PolishUnitConfig) -> Option<String> {
     let subchunks: Vec<_> = pileup
         .iter()
         .map(|n| super::local_clustering::node_to_subchunks(n, 100))
         .collect();
-    let max_pos = subchunks
-        .iter()
-        .filter_map(|n| n.iter().map(|n| n.pos).max())
-        .max()
-        .unwrap();
-    let mut chunks = vec![vec![]; max_pos + 1];
+    let mut chunks = vec![vec![]; len];
     for sc in subchunks.iter() {
-        for c in sc.iter() {
-            chunks[c.pos].push(c.seq.as_slice());
+        for c in sc.iter().filter(|c| 90 < c.seq.len() && c.seq.len() < 120) {
+            if c.pos < len {
+                chunks[c.pos].push(c.seq.as_slice());
+            }
         }
     }
     if chunks.iter().any(|cs| cs.len() < c.consensus_size) {
         None
     } else {
-        let consensus: String = chunks
+        let consensus: Vec<_> = chunks
             .into_iter()
             .flat_map(|cs| consensus_chunk(&cs, c))
-            .map(|n| n as char)
             .collect();
+        let consensus: String = consensus.into_iter().map(|n| n as char).collect();
         Some(consensus)
     }
 }
 
 fn consensus_chunk(pileup: &[&[u8]], c: &PolishUnitConfig) -> Vec<u8> {
     assert!(pileup.len() >= c.consensus_size);
-    use rand::{seq::SliceRandom, SeedableRng};
-    use rand_xoshiro::Xoshiro256PlusPlus;
     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(c.seed);
     let subseq: Vec<_> = (0..c.rep_num)
         .map(|_| {

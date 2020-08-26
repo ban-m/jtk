@@ -12,11 +12,11 @@ do
     #      ${reads} \
     #      ${output}/${diploid}.CCS
     reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CLR.fa
-    rm -f ${output}/${diploid}.CLR.log
-    qsub -j y -o ${output}/${diploid}.CLR.log \
+    rm -f ${output}/${diploid}.2.CLR.log
+    qsub -j y -o ${output}/${diploid}.2.CLR.log \
          ./script/pipeline_clr.sh \
          ${reads} \
-         ${output}/${diploid}.CLR
+         ${output}/${diploid}.2.CLR
 done
 
 

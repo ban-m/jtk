@@ -1,3 +1,6 @@
+use super::polish_units::PolishUnit;
+use super::polish_units::PolishUnitConfig;
+use super::Encode;
 use super::ReadType;
 use rayon::prelude::*;
 #[derive(Debug, Clone)]
@@ -106,6 +109,7 @@ impl DetermineUnit for definitions::DataSet {
                 debug!("Calib length {}->{}", config.chunk_len, temp.chunk_len);
                 temp
             };
+            let polish_config = PolishUnitConfig::new("CLR", 7, 10);
             let units: Vec<_> = reads
                 .iter()
                 .flat_map(|r| split_into(r, &clr_config))
@@ -121,14 +125,10 @@ impl DetermineUnit for definitions::DataSet {
                     Unit { id, seq }
                 })
                 .collect();
-            use super::Encode;
-            debug!("Encoding...");
             self = self.encode(config.threads);
-            debug!("Polishing {} units.", units.len());
-            use super::polish_units::PolishUnitConfig;
-            use super::polish_units::PolishUnits;
-            let polish_config = PolishUnitConfig::new("CLR", 10, 20);
-            self = self.polish_units(&polish_config);
+            self = self.polish_unit(&polish_config);
+            self = self.encode(config.threads);
+            self = self.polish_unit(&polish_config);
             debug!("Polished.");
             self.selected_chunks
                 .iter()
