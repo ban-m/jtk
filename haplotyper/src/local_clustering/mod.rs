@@ -226,9 +226,9 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let mut coef = 1.;
     // datasize * error rate / 3.
     let stable_thr = match c.read_type {
-        ReadType::CCS => (data.len() as f64 * 0.02).max(2.).floor() as u32,
-        ReadType::ONT => (data.len() as f64 * 0.08).max(3.).floor() as u32,
-        ReadType::CLR => (data.len() as f64 * 0.08).max(3.).floor() as u32,
+        ReadType::CCS => (data.len() as f64 * 0.02).max(1.).floor() as u32,
+        ReadType::ONT => (data.len() as f64 * 0.08).max(1.).floor() as u32,
+        ReadType::CLR => (data.len() as f64 * 0.08).max(1.).floor() as u32,
     };
     while count < c.stable_limit {
         let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c);
@@ -296,15 +296,26 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     // use rand::seq::SliceRandom;
     // let choices: Vec<_> = (0..c.cluster_num).collect();
     // let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
-    let new_assignment = weights
+    let (new_assignment, max) = weights
         .iter()
         .enumerate()
         .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|x| x.0)
-        .unwrap_or(0);
+        .unwrap_or((0, &0.));
+    let diff = weights
+        .iter()
+        .filter(|&x| (x - max).abs() > 0.001)
+        .map(|x| max - x)
+        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or(0.);
+    trace!(
+        "{}\t{:.3}\t{:.3}\t{:.3}",
+        picked,
+        weights[0],
+        weights[1],
+        diff
+    );
     let read = data.get_mut(picked).unwrap();
-    trace!("{}\t{:.3}\t{:.3}", picked, weights[0], weights[1],);
-    if read.cluster != new_assignment {
+    if diff > 0.3 && read.cluster != new_assignment {
         read.cluster = new_assignment;
         1
     } else {
@@ -332,14 +343,9 @@ fn get_weights<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: rand::Rng>(
     betas: &[Vec<Vec<f64>>],
     c: &ClusteringConfig<F>,
 ) -> Vec<f64> {
-    let fractions = {
-        let mut fractions = vec![1; c.cluster_num];
-        for read in data.iter() {
-            fractions[read.cluster as usize] += 1;
-        }
-        fractions
-    };
-    let rep_num = 5;
+    let fractions: Vec<_> = (0..c.cluster_num)
+        .map(|cl| data.iter().filter(|d| d.cluster == cl).count() + 1)
+        .collect();
     let models: Vec<_> = get_models(&data, chain_len, rng, c, &pos, Some(picked));
     let mut likelihoods: Vec<(usize, Vec<_>)> = data[picked]
         .chunks
@@ -353,7 +359,7 @@ fn get_weights<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: rand::Rng>(
             (chunk.pos, lks)
         })
         .collect();
-    for _ in 0..rep_num - 1 {
+    for _ in 0..c.repeat_num - 1 {
         let models: Vec<_> = get_models(&data, chain_len, rng, c, &pos, Some(picked));
         for (chunk, (pos, lks)) in data[picked]
             .chunks
@@ -372,7 +378,8 @@ fn get_weights<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: rand::Rng>(
         .map(|(pos, lks)| {
             let lks: Vec<_> = lks
                 .iter()
-                .map(|lks| logsumexp(lks) - (rep_num as f64).ln())
+                .map(|lks| logsumexp(lks) - (c.repeat_num as f64).ln())
+                // .map(|lks| lks.iter().sum::<f64>() / c.repeat_num as f64)
                 .collect();
             // let dump: Vec<_> = lks
             //     .iter()

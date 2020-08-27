@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
     c.cluster_num = 2;
     c.beta_increase = 1.03;
     c.stable_limit = 6;
-    c.repeat_num = 1;
+    c.repeat_num = 4;
     c.variant_num = 2;
     c.sample_num = 30;
     c.read_type = haplotyper::ReadType::CLR;
@@ -33,38 +33,38 @@ fn main() -> std::io::Result<()> {
     let template: Vec<_> = (0..chain_len)
         .map(|_| gen_sample::generate_seq(&mut rng, len))
         .collect::<Vec<_>>();
-    let p = gen_sample::Profile {
-        sub: errors / 3.,
-        ins: errors / 3.,
-        del: errors / 3.,
-    };
+    // let p = gen_sample::Profile {
+    //     sub: errors / 3.,
+    //     ins: errors / 3.,
+    //     del: errors / 3.,
+    // };
     // let mut templates = vec![];
     let mut templates = vec![template.clone()];
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {
-        // use log::debug;
-        // use rand::Rng;
-        // let var_pos = rng.gen_range(0, chain_len);
-        // let mut seq = template.clone();
-        // seq[var_pos] = match rng.gen::<u8>() % 3 {
-        //     0 => {
-        //         debug!("Ins");
-        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
-        //     }
-        //     1 => {
-        //         debug!("Del");
-        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
-        //     }
-        //     2 => {
-        //         debug!("Subs");
-        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
-        //     }
-        //     _ => panic!(),
-        // };
-        let seq: Vec<_> = template
-            .iter()
-            .map(|e| gen_sample::introduce_randomness(e, &mut rng, &p))
-            .collect();
+        use log::debug;
+        use rand::Rng;
+        let var_pos = rng.gen_range(0, chain_len);
+        let mut seq = template.clone();
+        seq[var_pos] = match rng.gen::<u8>() % 3 {
+            0 => {
+                debug!("Ins");
+                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
+            }
+            1 => {
+                debug!("Del");
+                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
+            }
+            2 => {
+                debug!("Subs");
+                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
+            }
+            _ => panic!(),
+        };
+        // let seq: Vec<_> = template
+        //     .iter()
+        //     .map(|e| gen_sample::introduce_randomness(e, &mut rng, &p))
+        //     .collect();
         templates.push(seq);
     }
     use sandbox::generate_mul_data;
@@ -73,10 +73,10 @@ fn main() -> std::io::Result<()> {
         .iter_mut()
         .zip(answer.iter())
         .for_each(|(x, &ans)| x.cluster = ans as usize);
-    clustering_by_kmeans(&mut dataset, chain_len, &c, 121);
+    clustering_by_kmeans(&mut dataset, chain_len, &c, 12232941);
     use std::collections::HashMap;
     let mut result: HashMap<_, u32> = HashMap::new();
-    for (data, answer) in dataset.iter().zip(answer) {
+    for (idx, (data, answer)) in dataset.iter().zip(answer).enumerate() {
         let ed0 = data
             .chunks
             .iter()
@@ -96,7 +96,7 @@ fn main() -> std::io::Result<()> {
             .map(|e| format!("{}", e))
             .collect();
         let diff = diff.join("\t");
-        eprintln!("D\t{}\t{}\t{}", answer, data.cluster, diff);
+        eprintln!("D\t{}\t{}\t{}\t{}", idx, answer, data.cluster, diff);
         *result.entry((data.cluster, answer)).or_default() += 1;
     }
     let mut result: Vec<_> = result.into_iter().collect();

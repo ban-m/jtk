@@ -34,7 +34,6 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
             trace!("{:?}", line.join(","));
         }
     }
-
     let pos: Vec<_> = position_in_use
         .iter()
         .enumerate()
@@ -74,13 +73,6 @@ where
             lks_poa(data, chain_len, &mut rng, c, picked)
         })
         .collect();
-    // for (idx, read) in lk_matrices.iter().enumerate() {
-    //     for pos in 0..chain_len {
-    //         let lk1 = read[pos];
-    //         let lk2 = read[pos + chain_len];
-    //         trace!("LK\t{}\t{}\t{}\t{}", idx, pos, lk1, lk2);
-    //     }
-    // }
     let ws = get_cluster_fraction(data, &vec![false; data.len()], c.cluster_num);
     let lk = lk_matrices
         .iter()
@@ -112,19 +104,19 @@ where
 {
     let poss = vec![true; chain_len];
     let config = &c.poa_config;
-    let rep_num = 4;
     //let mut res = vec![0.; c.cluster_num * chain_len];
     let mut res = vec![vec![]; c.cluster_num * chain_len];
-    for _ in 0..rep_num {
+    for _ in 0..c.repeat_num {
         let models = get_models(data, chain_len, rng, c, &poss, Some(picked));
         for (i, ms) in models.iter().enumerate() {
             for c in data[picked].chunks.iter() {
                 res[i * chain_len + c.pos].push(ms[c.pos].forward(&c.seq, config));
+                //res[i * chain_len + c.pos]+=ms[c.pos].forward(&c.seq, config);
             }
         }
     }
     res.into_iter()
-        .map(|lk| logsumexp(&lk) - (rep_num as f64).ln())
+        .map(|lk| logsumexp(&lk) - (c.repeat_num as f64).ln())
         .collect()
     // res.iter().map(|lk| lk / rep_num as f64).collect()
 }
