@@ -4,7 +4,7 @@ use std::collections::HashMap;
 const SAMPLE_RATE: f64 = 0.01;
 const INITIAL_BETA: f64 = 0.0005;
 const BETA_INCREASE: f64 = 1.03;
-const REPEAT_NUM: usize = 1;
+const REPEAT_NUM: usize = 4;
 const MAX_BETA: f64 = 0.8;
 const GIBBS_PRIOR: f64 = 0.01;
 const STABLE_LIMIT: u32 = 6;
@@ -121,8 +121,8 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         c.initial_beta = 0.0001;
         c.max_beta = 0.3;
         c.beta_increase = 1.01;
-        c.repeat_num = 1;
-        c.stable_limit = 8;
+        c.repeat_num = 4;
+        c.stable_limit = 6;
         c.read_type = ReadType::CLR;
         c
     }

@@ -11,29 +11,20 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     chain_len: usize,
     rng: &mut R,
     c: &ClusteringConfig<F>,
-) -> (Vec<Vec<Vec<f64>>>, Vec<bool>, f64) {
-    let (betas, lk) = {
-        let (vars, lk) = variant_calling(data, chain_len, rng, c);
-        (vars, lk)
-    };
-    let (mut betas, position_in_use) = select_variants(betas, chain_len, c.variant_num);
-    betas.iter_mut().for_each(|bss| {
-        bss.iter_mut().for_each(|bs| {
-            let sum = bs.iter().map(|x| x * x).sum::<f64>().sqrt();
-            bs.iter_mut().for_each(|b| *b = *b / sum)
-        })
-    });
-    for bss in betas.iter() {
-        for bs in bss.iter() {
-            let line: Vec<_> = bs
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| b.abs() > 0.001)
-                .map(|(i, b)| format!("{}:{:.2}", i, b))
-                .collect();
-            trace!("{:?}", line.join(","));
-        }
-    }
+) -> (Vec<Vec<Vec<f64>>>, Vec<bool>, Vec<Vec<f64>>, f64) {
+    let (betas, lks) = variant_calling(data, chain_len, rng, c);
+    let (betas, position_in_use, margin) = select_variants(betas, chain_len, c.variant_num);
+    // for bss in betas.iter() {
+    //     for bs in bss.iter() {
+    //         let line: Vec<_> = bs
+    //             .iter()
+    //             .enumerate()
+    //             .filter(|(_, b)| b.abs() > 0.001)
+    //             .map(|(i, b)| format!("{}:{:.2}", i, b))
+    //             .collect();
+    //         trace!("{:?}", line.join(","));
+    //     }
+    // }
     let pos: Vec<_> = position_in_use
         .iter()
         .enumerate()
@@ -41,7 +32,7 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
         .map(|x| x.0)
         .collect();
     trace!("{:?}", pos);
-    (betas, position_in_use, lk)
+    (betas, position_in_use, lks, margin)
 }
 
 // Calculate LK matrices for each read. Total LK would be also returned.
@@ -51,74 +42,70 @@ fn calc_matrices_poa<F, R>(
     chain_len: usize,
     rng: &mut R,
     c: &ClusteringConfig<F>,
-) -> (Vec<Vec<f64>>, f64)
+) -> Vec<Vec<f64>>
+//-> (Vec<Vec<f64>>, Vec<Vec<f64>>)
 where
     F: Fn(u8, u8) -> i32 + std::marker::Sync,
     R: Rng,
 {
-    let num_cluster = c.cluster_num;
+    // let num_cluster = c.cluster_num;
     // LK matrix of each read, i.e., lk_matrix[i] would
     // be lk matrix for the i-th read.
     // Note that the matrix is flattened.
     // To access the likelihood of the j-th position of the k-th cluster,
     // lk_matrix[i][chain_len * k + j] would work.
     let seed: Vec<u64> = (0..data.len()).map(|_| rng.gen()).collect();
-    use rand::SeedableRng;
-    use rand_xoshiro::Xoroshiro128PlusPlus;
-    let lk_matrices: Vec<Vec<f64>> = seed
-        .into_par_iter()
-        .enumerate()
-        .map(|(picked, seed)| {
-            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
-            lks_poa(data, chain_len, &mut rng, c, picked)
-        })
+    // use rand::SeedableRng;
+    // use rand_xoshiro::Xoroshiro128PlusPlus;
+    let poss = vec![true; chain_len];
+    let models = get_models(data, chain_len, rng, c, &poss, None);
+    // for pos in 0..chain_len {
+    //     let line: Vec<_> = (0..c.cluster_num)
+    //         .map(|cl| format!("{}", models[cl][pos]))
+    //         .collect();
+    //     trace!("{}\t{}", pos, line.join("\t"));
+    // }
+    let lk_matrices: Vec<Vec<f64>> = data
+        .par_iter()
+        .map(|read| lks_poa(&models, chain_len, c, read))
         .collect();
-    let ws = get_cluster_fraction(data, &vec![false; data.len()], c.cluster_num);
-    let lk = lk_matrices
-        .iter()
-        .map(|matrix| {
-            assert_eq!(matrix.len() / chain_len, num_cluster);
-            let lks: Vec<_> = matrix
-                .chunks_exact(chain_len)
-                .zip(ws.iter())
-                .map(|(chunks, w)| w.ln() + chunks.iter().sum::<f64>())
-                .collect();
-            logsumexp(&lks)
-        })
-        .sum::<f64>();
-    (lk_matrices, lk)
+    lk_matrices
+    // let ws = get_cluster_fraction(data, &vec![false; data.len()], c.cluster_num);
+    // let lk = lk_matrices
+    //     .iter()
+    //     .map(|matrix| {
+    //         assert_eq!(matrix.len() / chain_len, num_cluster);
+    //         let lks: Vec<_> = matrix
+    //             .chunks_exact(chain_len)
+    //             .zip(ws.iter())
+    //             .map(|(chunks, w)| w.ln() + chunks.iter().sum::<f64>())
+    //             .collect();
+    //         logsumexp(&lks)
+    //     })
+    //     .sum::<f64>();
+    //(lk_matrices, lk_matrices)
 }
 
 // Return likelihoods of the read.
 // the cl * i + j -th element is the likelihood for the i-th cluster at the j-th position.
-fn lks_poa<F, R>(
-    data: &[ChunkedUnit],
+// fn lks_poa<F, R>(
+fn lks_poa<F>(
+    models: &[Vec<poa_hmm::POA>],
     chain_len: usize,
-    rng: &mut R,
     c: &ClusteringConfig<F>,
-    picked: usize,
+    read: &ChunkedUnit,
 ) -> Vec<f64>
 where
     F: Fn(u8, u8) -> i32 + std::marker::Sync,
-    R: Rng,
 {
-    let poss = vec![true; chain_len];
     let config = &c.poa_config;
-    //let mut res = vec![0.; c.cluster_num * chain_len];
-    let mut res = vec![vec![]; c.cluster_num * chain_len];
-    for _ in 0..c.repeat_num {
-        let models = get_models(data, chain_len, rng, c, &poss, Some(picked));
-        for (i, ms) in models.iter().enumerate() {
-            for c in data[picked].chunks.iter() {
-                res[i * chain_len + c.pos].push(ms[c.pos].forward(&c.seq, config));
-                //res[i * chain_len + c.pos]+=ms[c.pos].forward(&c.seq, config);
-            }
+    let mut res = vec![0.; c.cluster_num * chain_len];
+    for (i, ms) in models.iter().enumerate() {
+        for c in read.chunks.iter() {
+            res[i * chain_len + c.pos] += ms[c.pos].forward(&c.seq, config);
         }
     }
-    res.into_iter()
-        .map(|lk| logsumexp(&lk) - (c.repeat_num as f64).ln())
-        .collect()
-    // res.iter().map(|lk| lk / rep_num as f64).collect()
+    res
 }
 
 fn centrize(mut matrices: Vec<Vec<f64>>, row: usize, column: usize) -> Vec<Vec<f64>> {
@@ -221,21 +208,28 @@ fn variant_calling<F, R>(
     chain_len: usize,
     rng: &mut R,
     c: &ClusteringConfig<F>,
-) -> (Vec<Vec<Vec<f64>>>, f64)
+) -> (Vec<Vec<Vec<f64>>>, Vec<Vec<f64>>)
 where
     F: Fn(u8, u8) -> i32 + std::marker::Sync,
     R: Rng,
 {
-    let (matrices, lk) = calc_matrices_poa(data, chain_len, rng, c);
+    let matrices = calc_matrices_poa(data, chain_len, rng, c);
+    // for (idx, matrix) in matrices.iter().enumerate() {
+    //     for pos in 0..chain_len {
+    //         let line: Vec<_> = (0..c.cluster_num)
+    //             .map(|c| format!("{}", matrix[pos + c * chain_len]))
+    //             .collect();
+    //         trace!("LK\t{}\t{}\t{}", idx, pos, line.join("\t"));
+    //     }
+    // }
     let betas: Vec<Vec<Vec<f64>>> = (0..c.cluster_num)
         .map(|i| {
             (0..i)
                 .map(|j| call_variants(i, j, data, &matrices, chain_len))
-                // .map(normalize)
                 .collect()
         })
         .collect();
-    (betas, lk)
+    (betas, matrices)
 }
 
 fn normalize(mut xs: Vec<f64>) -> Vec<f64> {
@@ -260,6 +254,9 @@ fn call_variants(
     matrices: &[Vec<f64>],
     column: usize,
 ) -> Vec<f64> {
+    // for (idx, d) in data.iter().enumerate() {
+    //     trace!("ASN\t{}\t{}", idx, d.cluster);
+    // }
     // Extract focal rows for each read.
     // let matrices: Vec<Vec<_>> = matrices
     //     .iter()
@@ -272,36 +269,215 @@ fn call_variants(
     //     })
     //     .collect();
     // let matrices = centrize(matrices, 2, column);
-    let margins = matrices
+    // let margins = matrices
+    //     .iter()
+    //     .zip(data.iter())
+    //     .filter(|(_, d)| d.cluster == i || d.cluster == j)
+    //     .fold(vec![vec![]; column], |mut margins, (matrix, d)| {
+    //         let cluster = if d.cluster == i { 1f64 } else { -1f64 };
+    //         for pos in 0..column {
+    //             if matrix[pos] < -0.001 || matrix[column + pos] < -0.001 {
+    //                 let diff = matrix[i * column + pos] - matrix[j * column + pos];
+    //                 margins[pos].push((cluster, diff));
+    //             }
+    //         }
+    //         margins
+    //     });
+    let mut differences: Vec<_> = vec![vec![]; column];
+    let mut indices = vec![vec![]; column];
+    for (idx, (matrix, data)) in matrices.iter().zip(data.iter()).enumerate() {
+        for chunk in data.chunks.iter() {
+            let diff = matrix[i * column + chunk.pos] - matrix[j * column + chunk.pos];
+            differences[chunk.pos].push(diff);
+            indices[chunk.pos].push(idx);
+        }
+    }
+    let result: Vec<_> = differences
         .iter()
-        .zip(data.iter())
-        .filter(|(_, d)| d.cluster == i || d.cluster == j)
-        .fold(vec![vec![]; column], |mut margins, (matrix, d)| {
-            let cluster = if d.cluster == i { 1. } else { -1. };
-            for pos in 0..column {
-                if matrix[pos] < -0.001 || matrix[column + pos] < -0.001 {
-                    let diff = matrix[i * column + pos] - matrix[j * column + pos];
-                    margins[pos].push((cluster, diff));
+        .zip(indices)
+        .enumerate()
+        .map(|(pos, (xs, idx))| {
+            let (assignment, lk) = clustering(xs, pos as u64, 2);
+            let (_, lk_0) = clustering(xs, pos as u64, 1);
+            let gain = lk - lk_0 - 3.;
+            let cluster = {
+                let mut slot = vec![0; 2];
+                for &asn in assignment.iter() {
+                    slot[asn] += 1;
                 }
+                slot
+            };
+            for ((asn, lk), i) in assignment.iter().zip(xs).zip(idx) {
+                trace!("LK\t{}\t{}\t{}\t{}", pos, i, lk, asn);
             }
-            margins
-        });
-    margins
-        .into_iter()
-        .map(|margin| {
-            let len = margin.len() as f64;
-            let mean = margin.iter().map(|x| x.1).sum::<f64>() / len;
-            margin
-                .iter()
-                .map(|(cluster, margin)| cluster * (margin - mean))
-                .sum::<f64>()
+            trace!(
+                "VAL\t{}\t{:?}\t{:.0}\t{:.0}\t{:.0}",
+                pos,
+                cluster,
+                lk,
+                lk_0,
+                gain,
+            );
+            gain.max(0.)
+            // let result: Vec<_> = margins
+            //     .into_iter()
+            //     .map(|mut margin| {
+            //         margin.sort_by(|x, y| x.1.abs().partial_cmp(&y.1.abs()).unwrap());
+            //         //let cut = 3;
+            //         // if margin.len() < 3 {
+            //         let len = margin.len() as f64;
+            //         let mean = margin.iter().map(|x| x.1).sum::<f64>() / len;
+            //         margin
+            //             .iter()
+            //             .map(|(cluster, margin)| cluster * (margin - mean))
+            //             .sum::<f64>()
+            // } else {
+            //     let len = margin.len() as f64 - cut as f64;
+            //     let mean = margin.iter().rev().map(|x| x.1).skip(cut).sum::<f64>() / len;
+            //     margin
+            //         .iter()
+            //         .rev()
+            //         .skip(3)
+            //         .map(|(cluster, margin)| cluster * (margin - mean))
+            //         .sum::<f64>()
+            // };
+            // let mean = margin.iter().map(|x| x.1).sum::<f64>() / len;
+            // let line: Vec<_> = margin
+            //     .iter()
+            //     .map(|(c, m)| format!("{:.3}", c * (m - mean)))
+            //     .collect();
+            // trace!("{}", line.join("\t"));
+            // trace!("{}\t{}", idx, sum);
         })
-        .collect()
+        .collect();
+    result
     // match maximize_margin_of(&matrices, 2, column) {
-    //     Some(res) => res,
+    //     Some(res) => normalize(res),
     //     None => vec![0.; column],
     // }
 }
+
+struct Gaussian {
+    mean: f64,
+    variance: f64,
+    weight: f64,
+}
+
+impl std::fmt::Display for Gaussian {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}\t{}\t{}", self.mean, self.variance, self.weight)
+    }
+}
+
+impl Gaussian {
+    fn lk(&self, x: f64) -> f64 {
+        if self.weight < 0.0001 || self.variance < 0.00001 {
+            std::f64::NEG_INFINITY
+        } else {
+            -(2. * std::f64::consts::PI * self.variance).ln() / 2.
+                - (x - self.mean).powi(2i32) / 2. / self.variance
+                + self.weight.ln()
+        }
+    }
+    fn update(xs: &[f64], weights: &[f64]) -> Self {
+        let len = xs.len() as f64;
+        let sum = weights.iter().sum::<f64>();
+        let mean = xs
+            .iter()
+            .zip(weights.iter())
+            .map(|(x, w)| x * w)
+            .sum::<f64>()
+            / sum;
+        let variance = xs
+            .iter()
+            .zip(weights.iter())
+            .map(|(x, w)| (x - mean).powi(2i32) * w)
+            .sum::<f64>()
+            / sum;
+        let variance = 0.3;
+        let weight = sum / len;
+        // eprintln!("{}\t{}\t{}", mean, variance, weight);
+        Self {
+            mean,
+            variance,
+            weight,
+        }
+    }
+}
+
+fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
+    let variance = {
+        let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+        xs.iter().map(|x| (x - mean).powi(2i32)).sum::<f64>() / xs.len() as f64
+    };
+    if variance < 0.0001 {
+        return (vec![0; xs.len()], 0.);
+    }
+    use rand::SeedableRng;
+    use rand_xoshiro::Xoshiro256StarStar;
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
+    let mut weights: Vec<Vec<_>> = xs
+        .iter()
+        .map(|_| {
+            let mut weights: Vec<_> = vec![0.; k];
+            weights[rng.gen::<usize>() % k] = 1.;
+            weights
+        })
+        .collect();
+    let mut diff = 10000000000000000.;
+    let mut lk = -10000000000000000.;
+    while diff > 0.0000001 {
+        let gaussian: Vec<_> = (0..k)
+            .map(|i| {
+                let weights: Vec<_> = weights.iter().map(|x| x[i]).collect();
+                Gaussian::update(&xs, &weights)
+            })
+            .collect();
+        weights = xs
+            .iter()
+            .map(|&x| {
+                let lks: Vec<_> = gaussian.iter().map(|g| g.lk(x)).collect();
+                let sum = logsumexp(&lks);
+                lks.iter().map(|x| (x - sum).exp()).collect::<Vec<_>>()
+            })
+            .inspect(|x| assert!((1. - x.iter().sum::<f64>()).abs() < 0.01))
+            .collect();
+        let likelihood: f64 = xs
+            .iter()
+            .map(|&x| {
+                let lks: Vec<_> = gaussian.iter().map(|g| g.lk(x)).collect();
+                logsumexp(&lks)
+            })
+            .sum::<f64>();
+        diff = likelihood - lk;
+        lk = likelihood;
+    }
+    let gaussian: Vec<_> = (0..k)
+        .map(|i| {
+            let weights: Vec<_> = weights.iter().map(|x| x[i]).collect();
+            Gaussian::update(&xs, &weights)
+        })
+        .collect();
+    let result: Vec<_> = weights
+        .iter()
+        .map(|xs| {
+            xs.iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(&(b.1)).unwrap())
+                .map(|x| x.0)
+                .unwrap()
+        })
+        .collect();
+    let likelihood: f64 = xs
+        .iter()
+        .map(|&x| {
+            let lks: Vec<_> = gaussian.iter().map(|g| g.lk(x)).collect();
+            logsumexp(&lks)
+        })
+        .sum::<f64>();
+    (result, likelihood)
+}
+
 fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
@@ -315,38 +491,41 @@ fn logsumexp(xs: &[f64]) -> f64 {
 fn select_variants(
     mut variants: Vec<Vec<Vec<f64>>>,
     chain_len: usize,
-    _variant_number: usize,
-) -> (Vec<Vec<Vec<f64>>>, Vec<bool>) {
+    variant_number: usize,
+) -> (Vec<Vec<Vec<f64>>>, Vec<bool>, f64) {
     let mut position = vec![false; chain_len];
-    let thr = {
-        // let mut var: Vec<_> = variants
+    // First, remove all the negative elements.
+    let (thr, max) = {
+        let mut var: Vec<_> = variants
+            .iter()
+            .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
+            .copied()
+            // .map(|x| x.abs())
+            .collect();
+        var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pos = var.len() - variant_number;
+        let max = *var.last().unwrap();
+        (var[pos].max(0.2 * max + 0.05), max)
+        // let margin = 0.2;
+        // let sum = variants
+        //     .iter()
+        //     .map(|bss| {
+        //         bss.iter()
+        //             .map(|bs| bs.iter().map(|&x| x * x).sum::<f64>().sqrt())
+        //             .sum::<f64>()
+        //     })
+        //     .sum::<f64>();
+        // let num = variants.iter().map(|bss| bss.len()).sum::<usize>();
+        // let mean = sum / num as f64;
+        // let margin = mean * margin;
+        // let max = variants
         //     .iter()
         //     .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
         //     .map(|x| x.abs())
-        //     .collect();
-        // var.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        // let pos = var.len() - variant_number;
-        // var[pos].max(0.05)
-        let margin = 0.2;
-        let sum = variants
-            .iter()
-            .map(|bss| {
-                bss.iter()
-                    .map(|bs| bs.iter().map(|&x| x * x).sum::<f64>().sqrt())
-                    .sum::<f64>()
-            })
-            .sum::<f64>();
-        let num = variants.iter().map(|bss| bss.len()).sum::<usize>();
-        let mean = sum / num as f64;
-        let margin = mean * margin;
-        let max = variants
-            .iter()
-            .flat_map(|bss| bss.iter().flat_map(|bs| bs.iter()))
-            .map(|x| x.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap_or(0.);
-        trace!("MAX:{:.3},MARGIN:{:.3}", max, margin);
-        (max - margin).max(0.05)
+        //     .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        //     .unwrap_or(0.);
+        // trace!("MAX:{:.3},MARGIN:{:.3}", max, margin);
+        // ((max - margin).max(0.05), max)
     };
     for bss in variants.iter_mut() {
         for bs in bss.iter_mut() {
@@ -354,13 +533,13 @@ fn select_variants(
                 if b.abs() < thr {
                     *b = 0.;
                 } else {
-                    *b -= thr * b.signum();
+                    *b = 1.;
                     position[idx] = true;
                 }
             }
         }
     }
-    (variants, position)
+    (variants, position, max)
 }
 
 fn get_cluster_fraction(

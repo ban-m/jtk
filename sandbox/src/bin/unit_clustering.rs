@@ -10,6 +10,10 @@ fn main() -> std::io::Result<()> {
     debug!("Started");
     let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
     let mut c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000);
+    //let mut c = haplotyper::ClusteringConfig::ccs(&dataset, 2, 100, 1000);
+    c.initial_beta = 0.4;
+    c.stable_limit = 6;
+    c.variant_num = 2;
     c.limit = 3000;
     c.seed = 100;
     let ref_unit = dataset
@@ -36,30 +40,32 @@ fn main() -> std::io::Result<()> {
                 .map(|(idx, n)| (id, idx, n))
         })
         .enumerate()
+        .inspect(|(idx, (id, _, _))| {
+            let cl = if id2name[id].contains("hapA") { 1 } else { 0 };
+            eprintln!("{}\t{}\t{}", idx, id2name[id], cl);
+        })
         .map(|(_, x)| x)
         .collect();
     haplotyper::unit_clustering(&mut units, &c, &ref_unit);
     let mut result: Vec<_> = units
         .iter()
         .map(|(id, _, unit)| (&id2name[&id], unit.cluster))
+        .inspect(|(id, cl)| eprintln!("{}\t{}", id, cl))
         .collect();
     result.sort_by_key(|x| x.1);
     let mut counts: HashMap<_, usize> = HashMap::new();
     for (i, x) in result {
-        // eprintln!("{}\t{}", x, i);
         if i.contains("hapA") {
             *counts.entry((x, 0)).or_default() += 1;
         } else {
             *counts.entry((x, 1)).or_default() += 1;
         }
     }
-    //eprint!("{}\t", i);
     for pred in 0..=1 {
         for ans in 0..=1 {
             eprint!("{}\t", counts.get(&(pred, ans)).unwrap_or(&0));
         }
     }
     eprintln!();
-    // }
     Ok(())
 }

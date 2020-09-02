@@ -1,11 +1,16 @@
 use haplotyper::ClusteringConfig;
 use poa_hmm::*;
-use rand_xoshiro::Xoroshiro128PlusPlus;
+use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256StarStar};
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
+    c.max_beta = 0.3;
     c.cluster_num = 2;
-    c.repeat_num = 1;
+    c.beta_increase = 1.03;
+    c.stable_limit = 6;
+    c.repeat_num = 8;
+    c.variant_num = 2;
+    c.sample_num = 30;
     c.read_type = haplotyper::ReadType::CLR;
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     let profile = gen_sample::PROFILE.norm().mul(0.20);
@@ -36,7 +41,6 @@ fn main() -> std::io::Result<()> {
     let mut templates = vec![template.clone()];
     for _ in 0..clusters - 1 {
         use log::debug;
-        use rand::Rng;
         let var_pos = rng.gen_range(0, chain_len);
         let mut seq = template.clone();
         seq[var_pos] = match rng.gen::<u8>() % 3 {
@@ -62,11 +66,17 @@ fn main() -> std::io::Result<()> {
     }
     use sandbox::generate_mul_data;
     let (mut dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
-    dataset
-        .iter_mut()
-        .zip(answer.iter())
-        .for_each(|(x, &ans)| x.cluster = ans as usize);
-    let (betas, _pos, _next_lk) =
+    let ref_unit = 12232941;
+    use rand::Rng;
+    let mut rng: Xoshiro256StarStar = rand::SeedableRng::seed_from_u64(21 * ref_unit);
+    dataset.iter_mut().for_each(|cs| {
+        cs.cluster = rng.gen_range(0, c.cluster_num);
+    });
+    // dataset
+    //     .iter_mut()
+    //     .zip(answer.iter())
+    //     .for_each(|(d, &a)| d.cluster = a as usize);
+    let (betas, _pos, _, _) =
         haplotyper::variant_calling::get_variants(&dataset, chain_len, &mut rng, &c);
     for (i, bss) in betas.iter().enumerate() {
         for (j, bs) in bss.iter().enumerate() {

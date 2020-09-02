@@ -7,12 +7,13 @@ const SMALL_WEIGHT: f64 = 0.000_000_001;
 mod config;
 pub mod naive_variant_calling;
 pub use config::*;
-mod create_model;
+pub mod create_model;
 pub mod eread;
 pub mod variant_calling;
 use create_model::*;
 use eread::*;
 use variant_calling::*;
+pub mod kmeans;
 pub trait LocalClustering {
     fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         self,
@@ -82,23 +83,7 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             ChunkedUnit { cluster: 0, chunks }
         })
         .collect();
-    // We need ... ?
-    // use poa_hmm::gen_sample;
-    // let p = gen_sample::Profile {
-    //     sub: 0.04,
-    //     ins: 0.04,
-    //     del: 0.04,
-    // };
-    // let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit.id);
-    // for &(_, _, ref u) in units.iter() {
-    //     let mut chunks = node_to_subchunks(u, c.subchunk_length);
-    //     chunks.retain(|chunk| min_length < chunk.seq.len() && chunk.seq.len() < max_length);
-    //     chunks.iter_mut().for_each(|chunk| {
-    //         chunk.seq = gen_sample::introduce_randomness(&chunk.seq, &mut rng, &p)
-    //     });
-    //     data.push(ChunkedUnit { cluster: 0, chunks });
-    // }
-    clustering_by_kmeans(&mut data, len, c, ref_unit.id);
+    let _m = clustering_by_kmeans(&mut data, len, &c, ref_unit.id);
     for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
         n.cluster = d.cluster as u64;
     }
@@ -207,55 +192,147 @@ pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
         .collect()
 }
 
+fn update_by_precomputed_lks<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
+    data: &mut [ChunkedUnit],
+    chain_len: usize,
+    beta: f64,
+    pos: &[bool],
+    lks: &[Vec<f64>],
+    rng: &mut R,
+    c: &ClusteringConfig<F>,
+) -> u32 {
+    let fractions: Vec<_> = (0..c.cluster_num)
+        .map(|cl| 1 + data.iter().filter(|d| d.cluster == cl).count())
+        .collect();
+    let choices: Vec<_> = (0..c.cluster_num).collect();
+    data.iter_mut()
+        .enumerate()
+        .map(|(idx, d)| {
+            let mut weights: Vec<_> = (0..c.cluster_num)
+                .map(|l| {
+                    (0..c.cluster_num)
+                        .map(|k| {
+                            if l == k {
+                                0.
+                            } else {
+                                let frac = (fractions[k] as f64 / fractions[l] as f64).ln();
+                                let modellk = (0..chain_len)
+                                    .filter(|&p| pos[p])
+                                    .map(|p| {
+                                        lks[idx][p + k * chain_len] - lks[idx][p + l * chain_len]
+                                    })
+                                    .sum::<f64>();
+                                modellk + beta * frac
+                            }
+                        })
+                        .map(|lkdiff| lkdiff.exp())
+                        .sum::<f64>()
+                        .recip()
+                })
+                .collect();
+            let sum = weights.iter().sum::<f64>();
+            weights.iter_mut().for_each(|x| *x /= sum);
+            let (new_assignment, max) = weights
+                .iter()
+                .enumerate()
+                .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or((0, &0.));
+            use rand::seq::SliceRandom;
+            let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
+            let diff = weights
+                .iter()
+                .filter(|&x| (x - max).abs() > 0.001)
+                .map(|x| max - x)
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or(0.);
+            // trace!("{}\t{:.3}\t{:.3}\t{:.3}", idx, weights[0], weights[1], diff);
+            if diff > 0.3 && d.cluster != new_assignment {
+                d.cluster = new_assignment;
+                1
+            } else {
+                0
+            }
+        })
+        .sum::<u32>()
+}
+
 pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     data: &mut Vec<ChunkedUnit>,
     chain_len: usize,
     c: &ClusteringConfig<F>,
     ref_unit: u64,
-) {
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit * 101);
-    data.iter_mut().for_each(|cs| {
-        cs.cluster = rng.gen_range(0, c.cluster_num);
-    });
-    let id = ref_unit;
-    let beta = c.initial_beta;
+) -> f64 {
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit);
     let mut count = 0;
-    let mut lk;
     let rng = &mut rng;
     let start = std::time::Instant::now();
     let mut coef = 1.;
-    // datasize * error rate / 3.
     let stable_thr = match c.read_type {
         ReadType::CCS => (data.len() as f64 * 0.02).max(1.).floor() as u32,
-        ReadType::ONT => (data.len() as f64 * 0.08).max(1.).floor() as u32,
-        ReadType::CLR => (data.len() as f64 * 0.08).max(1.).floor() as u32,
+        ReadType::ONT => (data.len() as f64 * 0.08).max(3.).floor() as u32,
+        ReadType::CLR => (data.len() as f64 * 0.08).max(3.).floor() as u32,
     };
-    while count < c.stable_limit {
-        let (betas, pos, next_lk) = get_variants(&data, chain_len, rng, c);
-        coef *= c.beta_increase;
-        let beta = (beta * coef).min(c.max_beta);
-        lk = next_lk;
-        let changed_num = rand::seq::index::sample(rng, data.len(), data.len() / 3)
-            .iter()
-            .map(|picked| update_assignment(data, c, picked, &betas, beta, &pos, chain_len, rng))
-            .sum::<u32>();
-        report(id, &data, count, lk, coef, changed_num);
+    let (betas, pos, lks, margin) = (0..20)
+        .map(|_| {
+            data.iter_mut().for_each(|cs| {
+                cs.cluster = rng.gen_range(0, c.cluster_num);
+            });
+            get_variants(&data, chain_len, rng, c)
+        })
+        .max_by(|x, y| (x.3).partial_cmp(&y.3).unwrap())
+        .unwrap();
+    trace!("Init Margin:{}", margin);
+    let beta = 1.;
+    // let beta = (c.initial_beta * coef).min(c.max_beta);
+    for (idx, d) in data.iter().enumerate() {
+        trace!("{}\t{}", idx, d.cluster);
+    }
+    let lks = average_correction(lks, chain_len, c.cluster_num);
+    update_by_precomputed_lks(data, chain_len, beta, &pos, &lks, rng, c);
+    loop {
+        // coef *= c.beta_increase;
+        // let beta = (c.initial_beta * coef).min(c.max_beta);
+        let (betas, pos, lks, margin) = get_variants(&data, chain_len, rng, c);
+        let lks = average_correction(lks, chain_len, c.cluster_num);
+        let changed_num = update_by_precomputed_lks(data, chain_len, beta, &pos, &lks, rng, c);
         count += (changed_num <= stable_thr) as u32;
         count *= (changed_num <= stable_thr) as u32;
-        let elapsed = (std::time::Instant::now() - start).as_secs();
-        if elapsed > c.limit {
-            info!("Break by timelimit:{:?}", elapsed);
-            break;
+        report(ref_unit, &data, count, margin, coef, changed_num);
+        if (std::time::Instant::now() - start).as_secs() > c.limit {
+            info!("Break by timelimit:{}", c.limit);
+            break margin;
+        } else if count >= c.stable_limit {
+            break margin;
         }
     }
 }
 
-// fn scale_weights(betas: &mut [Vec<Vec<f64>>], x: f64) {
-//     betas.iter_mut().for_each(|bss| {
-//         bss.iter_mut()
-//             .for_each(|bs| bs.iter_mut().for_each(|b| *b *= x))
-//     })
-// }
+fn average_correction(
+    mut lks: Vec<Vec<f64>>,
+    chain_len: usize,
+    cluster_num: usize,
+) -> Vec<Vec<f64>> {
+    let mut count = vec![0.; chain_len * cluster_num];
+    // To avoid zero-division.
+    let mut sum = vec![0.001; chain_len * cluster_num];
+    for read in lks.iter() {
+        for (i, lk) in read.iter().enumerate() {
+            if lk.is_sign_negative() {
+                count[i] += 1.;
+                sum[i] += lk;
+            }
+        }
+    }
+    let mean_vec: Vec<_> = sum.iter().zip(count).map(|(&s, c)| s / c).collect();
+    for matrix in lks.iter_mut() {
+        assert_eq!(mean_vec.len(), matrix.len());
+        matrix
+            .iter_mut()
+            .zip(mean_vec.iter())
+            .for_each(|(x, &y)| *x -= y);
+    }
+    lks
+}
 
 fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32) {
     if !log_enabled!(log::Level::Trace) {
@@ -272,7 +349,7 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32)
     };
     let counts = counts.join("\t");
     trace!(
-        "{}\t{}\t{:.3}\t{:.3}\t{}\t{}",
+        "Summary\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}",
         id,
         count,
         lk,
@@ -292,10 +369,9 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     chain_len: usize,
     rng: &mut R,
 ) -> u32 {
-    let weights = get_weights(data, chain_len, rng, &pos, picked, beta, betas, c);
-    // use rand::seq::SliceRandom;
-    // let choices: Vec<_> = (0..c.cluster_num).collect();
-    // let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
+    let mut weights = get_weights(data, chain_len, rng, &pos, picked, beta, betas, c);
+    let sum = weights.iter().sum::<f64>();
+    weights.iter_mut().for_each(|x| *x /= sum);
     let (new_assignment, max) = weights
         .iter()
         .enumerate()
@@ -312,10 +388,10 @@ fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
         picked,
         weights[0],
         weights[1],
-        diff
+        diff,
     );
     let read = data.get_mut(picked).unwrap();
-    if diff > 0.3 && read.cluster != new_assignment {
+    if diff > 0.4 && read.cluster != new_assignment {
         read.cluster = new_assignment;
         1
     } else {
@@ -379,7 +455,6 @@ fn get_weights<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: rand::Rng>(
             let lks: Vec<_> = lks
                 .iter()
                 .map(|lks| logsumexp(lks) - (c.repeat_num as f64).ln())
-                // .map(|lks| lks.iter().sum::<f64>() / c.repeat_num as f64)
                 .collect();
             // let dump: Vec<_> = lks
             //     .iter()

@@ -5,7 +5,7 @@ mod entry;
 mod extract;
 mod find_union;
 mod global_clustering;
-mod local_clustering;
+pub mod local_clustering;
 mod polish_clustering;
 mod polish_units;
 mod view;

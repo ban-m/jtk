@@ -4,19 +4,19 @@ ROOT=${PWD}
 for diploid in dip-A-D dip-A-C
 do
     output=${ROOT}/result/${diploid}/jtk
-    # mkdir -p ${output}
-    # reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS.fa
-    # rm -f ${output}/${diploid}.CCS.log
-    # qsub -j y -o ${output}/${diploid}.CCS.log \
-    #      ./script/pipeline.sh \
-    #      ${reads} \
-    #      ${output}/${diploid}.CCS
+    mkdir -p ${output}
+    reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS.fa
+    rm -f ${output}/${diploid}.CCS.log
+    qsub -j y -o ${output}/${diploid}.CCS.log \
+         ./script/pipeline.sh \
+         ${reads} \
+         ${output}/${diploid}.CCS
     reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CLR.fa
-    rm -f ${output}/${diploid}.2.CLR.log
-    qsub -j y -o ${output}/${diploid}.2.CLR.log \
+    rm -f ${output}/${diploid}.CLR.log
+    qsub -j y -o ${output}/${diploid}.CLR.log \
          ./script/pipeline_clr.sh \
          ${reads} \
-         ${output}/${diploid}.2.CLR
+         ${output}/${diploid}.CLR
 done
 
 

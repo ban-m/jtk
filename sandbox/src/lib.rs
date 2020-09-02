@@ -8,15 +8,21 @@ pub fn generate_mul_data<T: Rng>(
     probs: &[f64],
     profile: &poa_hmm::gen_sample::Profile,
 ) -> (Vec<haplotyper::eread::ChunkedUnit>, Vec<u8>) {
-    let answer: Vec<_> = probs
-        .iter()
-        .enumerate()
-        .flat_map(|(idx, &prob)| {
-            let num = (test_num as f64 * prob).ceil() as usize;
-            vec![idx; num]
-        })
-        .map(|e| e as u8)
+    let choices: Vec<_> = (0..templates.len()).collect();
+    use rand::seq::SliceRandom;
+    let mut answer: Vec<_> = (0..test_num)
+        .filter_map(|_| choices.choose(rng))
+        .map(|&x| x as u8)
         .collect();
+    answer.sort();
+    // let answer: Vec<_> = probs
+    //     .iter()
+    //     .enumerate()
+    //     .flat_map(|(idx, &prob)| {
+    //         let num = (test_num as f64 * prob).ceil() as usize;
+    //         vec![idx as u8; num]
+    //     })
+    //     .collect();
     let mut gen = |t: &[Vec<u8>]| {
         t.iter()
             .map(|e| gen_sample::introduce_randomness(e, rng, profile))
