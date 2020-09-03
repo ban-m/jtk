@@ -50,7 +50,7 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
         reads.push("reads.fa");
         let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
         for read in ds.raw_reads.iter() {
-            let id = format!("{}", read.name);
+            let id = read.name.to_string();
             let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
             wtr.write_record(&record)?;
         }
@@ -97,7 +97,7 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
     }
     let alignments: Vec<_> = String::from_utf8_lossy(&lastal.stdout)
         .lines()
-        .filter(|e| !e.starts_with("#"))
+        .filter(|e| !e.starts_with('#'))
         .filter_map(|e| LastTAB::from_line(&e))
         .collect();
     debug!("Removing {:?}", c_dir);
@@ -218,8 +218,8 @@ fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> 
     }
     let (mut q_pos, mut r_pos) = (query_start, 0);
     let mut cigar = vec![];
-    match &chain[0] {
-        &&DAGNode::Start(x) => assert_eq!(x, q_pos),
+    match *chain[0] {
+        DAGNode::Start(x) => assert_eq!(x, q_pos),
         _ => panic!(),
     }
     for node in chain.iter().skip(1) {
@@ -366,14 +366,14 @@ fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, unit_len: usize) -> Option
     match u {
         DAGNode::End(_) => None,
         DAGNode::Start(x) => match v {
-            DAGNode::Aln(aln) => Some((aln.seq2_start() - x + aln.seq1_start()) as i64 * -1),
+            DAGNode::Aln(aln) => Some(-((aln.seq2_start() - x + aln.seq1_start()) as i64)),
             _ => None,
         },
         DAGNode::Aln(aln1) => match v {
             DAGNode::End(x) => {
                 let refr_remain = unit_len - aln1.seq1_start() - aln1.seq1_matchlen();
                 let query_remain = x - aln1.seq2_start() - aln1.seq2_matchlen();
-                Some((refr_remain + query_remain) as i64 * -1)
+                Some(-((refr_remain + query_remain) as i64))
             }
             DAGNode::Start(_) => None,
             DAGNode::Aln(aln2) => {
@@ -382,7 +382,7 @@ fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, unit_len: usize) -> Option
                 let v_refr_start = aln2.seq1_start();
                 let v_query_start = aln2.seq2_start();
                 if u_refr_end <= v_refr_start && u_query_end <= v_query_start {
-                    Some((v_refr_start - u_refr_end + v_query_start - u_query_end) as i64 * -1)
+                    Some(-((v_refr_start - u_refr_end + v_query_start - u_query_end) as i64))
                 } else {
                     None
                 }
@@ -420,8 +420,10 @@ fn alignment(query: &[u8], refr: &[u8], mat: i64, mism: i64, gap: i64) -> Vec<Op
     for j in 0..=query.len() {
         dp[0][j] = j as i64 * gap;
     }
-    for i in 0..=refr.len() {
-        dp[i][0] = i as i64 * gap;
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i as i64 * gap;
+        // for i in 0..=refr.len() {
+        // dp[i][0] = i as i64 * gap;
     }
     for (i, r) in refr.iter().enumerate() {
         for (j, q) in query.iter().enumerate() {

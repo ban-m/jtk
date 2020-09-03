@@ -55,7 +55,7 @@ fn main() {
             for pred in 0..=1 {
                 match result.get(&(ans, pred)) {
                     Some(count) => line.push(format!("{}", count)),
-                    None => line.push(format!("0")),
+                    None => line.push("0".to_string()),
                 }
             }
         }

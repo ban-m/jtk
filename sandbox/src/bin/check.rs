@@ -5,13 +5,9 @@ use rand_xoshiro::Xoroshiro128PlusPlus;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
-    c.max_beta = 0.3;
     c.cluster_num = 2;
-    c.beta_increase = 1.03;
     c.stable_limit = 6;
-    c.repeat_num = 3;
     c.variant_num = 2;
-    c.sample_num = 30;
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     c.read_type = haplotyper::ReadType::CLR;
     let profile = gen_sample::PROFILE.norm().mul(0.15);

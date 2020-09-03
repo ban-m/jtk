@@ -1,4 +1,4 @@
-const BASES: &'static [char] = &['A', 'C', 'G', 'T'];
+const BASES: &[char] = &['A', 'C', 'G', 'T'];
 use rand::seq::SliceRandom;
 fn main() {
     use std::time::Instant;

@@ -44,12 +44,11 @@ pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .zip(use_position.iter())
                 .zip(reference.iter())
                 .map(|((cs, &b), refr)| {
-                    let res = if b && !cs.is_empty() {
+                    if b && !cs.is_empty() {
                         construct_poa(refr, &cs, c)
                     } else {
                         POA::default()
-                    };
-                    res
+                    }
                 })
                 .collect()
         })
@@ -70,7 +69,7 @@ where
     let base = base
         .as_ref()
         .map(|e| POA::new(&e.consensus(), 1.))
-        .unwrap_or(POA::default());
+        .unwrap_or_default();
     match c.read_type {
         ReadType::CCS => base.update(&cs, &vec![1.; cs.len()], param),
         _ => {

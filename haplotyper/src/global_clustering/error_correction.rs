@@ -254,7 +254,7 @@ pub fn local_correction(ds: &DataSet, c: &GlobalClusteringConfig) -> Vec<Correct
 
 pub fn polish_reads(reads: &[CorrectedRead], c: &GlobalClusteringConfig) -> Vec<CorrectedRead> {
     let reads: Vec<_> = reads
-        .into_iter()
+        .iter()
         .map(|read| {
             let nodes: Vec<_> = read
                 .nodes
@@ -290,9 +290,10 @@ fn local_correction_inner(
         .collect()
 }
 
+type ReadSkelton = (u64, Vec<(u64, u64)>, Vec<(u64, u64)>);
 fn correct(
     &(id, ref nodes): &(u64, Vec<(u64, u64)>),
-    reads: &[(u64, Vec<(u64, u64)>, Vec<(u64, u64)>)],
+    reads: &[ReadSkelton],
     param: (i32, i32, i32),
     thr: i32,
 ) -> CorrectedRead {

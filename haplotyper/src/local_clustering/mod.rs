@@ -3,14 +3,11 @@ use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
 use std::collections::HashMap;
-const SMALL_WEIGHT: f64 = 0.000_000_001;
 mod config;
-pub mod naive_variant_calling;
 pub use config::*;
 pub mod create_model;
 pub mod eread;
 pub mod variant_calling;
-use create_model::*;
 use eread::*;
 use variant_calling::*;
 pub mod kmeans;
@@ -40,13 +37,14 @@ impl LocalClustering for DataSet {
             .par_iter_mut()
             .enumerate()
             .for_each(|(unit_id, mut units)| {
-                debug!("The {}-th pileup", unit_id);
+                debug!("RECORD\t{}", unit_id);
                 let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
                     Some(res) => res,
                     None => return,
                 };
                 assert!(units.iter().all(|n| n.2.unit == unit_id as u64));
                 unit_clustering(&mut units, c, ref_unit);
+                debug!("RECORD\t{}", unit_id);
                 if log_enabled!(log::Level::Debug) {
                     for cl in 0..c.cluster_num {
                         let cl = cl as u64;
@@ -232,21 +230,20 @@ fn update_by_precomputed_lks<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .collect();
             let sum = weights.iter().sum::<f64>();
             weights.iter_mut().for_each(|x| *x /= sum);
-            let (new_assignment, max) = weights
-                .iter()
-                .enumerate()
-                .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .unwrap_or((0, &0.));
+            // let (_, max) = weights
+            //     .iter()
+            //     .enumerate()
+            //     .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            //     .unwrap_or((0, &0.));
             use rand::seq::SliceRandom;
             let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
-            let diff = weights
-                .iter()
-                .filter(|&x| (x - max).abs() > 0.001)
-                .map(|x| max - x)
-                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .unwrap_or(0.);
-            // trace!("{}\t{:.3}\t{:.3}\t{:.3}", idx, weights[0], weights[1], diff);
-            if diff > 0.3 && d.cluster != new_assignment {
+            // let diff = weights
+            //     .iter()
+            //     .filter(|&x| (x - max).abs() > 0.001)
+            //     .map(|x| max - x)
+            //     .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            //     .unwrap_or(0.);
+            if d.cluster != new_assignment {
                 d.cluster = new_assignment;
                 1
             } else {
@@ -263,41 +260,39 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     ref_unit: u64,
 ) -> f64 {
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit);
-    let mut count = 0;
+    let mut count: u32 = 0;
     let rng = &mut rng;
     let start = std::time::Instant::now();
-    let mut coef = 1.;
     let stable_thr = match c.read_type {
         ReadType::CCS => (data.len() as f64 * 0.02).max(1.).floor() as u32,
-        ReadType::ONT => (data.len() as f64 * 0.08).max(3.).floor() as u32,
-        ReadType::CLR => (data.len() as f64 * 0.08).max(3.).floor() as u32,
+        ReadType::ONT => (data.len() as f64 * 0.1).max(4.).floor() as u32,
+        ReadType::CLR => (data.len() as f64 * 0.1).max(4.).floor() as u32,
     };
-    let (betas, pos, lks, margin) = (0..20)
+    let (pos, lks, margin) = (0..20)
         .map(|_| {
             data.iter_mut().for_each(|cs| {
                 cs.cluster = rng.gen_range(0, c.cluster_num);
             });
-            get_variants(&data, chain_len, rng, c)
+            let vn = 3 * c.variant_num;
+            let (_, pos, lks, margin) = get_variants(&data, chain_len, rng, c, vn);
+            // let lks = average_correction(lks, chain_len, c.cluster_num);
+            // update_by_precomputed_lks(data, chain_len, 1., &pos, &lks, rng, c);
+            // let (_, pos, lks, margin) = get_variants(&data, chain_len, rng, c, vn);
+            (pos, lks, margin)
         })
-        .max_by(|x, y| (x.3).partial_cmp(&y.3).unwrap())
+        .max_by(|x, y| (x.2).partial_cmp(&y.2).unwrap())
         .unwrap();
     trace!("Init Margin:{}", margin);
-    let beta = 1.;
-    // let beta = (c.initial_beta * coef).min(c.max_beta);
-    for (idx, d) in data.iter().enumerate() {
-        trace!("{}\t{}", idx, d.cluster);
-    }
     let lks = average_correction(lks, chain_len, c.cluster_num);
-    update_by_precomputed_lks(data, chain_len, beta, &pos, &lks, rng, c);
+    update_by_precomputed_lks(data, chain_len, 1., &pos, &lks, rng, c);
     loop {
-        // coef *= c.beta_increase;
-        // let beta = (c.initial_beta * coef).min(c.max_beta);
-        let (betas, pos, lks, margin) = get_variants(&data, chain_len, rng, c);
+        let vn = 3 * c.variant_num - c.variant_num * count as usize / (c.stable_limit as usize - 1);
+        let (_, pos, lks, margin) = get_variants(&data, chain_len, rng, c, vn);
         let lks = average_correction(lks, chain_len, c.cluster_num);
-        let changed_num = update_by_precomputed_lks(data, chain_len, beta, &pos, &lks, rng, c);
+        let changed_num = update_by_precomputed_lks(data, chain_len, 1., &pos, &lks, rng, c);
         count += (changed_num <= stable_thr) as u32;
         count *= (changed_num <= stable_thr) as u32;
-        report(ref_unit, &data, count, margin, coef, changed_num);
+        report(ref_unit, &data, count, margin, 1., changed_num);
         if (std::time::Instant::now() - start).as_secs() > c.limit {
             info!("Break by timelimit:{}", c.limit);
             break margin;
@@ -357,134 +352,6 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32)
         c,
         counts
     );
-}
-
-fn update_assignment<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
-    data: &mut [ChunkedUnit],
-    c: &ClusteringConfig<F>,
-    picked: usize,
-    betas: &[Vec<Vec<f64>>],
-    beta: f64,
-    pos: &[bool],
-    chain_len: usize,
-    rng: &mut R,
-) -> u32 {
-    let mut weights = get_weights(data, chain_len, rng, &pos, picked, beta, betas, c);
-    let sum = weights.iter().sum::<f64>();
-    weights.iter_mut().for_each(|x| *x /= sum);
-    let (new_assignment, max) = weights
-        .iter()
-        .enumerate()
-        .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap_or((0, &0.));
-    let diff = weights
-        .iter()
-        .filter(|&x| (x - max).abs() > 0.001)
-        .map(|x| max - x)
-        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap_or(0.);
-    trace!(
-        "{}\t{:.3}\t{:.3}\t{:.3}",
-        picked,
-        weights[0],
-        weights[1],
-        diff,
-    );
-    let read = data.get_mut(picked).unwrap();
-    if diff > 0.4 && read.cluster != new_assignment {
-        read.cluster = new_assignment;
-        1
-    } else {
-        0
-    }
-}
-
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
-}
-
-fn get_weights<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: rand::Rng>(
-    data: &[ChunkedUnit],
-    chain_len: usize,
-    rng: &mut R,
-    pos: &[bool],
-    picked: usize,
-    beta: f64,
-    betas: &[Vec<Vec<f64>>],
-    c: &ClusteringConfig<F>,
-) -> Vec<f64> {
-    let fractions: Vec<_> = (0..c.cluster_num)
-        .map(|cl| data.iter().filter(|d| d.cluster == cl).count() + 1)
-        .collect();
-    let models: Vec<_> = get_models(&data, chain_len, rng, c, &pos, Some(picked));
-    let mut likelihoods: Vec<(usize, Vec<_>)> = data[picked]
-        .chunks
-        .iter()
-        .filter(|chunk| pos[chunk.pos])
-        .map(|chunk| {
-            let lks: Vec<_> = models
-                .iter()
-                .map(|ms| vec![ms[chunk.pos].forward(&chunk.seq, &c.poa_config)])
-                .collect();
-            (chunk.pos, lks)
-        })
-        .collect();
-    for _ in 0..c.repeat_num - 1 {
-        let models: Vec<_> = get_models(&data, chain_len, rng, c, &pos, Some(picked));
-        for (chunk, (pos, lks)) in data[picked]
-            .chunks
-            .iter()
-            .filter(|chunk| pos[chunk.pos])
-            .zip(likelihoods.iter_mut())
-        {
-            assert_eq!(*pos, chunk.pos);
-            lks.iter_mut()
-                .zip(models.iter())
-                .for_each(|(xs, ms)| xs.push(ms[chunk.pos].forward(&chunk.seq, &c.poa_config)));
-        }
-    }
-    let likelihoods: Vec<(usize, Vec<_>)> = likelihoods
-        .into_iter()
-        .map(|(pos, lks)| {
-            let lks: Vec<_> = lks
-                .iter()
-                .map(|lks| logsumexp(lks) - (c.repeat_num as f64).ln())
-                .collect();
-            // let dump: Vec<_> = lks
-            //     .iter()
-            //     .map(|x| lks.iter().map(|y| (y - x).exp()).sum::<f64>().recip())
-            //     .map(|x| format!("{}", x))
-            //     .collect();
-            // debug!("DUMP\t{}\t{}", pos, dump.join("\t"));
-            (pos, lks)
-        })
-        .collect();
-    (0..c.cluster_num)
-        .map(|l| {
-            (0..c.cluster_num)
-                .map(|k| {
-                    if k == l {
-                        return 0.;
-                    }
-                    let (i, j) = (l.max(k), l.min(k));
-                    let prior = (fractions[k] as f64 / fractions[l] as f64).ln();
-                    beta * prior
-                        + likelihoods
-                            .iter()
-                            .map(|&(pos, ref lks)| betas[i][j][pos] * (lks[k] - lks[l]))
-                            .sum::<f64>()
-                })
-                .map(|lkdiff| lkdiff.exp())
-                .sum::<f64>()
-                .recip()
-        })
-        .collect()
 }
 
 #[cfg(test)]

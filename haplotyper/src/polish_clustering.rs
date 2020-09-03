@@ -216,9 +216,10 @@ impl Column {
     }
 }
 
+type ReadSkelton = (Vec<(u64, u64)>, Vec<(u64, u64)>);
 fn correct_read(
-    read: &Vec<(u64, u64)>,
-    reads: &[(Vec<(u64, u64)>, Vec<(u64, u64)>)],
+    read: &[(u64, u64)],
+    reads: &[ReadSkelton],
     c: &PolishClusteringConfig,
 ) -> Vec<(u64, u64)> {
     let param = (c.mat_score, c.mismat_score, c.gap_score);

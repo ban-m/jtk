@@ -5,7 +5,7 @@ pub fn generate_mul_data<T: Rng>(
     templates: &[Vec<Vec<u8>>],
     test_num: usize,
     rng: &mut T,
-    probs: &[f64],
+    _probs: &[f64],
     profile: &poa_hmm::gen_sample::Profile,
 ) -> (Vec<haplotyper::eread::ChunkedUnit>, Vec<u8>) {
     let choices: Vec<_> = (0..templates.len()).collect();

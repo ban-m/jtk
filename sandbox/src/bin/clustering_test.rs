@@ -1,5 +1,3 @@
-// use rand::{seq::SliceRandom, SeedableRng};
-// use rand_xoshiro::Xoshiro256StarStar;
 fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     use std::collections::HashMap;
@@ -11,7 +9,7 @@ fn main() -> std::io::Result<()> {
         .lines()
         .filter_map(|e| e.ok())
     {
-        let line: Vec<_> = line.split("\t").collect();
+        let line: Vec<_> = line.split('\t').collect();
         let read_id: usize = line[1].parse().unwrap();
         let pos: usize = line[2].parse().unwrap();
         let lk1: f64 = line[3].parse().unwrap();

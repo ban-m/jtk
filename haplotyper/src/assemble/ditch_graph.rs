@@ -282,7 +282,7 @@ impl<'a> DitchGraph<'a, 'a> {
         let mut selected = vec![false; self.nodes.len()];
         let mut primary_candidates: Vec<_> = (0..self.nodes.len())
             .filter_map(|i| {
-                for position in vec![Position::Head, Position::Tail] {
+                for &position in &[Position::Head, Position::Tail] {
                     if self.nodes[i]
                         .edges
                         .iter()
@@ -301,7 +301,7 @@ impl<'a> DitchGraph<'a, 'a> {
             (0..self.nodes.len())
                 .filter(|&i| !selected[i])
                 .filter_map(|i| {
-                    for position in vec![Position::Head, Position::Tail] {
+                    for &position in &[Position::Head, Position::Tail] {
                         // The unwrap() never panics.
                         let grand_child = self.nodes[i]
                             .edges
@@ -566,17 +566,17 @@ impl<'a> DitchGraph<'a, 'a> {
             .filter(|e| e.from_position == start_position)
             .filter_map(|e| {
                 assert!(e.from == start);
-                let (sid2, beg2) = match &sids[e.to] {
-                    &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
+                let (sid2, beg2) = match sids[e.to] {
+                    ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(0, false))
                     }
-                    &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
+                    ContigTag::End(ref name, pos, len) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(len, true))
                     }
-                    &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
+                    ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(0, false))
                     }
-                    &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
+                    ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(len, true))
                     }
                     _ => return None,
@@ -669,17 +669,17 @@ impl<'a> DitchGraph<'a, 'a> {
             .filter(|e| e.from_position == position)
             .filter_map(|e| {
                 assert!(e.from == node);
-                let (sid2, beg2) = match &sids[e.to] {
-                    &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
+                let (sid2, beg2) = match sids[e.to] {
+                    ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(0, false))
                     }
-                    &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
+                    ContigTag::End(ref name, pos, len) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(len, true))
                     }
-                    &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
+                    ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(0, false))
                     }
-                    &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
+                    ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(len, true))
                     }
                     _ => return None,

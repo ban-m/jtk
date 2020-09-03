@@ -2,14 +2,8 @@ use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 const SAMPLE_RATE: f64 = 0.01;
-const INITIAL_BETA: f64 = 0.0005;
-const BETA_INCREASE: f64 = 1.03;
-const REPEAT_NUM: usize = 4;
-const MAX_BETA: f64 = 0.8;
-const GIBBS_PRIOR: f64 = 0.01;
 const STABLE_LIMIT: u32 = 6;
 const VARIANT_NUMBER: usize = 2;
-const DEFAULT_SAMPLE_NUM: usize = 50;
 #[derive(Debug, Clone)]
 pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub cluster_num: usize,
@@ -18,17 +12,10 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub sample_rate: f64,
     pub alnparam: AlignmentParameters<F>,
     pub poa_config: poa_hmm::Config,
-    pub seed: u64,
     pub id: u64,
-    pub beta_increase: f64,
-    pub initial_beta: f64,
-    pub max_beta: f64,
-    pub repeat_num: usize,
-    pub gibbs_prior: f64,
     pub stable_limit: u32,
     pub variant_num: usize,
     pub read_type: ReadType,
-    pub sample_num: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +32,6 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
         limit: u64,
     ) -> Self {
-        let seed = ((subchunk_length << cluster_num) / 17) as u64 * limit;
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
         let bf = base_freq(&dataset.raw_reads);
         let units: HashMap<u64, &definitions::Unit> =
@@ -66,17 +52,10 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             alnparam: DEFAULT_ALN,
             poa_config: config,
             sample_rate: SAMPLE_RATE,
-            seed,
             id,
-            beta_increase: BETA_INCREASE,
-            initial_beta: INITIAL_BETA,
-            max_beta: MAX_BETA,
-            repeat_num: REPEAT_NUM,
-            gibbs_prior: GIBBS_PRIOR,
             stable_limit: STABLE_LIMIT,
             variant_num: VARIANT_NUMBER,
             read_type: ReadType::CCS,
-            sample_num: DEFAULT_SAMPLE_NUM,
         }
     }
     pub fn default() -> Self {
@@ -90,17 +69,10 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             alnparam: DEFAULT_ALN,
             poa_config: config,
             sample_rate: SAMPLE_RATE,
-            seed: 10000,
             id,
-            beta_increase: BETA_INCREASE,
-            initial_beta: INITIAL_BETA,
-            max_beta: MAX_BETA,
-            repeat_num: REPEAT_NUM,
-            gibbs_prior: GIBBS_PRIOR,
             stable_limit: STABLE_LIMIT,
             variant_num: VARIANT_NUMBER,
             read_type: ReadType::CCS,
-            sample_num: DEFAULT_SAMPLE_NUM,
         }
     }
     pub fn ccs(
@@ -118,11 +90,6 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         limit: u64,
     ) -> Self {
         let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit);
-        c.initial_beta = 0.0001;
-        c.max_beta = 0.3;
-        c.beta_increase = 1.01;
-        c.repeat_num = 4;
-        c.stable_limit = 6;
         c.read_type = ReadType::CLR;
         c
     }

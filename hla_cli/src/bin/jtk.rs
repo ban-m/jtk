@@ -571,7 +571,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Entry");
@@ -588,7 +588,7 @@ fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Extract");
@@ -634,7 +634,7 @@ fn stats(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Stats step");
@@ -649,7 +649,7 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Selecting Units");
@@ -692,7 +692,7 @@ fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Encoding step");
@@ -713,7 +713,7 @@ fn polish_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start polishing units");
@@ -744,7 +744,7 @@ fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("View");
@@ -763,7 +763,7 @@ fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Local Clustering step");
@@ -803,7 +803,7 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Global Clustering step");
@@ -851,7 +851,7 @@ fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Polish Clustering step");
@@ -885,7 +885,7 @@ fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
         0 => "warn",
         1 => "info",
         2 => "debug",
-        3 | _ => "trace",
+        _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     debug!("Start Assembly step");
@@ -1000,10 +1000,11 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
     gfa_path.pop();
     match std::fs::create_dir_all(gfa_path) {
         Err(why) => error!("{:?}. Please check gfa path.", why),
-        Ok(_) => match std::fs::File::create(gfa_file).map(BufWriter::new) {
-            Ok(mut wtr) => writeln!(&mut wtr, "{}", gfa)?,
-            _ => {}
-        },
+        Ok(_) => {
+            if let Ok(mut wtr) = std::fs::File::create(gfa_file).map(BufWriter::new) {
+                writeln!(&mut wtr, "{}", gfa)?;
+            }
+        }
     }
     flush_file(&dataset)
 }

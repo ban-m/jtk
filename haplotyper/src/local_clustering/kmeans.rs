@@ -168,7 +168,8 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             update_assignment(&mut data[picked], &models, rng, c);
             models.push_seq(&data[picked]);
         }
-        let (_, _, _, margin) = super::variant_calling::get_variants(&data, chain_len, rng, c);
+        let (_, _, _, margin) =
+            super::variant_calling::get_variants(&data, chain_len, rng, c, c.variant_num);
         count += 1;
         trace!("Margin:{}", margin);
     }
