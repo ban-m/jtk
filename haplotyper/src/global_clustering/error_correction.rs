@@ -212,6 +212,7 @@ impl Column {
             c: 1,
         }
     }
+    #[allow(dead_code)]
     fn generate_orig(&self, node: &mut Vec<Unit>) {
         if self.i.len() > self.c / 3 {
             let mut counts: HashMap<_, u32> = HashMap::new();
@@ -234,7 +235,9 @@ impl Column {
             for &x in self.i.iter() {
                 *counts.entry(x).or_default() += 1;
             }
-            if let Some(((unit, cluster), _)) = counts.into_iter().max_by_key(|x| x.1) {
+            let mut counts: Vec<_> = counts.into_iter().collect();
+            counts.sort_by_key(|x| x.1);
+            if let Some(((unit, cluster), _)) = counts.pop() {
                 node.push(Unit { unit, cluster });
             }
         }
@@ -243,7 +246,9 @@ impl Column {
             for &x in self.m.iter() {
                 *counts.entry(x).or_default() += 1;
             }
-            if let Some(((unit, cluster), _)) = counts.into_iter().max_by_key(|x| x.1) {
+            let mut counts: Vec<_> = counts.into_iter().collect();
+            counts.sort_by_key(|x| x.1);
+            if let Some(((unit, cluster), _)) = counts.pop() {
                 node.push(Unit { unit, cluster });
             }
         }
@@ -324,7 +329,7 @@ fn correct(
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
     for column in pileup.column {
-        column.generate_orig(&mut nodes);
+        column.generate(&mut nodes);
     }
     CorrectedRead { id, nodes }
 }

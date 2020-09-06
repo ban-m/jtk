@@ -29,7 +29,7 @@ impl Encode for definitions::DataSet {
 fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
-    let id: u64 = rng.gen::<u64>() % 10_000;
+    let id: u64 = rng.gen::<u64>() % 100_000_000;
     let mut c_dir = std::env::current_dir()?;
     use std::io::{BufWriter, Write};
     c_dir.push(format!("{}", id));
