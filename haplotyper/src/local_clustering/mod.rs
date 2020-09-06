@@ -41,21 +41,6 @@ impl LocalClustering for DataSet {
             }
         }
         debug!("Remaining {} unresolved cluster.", unit_num);
-        let to_be_impute: HashMap<_, _> =
-            clustered_units.into_iter().map(|(x, y)| (x, !y)).collect();
-        // Erase clustering useless information
-        for read in self.encoded_reads.iter_mut() {
-            for node in read.nodes.iter_mut() {
-                if *to_be_impute.get(&node.unit).unwrap_or(&false) {
-                    node.cluster = 0;
-                }
-            }
-        }
-        super::em_correction::impute_clustering(&mut self, &to_be_impute);
-        // Impute all other positions(, which works as error correction.)
-        let to_be_impute: HashMap<_, _> =
-            self.selected_chunks.iter().map(|e| (e.id, true)).collect();
-        super::em_correction::impute_clustering(&mut self, &to_be_impute);
         self
     }
 }

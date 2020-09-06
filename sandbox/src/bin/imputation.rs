@@ -93,11 +93,11 @@ fn main() {
         let reads: Vec<_> = reads.iter().collect();
         use haplotyper::em_correction::clustering;
         let focal = units[units.len() / 2].id;
-        let config = haplotyper::em_correction::Config::with_default(focal, cluster_num);
+        let config = haplotyper::em_correction::Config::new(10, 2190, cluster_num, focal, 5);
         let preds = clustering(&units, &reads, &config);
         use std::collections::HashMap;
         let mut count: HashMap<_, u32> = HashMap::new();
-        for ((read, ans), pred) in reads.iter().zip(answer).zip(preds) {
+        for ((_read, ans), pred) in reads.iter().zip(answer).zip(preds) {
             *count.entry((ans, pred)).or_default() += 1;
             // let line: Vec<_> = read
             //     .nodes

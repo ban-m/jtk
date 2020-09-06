@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
     use std::io::BufReader;
     let args: Vec<_> = std::env::args().collect();
     let ds = BufReader::new(std::fs::File::open(&args[1])?);
-    let mut ds: DataSet = serde_json::de::from_reader(ds).unwrap();
+    let ds: DataSet = serde_json::de::from_reader(ds).unwrap();
     if args.len() > 2 {
         let unit: u64 = args[2].parse().unwrap();
         let is_hap_a: HashMap<_, _> = ds
@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
             .iter()
             .filter(|r| r.nodes.iter().any(|n| n.unit == unit))
             .collect();
-        let config = haplotyper::em_correction::Config::with_default(unit, 2);
+        let config = haplotyper::em_correction::Config::new(10, 23910, 2, unit, 5);
         let preds = haplotyper::em_correction::clustering(&ds.selected_chunks, &reads, &config);
         for cl in 0..2 {
             for (pred, read) in preds.iter().zip(reads.iter()).filter(|&(&p, _)| p == cl) {
@@ -32,8 +32,10 @@ fn main() -> std::io::Result<()> {
             }
         }
     } else {
-        let units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, true)).collect();
-        haplotyper::em_correction::impute_clustering(&mut ds, &units);
+        let repeat_num = 10;
+        let coverage_thr = 5;
+        use haplotyper::em_correction::ClusteringCorrection;
+        let ds = ds.correct_clustering(repeat_num, coverage_thr);
         println!("{}", serde_json::ser::to_string(&ds).unwrap());
     }
     Ok(())

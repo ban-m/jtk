@@ -129,7 +129,8 @@ impl GlobalClustering for definitions::DataSet {
         }
         // TODO: Maybe this function should only correct
         // Insertion/Deletion errors.
-        let reads = error_correction::local_correction(&self, c);
+        // let reads = error_correction::local_correction(&self, c);
+        let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
         let mut graph = DeBruijnGraph::from(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             debug!("------Corrected reads------");

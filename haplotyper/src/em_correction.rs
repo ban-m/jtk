@@ -2,7 +2,6 @@ use definitions::*;
 use rayon::prelude::*;
 const REPEAT_NUM: usize = 10;
 const SEED: u64 = 1221;
-const COVERAGE_THR: usize = 5;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
@@ -33,72 +32,69 @@ impl Config {
             coverage_thr: coverage,
         }
     }
-    pub fn with_default(focal: u64, cluster_num: usize) -> Self {
-        Self {
-            cluster_num,
-            repeat_num: REPEAT_NUM,
-            seed: SEED,
-            coverage_thr: COVERAGE_THR,
-            focal,
-        }
-    }
 }
 
-// TODO: tune parameters based on read type (Low coverage threshould for CCS reads?).
-pub fn impute_clustering(ds: &mut DataSet, positions: &HashMap<u64, bool>) {
-    // (read index, read_id, corrrect_position, unit_id, new_cluster)
-    let id_to_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    let id_to_desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    let result: Vec<_> = positions
-        .par_iter()
-        .filter(|&(_, &x)| x)
-        .flat_map(|(&unit_id, _)| {
-            let (read_indices, reads): (Vec<usize>, Vec<_>) = ds
-                .encoded_reads
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| r.nodes.iter().any(|n| n.unit == unit_id))
-                .unzip();
-            if let Some(unit) = ds.selected_chunks.iter().find(|u| u.id == unit_id) {
-                let k = unit.cluster_num;
-                let mut config = Config::with_default(unit_id, k);
-                config.repeat_num = 0;
-                let new_clustering = clustering(&ds.selected_chunks, &reads, &config);
-                if log_enabled!(log::Level::Debug) {
-                    for cl in 0..k {
-                        for (read, &cluster) in reads.iter().zip(new_clustering.iter()) {
-                            let id = read.id;
-                            if cluster == cl {
-                                let name = id_to_name[&id];
-                                let desc = match id_to_desc.get(&id) {
-                                    Some(res) => res.as_str(),
-                                    None => "",
-                                };
-                                debug!("IMP\t{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, desc);
+pub trait ClusteringCorrection {
+    fn correct_clustering(self, repeat_num: usize, coverage_thr: usize) -> Self;
+}
+
+impl ClusteringCorrection for DataSet {
+    fn correct_clustering(mut self, repeat_num: usize, coverage_thr: usize) -> Self {
+        let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+        let id_to_desc: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+        let result: Vec<_> = self
+            .selected_chunks
+            .par_iter()
+            .flat_map(|ref_unit| {
+                let unit_id = ref_unit.id;
+                let (read_indices, reads): (Vec<usize>, Vec<_>) = self
+                    .encoded_reads
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| r.nodes.iter().any(|n| n.unit == unit_id))
+                    .unzip();
+                if let Some(unit) = self.selected_chunks.iter().find(|u| u.id == unit_id) {
+                    let k = unit.cluster_num;
+                    let mut config = Config::new(repeat_num, SEED, k, unit_id, coverage_thr);
+                    config.repeat_num = 0;
+                    let new_clustering = clustering(&self.selected_chunks, &reads, &config);
+                    if log_enabled!(log::Level::Debug) {
+                        for cl in 0..k {
+                            for (read, &cluster) in reads.iter().zip(new_clustering.iter()) {
+                                let id = read.id;
+                                if cluster == cl {
+                                    let name = id_to_name[&id];
+                                    let desc = match id_to_desc.get(&id) {
+                                        Some(res) => res.as_str(),
+                                        None => "",
+                                    };
+                                    debug!("IMP\t{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, desc);
+                                }
                             }
                         }
                     }
-                }
-                let mut result = vec![];
-                for ((read, read_idx), cluster) in
-                    reads.into_iter().zip(read_indices).zip(new_clustering)
-                {
-                    for (idx, node) in read.nodes.iter().enumerate() {
-                        if node.unit == unit_id {
-                            result.push((read_idx, read.id, idx, node.unit, cluster));
+                    let mut result = vec![];
+                    for ((read, read_idx), cluster) in
+                        reads.into_iter().zip(read_indices).zip(new_clustering)
+                    {
+                        for (idx, node) in read.nodes.iter().enumerate() {
+                            if node.unit == unit_id {
+                                result.push((read_idx, read.id, idx, node.unit, cluster));
+                            }
                         }
                     }
+                    result
+                } else {
+                    vec![]
                 }
-                result
-            } else {
-                vec![]
-            }
-        })
-        .collect();
-    for (read_idx, read_id, position, unit_id, cluster) in result {
-        assert_eq!(ds.encoded_reads[read_idx].id, read_id);
-        assert_eq!(ds.encoded_reads[read_idx].nodes[position].unit, unit_id);
-        ds.encoded_reads[read_idx].nodes[position].cluster = cluster as u64;
+            })
+            .collect();
+        for (read_idx, read_id, position, unit_id, cluster) in result {
+            assert_eq!(self.encoded_reads[read_idx].id, read_id);
+            assert_eq!(self.encoded_reads[read_idx].nodes[position].unit, unit_id);
+            self.encoded_reads[read_idx].nodes[position].cluster = cluster as u64;
+        }
+        self
     }
 }
 

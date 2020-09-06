@@ -362,11 +362,11 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_polish_clustering() -> App<'static, 'static> {
-    SubCommand::with_name("polish_clustering")
+fn subcommand_clustering_correction() -> App<'static, 'static> {
+    SubCommand::with_name("clustering_correction")
         .version("0.1")
         .author("BanshoMasutani")
-        .about("Polish local clustering.")
+        .about("Correct local clustering by EM algorithm.")
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -384,43 +384,23 @@ fn subcommand_polish_clustering() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("mat_score")
-                .short("p")
-                .long("match_score")
+            Arg::with_name("repeat_num")
+                .short("r")
+                .long("repeat_num")
                 .required(false)
-                .value_name("MATCH_SCORE")
-                .help("The match score")
-                .default_value(&"1")
+                .value_name("REPEAT_NUM")
+                .help("Do EM algorithm for REPEAT_NUM times.")
+                .default_value(&"10")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("mismat_score")
-                .short("q")
-                .long("mismatch_score")
-                .required(false)
-                .value_name("MISMATCH_SCORE")
-                .help("The mismatch score")
-                .default_value(&"1")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("gap_score")
-                .short("g")
-                .long("gap_score")
-                .required(false)
-                .value_name("GAP_SCORE")
-                .help("The gap penalty")
-                .default_value(&"2")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("score_threshold")
+            Arg::with_name("coverage_threshold")
                 .short("x")
                 .long("threshold")
                 .required(false)
                 .value_name("THRESHOLD")
-                .help("Alignment with score less that this value would be removed.")
-                .default_value(&"0")
+                .help("Unit with less that this coverage would be ignored.")
+                .default_value(&"5")
                 .takes_value(true),
         )
 }
@@ -879,7 +859,7 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
     flush_file(&dataset)
 }
 
-fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
+fn clustering_correction(matches: &clap::ArgMatches) -> std::io::Result<()> {
     let level = match matches.occurrences_of("verbose") {
         0 => "warn",
         1 => "info",
@@ -887,34 +867,24 @@ fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    debug!("Start Polish Clustering step");
+    debug!("Start Clustering Correction step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let mat_score: i32 = matches
-        .value_of("mat_score")
-        .and_then(|num| num.parse().ok())
+    let repeat_num: usize = matches
+        .value_of("repeat_num")
+        .and_then(|num| num.parse::<usize>().ok())
         .unwrap();
-    let mismat_score: i32 = -matches
-        .value_of("mismat_score")
-        .and_then(|num| num.parse::<i32>().ok())
-        .unwrap();
-    let gap_score: i32 = -matches
-        .value_of("gap_score")
-        .and_then(|num| num.parse::<i32>().ok())
-        .unwrap();
-    let threshold: i32 = matches
-        .value_of("score_threshold")
+    let threshold: usize = matches
+        .value_of("coverage_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
         .unwrap();
-    let config =
-        haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score, threshold);
-    let dataset = get_input_file()?.polish_clustering(&config);
+    let dataset = get_input_file()?.correct_clustering(repeat_num, threshold);
     flush_file(&dataset)
 }
 
@@ -1020,10 +990,6 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("gap_score")
         .and_then(|num| num.parse::<i32>().ok())
         .unwrap();
-    let threshold: i32 = matches
-        .value_of("score_threshold")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
     let global_config = haplotyper::GlobalClusteringConfig::new(
         kmer,
         min_cluster_size,
@@ -1031,12 +997,17 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         mismat_score,
         gap_score,
     );
-    let config =
-        haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score, threshold);
+    let repeat_num: usize = 10;
+    let coverage_thr = match matches.value_of("read_type").unwrap() {
+        "CCS" => 2,
+        "CLR" => 5,
+        "ONT" => 5,
+        _ => unreachable!(),
+    };
     let dataset = dataset
         .local_clustering(&local_config)
-        .global_clustering(&global_config)
-        .polish_clustering(&config);
+        .correct_clustering(repeat_num, coverage_thr)
+        .global_clustering(&global_config);
     let config = AssembleConfig::default();
     let gfa = dataset.assemble_as_gfa(&config);
     let gfa_file = matches.value_of("gfa").unwrap();
@@ -1094,7 +1065,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_view())
         .subcommand(subcommand_local_clustering())
         .subcommand(subcommand_global_clustering())
-        .subcommand(subcommand_polish_clustering())
+        .subcommand(subcommand_clustering_correction())
         .subcommand(subcommand_assembly())
         .subcommand(subcommand_pipeline())
         .get_matches();
@@ -1108,7 +1079,7 @@ fn main() -> std::io::Result<()> {
         ("view", Some(sub_m)) => view(sub_m),
         ("local_clustering", Some(sub_m)) => local_clustering(sub_m),
         ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
-        ("polish_clustering", Some(sub_m)) => polish_clustering(sub_m),
+        ("polish_clustering", Some(sub_m)) => clustering_correction(sub_m),
         ("assemble", Some(sub_m)) => assembly(sub_m),
         ("pipeline", Some(sub_m)) => pipeline(sub_m),
         _ => Ok(()),
