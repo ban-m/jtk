@@ -55,6 +55,8 @@ fn cluster_to_gfa(cl: usize, reads: Vec<&EncodedRead>, c: &AssembleConfig) -> Ve
         return vec![];
     }
     let mut graph = DitchGraph::new(&reads, c);
+    graph.resolve_repeats();
+    graph.remove_redundant_edges(1);
     graph.remove_tips();
     graph.collapse_buddle(c);
     debug!("{}", graph);

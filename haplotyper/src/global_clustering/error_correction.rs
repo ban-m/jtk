@@ -311,11 +311,6 @@ fn correct(
     for column in pileup.column {
         column.generate(&mut nodes);
     }
-    // let af: Vec<_> = nodes
-    //     .iter()
-    //     .map(|u| format!("{}-{}", u.unit, u.cluster))
-    //     .collect();
-    // eprintln!("=======\n{}\n{}", bf.join(","), af.join(","));
     CorrectedRead { id, nodes }
 }
 

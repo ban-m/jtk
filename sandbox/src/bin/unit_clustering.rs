@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
     let unit: u64 = args[2].parse().unwrap();
     debug!("Started");
     let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
-    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000);
+    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000, 10);
     let ref_unit = dataset
         .selected_chunks
         .iter()
@@ -40,7 +40,7 @@ fn main() -> std::io::Result<()> {
         // })
         .map(|(_, x)| x)
         .collect();
-    haplotyper::unit_clustering(&mut units, &c, &ref_unit);
+    haplotyper::unit_clustering(&mut units, &c, &ref_unit, 10);
     let mut result: Vec<_> = units
         .iter()
         .map(|(id, _, unit)| (&id2name[&id], unit.cluster))
@@ -57,9 +57,9 @@ fn main() -> std::io::Result<()> {
     }
     for pred in 0..=1 {
         for ans in 0..=1 {
-            eprint!("{}\t", counts.get(&(pred, ans)).unwrap_or(&0));
+            print!("{}\t", counts.get(&(pred, ans)).unwrap_or(&0));
         }
     }
-    eprintln!();
+    println!();
     Ok(())
 }

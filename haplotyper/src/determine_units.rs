@@ -16,6 +16,7 @@ pub struct UnitConfig {
     pub hits_range: usize,
     pub read_type: ReadType,
     pub threads: usize,
+    pub min_cluster: usize,
 }
 const DEFAULT_RNG: usize = 200;
 impl UnitConfig {
@@ -38,6 +39,7 @@ impl UnitConfig {
             hits_thr: 0.3,
             read_type: ReadType::CCS,
             threads,
+            min_cluster: 2,
         }
     }
     pub fn new_clr(
@@ -59,6 +61,7 @@ impl UnitConfig {
             hits_thr: 0.3,
             read_type: ReadType::CLR,
             threads,
+            min_cluster: 2,
         }
     }
     pub fn new_ont(
@@ -80,6 +83,7 @@ impl UnitConfig {
             hits_thr: 0.3,
             read_type: ReadType::ONT,
             threads,
+            min_cluster: 2,
         }
     }
 }
@@ -122,7 +126,11 @@ impl DetermineUnit for definitions::DataSet {
                 .map(|(idx, seq)| {
                     let id = idx as u64;
                     let seq = String::from_utf8_lossy(seq).to_string();
-                    Unit { id, seq }
+                    Unit {
+                        id,
+                        seq,
+                        cluster_num: config.min_cluster,
+                    }
                 })
                 .collect();
             self = self.encode(config.threads);
@@ -193,7 +201,11 @@ impl DetermineUnit for definitions::DataSet {
             .map(|(idx, seq)| {
                 let id = idx as u64;
                 let seq = String::from_utf8(seq).unwrap();
-                Unit { id, seq }
+                Unit {
+                    id,
+                    seq,
+                    cluster_num: config.min_cluster,
+                }
             })
             .collect();
         self
@@ -245,7 +257,11 @@ impl DetermineUnit for definitions::DataSet {
             .map(|(idx, seq)| {
                 let id = idx as u64;
                 let seq = String::from_utf8(seq).unwrap();
-                Unit { id, seq }
+                Unit {
+                    id,
+                    seq,
+                    cluster_num: config.min_cluster,
+                }
             })
             .collect();
         self

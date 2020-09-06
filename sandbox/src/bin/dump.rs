@@ -6,40 +6,40 @@ fn main() {
     let ds = get_input_file().unwrap();
     let end = std::time::Instant::now();
     eprintln!("{:?}", end - start);
-    let count: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .flat_map(|read| {
-            read.nodes.iter().map(|node| {
-                haplotyper::node_to_subchunks(&node, 100)
-                    .into_iter()
-                    .count()
-            })
-        })
-        .collect();
-    let hist = histgram_viz::Histgram::new(&count);
-    println!("{}", hist.format(20, 20));
-    let mut count = HashMap::<Vec<u64>, usize>::new();
+    // let count: Vec<_> = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .flat_map(|read| {
+    //         read.nodes.iter().map(|node| {
+    //             haplotyper::node_to_subchunks(&node, 100)
+    //                 .into_iter()
+    //                 .count()
+    //         })
+    //     })
+    //     .collect();
+    // let hist = histgram_viz::Histgram::new(&count);
+    // println!("{}", hist.format(20, 20));
+    // let mut count = HashMap::<Vec<u64>, usize>::new();
     let k = 4;
-    for read in ds.encoded_reads.iter() {
-        for kmer in read.nodes.windows(k) {
-            let mut kmer: Vec<_> = kmer.iter().map(|u| u.unit).collect();
-            if kmer.last().unwrap() <= kmer.first().unwrap() {
-                kmer.reverse();
-            }
-            *count.entry(kmer).or_default() += 1;
-        }
-    }
-    let count: Vec<_> = count.values().copied().collect();
-    let hist = histgram_viz::Histgram::new(&count);
-    println!("{}", hist.format(20, 20));
+    // for read in ds.encoded_reads.iter() {
+    //     for kmer in read.nodes.windows(k) {
+    //         let mut kmer: Vec<_> = kmer.iter().map(|u| u.unit).collect();
+    //         if kmer.last().unwrap() <= kmer.first().unwrap() {
+    //             kmer.reverse();
+    //         }
+    //         *count.entry(kmer).or_default() += 1;
+    //     }
+    // }
+    // let count: Vec<_> = count.values().copied().collect();
+    // let hist = histgram_viz::Histgram::new(&count);
+    // println!("{}", hist.format(20, 20));
     let mut count: HashMap<_, HashMap<_, usize>> = HashMap::new();
     let is_hap_a: HashMap<_, _> = ds
         .raw_reads
         .iter()
         .map(|read| (read.id, if read.name.contains("hapA") { 1 } else { 0 }))
         .collect();
-    for read in ds.encoded_reads.iter() {
+    for read in ds.encoded_reads.iter().filter(|r| r.nodes.len() >= 4) {
         let cluster = is_hap_a[&read.id];
         for node in read.nodes.iter() {
             *count
@@ -49,6 +49,8 @@ fn main() {
                 .or_default() += 1;
         }
     }
+    let mut count: Vec<_> = count.into_iter().collect();
+    count.sort_by_key(|x| x.0);
     for (slot, result) in count {
         let mut line = vec![];
         for ans in 0..=1 {
@@ -59,8 +61,38 @@ fn main() {
                 }
             }
         }
-        println!("{}\t{}", slot, line.join("\t"));
+        println!("UNIT\t{}\t{}", slot, line.join("\t"));
     }
+    let mut count = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        for kmer in read.nodes.windows(k) {
+            let mut kmer: Vec<_> = kmer.iter().map(|u| (u.unit, u.cluster)).collect();
+            if kmer.last().unwrap() <= kmer.first().unwrap() {
+                kmer.reverse();
+            }
+            *count.entry(kmer).or_default() += 1;
+        }
+    }
+    let count: Vec<_> = count.values().copied().collect();
+    let hist = histgram_viz::Histgram::new(&count);
+    println!("{}", hist.format(20, 20));
+    ////////////////////////////////////////////////
+    let mut count: HashMap<_, usize> = HashMap::new();
+    let c = haplotyper::global_clustering::GlobalClusteringConfig::new(4, 2, -1, -1, -2);
+    let reads = haplotyper::global_clustering::error_correction::local_correction(&ds, &c);
+    for read in reads {
+        for kmer in read.nodes.windows(k) {
+            let mut kmer: Vec<_> = kmer.iter().map(|u| (u.unit, u.cluster)).collect();
+            if kmer.last().unwrap() <= kmer.first().unwrap() {
+                kmer.reverse();
+            }
+            *count.entry(kmer).or_default() += 1;
+        }
+    }
+    let count: Vec<_> = count.values().copied().collect();
+    let hist = histgram_viz::Histgram::new(&count);
+    println!("{}", hist.format(20, 20));
+    ///////////////////////////////////////////////
     let mut kmer_in_hap_d: HashMap<Vec<(u64, u64)>, usize> = HashMap::new();
     let mut kmer_in_hap_a: HashMap<Vec<(u64, u64)>, usize> = HashMap::new();
     for read in ds.encoded_reads.iter() {

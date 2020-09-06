@@ -4,16 +4,18 @@ use poa_hmm::POA;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rayon::prelude::*;
+const CONSENSUS_NUMBER: usize = 15;
+const MAX_COVERAGE: usize = 40;
 pub fn get_models<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
     data: &[ChunkedUnit],
-    chain_len: usize,
+    (cluster_num, chain_len): (usize, usize),
     rng: &mut R,
     c: &ClusteringConfig<F>,
     use_position: &[bool],
     picked: Option<usize>,
 ) -> Vec<Vec<POA>> {
     let mut reference = vec![vec![]; chain_len];
-    let mut chunks: Vec<Vec<Vec<&[u8]>>> = vec![vec![vec![]; chain_len]; c.cluster_num];
+    let mut chunks: Vec<Vec<Vec<&[u8]>>> = vec![vec![vec![]; chain_len]; cluster_num];
     for (_, read) in data.iter().enumerate().filter(|&(i, _)| Some(i) != picked) {
         for chunk in read.chunks.iter().filter(|chunk| use_position[chunk.pos]) {
             chunks[read.cluster][chunk.pos].push(chunk.seq.as_slice());
@@ -75,12 +77,13 @@ where
         _ => {
             let mut cs: Vec<_> = cs.iter().copied().collect();
             let mut rng: rand_xoshiro::Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(924);
-            let cs: Vec<_> = (0..15)
+            let cs: Vec<_> = (0..CONSENSUS_NUMBER)
                 .map(|_| {
                     cs.shuffle(&mut rng);
                     let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
                     let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
                     cs.iter()
+                        .take(MAX_COVERAGE)
                         .fold(base.clone(), |x, y| {
                             let res = if x.nodes().len() > node_num_thr {
                                 x.add(y, 1., param).remove_node(0.4)

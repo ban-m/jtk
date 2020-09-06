@@ -71,10 +71,11 @@ impl HiCPair {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct Unit {
     pub id: u64,
     pub seq: String,
+    pub cluster_num: usize,
 }
 
 impl Unit {

@@ -69,12 +69,9 @@ fn main() -> std::io::Result<()> {
     dataset.iter_mut().for_each(|cs| {
         cs.cluster = rng.gen_range(0, c.cluster_num);
     });
-    // dataset
-    //     .iter_mut()
-    //     .zip(answer.iter())
-    //     .for_each(|(d, &a)| d.cluster = a as usize);
+    let dim = (2, chain_len);
     let (betas, _pos, _, _) =
-        haplotyper::variant_calling::get_variants(&dataset, chain_len, &mut rng, &c, c.variant_num);
+        haplotyper::variant_calling::get_variants(&dataset, dim, &mut rng, &c, c.variant_num);
     for (i, bss) in betas.iter().enumerate() {
         for (j, bs) in bss.iter().enumerate() {
             eprintln!("{:?}", bs);

@@ -277,6 +277,16 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .default_value(&"CCS")
                 .help("Read type. CCS, CLR, or ONT."),
         )
+        .arg(
+            Arg::with_name("retry")
+                .short("r")
+                .long("retry")
+                .required(false)
+                .value_name("RETRY")
+                .help("If clustering fails, retry [RETRY] times.")
+                .default_value(&"5")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_global_clustering() -> App<'static, 'static> {
@@ -307,7 +317,7 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("KMER_SIZE")
                 .help("The size of the kmer")
-                .default_value(&"3")
+                .default_value(&"4")
                 .takes_value(true),
         )
         .arg(
@@ -337,7 +347,7 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MISMATCH_SCORE")
                 .help("The mismatch score")
-                .default_value(&"-1")
+                .default_value(&"1")
                 .takes_value(true),
         )
         .arg(
@@ -346,8 +356,8 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .long("gap_score")
                 .required(false)
                 .value_name("GAP_SCORE")
-                .help("The gap penalty(< 0)")
-                .default_value(&"-2")
+                .help("The gap penalty")
+                .default_value(&"2")
                 .takes_value(true),
         )
 }
@@ -390,7 +400,7 @@ fn subcommand_polish_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MISMATCH_SCORE")
                 .help("The mismatch score")
-                .default_value(&"-1")
+                .default_value(&"1")
                 .takes_value(true),
         )
         .arg(
@@ -399,8 +409,18 @@ fn subcommand_polish_clustering() -> App<'static, 'static> {
                 .long("gap_score")
                 .required(false)
                 .value_name("GAP_SCORE")
-                .help("The gap penalty(< 0)")
-                .default_value(&"-2")
+                .help("The gap penalty")
+                .default_value(&"2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("score_threshold")
+                .short("x")
+                .long("threshold")
+                .required(false)
+                .value_name("THRESHOLD")
+                .help("Alignment with score less that this value would be removed.")
+                .default_value(&"0")
                 .takes_value(true),
         )
 }
@@ -544,7 +564,7 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MISMATCH_SCORE")
                 .help("The mismatch score")
-                .default_value(&"-1")
+                .default_value(&"1")
                 .takes_value(true),
         )
         .arg(
@@ -553,7 +573,16 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .required(false)
                 .value_name("GAP_SCORE")
                 .help("The gap penalty(< 0)")
-                .default_value(&"-2")
+                .default_value(&"2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("score_threshold")
+                .long("threshold")
+                .required(false)
+                .value_name("THRESHOLD")
+                .help("Alignment with score less that this value would be removed.")
+                .default_value(&"1")
                 .takes_value(true),
         )
         .arg(
@@ -783,15 +812,19 @@ fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("subchunk_len")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let retry: u64 = matches
+        .value_of("retry")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
         .unwrap();
     let dataset = get_input_file()?;
     let config = match matches.value_of("read_type").unwrap() {
-        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit),
-        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit),
-        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit),
+        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry),
+        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry),
+        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry),
         _ => unreachable!(),
     };
     let dataset = dataset.local_clustering(&config);
@@ -823,13 +856,13 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("mat_score")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let mismat_score: i32 = matches
+    let mismat_score: i32 = -matches
         .value_of("mismat_score")
-        .and_then(|num| num.parse().ok())
+        .and_then(|num| num.parse::<i32>().ok())
         .unwrap();
-    let gap_score: i32 = matches
+    let gap_score: i32 = -matches
         .value_of("gap_score")
-        .and_then(|num| num.parse().ok())
+        .and_then(|num| num.parse::<i32>().ok())
         .unwrap();
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -863,19 +896,24 @@ fn polish_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("mat_score")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let mismat_score: i32 = matches
+    let mismat_score: i32 = -matches
         .value_of("mismat_score")
-        .and_then(|num| num.parse().ok())
+        .and_then(|num| num.parse::<i32>().ok())
         .unwrap();
-    let gap_score: i32 = matches
+    let gap_score: i32 = -matches
         .value_of("gap_score")
+        .and_then(|num| num.parse::<i32>().ok())
+        .unwrap();
+    let threshold: i32 = matches
+        .value_of("score_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
         .unwrap();
-    let config = haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score);
+    let config =
+        haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score, threshold);
     let dataset = get_input_file()?.polish_clustering(&config);
     flush_file(&dataset)
 }
@@ -955,10 +993,11 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("subchunk_len")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let retry = 10;
     let local_config = match matches.value_of("read_type").unwrap() {
-        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit),
-        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit),
-        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit),
+        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry),
+        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry),
+        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry),
         _ => unreachable!(),
     };
     let kmer: usize = matches
@@ -973,12 +1012,16 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("mat_score")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let mismat_score: i32 = matches
+    let mismat_score: i32 = -matches
         .value_of("mismat_score")
-        .and_then(|num| num.parse().ok())
+        .and_then(|num| num.parse::<i32>().ok())
         .unwrap();
-    let gap_score: i32 = matches
+    let gap_score: i32 = -matches
         .value_of("gap_score")
+        .and_then(|num| num.parse::<i32>().ok())
+        .unwrap();
+    let threshold: i32 = matches
+        .value_of("score_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
     let global_config = haplotyper::GlobalClusteringConfig::new(
@@ -988,7 +1031,8 @@ fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
         mismat_score,
         gap_score,
     );
-    let config = haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score);
+    let config =
+        haplotyper::PolishClusteringConfig::new(mat_score, mismat_score, gap_score, threshold);
     let dataset = dataset
         .local_clustering(&local_config)
         .global_clustering(&global_config)

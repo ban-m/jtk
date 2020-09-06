@@ -422,6 +422,40 @@ impl<'a> DitchGraph<'a, 'a> {
             }
         }
     }
+    /// Resolve repetitive units. (TODO.)
+    pub fn resolve_repeats(&self) {}
+    pub fn remove_redundant_edges(&mut self, thr: usize) {
+        let mut removed_edges = vec![vec![]; self.nodes.len()];
+        for (from, node) in self.nodes.iter().enumerate() {
+            for &pos in &[Position::Head, Position::Tail] {
+                let to_cands: HashSet<_> = node
+                    .edges
+                    .iter()
+                    .filter(|e| e.from_position == pos)
+                    .map(|e| (e.to_position, e.to))
+                    .collect();
+                if to_cands.len() > 1 {
+                    for e in node
+                        .edges
+                        .iter()
+                        .filter(|e| e.from_position == pos && e.edges.len() <= thr)
+                    {
+                        let to = e.to;
+                        let t_pos = e.to_position;
+                        removed_edges[from].push((pos, to, t_pos));
+                        removed_edges[to].push((t_pos, from, pos));
+                    }
+                }
+            }
+        }
+        self.nodes.iter_mut().enumerate().for_each(|(idx, n)| {
+            let to_be_removed = &removed_edges[idx];
+            n.edges.retain(|x| {
+                let probe = (x.from_position, x.to, x.to_position);
+                !to_be_removed.contains(&probe)
+            })
+        });
+    }
     pub fn collapse_buddle(&mut self, c: &AssembleConfig) {
         let mut to_remove = vec![false; self.nodes.len()];
         let mut queue = std::collections::VecDeque::new();
@@ -596,13 +630,12 @@ impl<'a> DitchGraph<'a, 'a> {
             unit_names.push((self.nodes[node].unit, self.nodes[node].cluster));
             arrived[node] = true;
             // Move forward.
-            match position {
-                Position::Head => seq += &self.nodes[node].nodes[0].seq,
-                Position::Tail => {
-                    let s = &self.nodes[node].nodes[0].seq;
-                    seq += &revcmp_str(s);
-                }
+            let xs: Vec<_> = self.nodes[node].nodes.iter().map(|n| n.seq()).collect();
+            let cons = match position {
+                Position::Head => consensus(&xs),
+                Position::Tail => revcmp_str(&consensus(&xs)),
             };
+            seq += &cons;
             position = !position;
             // Check.
             let num_edges = self.nodes[node]
@@ -622,17 +655,36 @@ impl<'a> DitchGraph<'a, 'a> {
             assert_eq!(selected_edge.from, node);
             assert_eq!(selected_edge.from_position, position);
             // Succeed along with the edge.
-            // if let Some(&(ref edge, is_forward)) =
-            let &(ref edge, is_forward) = selected_edge.edges.first().unwrap();
-            if edge.offset >= 0 {
-                if is_forward {
-                    seq += &edge.label;
+            let (offset, label) = {
+                let offset = selected_edge
+                    .edges
+                    .iter()
+                    .map(|(e, _)| e.offset)
+                    .sum::<i64>();
+                let offset = offset / selected_edge.edges.len() as i64;
+                let label = if offset <= 0 {
+                    String::new()
                 } else {
-                    seq += &revcmp_str(&edge.label);
-                }
+                    let xs: Vec<_> = selected_edge
+                        .edges
+                        .iter()
+                        .map(|&(ref e, is_forward)| {
+                            if is_forward {
+                                e.label().to_vec()
+                            } else {
+                                bio_utils::revcmp(e.label())
+                            }
+                        })
+                        .collect();
+                    let xs: Vec<_> = xs.iter().map(|x| x.as_slice()).collect();
+                    consensus(&xs)
+                };
+                (offset, label)
+            };
+            if offset >= 0 {
+                seq += &label;
             } else {
-                assert!(-edge.offset > 0);
-                (0..(-edge.offset) as usize).all(|_| seq.pop().is_some());
+                (0..(-offset) as usize).all(|_| seq.pop().is_some());
             }
             let (next, next_position) = (selected_edge.to, selected_edge.to_position);
             // Check the number of child.
@@ -693,6 +745,43 @@ impl<'a> DitchGraph<'a, 'a> {
         edges.extend(tail_edges);
         (seg, edges)
     }
+}
+
+fn consensus(xs: &[&[u8]]) -> String {
+    // if xs.len() < 10 {
+    String::from_utf8_lossy(&xs[0]).to_string()
+    // }
+    // let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
+    // use rand_xoshiro::Xoroshiro128StarStar;
+    // use rayon::prelude::*;
+    // let cs: Vec<_> = (0..15u64)
+    //     .into_par_iter()
+    //     .map(|s| {
+    //         use rand::seq::SliceRandom;
+    //         let mut rng: Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(s);
+    //         let mut cs: Vec<_> = xs.to_vec();
+    //         cs.shuffle(&mut rng);
+    //         let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
+    //         let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
+    //         cs.iter()
+    //             .fold(poa_hmm::POA::default(), |x, y| {
+    //                 let res = if x.nodes().len() > node_num_thr {
+    //                     x.add(y, 1., param).remove_node(0.4)
+    //                 } else {
+    //                     x.add(y, 1., param)
+    //                 };
+    //                 res
+    //             })
+    //             .remove_node(0.4)
+    //             .finalize()
+    //             .consensus()
+    //     })
+    //     .collect();
+    // let cs: Vec<_> = cs.iter().map(|cs| cs.as_slice()).collect();
+    // let c = poa_hmm::POA::default()
+    //     .update_thr(&cs, &vec![1.; cs.len()], param, 0.8, 1.5)
+    //     .consensus();
+    // String::from_utf8(c).unwrap()
 }
 
 #[cfg(test)]

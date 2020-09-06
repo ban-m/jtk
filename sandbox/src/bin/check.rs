@@ -73,7 +73,12 @@ fn main() -> std::io::Result<()> {
     // let (_, asn) = (0..3)
     //     .map(|i| {
     // let seed = seed as u64 * i as u64;
-    clustering_by_kmeans(&mut dataset, chain_len, &c, seed as u64);
+    let unit = definitions::Unit {
+        id: 0,
+        seq: String::new(),
+        cluster_num: 2,
+    };
+    clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
     // let asn: Vec<_> = dataset.iter().map(|c| c.cluster).collect();
     // (m, asn)
     //     })

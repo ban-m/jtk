@@ -1,13 +1,15 @@
 mod assemble;
 mod determine_units;
+pub mod em_correction;
 pub mod encode;
 mod entry;
 mod extract;
 mod find_union;
-mod global_clustering;
+pub mod global_clustering;
 pub mod local_clustering;
 mod polish_clustering;
 mod polish_units;
+pub mod unit_correlation;
 mod view;
 #[macro_use]
 extern crate log;

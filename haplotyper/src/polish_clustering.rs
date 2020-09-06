@@ -6,14 +6,16 @@ pub struct PolishClusteringConfig {
     pub mat_score: i32,
     pub mismat_score: i32,
     pub gap_score: i32,
+    pub score_thr: i32,
 }
 
 impl PolishClusteringConfig {
-    pub fn new(mat_score: i32, mismat_score: i32, gap_score: i32) -> Self {
+    pub fn new(mat_score: i32, mismat_score: i32, gap_score: i32, score_thr: i32) -> Self {
         Self {
             mat_score,
             mismat_score,
             gap_score,
+            score_thr,
         }
     }
 }
@@ -73,7 +75,6 @@ fn has_shared_unit(qry: &[(u64, u64)], rfr: &[(u64, u64)]) -> bool {
 // A Cigar::Match(x,y) mean the query sequence at that point is (x,y)
 // And Cigar::Ins is a insertion to the reference.
 // Also, the alignment is "semi-global" one. See the initialization step.
-// TODO: faster!
 fn alignment(
     qry: &[(u64, u64)],
     rfr: &[(u64, u64)],
@@ -100,7 +101,8 @@ fn alignment(
         .enumerate()
         .max_by_key(|x| x.1)?;
     let score = *column_max.max(row_max);
-    if score <= mat {
+    // trace!("Aligning {:?}->{}", qry, score);
+    if score < mat {
         return None;
     }
     let (mut q_pos, mut r_pos) = if row_max < column_max {
@@ -145,11 +147,6 @@ fn alignment(
         r_pos -= 1;
     }
     cigar.reverse();
-    // let qry: Vec<_> = qry.iter().map(|&(x, y)| format!("{}-{}", x, y)).collect();
-    // let rfr: Vec<_> = rfr.iter().map(|&(x, y)| format!("{}-{}", x, y)).collect();
-    // eprintln!("{}", qry.join(","));
-    // eprintln!("{}", rfr.join(","));
-    // eprintln!("{:?}\n", cigar);
     Some((score, cigar))
 }
 
@@ -201,23 +198,31 @@ impl Pileup {
 #[derive(Clone, Debug)]
 struct Column {
     m: Vec<(u64, u64)>,
+    original: (u64, u64),
 }
 
 impl Column {
     fn new(n: (u64, u64)) -> Self {
-        Self { m: vec![n] }
+        let m = vec![n];
+        let original = n;
+        Self { m, original }
     }
     fn generate(&self) -> (u64, u64) {
         let mut counts: HashMap<_, u32> = HashMap::new();
         for &x in self.m.iter() {
             *counts.entry(x).or_default() += 1;
         }
-        counts.into_iter().max_by_key(|x| x.1).unwrap().0
+        let (&argmax, &max) = counts.iter().max_by_key(|x| x.1).unwrap();
+        if counts.values().filter(|&&x| x == max).count() != 1 {
+            self.original
+        } else {
+            argmax
+        }
     }
 }
 
 type ReadSkelton = (Vec<(u64, u64)>, Vec<(u64, u64)>);
-fn correct_read(
+pub fn correct_read(
     read: &[(u64, u64)],
     reads: &[ReadSkelton],
     c: &PolishClusteringConfig,
@@ -226,10 +231,18 @@ fn correct_read(
     let pileup = reads
         .iter()
         .filter_map(|(forward, rev)| match alignment(forward, read, param) {
-            Some(res) => Some(res),
-            None => alignment(rev, read, param),
+            Some((score, aln)) if score > c.score_thr => Some(aln),
+            _ => match alignment(rev, read, param) {
+                Some((score, aln)) if score > c.score_thr => Some(aln),
+                _ => None,
+            },
         })
-        .fold(Pileup::new(read), |x, (_, y)| x.add(y));
+        .fold(Pileup::new(read), |x, y| x.add(y));
+    if log_enabled!(log::Level::Trace) {
+        for (p, e) in read.iter().zip(pileup.column.iter()) {
+            trace!("{:?}\t{:?}", e, p);
+        }
+    }
     pileup
         .column
         .into_iter()
@@ -303,7 +316,7 @@ mod tests {
                 .map(|read| read.iter().copied().rev().collect::<Vec<_>>());
             reads.iter().cloned().zip(rev).collect()
         };
-        let config = PolishClusteringConfig::new(1, -1, -2);
+        let config = PolishClusteringConfig::new(1, -1, -2, 1);
         for read in reads.iter() {
             eprintln!("Correcting:{:?}", read);
             let res = correct_read(&read, &rev_for_reads, &config);

@@ -23,49 +23,100 @@ impl LocalClustering for DataSet {
         mut self,
         c: &ClusteringConfig<F>,
     ) -> Self {
-        let max_unit = self.selected_chunks.iter().map(|u| u.id).max().unwrap() + 1;
-        let mut pileups: Vec<Vec<(_, _, &mut Node)>> = (0..max_unit).map(|_| Vec::new()).collect();
-        for read in self.encoded_reads.iter_mut() {
-            for (idx, node) in read.nodes.iter_mut().enumerate() {
-                pileups[node.unit as usize].push((read.id, idx, node));
+        // If true, the unit is clustered.
+        let mut clustered_units: HashMap<_, _> =
+            self.selected_chunks.iter().map(|u| (u.id, false)).collect();
+        let mut unit_num = clustered_units.values().filter(|&&x| !x).count();
+        for i in 0..c.retry_limit {
+            debug!("NUM\t{}\t{}\tUnits to be clsutered.", i, unit_num);
+            debug!("==================================");
+            local_clustering_on_selected(&mut self, c, &clustered_units, i);
+            clustered_units = super::unit_correlation::select_uninformative_units(&self, c.p_value);
+            let next_num = clustered_units.values().filter(|&&x| !x).count();
+            let diff = unit_num.max(next_num) - unit_num.min(next_num);
+            unit_num = next_num;
+            if next_num == 0 || diff == 0 {
+                debug!("DONE\t{}\t{}", next_num, diff);
+                break;
             }
         }
-        let selected_chunks = self.selected_chunks.clone();
-        let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-        let id_to_desc: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-        pileups
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(unit_id, mut units)| {
-                debug!("RECORD\t{}", unit_id);
-                let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
-                    Some(res) => res,
-                    None => return,
-                };
-                assert!(units.iter().all(|n| n.2.unit == unit_id as u64));
-                unit_clustering(&mut units, c, ref_unit);
-                debug!("RECORD\t{}", unit_id);
-                if log_enabled!(log::Level::Debug) {
-                    for cl in 0..c.cluster_num {
-                        let cl = cl as u64;
-                        for (id, _, _) in units.iter().filter(|&(_, _, n)| n.cluster == cl) {
-                            let name = id_to_name[&id];
-                            match id_to_desc.get(&id) {
-                                Some(d) => debug!("{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, d),
-                                None => debug!("{}\t{}\t{}\t{}", unit_id, cl, id, name),
-                            }
-                        }
-                    }
+        debug!("Remaining {} unresolved cluster.", unit_num);
+        let to_be_impute: HashMap<_, _> =
+            clustered_units.into_iter().map(|(x, y)| (x, !y)).collect();
+        // Erase clustering useless information
+        for read in self.encoded_reads.iter_mut() {
+            for node in read.nodes.iter_mut() {
+                if *to_be_impute.get(&node.unit).unwrap_or(&false) {
+                    node.cluster = 0;
                 }
-            });
+            }
+        }
+        super::em_correction::impute_clustering(&mut self, &to_be_impute);
+        // Impute all other positions(, which works as error correction.)
+        let to_be_impute: HashMap<_, _> =
+            self.selected_chunks.iter().map(|e| (e.id, true)).collect();
+        super::em_correction::impute_clustering(&mut self, &to_be_impute);
         self
     }
+}
+
+fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    ds: &mut DataSet,
+    c: &ClusteringConfig<F>,
+    positions: &HashMap<u64, bool>,
+    iteration: u64,
+) {
+    // If positions[idx] is *false*, the position would be used.
+    let mut pileups: HashMap<u64, Vec<(_, _, &mut Node)>> = HashMap::new();
+    for read in ds.encoded_reads.iter_mut() {
+        for (idx, node) in read.nodes.iter_mut().enumerate() {
+            if let Some(&res) = positions.get(&node.unit) {
+                // This is correct.
+                if !res {
+                    pileups
+                        .entry(node.unit)
+                        .or_default()
+                        .push((read.id, idx, node));
+                }
+            }
+        }
+    }
+    let selected_chunks = ds.selected_chunks.clone();
+    let id_to_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let id_to_desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
+        debug!("RECORD\t{}\t{}\tStart", unit_id, iteration);
+        let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
+            Some(res) => res,
+            None => return,
+        };
+        // If true, this position is already clustered.
+        if positions[&unit_id] {
+            return;
+        }
+        assert!(units.iter().all(|n| n.2.unit == unit_id as u64));
+        unit_clustering(&mut units, c, ref_unit, iteration);
+        debug!("RECORD\t{}\t{}\tEnd", unit_id, iteration);
+        if log_enabled!(log::Level::Debug) {
+            for cl in 0..c.cluster_num.max(ref_unit.cluster_num) {
+                let cl = cl as u64;
+                for (id, _, _) in units.iter().filter(|&(_, _, n)| n.cluster == cl) {
+                    let name = id_to_name[&id];
+                    match id_to_desc.get(&id) {
+                        Some(d) => debug!("{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, d),
+                        None => debug!("{}\t{}\t{}\t{}", unit_id, cl, id, name),
+                    }
+                }
+            }
+        }
+    });
 }
 
 pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     units: &mut [(u64, usize, &mut Node)],
     c: &ClusteringConfig<F>,
     ref_unit: &Unit,
+    iteration: u64,
 ) {
     let len = if ref_unit.seq().len() % c.subchunk_length == 0 {
         ref_unit.seq().len() / c.subchunk_length
@@ -81,7 +132,8 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             ChunkedUnit { cluster: 0, chunks }
         })
         .collect();
-    let _m = clustering_by_kmeans(&mut data, len, &c, ref_unit.id);
+    let seed = ref_unit.id * iteration;
+    clustering_by_kmeans(&mut data, len, &c, ref_unit, seed);
     for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
         n.cluster = d.cluster as u64;
     }
@@ -190,25 +242,24 @@ pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
         .collect()
 }
 
-fn update_by_precomputed_lks<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
+fn update_by_precomputed_lks<R: Rng>(
     data: &mut [ChunkedUnit],
-    chain_len: usize,
-    beta: f64,
+    (cluster_num, chain_len): (usize, usize),
+    pick: f64,
     pos: &[bool],
     lks: &[Vec<f64>],
     rng: &mut R,
-    c: &ClusteringConfig<F>,
 ) -> u32 {
-    let fractions: Vec<_> = (0..c.cluster_num)
+    let fractions: Vec<_> = (0..cluster_num)
         .map(|cl| 1 + data.iter().filter(|d| d.cluster == cl).count())
         .collect();
-    let choices: Vec<_> = (0..c.cluster_num).collect();
+    let choices: Vec<_> = (0..cluster_num).collect();
     data.iter_mut()
         .enumerate()
         .map(|(idx, d)| {
-            let mut weights: Vec<_> = (0..c.cluster_num)
+            let mut weights: Vec<_> = (0..cluster_num)
                 .map(|l| {
-                    (0..c.cluster_num)
+                    (0..cluster_num)
                         .map(|k| {
                             if l == k {
                                 0.
@@ -220,7 +271,7 @@ fn update_by_precomputed_lks<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                                         lks[idx][p + k * chain_len] - lks[idx][p + l * chain_len]
                                     })
                                     .sum::<f64>();
-                                modellk + beta * frac
+                                modellk + frac
                             }
                         })
                         .map(|lkdiff| lkdiff.exp())
@@ -230,19 +281,10 @@ fn update_by_precomputed_lks<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
                 .collect();
             let sum = weights.iter().sum::<f64>();
             weights.iter_mut().for_each(|x| *x /= sum);
-            // let (_, max) = weights
-            //     .iter()
-            //     .enumerate()
-            //     .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            //     .unwrap_or((0, &0.));
             use rand::seq::SliceRandom;
-            let new_assignment = *choices.choose_weighted(rng, |&k| weights[k]).unwrap();
-            // let diff = weights
-            //     .iter()
-            //     .filter(|&x| (x - max).abs() > 0.001)
-            //     .map(|x| max - x)
-            //     .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            //     .unwrap_or(0.);
+            let new_assignment = *choices
+                .choose_weighted(rng, |&k| weights[k] + pick)
+                .unwrap();
             if d.cluster != new_assignment {
                 d.cluster = new_assignment;
                 1
@@ -257,9 +299,11 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     data: &mut Vec<ChunkedUnit>,
     chain_len: usize,
     c: &ClusteringConfig<F>,
-    ref_unit: u64,
+    ref_unit: &Unit,
+    seed: u64,
 ) -> f64 {
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit);
+    let dim = (c.cluster_num.max(ref_unit.cluster_num), chain_len);
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
     let mut count: u32 = 0;
     let rng = &mut rng;
     let start = std::time::Instant::now();
@@ -268,44 +312,83 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         ReadType::ONT => (data.len() as f64 * 0.1).max(4.).floor() as u32,
         ReadType::CLR => (data.len() as f64 * 0.1).max(4.).floor() as u32,
     };
-    let (pos, lks, margin) = (0..20)
+    let (pos, lks, margin) = (0..8)
         .map(|_| {
             data.iter_mut().for_each(|cs| {
-                cs.cluster = rng.gen_range(0, c.cluster_num);
+                cs.cluster = rng.gen_range(0, dim.0);
             });
             let vn = 3 * c.variant_num;
-            let (_, pos, lks, margin) = get_variants(&data, chain_len, rng, c, vn);
-            // let lks = average_correction(lks, chain_len, c.cluster_num);
-            // update_by_precomputed_lks(data, chain_len, 1., &pos, &lks, rng, c);
-            // let (_, pos, lks, margin) = get_variants(&data, chain_len, rng, c, vn);
+            let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
             (pos, lks, margin)
         })
         .max_by(|x, y| (x.2).partial_cmp(&y.2).unwrap())
         .unwrap();
     trace!("Init Margin:{}", margin);
-    let lks = average_correction(lks, chain_len, c.cluster_num);
-    update_by_precomputed_lks(data, chain_len, 1., &pos, &lks, rng, c);
+    let lks = average_correction(lks, dim);
+    update_by_precomputed_lks(data, dim, 0., &pos, &lks, rng);
     loop {
         let vn = 3 * c.variant_num - c.variant_num * count as usize / (c.stable_limit as usize - 1);
-        let (_, pos, lks, margin) = get_variants(&data, chain_len, rng, c, vn);
-        let lks = average_correction(lks, chain_len, c.cluster_num);
-        let changed_num = update_by_precomputed_lks(data, chain_len, 1., &pos, &lks, rng, c);
+        let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
+        let lks = average_correction(lks, dim);
+        let changed_num = update_by_precomputed_lks(data, dim, 0., &pos, &lks, rng);
         count += (changed_num <= stable_thr) as u32;
         count *= (changed_num <= stable_thr) as u32;
-        report(ref_unit, &data, count, margin, 1., changed_num);
+        report(ref_unit.id, &data, count, margin, 1., changed_num);
         if (std::time::Instant::now() - start).as_secs() > c.limit {
             info!("Break by timelimit:{}", c.limit);
             break margin;
         } else if count >= c.stable_limit {
+            trace!("LK\t{}", likelihoods(data, dim, c, ref_unit.id));
             break margin;
         }
     }
 }
 
+fn likelihoods<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    data: &mut Vec<ChunkedUnit>,
+    (cluster_num, chain_len): (usize, usize),
+    c: &ClusteringConfig<F>,
+    ref_unit: u64,
+) -> f64 {
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit);
+    let dim = (cluster_num, chain_len);
+    let position = vec![true; chain_len];
+    let poa = create_model::get_models(data, dim, &mut rng, c, &position, None);
+    let mut fraction = vec![0.1; cluster_num];
+    for read in data.iter() {
+        fraction[read.cluster] += 1.;
+    }
+    fraction.iter_mut().for_each(|x| *x /= data.len() as f64);
+    data.par_iter()
+        .map(|read| {
+            let lks: Vec<_> = (0..cluster_num)
+                .map(|cl| {
+                    fraction[cl].ln()
+                        + read
+                            .chunks
+                            .iter()
+                            .map(|chunk| poa[cl][chunk.pos].forward(&chunk.seq, &c.poa_config))
+                            .sum::<f64>()
+                })
+                .collect();
+            logsumexp(&lks)
+        })
+        .sum::<f64>()
+}
+
+fn logsumexp(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.;
+    }
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
+    assert!(sum >= 0., "{:?}->{}", xs, sum);
+    max + sum
+}
+
 fn average_correction(
     mut lks: Vec<Vec<f64>>,
-    chain_len: usize,
-    cluster_num: usize,
+    (cluster_num, chain_len): (usize, usize),
 ) -> Vec<Vec<f64>> {
     let mut count = vec![0.; chain_len * cluster_num];
     // To avoid zero-division.
@@ -352,82 +435,4 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32)
         c,
         counts
     );
-}
-
-#[cfg(test)]
-mod tests {
-    #[derive(Clone, Copy, Debug)]
-    struct TestConfig {
-        cl: usize,
-        num: usize,
-        fail: f64,
-        skip: f64,
-        max_len: usize,
-        min_len: usize,
-        unit_len: usize,
-    }
-    use super::*;
-    #[test]
-    fn works() {}
-    #[allow(dead_code)]
-    fn gen_dataset<R: Rng>(r: &mut R, conf: TestConfig) -> Vec<ERead> {
-        let TestConfig {
-            cl,
-            num,
-            fail,
-            skip,
-            max_len,
-            min_len,
-            unit_len,
-        } = conf;
-        use rand::seq::SliceRandom;
-        let _unit_map: HashMap<usize, u64> = {
-            let units: Vec<_> = (0..unit_len).collect();
-            units
-                .choose_multiple(r, unit_len)
-                .enumerate()
-                .map(|(idx, &u)| (idx, u as u64))
-                .collect()
-        };
-        (0..num)
-            .map(|i| {
-                let id = i as u64;
-                let cluster = i % cl;
-                let len = r.gen::<usize>() % (max_len - min_len) + min_len;
-                let path: Vec<_> = if r.gen_bool(0.5) {
-                    let start = r.gen::<usize>() % (unit_len - len);
-                    (start..start + len)
-                        .map(|unit| unit as u64)
-                        .filter_map(|unit| {
-                            if r.gen_bool(skip) {
-                                None
-                            } else if r.gen_bool(fail) {
-                                let cluster = r.gen::<usize>() % cl;
-                                Some(Elm { unit, cluster })
-                            } else {
-                                Some(Elm { unit, cluster })
-                            }
-                        })
-                        .collect()
-                } else {
-                    let start = r.gen::<usize>() % (unit_len - len) + len;
-                    (start - len..start)
-                        .rev()
-                        .map(|unit| unit as u64)
-                        .filter_map(|unit| {
-                            if r.gen_bool(skip) {
-                                None
-                            } else if r.gen_bool(fail) {
-                                let cluster = r.gen::<usize>() % cl;
-                                Some(Elm { unit, cluster })
-                            } else {
-                                Some(Elm { unit, cluster })
-                            }
-                        })
-                        .collect()
-                };
-                ERead { id, cluster, path }
-            })
-            .collect()
-    }
 }
