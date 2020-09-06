@@ -28,8 +28,7 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 
 ## TODO
 
-### Unit selection
-We should consider the repetitive regions in mind. For this prepose, we can take one or both of the two following approach:
+`rg TODO` would show where to check.
 
 ### Unit encoding
 LAST -> Something else. Hopefully, it is written in Rust. The priority of this TODO is extremely low, as LAST would serve a good aligner as far.
@@ -39,6 +38,10 @@ Currently, I've written documents on only a few types. We should write more and 
 
 ### Determine the number of the cluster
 
+We should predict the number of the cluster for local clustering for each determiend units.
+Although we can predict the number of the cluster as well as clusterings simultaneously (Variational Byes'?), it might be though to tune hyper parameters or find an approprieate model.
+
+
 ### Clustering (Global)
 The entire algorithm should be more mature and sophisticated. We need to find some foundation of our clustering algorithm. Maybe a theory on Markov's walk on graphs serves a good guide.
 
@@ -46,6 +49,7 @@ The entire algorithm should be more mature and sophisticated. We need to find so
 ### Sanity check
 At each stage of the pipeline, we should check whether the input data has enough information. In the clustering step, the dataset should have, at least, an encoded read set and selected units.
 Also, we should have some "invariant checker" for a sanity check. For example, we need to check the dataset is consistent. For instance, all encoded reads should have corresponding raw reads. This checker is required, as we filter out raw reads and encoded reads at some stage among the pipeline in the future. Also, there would be some interplay between Python <-> Rust or Javascript <-> Rust.
+
 
 
 ### Compact serialization(BinCode) vs Readable serialization(JSON)

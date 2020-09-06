@@ -1,19 +1,18 @@
 import definitions
 import json
-FILE = "../result/CCS_reads.15000.1M.entry.units.encode.json"
+import sys
 if __name__ == "__main__":
-    print("test")
-    # with open(FILE, 'r') as f:
-    #     DATASET = json.load(f)
-    #     print(len(DATASET['raw_reads']))
-    #     print(len(DATASET['selected_chunks']))
+    ARGV = sys.argv;
+    FILE = ARGV[1]
     with open(FILE, 'r') as f:
         DATASET = json.load(f, object_hook=definitions.as_dataset)
+        print("DESERIALIZE OK")
         serialize = json.dumps(DATASET, cls=definitions.DataSetEncoder)
-        print("OK")
+        print("SERIALIZE OK")
         deserialize = json.loads(serialize, object_hook=definitions.as_dataset)
-        print(len(deserialize.raw_reads))
-        print(len(deserialize.selected_chunks))
+        print("SER->DE OK")
+        print("NUMBER OF READS:", len(deserialize.raw_reads))
+        print("NUMBER OF UNITS:", len(deserialize.selected_chunks))
 
 
 

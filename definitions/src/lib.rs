@@ -86,10 +86,10 @@ impl Unit {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EncodedRead {
+    pub id: u64,
     pub original_length: usize,
     pub leading_gap: usize,
     pub trailing_gap: usize,
-    pub id: u64,
     pub edges: Vec<Edge>,
     pub nodes: Vec<Node>,
 }
