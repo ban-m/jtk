@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
     let unit: u64 = args[2].parse().unwrap();
     debug!("Started");
     let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
-    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000, 10);
+    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000, 10, false);
     let ref_unit = dataset
         .selected_chunks
         .iter()

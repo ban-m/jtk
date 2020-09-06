@@ -18,6 +18,7 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub read_type: ReadType,
     pub p_value: f64,
     pub retry_limit: u64,
+    pub retain_current_clustering: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
         limit: u64,
         retry: u64,
+        retain: bool,
     ) -> Self {
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
         let bf = base_freq(&dataset.raw_reads);
@@ -59,6 +61,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             read_type: ReadType::CCS,
             p_value: P_VALUE,
             retry_limit: retry,
+            retain_current_clustering: retain,
         }
     }
     pub fn default() -> Self {
@@ -76,6 +79,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             read_type: ReadType::CCS,
             p_value: P_VALUE,
             retry_limit: RETRY_LIMIT,
+            retain_current_clustering: false,
         }
     }
     pub fn ccs(
@@ -84,8 +88,9 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
         limit: u64,
         retry: u64,
+        retain: bool,
     ) -> Self {
-        Self::with_default(dataset, cluster_num, subchunk_length, limit, retry)
+        Self::with_default(dataset, cluster_num, subchunk_length, limit, retry, retain)
     }
     pub fn clr(
         dataset: &definitions::DataSet,
@@ -93,8 +98,9 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
         limit: u64,
         retry: u64,
+        retain: bool,
     ) -> Self {
-        let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit, retry);
+        let mut c = Self::with_default(dataset, cluster_num, subchunk_length, limit, retry, retain);
         c.read_type = ReadType::CLR;
         c
     }
@@ -104,8 +110,9 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
         limit: u64,
         retry: u64,
+        retain: bool,
     ) -> Self {
-        let mut c = Self::clr(dataset, cluster_num, subchunk_length, limit, retry);
+        let mut c = Self::clr(dataset, cluster_num, subchunk_length, limit, retry, retain);
         c.read_type = ReadType::ONT;
         c
     }

@@ -8,6 +8,8 @@ pub use config::*;
 pub mod create_model;
 pub mod eread;
 pub mod variant_calling;
+const REPEAT_NUM: usize = 10;
+
 use eread::*;
 use variant_calling::*;
 pub mod kmeans;
@@ -114,7 +116,12 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         .map(|&(_, _, ref node)| {
             let mut chunks = node_to_subchunks(node, c.subchunk_length);
             chunks.retain(|chunk| min_length < chunk.seq.len() && chunk.seq.len() < max_length);
-            ChunkedUnit { cluster: 0, chunks }
+            let cluster = if c.retain_current_clustering {
+                node.cluster as usize
+            } else {
+                0
+            };
+            ChunkedUnit { cluster, chunks }
         })
         .collect();
     let seed = ref_unit.id * iteration;
@@ -297,11 +304,18 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         ReadType::ONT => (data.len() as f64 * 0.1).max(4.).floor() as u32,
         ReadType::CLR => (data.len() as f64 * 0.1).max(4.).floor() as u32,
     };
-    let (pos, lks, margin) = (0..8)
+    let repeat_num = if c.retain_current_clustering {
+        1
+    } else {
+        REPEAT_NUM
+    };
+    let (pos, lks, margin) = (0..repeat_num)
         .map(|_| {
-            data.iter_mut().for_each(|cs| {
-                cs.cluster = rng.gen_range(0, dim.0);
-            });
+            if !c.retain_current_clustering {
+                data.iter_mut().for_each(|cs| {
+                    cs.cluster = rng.gen_range(0, dim.0);
+                });
+            }
             let vn = 3 * c.variant_num;
             let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
             (pos, lks, margin)

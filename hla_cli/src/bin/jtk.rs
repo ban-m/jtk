@@ -2,8 +2,8 @@
 use clap::{App, Arg, SubCommand};
 use definitions::*;
 use haplotyper::*;
+use std::io::BufReader;
 use std::io::Write;
-use std::io::{BufReader, BufWriter};
 #[macro_use]
 extern crate log;
 fn subcommand_entry() -> App<'static, 'static> {
@@ -247,7 +247,7 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("LIMIT")
                 .help("Maximum Execution time(sec)")
-                .default_value(&"2000")
+                .default_value(&"600")
                 .takes_value(true),
         )
         .arg(
@@ -286,6 +286,11 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .help("If clustering fails, retry [RETRY] times.")
                 .default_value(&"5")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("retain_current_clustering")
+                .long("retain_current_clustering")
+                .help("Use current clusterings as a initial value. Overwrite retry to 0."),
         )
 }
 
@@ -796,15 +801,17 @@ fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("retry")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let retain = matches.is_present("retain_current_clustering");
+    let retry = if retain { 1 } else { retry };
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
         .unwrap();
     let dataset = get_input_file()?;
     let config = match matches.value_of("read_type").unwrap() {
-        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry),
-        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry),
-        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry),
+        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry, retain),
+        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry, retain),
+        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry, retain),
         _ => unreachable!(),
     };
     let dataset = dataset.local_clustering(&config);
@@ -912,116 +919,117 @@ fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
     writeln!(&mut wtr, "{}", gfa)
 }
 
-fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let threads: usize = matches
-        .value_of("threads")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build_global()
-        .unwrap();
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
-    debug!("Encoding {} reads", seqs.len());
-    let dataset: DataSet = DataSet::new(seqs);
-    debug!("Start Selecting Units");
-    let chunk_len: usize = matches
-        .value_of("chunk_len")
-        .and_then(|e| e.parse().ok())
-        .expect("Chunk len");
-    let margin: usize = matches
-        .value_of("margin")
-        .and_then(|e| e.parse().ok())
-        .expect("Margin");
-    let skip_len: usize = matches
-        .value_of("skip_len")
-        .and_then(|e| e.parse().ok())
-        .expect("Skip Len");
-    let take_num: usize = matches
-        .value_of("take_num")
-        .and_then(|e| e.parse().ok())
-        .expect("take num");
-    let unit_config = match matches.value_of("read_type").unwrap() {
-        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, threads),
-        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, threads),
-        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, threads),
-        _ => unreachable!(),
-    };
-    let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);
-    debug!("Start Local Clustering step");
-    let cluster_num: usize = matches
-        .value_of("cluster_num")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let limit: u64 = matches
-        .value_of("limit")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let length: usize = matches
-        .value_of("subchunk_len")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let retry = 10;
-    let local_config = match matches.value_of("read_type").unwrap() {
-        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry),
-        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry),
-        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry),
-        _ => unreachable!(),
-    };
-    let kmer: usize = matches
-        .value_of("k")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let min_cluster_size = matches
-        .value_of("min_cluster_size")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let mat_score: i32 = matches
-        .value_of("mat_score")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let mismat_score: i32 = -matches
-        .value_of("mismat_score")
-        .and_then(|num| num.parse::<i32>().ok())
-        .unwrap();
-    let gap_score: i32 = -matches
-        .value_of("gap_score")
-        .and_then(|num| num.parse::<i32>().ok())
-        .unwrap();
-    let global_config = haplotyper::GlobalClusteringConfig::new(
-        kmer,
-        min_cluster_size,
-        mat_score,
-        mismat_score,
-        gap_score,
-    );
-    let repeat_num: usize = 10;
-    let coverage_thr = match matches.value_of("read_type").unwrap() {
-        "CCS" => 2,
-        "CLR" => 5,
-        "ONT" => 5,
-        _ => unreachable!(),
-    };
-    let dataset = dataset
-        .local_clustering(&local_config)
-        .correct_clustering(repeat_num, coverage_thr)
-        .global_clustering(&global_config);
-    let config = AssembleConfig::default();
-    let gfa = dataset.assemble_as_gfa(&config);
-    let gfa_file = matches.value_of("gfa").unwrap();
-    let mut gfa_path = std::path::PathBuf::from(&gfa_file);
-    gfa_path.pop();
-    match std::fs::create_dir_all(gfa_path) {
-        Err(why) => error!("{:?}. Please check gfa path.", why),
-        Ok(_) => {
-            if let Ok(mut wtr) = std::fs::File::create(gfa_file).map(BufWriter::new) {
-                writeln!(&mut wtr, "{}", gfa)?;
-            }
-        }
-    }
-    flush_file(&dataset)
+fn pipeline(_matches: &clap::ArgMatches) -> std::io::Result<()> {
+    // let threads: usize = matches
+    //     .value_of("threads")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // rayon::ThreadPoolBuilder::new()
+    //     .num_threads(threads)
+    //     .build_global()
+    //     .unwrap();
+    // let stdin = std::io::stdin();
+    // let reader = BufReader::new(stdin.lock());
+    // let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
+    // debug!("Encoding {} reads", seqs.len());
+    // let dataset: DataSet = DataSet::new(seqs);
+    // debug!("Start Selecting Units");
+    // let chunk_len: usize = matches
+    //     .value_of("chunk_len")
+    //     .and_then(|e| e.parse().ok())
+    //     .expect("Chunk len");
+    // let margin: usize = matches
+    //     .value_of("margin")
+    //     .and_then(|e| e.parse().ok())
+    //     .expect("Margin");
+    // let skip_len: usize = matches
+    //     .value_of("skip_len")
+    //     .and_then(|e| e.parse().ok())
+    //     .expect("Skip Len");
+    // let take_num: usize = matches
+    //     .value_of("take_num")
+    //     .and_then(|e| e.parse().ok())
+    //     .expect("take num");
+    // let unit_config = match matches.value_of("read_type").unwrap() {
+    //     "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, threads),
+    //     "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, threads),
+    //     "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, threads),
+    //     _ => unreachable!(),
+    // };
+    // let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);
+    // debug!("Start Local Clustering step");
+    // let cluster_num: usize = matches
+    //     .value_of("cluster_num")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // let limit: u64 = matches
+    //     .value_of("limit")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // let length: usize = matches
+    //     .value_of("subchunk_len")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // let retry = 10;
+    // let local_config = match matches.value_of("read_type").unwrap() {
+    //     "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry),
+    //     "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry),
+    //     "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry),
+    //     _ => unreachable!(),
+    // };
+    // let kmer: usize = matches
+    //     .value_of("k")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // let min_cluster_size = matches
+    //     .value_of("min_cluster_size")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // let mat_score: i32 = matches
+    //     .value_of("mat_score")
+    //     .and_then(|num| num.parse().ok())
+    //     .unwrap();
+    // let mismat_score: i32 = -matches
+    //     .value_of("mismat_score")
+    //     .and_then(|num| num.parse::<i32>().ok())
+    //     .unwrap();
+    // let gap_score: i32 = -matches
+    //     .value_of("gap_score")
+    //     .and_then(|num| num.parse::<i32>().ok())
+    //     .unwrap();
+    // let global_config = haplotyper::GlobalClusteringConfig::new(
+    //     kmer,
+    //     min_cluster_size,
+    //     mat_score,
+    //     mismat_score,
+    //     gap_score,
+    // );
+    // let repeat_num: usize = 10;
+    // let coverage_thr = match matches.value_of("read_type").unwrap() {
+    //     "CCS" => 2,
+    //     "CLR" => 5,
+    //     "ONT" => 5,
+    //     _ => unreachable!(),
+    // };
+    // let dataset = dataset
+    //     .local_clustering(&local_config)
+    //     .correct_clustering(repeat_num, coverage_thr)
+    //     .global_clustering(&global_config);
+    // let config = AssembleConfig::default();
+    // let gfa = dataset.assemble_as_gfa(&config);
+    // let gfa_file = matches.value_of("gfa").unwrap();
+    // let mut gfa_path = std::path::PathBuf::from(&gfa_file);
+    // gfa_path.pop();
+    // match std::fs::create_dir_all(gfa_path) {
+    //     Err(why) => error!("{:?}. Please check gfa path.", why),
+    //     Ok(_) => {
+    //         if let Ok(mut wtr) = std::fs::File::create(gfa_file).map(BufWriter::new) {
+    //             writeln!(&mut wtr, "{}", gfa)?;
+    //         }
+    //     }
+    // }
+    // flush_file(&dataset)
+    Ok(())
 }
 
 fn get_input_file() -> std::io::Result<DataSet> {
@@ -1079,7 +1087,7 @@ fn main() -> std::io::Result<()> {
         ("view", Some(sub_m)) => view(sub_m),
         ("local_clustering", Some(sub_m)) => local_clustering(sub_m),
         ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
-        ("polish_clustering", Some(sub_m)) => clustering_correction(sub_m),
+        ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m),
         ("assemble", Some(sub_m)) => assembly(sub_m),
         ("pipeline", Some(sub_m)) => pipeline(sub_m),
         _ => Ok(()),

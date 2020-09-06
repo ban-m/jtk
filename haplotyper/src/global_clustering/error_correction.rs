@@ -195,6 +195,7 @@ impl Pileup {
 
 #[derive(Clone, Debug)]
 struct Column {
+    original: (u64, u64),
     m: Vec<(u64, u64)>,
     i: Vec<(u64, u64)>,
     d: usize,
@@ -204,16 +205,14 @@ struct Column {
 impl Column {
     fn new(n: (u64, u64)) -> Self {
         Self {
+            original: n,
             m: vec![n],
             i: vec![],
             d: 0,
             c: 1,
         }
     }
-    fn generate(&self, node: &mut Vec<Unit>) {
-        // eprintln!("M{:?}", self.m);
-        // eprintln!("I{:?}", self.i);
-        // eprintln!("d:{},c:{}", self.d, self.c);
+    fn generate_orig(&self, node: &mut Vec<Unit>) {
         if self.i.len() > self.c / 3 {
             let mut counts: HashMap<_, u32> = HashMap::new();
             for &x in self.i.iter() {
@@ -223,7 +222,23 @@ impl Column {
                 node.push(Unit { unit, cluster });
             }
         }
-        if self.m.len() > self.c / 2 {
+        if self.m.len() > self.c / 3 {
+            let (unit, cluster) = self.original;
+            node.push(Unit { unit, cluster });
+        }
+    }
+    #[allow(dead_code)]
+    fn generate(&self, node: &mut Vec<Unit>) {
+        if self.i.len() > self.c / 3 {
+            let mut counts: HashMap<_, u32> = HashMap::new();
+            for &x in self.i.iter() {
+                *counts.entry(x).or_default() += 1;
+            }
+            if let Some(((unit, cluster), _)) = counts.into_iter().max_by_key(|x| x.1) {
+                node.push(Unit { unit, cluster });
+            }
+        }
+        if self.m.len() > self.c / 3 {
             let mut counts: HashMap<_, u32> = HashMap::new();
             for &x in self.m.iter() {
                 *counts.entry(x).or_default() += 1;
@@ -309,7 +324,7 @@ fn correct(
         .fold(Pileup::new(nodes), |x, (_, y)| x.add(y));
     let mut nodes = vec![];
     for column in pileup.column {
-        column.generate(&mut nodes);
+        column.generate_orig(&mut nodes);
     }
     CorrectedRead { id, nodes }
 }
