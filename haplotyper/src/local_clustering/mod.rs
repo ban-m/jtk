@@ -105,6 +105,10 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     ref_unit: &Unit,
     iteration: u64,
 ) {
+    if ref_unit.cluster_num == 1 {
+        units.iter_mut().for_each(|x| x.2.cluster = 0);
+        return;
+    }
     let len = if ref_unit.seq().len() % c.subchunk_length == 0 {
         ref_unit.seq().len() / c.subchunk_length
     } else {

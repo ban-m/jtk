@@ -114,7 +114,7 @@ impl Stats for definitions::DataSet {
             let units: Vec<_> = units.into_iter().filter(|&x| x < last).collect();
             let hist = histgram_viz::Histgram::new(&units);
             writeln!(&mut wtr, "Top 20 Occurences:{:?}", top_20)?;
-            writeln!(&mut wtr, "The rest of the Units\n{}", hist.format(20, 20))?;
+            writeln!(&mut wtr, "The rest of the Units\n{}", hist.format(40, 20))?;
         }
         Ok(())
     }

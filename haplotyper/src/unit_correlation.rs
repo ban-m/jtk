@@ -49,6 +49,9 @@ fn calc_p_value(clusters: &[(u64, u64)], seed: u64, k1: u64, k2: u64) -> f64 {
     }
     trace!("DUMP\t{:?}", dump);
     let degree_of_freedom = (k1 - 1) * (k2 - 1);
+    if degree_of_freedom == 0 {
+        return 0.;
+    }
     assert!(degree_of_freedom > 0);
     let k1_fraction: Vec<_> = (0..k1)
         .map(|c1| clusters.iter().filter(|&&(x, _)| x == c1).count())

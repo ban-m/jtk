@@ -127,6 +127,14 @@ impl GlobalClustering for definitions::DataSet {
             count.sort_by_key(|x| x.0);
             eprintln!("Degree Count\n{:?}", count);
         }
+        let clustered_units = super::unit_correlation::select_uninformative_units(&self, 0.01);
+        for read in self.encoded_reads.iter_mut() {
+            for node in read.nodes.iter_mut() {
+                if !clustered_units[&node.unit] {
+                    node.cluster = 0;
+                }
+            }
+        }
         let reads = error_correction::local_correction(&self, c);
         // let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
         let mut graph = DeBruijnGraph::from(&reads, c.k_mer);

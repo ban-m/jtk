@@ -1,4 +1,5 @@
 use super::AssembleConfig;
+use crate::find_union;
 use definitions::{Edge, EncodedRead};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -222,6 +223,43 @@ enum ContigTag {
     None,
 }
 
+/// A summary of a contig. It tells us
+/// the unit, the cluster, and the direction
+/// it spelled.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ContigSummary {
+    /// The ID of the focal contig.
+    pub id: String,
+    pub summary: Vec<ContigElement>,
+}
+
+impl ContigSummary {
+    fn new(id: &str, summary: &[ContigElement]) -> Self {
+        Self {
+            id: id.to_string(),
+            summary: summary.to_vec(),
+        }
+    }
+}
+
+impl std::fmt::Display for ContigSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let line: Vec<_> = self
+            .summary
+            .iter()
+            .map(|n| format!("{}-{}", n.unit, n.cluster))
+            .collect();
+        writeln!(f, "{}\t{}", self.id, line.join(":"))
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ContigElement {
+    pub unit: u64,
+    pub cluster: u64,
+    pub strand: bool,
+}
+
 impl<'a> DitchGraph<'a, 'a> {
     pub fn new(reads: &[&'a EncodedRead], _c: &AssembleConfig) -> Self {
         // Allocate all nodes.
@@ -339,19 +377,26 @@ impl<'a> DitchGraph<'a, 'a> {
         &self,
         c: &AssembleConfig,
         cl: usize,
-    ) -> (Vec<gfa::Segment>, Vec<gfa::Edge>, gfa::Group) {
+    ) -> (
+        Vec<gfa::Segment>,
+        Vec<gfa::Edge>,
+        gfa::Group,
+        Vec<ContigSummary>,
+    ) {
         let mut arrived = vec![false; self.nodes.len()];
         let mut sids = vec![ContigTag::None; self.nodes.len()];
-        let (mut g_segs, mut g_edges) = (vec![], vec![]);
+        let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);
         let candidates = self.enumerate_candidates();
         for (i, p) in candidates {
             if arrived[i] {
                 continue;
             }
             let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
-            let (contig, edges) = self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
+            let (contig, edges, summary) =
+                self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
             g_segs.push(contig);
             g_edges.extend(edges);
+            summaries.push(summary);
         }
         for i in 0..self.nodes.len() {
             if arrived[i] {
@@ -359,9 +404,11 @@ impl<'a> DitchGraph<'a, 'a> {
             }
             let p = Position::Head;
             let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
-            let (contig, edges) = self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
+            let (contig, edges, summary) =
+                self.traverse_from(&mut arrived, &mut sids, i, p, name, c);
             g_segs.push(contig);
             g_edges.extend(edges);
+            summaries.push(summary);
         }
         let ids: Vec<_> = g_segs
             .iter()
@@ -370,7 +417,7 @@ impl<'a> DitchGraph<'a, 'a> {
             .collect();
         let uid = Some(format!("group-{}", cl));
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
-        (g_segs, g_edges, group)
+        (g_segs, g_edges, group, summaries)
     }
     pub fn remove_tips(&mut self) {
         let sum = self.nodes.iter().map(|e| e.nodes.len()).sum::<usize>();
@@ -455,6 +502,32 @@ impl<'a> DitchGraph<'a, 'a> {
                 !to_be_removed.contains(&probe)
             })
         });
+    }
+    pub fn remove_small_component(&mut self, thr: usize) {
+        let mut to_remove = vec![false; self.nodes.len()];
+        use find_union::FindUnion;
+        let mut cluster = FindUnion::new(self.nodes.len());
+        for node in self.nodes.iter() {
+            for edge in node.edges.iter() {
+                cluster.unite(edge.from, edge.to);
+            }
+        }
+        for node in 0..self.nodes.len() {
+            if cluster.find(node).unwrap() != node {
+                continue;
+            }
+            let count = (0..self.nodes.len())
+                .filter(|&x| cluster.find(x).unwrap() == node)
+                .count();
+            if count < thr {
+                for component in 0..self.nodes.len() {
+                    if cluster.find(component).unwrap() == node {
+                        to_remove[component] = true;
+                    }
+                }
+            }
+        }
+        self.remove_nodes(&to_remove);
     }
     pub fn collapse_buddle(&mut self, c: &AssembleConfig) {
         let mut to_remove = vec![false; self.nodes.len()];
@@ -592,7 +665,7 @@ impl<'a> DitchGraph<'a, 'a> {
         start_position: Position,
         seqname: String,
         _c: &AssembleConfig,
-    ) -> (gfa::Segment, Vec<gfa::Edge>) {
+    ) -> (gfa::Segment, Vec<gfa::Edge>, ContigSummary) {
         // Find edges.
         let mut edges: Vec<_> = self.nodes[start]
             .edges
@@ -627,7 +700,6 @@ impl<'a> DitchGraph<'a, 'a> {
         // Start traveresing.
         let mut unit_names = vec![];
         loop {
-            unit_names.push((self.nodes[node].unit, self.nodes[node].cluster));
             arrived[node] = true;
             // Move forward.
             let xs: Vec<_> = self.nodes[node].nodes.iter().map(|n| n.seq()).collect();
@@ -635,6 +707,18 @@ impl<'a> DitchGraph<'a, 'a> {
                 Position::Head => consensus(&xs),
                 Position::Tail => revcmp_str(&consensus(&xs)),
             };
+            {
+                let direction = match position {
+                    Position::Head => true,
+                    Position::Tail => false,
+                };
+                let elm = ContigElement {
+                    unit: self.nodes[node].unit,
+                    cluster: self.nodes[node].cluster,
+                    strand: direction,
+                };
+                unit_names.push(elm);
+            }
             seq += &cons;
             position = !position;
             // Check.
@@ -701,11 +785,7 @@ impl<'a> DitchGraph<'a, 'a> {
             node = next;
             position = next_position;
         }
-        let unit_names: Vec<_> = unit_names
-            .iter()
-            .map(|(u, c)| format!("{}:{}", u, c))
-            .collect();
-        debug!("{}\t{}", seqname, unit_names.join("\t"));
+        let summary = ContigSummary::new(&seqname, &unit_names);
         // Register start and tail node.
         if start == node {
             sids[node] = ContigTag::Both(seqname.clone(), start_position, position, seq.len());
@@ -743,7 +823,7 @@ impl<'a> DitchGraph<'a, 'a> {
                 Some(gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a))
             });
         edges.extend(tail_edges);
-        (seg, edges)
+        (seg, edges, summary)
     }
 }
 

@@ -59,6 +59,11 @@ fn alignment(
     rfr: &[(u64, u64)],
     (mat, mism, gap): (i32, i32, i32),
 ) -> Option<(i32, Vec<Cigar>)> {
+    use std::collections::HashSet;
+    let qs: HashSet<_> = qry.iter().copied().collect();
+    if rfr.iter().all(|r| !qs.contains(r)) {
+        return None;
+    }
     let mut dp = vec![vec![0; rfr.len() + 1]; qry.len() + 1];
     for (i, &q) in qry.iter().enumerate() {
         for (j, &r) in rfr.iter().enumerate() {
@@ -236,7 +241,7 @@ impl Column {
                 *counts.entry(x).or_default() += 1;
             }
             let mut counts: Vec<_> = counts.into_iter().collect();
-            counts.sort_by_key(|x| x.1);
+            counts.sort_by_key(|x| (x.1, x.0));
             if let Some(((unit, cluster), _)) = counts.pop() {
                 node.push(Unit { unit, cluster });
             }

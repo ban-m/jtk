@@ -122,10 +122,10 @@ pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option
         let q_direction = aln.seq2_direction().is_forward();
         buckets.entry((r_name, q_direction)).or_default().push(aln);
     }
-    let mut buckets: Vec<_> = buckets.values().collect();
-    buckets.sort_by_key(|alns| alns.iter().map(|aln| aln.seq1_start()).min().unwrap_or(0));
+    // let mut buckets: Vec<_> = buckets.values().collect();
+    // buckets.sort_by_key(|alns| alns.iter().map(|aln| aln.seq1_start()).min().unwrap_or(0));
     let mut nodes: Vec<_> = buckets
-        .iter()
+        .values()
         .filter_map(|alns| encode_alignment(alns, units, read))
         .collect();
     nodes.sort_by_key(|e| e.position_from_start);
@@ -189,8 +189,8 @@ fn encode_alignment(alns: &[&LastTAB], units: &[Unit], read: &RawRead) -> Option
 #[derive(Debug, Clone)]
 enum DAGNode<'a> {
     Aln(&'a LastTAB),
-    Start(usize),
-    End(usize),
+    Start,
+    End,
 }
 
 // Query start, Query sequence, Cigar.
@@ -198,13 +198,22 @@ type Alignment = (usize, String, Vec<Op>);
 fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> Option<Alignment> {
     assert!(!alns.is_empty());
     // Compute anchor position.
-    let (query_start, query_end) = get_read_range(alns, unit, read)?;
-    if query_end - query_start < unit.seq().len() * 8 / 10 {
-        return None;
-    }
-    let mut dag_nodes = vec![DAGNode::Start(query_start), DAGNode::End(query_end)];
+    assert!(!alns.is_empty());
+    let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
     dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
     let chain = chaining(&dag_nodes, unit.seq().len());
+    let (query_start, query_end) = {
+        let chain = chain.iter().filter_map(|n| match n {
+            DAGNode::Aln(aln) => Some(aln),
+            _ => None,
+        });
+        // First aln.
+        let start = chain.clone().next().unwrap().seq2_start();
+        // Last aln.
+        let end_aln = chain.clone().last().unwrap();
+        let end = end_aln.seq2_start() + end_aln.seq2_matchlen();
+        (start, end)
+    };
     // Check if this chain covers sufficient fraction of the unit.
     let cover_length = chain
         .iter()
@@ -218,13 +227,13 @@ fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> 
     }
     let (mut q_pos, mut r_pos) = (query_start, 0);
     let mut cigar = vec![];
-    match *chain[0] {
-        DAGNode::Start(x) => assert_eq!(x, q_pos),
-        _ => panic!(),
-    }
+    assert!(match *chain[0] {
+        DAGNode::Start => true,
+        _ => false,
+    });
     for node in chain.iter().skip(1) {
         let (q_target, r_target) = match node {
-            &&DAGNode::End(x) => (x, unit.seq().len()),
+            &&DAGNode::End => (query_end, unit.seq().len()),
             DAGNode::Aln(x) => (x.seq2_start(), x.seq1_start()),
             _ => panic!(),
         };
@@ -301,6 +310,7 @@ pub fn recover(query: &[u8], refr: &[u8], ops: &[Op]) -> (Vec<u8>, Vec<u8>, Vec<
     (q, al, r)
 }
 
+#[allow(dead_code)]
 fn get_read_range(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> Option<(usize, usize)> {
     let query_start = {
         let first = alns.iter().min_by_key(|aln| aln.seq1_start())?;
@@ -331,7 +341,8 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
         })
         .collect();
     let order = topological_sort(&edges);
-    let (mut dp, mut parent) = (vec![0; nodes.len()], vec![0; nodes.len()]);
+    // By initializing by 0, we assume that we can start anywhere...
+    let (mut dp, mut parent) = (vec![-1; nodes.len()], vec![0; nodes.len()]);
     for i in order {
         for &(j, score) in edges[i].iter() {
             let aln_j = match nodes[j] {
@@ -347,7 +358,7 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
     }
     // i <= 1, tracing back from the end node.
     assert!(match nodes[1] {
-        DAGNode::End(_) => true,
+        DAGNode::End => true,
         _ => false,
     });
     let mut path = vec![];
@@ -362,20 +373,23 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
 }
 
 // Compute edge score between from u to v. If no edge possible, return None.
-fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, unit_len: usize) -> Option<i64> {
+fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, _unit_len: usize) -> Option<i64> {
     match u {
-        DAGNode::End(_) => None,
-        DAGNode::Start(x) => match v {
-            DAGNode::Aln(aln) => Some(-((aln.seq2_start() - x + aln.seq1_start()) as i64)),
-            _ => None,
-        },
+        DAGNode::End => None,
+        // We can start anywhere.
+        DAGNode::Start => Some(0),
+        // DAGNode::Start => match v {
+        //     DAGNode::Aln(aln) => Some(-((aln.seq2_start() - x + aln.seq1_start()) as i64)),
+        //     _ => None,
+        // },
         DAGNode::Aln(aln1) => match v {
-            DAGNode::End(x) => {
-                let refr_remain = unit_len - aln1.seq1_start() - aln1.seq1_matchlen();
-                let query_remain = x - aln1.seq2_start() - aln1.seq2_matchlen();
-                Some(-((refr_remain + query_remain) as i64))
-            }
-            DAGNode::Start(_) => None,
+            // DAGNode::End(x) => {
+            //     let refr_remain = unit_len - aln1.seq1_start() - aln1.seq1_matchlen();
+            //     let query_remain = x - aln1.seq2_start() - aln1.seq2_matchlen();
+            //     Some(-((refr_remain + query_remain) as i64))
+            // }
+            DAGNode::End => Some(0),
+            DAGNode::Start => None,
             DAGNode::Aln(aln2) => {
                 let u_refr_end = aln1.seq1_start() + aln1.seq1_matchlen();
                 let u_query_end = aln1.seq2_start() + aln1.seq2_matchlen();

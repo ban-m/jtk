@@ -3,7 +3,7 @@ use clap::{App, Arg, SubCommand};
 use definitions::*;
 use haplotyper::*;
 use std::io::BufReader;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 #[macro_use]
 extern crate log;
 fn subcommand_entry() -> App<'static, 'static> {
@@ -39,6 +39,14 @@ fn subcommand_extract() -> App<'static, 'static> {
                 .value_name("TARGET")
                 .required(true)
                 .possible_values(&targets),
+        )
+        .arg(
+            Arg::with_name("output")
+                .short("o")
+                .long("output")
+                .takes_value(true)
+                .value_name("PATH")
+                .required(true),
         )
 }
 
@@ -188,34 +196,50 @@ fn subcommand_encode() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_view() -> App<'static, 'static> {
-    SubCommand::with_name("view")
+fn subcommand_multiplicity_estimation() -> App<'static, 'static> {
+    SubCommand::with_name("multiplicity_estimation")
         .version("0.1")
-        .author("BanshoMasutani")
-        .about("View reads")
+        .author("Bansho Masutani")
+        .about("Determine multiplicities of units.")
+        .arg(Arg::with_name("verbose").short("v").multiple(true))
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
-                .help("Debug mode"),
-        )
-        .arg(
-            Arg::with_name("name")
-                .short("n")
-                .long("name")
-                .takes_value(true)
-                .required(true)
-                .value_name("NAME")
-                .help("Name of the read to be showed."),
-        )
-        .arg(
-            Arg::with_name("type")
+            Arg::with_name("threads")
                 .short("t")
-                .long("type")
-                .takes_value(true)
-                .required(true)
-                .value_name("TYPE")
-                .possible_values(&["read", "unit"]),
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("max_multiplicity")
+                .short("m")
+                .long("max_multiplicity")
+                .required(false)
+                .value_name("MULTIPLICITY")
+                .help("Maximum number of multiplicity")
+                .default_value(&"2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("seed")
+                .short("s")
+                .long("seed")
+                .required(false)
+                .value_name("SEED")
+                .help("Seed for pseudorandon number generators.")
+                .default_value(&"24")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("draft_assembly")
+                .short("o")
+                .long("draft_assembly")
+                .required(false)
+                .value_name("PATH")
+                .help("If given, output draft GFA to PATH.")
+                .takes_value(true),
         )
 }
 
@@ -431,6 +455,15 @@ fn subcommand_assembly() -> App<'static, 'static> {
                 .default_value(&"1")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("output")
+                .short("o")
+                .long("output")
+                .required(true)
+                .value_name("PATH")
+                .help("Output file name")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_pipeline() -> App<'static, 'static> {
@@ -468,18 +501,18 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .help("Margin between units"),
         )
         .arg(
-            Arg::with_name("margin")
-                .long("margin")
-                .takes_value(true)
-                .default_value(&"500")
-                .help("Margin at the both end of a read."),
-        )
-        .arg(
             Arg::with_name("take_num")
                 .long("take_num")
                 .takes_value(true)
                 .default_value(&"2000")
                 .help("Number of units. 2*Genome size / chunk_len would be nice."),
+        )
+        .arg(
+            Arg::with_name("margin")
+                .long("margin")
+                .takes_value(true)
+                .default_value(&"500")
+                .help("Margin at the both end of a read."),
         )
         .arg(
             Arg::with_name("read_type")
@@ -490,12 +523,38 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .help("Read type. CCS, CLR, or ONT."),
         )
         .arg(
+            Arg::with_name("max_multiplicity")
+                .long("max_multiplicity")
+                .required(false)
+                .value_name("MULTIPLICITY")
+                .help("Maximum number of multiplicity")
+                .default_value(&"2")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("seed")
+                .long("seed")
+                .required(false)
+                .value_name("SEED")
+                .help("Seed for pseudorandon number generators.")
+                .default_value(&"24")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("draft_assembly")
+                .long("draft_assembly")
+                .required(false)
+                .value_name("PATH")
+                .help("If given, output draft GFA to PATH.")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("limit")
                 .long("limit")
                 .required(false)
                 .value_name("LIMIT")
                 .help("Maximum Execution time(sec)")
-                .default_value(&"3000")
+                .default_value(&"600")
                 .takes_value(true),
         )
         .arg(
@@ -508,12 +567,44 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("retry")
+                .long("retry")
+                .required(false)
+                .value_name("RETRY")
+                .help("If clustering fails, retry [RETRY] times.")
+                .default_value(&"5")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("retain_current_clustering")
+                .long("retain_current_clustering")
+                .help("Use current clusterings as a initial value."),
+        )
+        .arg(
             Arg::with_name("subchunk_len")
                 .long("subchunk_len")
                 .required(false)
                 .value_name("SubChunkLength")
                 .help("The length of sub-chunks")
                 .default_value(&"100")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("repeat_num")
+                .long("repeat_num")
+                .required(false)
+                .value_name("REPEAT_NUM")
+                .help("Do EM algorithm for REPEAT_NUM times.")
+                .default_value(&"10")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("coverage_threshold")
+                .long("threshold")
+                .required(false)
+                .value_name("THRESHOLD")
+                .help("Unit with less that this coverage would be ignored.")
+                .default_value(&"5")
                 .takes_value(true),
         )
         .arg(
@@ -562,110 +653,67 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("score_threshold")
-                .long("threshold")
-                .required(false)
-                .value_name("THRESHOLD")
-                .help("Alignment with score less that this value would be removed.")
-                .default_value(&"1")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("gfa")
-                .long("gfa_output_path")
+            Arg::with_name("output")
+                .long("output")
                 .required(true)
                 .value_name("PATH")
-                .help("path to the output gfa file")
+                .help("Output GFA File name")
                 .takes_value(true),
         )
 }
 
-fn entry(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn entry(_matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     debug!("Entry");
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
     debug!("Encoding {} reads", seqs.len());
-    let dataset: DataSet = DataSet::new(seqs);
-    flush_file(&dataset)
+    Ok(DataSet::new(seqs))
 }
 
-fn extract(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Extract");
-    let dataset = get_input_file()?;
     debug!("Target is {}", matches.value_of("target").unwrap());
+    let file = std::fs::File::create(matches.value_of("output").unwrap())?;
     match matches.value_of("target").unwrap() {
         "raw_reads" => {
-            let stdout = std::io::stdout();
-            let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
+            let mut wtr = bio_utils::fasta::Writer::new(file);
             for seq in dataset.extract_fasta(ExtractTarget::RawReads) {
                 wtr.write_record(&seq)?;
             }
         }
         "hic_reads" => {
-            let stdout = std::io::stdout();
-            let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
+            let mut wtr = bio_utils::fasta::Writer::new(file);
             for seq in dataset.extract_fasta(ExtractTarget::HiCReads) {
                 wtr.write_record(&seq)?;
             }
         }
         "units" => {
-            let stdout = std::io::stdout();
-            let mut wtr = bio_utils::fasta::Writer::new(stdout.lock());
+            let mut wtr = bio_utils::fasta::Writer::new(file);
             for seq in dataset.extract_fasta(ExtractTarget::Units) {
                 wtr.write_record(&seq)?;
             }
         }
         "assignments" => {
             let asn_name_desc = dataset.extract_assignments();
-            let stdout = std::io::stdout();
-            let mut wtr = std::io::BufWriter::new(stdout.lock());
+            let mut wtr = BufWriter::new(file);
             for (asn, name, desc) in asn_name_desc {
                 writeln!(&mut wtr, "{}\t{}\t{}", asn, name, desc)?;
             }
         }
         &_ => unreachable!(),
     };
-    Ok(())
+    Ok(dataset)
 }
 
-fn stats(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn stats(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Stats step");
-    let dataset = get_input_file()?;
     let wtr = std::io::BufWriter::new(std::fs::File::create(matches.value_of("file").unwrap())?);
     dataset.stats(wtr)?;
-    flush_file(&dataset)
+    Ok(dataset)
 }
 
-fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Selecting Units");
     let chunk_len: usize = matches
         .value_of("chunk_len")
@@ -687,49 +735,37 @@ fn select_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .expect("threads");
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(thrds)
         .build_global()
-        .unwrap();
+    {
+        debug!("{:?}:If you run `pipeline` module, this is Harmless.", why);
+    }
     let config = match matches.value_of("read_type").unwrap() {
         "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds),
         "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds),
         "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds),
         _ => unreachable!(),
     };
-    let dataset = get_input_file()?.select_chunks(&config);
-    flush_file(&dataset)
+    Ok(dataset.select_chunks(&config))
 }
 
-fn encode(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Encoding step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .unwrap();
-    let dataset = get_input_file()?.encode(threads);
-    flush_file(&dataset)
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    Ok(dataset.encode(threads))
 }
 
-fn polish_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start polishing units");
     let threads: usize = matches
         .value_of("threads")
@@ -744,42 +780,44 @@ fn polish_unit(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
     let readtype = matches.value_of("read_type").unwrap();
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .unwrap();
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
     let config = PolishUnitConfig::new(readtype, consensus_size, iteration);
-    let dataset = get_input_file()?.polish_unit(&config);
-    flush_file(&dataset)
+    Ok(dataset.polish_unit(&config))
+}
+fn multiplicity_estimation(
+    matches: &clap::ArgMatches,
+    dataset: DataSet,
+) -> std::io::Result<DataSet> {
+    debug!("Start multiplicity estimation");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse().ok())
+        .unwrap();
+    let multiplicity: usize = matches
+        .value_of("max_multiplicity")
+        .and_then(|e| e.parse().ok())
+        .unwrap();
+    let seed: u64 = matches
+        .value_of("seed")
+        .and_then(|e| e.parse().ok())
+        .unwrap();
+    let path = matches.value_of("draft_assembly");
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    let config = MultiplicityEstimationConfig::new(multiplicity, seed, path);
+    Ok(dataset.estimate_multiplicity(&config))
 }
 
-fn view(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    debug!("View");
-    let dataset = get_input_file()?;
-    let name = matches.value_of("name").unwrap();
-    match matches.value_of("type") {
-        Some(x) if x == "read" => dataset.view(name),
-        Some(x) if x == "unit" => dataset.view_unit(name),
-        _ => Some(()),
-    };
-    Ok(())
-}
-
-fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Local Clustering step");
     let cluster_num: usize = matches
         .value_of("cluster_num")
@@ -803,29 +841,22 @@ fn local_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .unwrap();
     let retain = matches.is_present("retain_current_clustering");
     let retry = if retain { 1 } else { retry };
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .unwrap();
-    let dataset = get_input_file()?;
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
     let config = match matches.value_of("read_type").unwrap() {
         "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry, retain),
         "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry, retain),
         "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry, retain),
         _ => unreachable!(),
     };
-    let dataset = dataset.local_clustering(&config);
-    flush_file(&dataset)
+    Ok(dataset.local_clustering(&config))
 }
 
-fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Global Clustering step");
     let threads: usize = matches
         .value_of("threads")
@@ -851,10 +882,12 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("gap_score")
         .and_then(|num| num.parse::<i32>().ok())
         .unwrap();
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .unwrap();
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
     let config = haplotyper::GlobalClusteringConfig::new(
         kmer,
         min_cluster_size,
@@ -862,18 +895,10 @@ fn global_clustering(matches: &clap::ArgMatches) -> std::io::Result<()> {
         mismat_score,
         gap_score,
     );
-    let dataset = get_input_file()?.global_clustering(&config);
-    flush_file(&dataset)
+    Ok(dataset.global_clustering(&config))
 }
 
-fn clustering_correction(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Clustering Correction step");
     let threads: usize = matches
         .value_of("threads")
@@ -887,149 +912,46 @@ fn clustering_correction(matches: &clap::ArgMatches) -> std::io::Result<()> {
         .value_of("coverage_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .unwrap();
-    let dataset = get_input_file()?.correct_clustering(repeat_num, threshold);
-    flush_file(&dataset)
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    Ok(dataset.correct_clustering(repeat_num, threshold))
 }
 
-fn assembly(matches: &clap::ArgMatches) -> std::io::Result<()> {
-    let level = match matches.occurrences_of("verbose") {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Assembly step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    rayon::ThreadPoolBuilder::new()
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .unwrap();
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    let file = matches.value_of("output").unwrap();
+    let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     let config = AssembleConfig::default();
-    let gfa = get_input_file()?.assemble_as_gfa(&config);
-    let stdout = std::io::stdout();
-    let mut wtr = std::io::BufWriter::new(stdout.lock());
-    writeln!(&mut wtr, "{}", gfa)
+    let gfa = dataset.assemble_as_gfa(&config);
+    writeln!(&mut file, "{}", gfa)?;
+    Ok(dataset)
 }
 
-fn pipeline(_matches: &clap::ArgMatches) -> std::io::Result<()> {
-    // let threads: usize = matches
-    //     .value_of("threads")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // rayon::ThreadPoolBuilder::new()
-    //     .num_threads(threads)
-    //     .build_global()
-    //     .unwrap();
-    // let stdin = std::io::stdin();
-    // let reader = BufReader::new(stdin.lock());
-    // let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
-    // debug!("Encoding {} reads", seqs.len());
-    // let dataset: DataSet = DataSet::new(seqs);
-    // debug!("Start Selecting Units");
-    // let chunk_len: usize = matches
-    //     .value_of("chunk_len")
-    //     .and_then(|e| e.parse().ok())
-    //     .expect("Chunk len");
-    // let margin: usize = matches
-    //     .value_of("margin")
-    //     .and_then(|e| e.parse().ok())
-    //     .expect("Margin");
-    // let skip_len: usize = matches
-    //     .value_of("skip_len")
-    //     .and_then(|e| e.parse().ok())
-    //     .expect("Skip Len");
-    // let take_num: usize = matches
-    //     .value_of("take_num")
-    //     .and_then(|e| e.parse().ok())
-    //     .expect("take num");
-    // let unit_config = match matches.value_of("read_type").unwrap() {
-    //     "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, threads),
-    //     "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, threads),
-    //     "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, threads),
-    //     _ => unreachable!(),
-    // };
-    // let dataset = dataset.select_chunks_freq(&unit_config).encode(threads);
-    // debug!("Start Local Clustering step");
-    // let cluster_num: usize = matches
-    //     .value_of("cluster_num")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // let limit: u64 = matches
-    //     .value_of("limit")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // let length: usize = matches
-    //     .value_of("subchunk_len")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // let retry = 10;
-    // let local_config = match matches.value_of("read_type").unwrap() {
-    //     "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry),
-    //     "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry),
-    //     "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry),
-    //     _ => unreachable!(),
-    // };
-    // let kmer: usize = matches
-    //     .value_of("k")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // let min_cluster_size = matches
-    //     .value_of("min_cluster_size")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // let mat_score: i32 = matches
-    //     .value_of("mat_score")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
-    // let mismat_score: i32 = -matches
-    //     .value_of("mismat_score")
-    //     .and_then(|num| num.parse::<i32>().ok())
-    //     .unwrap();
-    // let gap_score: i32 = -matches
-    //     .value_of("gap_score")
-    //     .and_then(|num| num.parse::<i32>().ok())
-    //     .unwrap();
-    // let global_config = haplotyper::GlobalClusteringConfig::new(
-    //     kmer,
-    //     min_cluster_size,
-    //     mat_score,
-    //     mismat_score,
-    //     gap_score,
-    // );
-    // let repeat_num: usize = 10;
-    // let coverage_thr = match matches.value_of("read_type").unwrap() {
-    //     "CCS" => 2,
-    //     "CLR" => 5,
-    //     "ONT" => 5,
-    //     _ => unreachable!(),
-    // };
-    // let dataset = dataset
-    //     .local_clustering(&local_config)
-    //     .correct_clustering(repeat_num, coverage_thr)
-    //     .global_clustering(&global_config);
-    // let config = AssembleConfig::default();
-    // let gfa = dataset.assemble_as_gfa(&config);
-    // let gfa_file = matches.value_of("gfa").unwrap();
-    // let mut gfa_path = std::path::PathBuf::from(&gfa_file);
-    // gfa_path.pop();
-    // match std::fs::create_dir_all(gfa_path) {
-    //     Err(why) => error!("{:?}. Please check gfa path.", why),
-    //     Ok(_) => {
-    //         if let Ok(mut wtr) = std::fs::File::create(gfa_file).map(BufWriter::new) {
-    //             writeln!(&mut wtr, "{}", gfa)?;
-    //         }
-    //     }
-    // }
-    // flush_file(&dataset)
-    Ok(())
+fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
+    // TODO: after clustering correction, retry local clustering with `--retain_current_clustering` flag.
+    // Maybe we should invoke local clustering manually.
+    entry(matches)
+        .and_then(|ds| select_unit(matches, ds))
+        .and_then(|ds| encode(matches, ds))
+        .and_then(|ds| multiplicity_estimation(matches, ds))
+        .and_then(|ds| local_clustering(matches, ds))
+        .and_then(|ds| clustering_correction(matches, ds))
+        .and_then(|ds| global_clustering(matches, ds))
+        .and_then(|ds| assembly(matches, ds))
 }
 
 fn get_input_file() -> std::io::Result<DataSet> {
@@ -1070,26 +992,40 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_select_unit())
         .subcommand(subcommand_polish_unit())
         .subcommand(subcommand_encode())
-        .subcommand(subcommand_view())
+        .subcommand(subcommand_multiplicity_estimation())
         .subcommand(subcommand_local_clustering())
         .subcommand(subcommand_global_clustering())
         .subcommand(subcommand_clustering_correction())
         .subcommand(subcommand_assembly())
         .subcommand(subcommand_pipeline())
         .get_matches();
-    match matches.subcommand() {
-        ("entry", Some(sub_m)) => entry(sub_m),
-        ("extract", Some(sub_m)) => extract(sub_m),
-        ("stats", Some(sub_m)) => stats(sub_m),
-        ("select_unit", Some(sub_m)) => select_unit(sub_m),
-        ("polish_unit", Some(sub_m)) => polish_unit(sub_m),
-        ("encode", Some(sub_m)) => encode(sub_m),
-        ("view", Some(sub_m)) => view(sub_m),
-        ("local_clustering", Some(sub_m)) => local_clustering(sub_m),
-        ("global_clustering", Some(sub_m)) => global_clustering(sub_m),
-        ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m),
-        ("assemble", Some(sub_m)) => assembly(sub_m),
-        ("pipeline", Some(sub_m)) => pipeline(sub_m),
-        _ => Ok(()),
+    if let Some(sub_m) = matches.subcommand().1 {
+        let level = match sub_m.occurrences_of("verbose") {
+            0 => "warn",
+            1 => "info",
+            2 => "debug",
+            _ => "trace",
+        };
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     }
+    if let ("entry", Some(sub_m)) = matches.subcommand() {
+        return entry(sub_m).and_then(|x| flush_file(&x));
+    } else if let ("pipeline", Some(sub_m)) = matches.subcommand() {
+        return pipeline(sub_m).and_then(|x| flush_file(&x));
+    };
+    let ds = get_input_file()?;
+    let result = match matches.subcommand() {
+        ("extract", Some(sub_m)) => extract(sub_m, ds),
+        ("stats", Some(sub_m)) => stats(sub_m, ds),
+        ("select_unit", Some(sub_m)) => select_unit(sub_m, ds),
+        ("polish_unit", Some(sub_m)) => polish_unit(sub_m, ds),
+        ("encode", Some(sub_m)) => encode(sub_m, ds),
+        ("local_clustering", Some(sub_m)) => local_clustering(sub_m, ds),
+        ("multiplicity_estimation", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
+        ("global_clustering", Some(sub_m)) => global_clustering(sub_m, ds),
+        ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m, ds),
+        ("assemble", Some(sub_m)) => assembly(sub_m, ds),
+        _ => unreachable!(),
+    };
+    result.and_then(|x| flush_file(&x))
 }
