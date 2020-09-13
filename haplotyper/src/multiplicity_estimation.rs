@@ -90,15 +90,22 @@ fn estimate_graph_multiplicity(
         .unwrap();
     debug!("AIC\t{}", aic);
     let assignments: Vec<_> = covs.iter().map(|&d| model.assign(d)).collect();
-    let min_coverage = assignments
-        .iter()
-        .map(|&x| model.lambdas[x])
-        .min_by(|x, y| x.partial_cmp(y).unwrap())
-        .unwrap();
+    let single_copy_coverage = {
+        let mut number_of_units: HashMap<usize, usize> = HashMap::new();
+        for (&asn, contig) in assignments.iter().zip(graph.nodes.iter()) {
+            let num = contig.segments.len();
+            *number_of_units.entry(asn).or_default() += num;
+        }
+        let (&max_cluster, num) = number_of_units.iter().max_by_key(|x| x.1).unwrap();
+        let coverage = model.lambdas[max_cluster];
+        debug!("DIPLOID\t{}\t{}\t{}", max_cluster, num, coverage);
+        // As it is diploid coverage, we divide it by 2.
+        coverage / 2.
+    };
     let repeat_num: Vec<_> = model
         .lambdas
         .iter()
-        .map(|x| ((x / min_coverage) + 0.5).floor() as usize)
+        .map(|x| ((x / single_copy_coverage) + 0.5).floor() as usize)
         .collect();
     debug!("LAMBDAS:{:?}", model.lambdas);
     debug!("PREDCT:{:?}", repeat_num);
