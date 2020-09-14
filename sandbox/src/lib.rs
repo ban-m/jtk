@@ -15,14 +15,6 @@ pub fn generate_mul_data<T: Rng>(
         .map(|&x| x as u8)
         .collect();
     answer.sort();
-    // let answer: Vec<_> = probs
-    //     .iter()
-    //     .enumerate()
-    //     .flat_map(|(idx, &prob)| {
-    //         let num = (test_num as f64 * prob).ceil() as usize;
-    //         vec![idx as u8; num]
-    //     })
-    //     .collect();
     let mut gen = |t: &[Vec<u8>]| {
         t.iter()
             .map(|e| gen_sample::introduce_randomness(e, rng, profile))

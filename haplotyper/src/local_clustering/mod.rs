@@ -8,7 +8,7 @@ pub use config::*;
 pub mod create_model;
 pub mod eread;
 pub mod variant_calling;
-const REPEAT_NUM: usize = 10;
+const REPEAT_NUM: usize = 8;
 
 use eread::*;
 use variant_calling::*;
@@ -341,7 +341,6 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             info!("Break by timelimit:{}", c.limit);
             break margin;
         } else if count >= c.stable_limit {
-            trace!("LK\t{}", likelihoods(data, dim, c, ref_unit.id));
             break margin;
         }
     }

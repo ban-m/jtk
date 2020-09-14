@@ -346,7 +346,7 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("KMER_SIZE")
                 .help("The size of the kmer")
-                .default_value(&"4")
+                .default_value(&"3")
                 .takes_value(true),
         )
         .arg(
@@ -419,7 +419,7 @@ fn subcommand_clustering_correction() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value(&"10")
+                .default_value(&"5")
                 .takes_value(true),
         )
         .arg(

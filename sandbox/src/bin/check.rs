@@ -6,7 +6,6 @@ fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
     c.cluster_num = 2;
-    c.stable_limit = 6;
     c.variant_num = 2;
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     c.read_type = haplotyper::ReadType::CLR;
@@ -39,29 +38,29 @@ fn main() -> std::io::Result<()> {
     let mut templates = vec![template.clone()];
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {
-        // use log::debug;
-        // use rand::Rng;
-        // let var_pos = rng.gen_range(0, chain_len);
-        // let mut seq = template.clone();
-        // seq[var_pos] = match rng.gen::<u8>() % 3 {
-        //     0 => {
-        //         debug!("Ins");
-        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
-        //     }
-        //     1 => {
-        //         debug!("Del");
-        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
-        //     }
-        //     2 => {
-        //         debug!("Subs");
-        //         gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
-        //     }
-        //     _ => panic!(),
-        // };
-        let seq: Vec<_> = template
-            .iter()
-            .map(|e| gen_sample::introduce_randomness(e, &mut rng, &p))
-            .collect();
+        use log::debug;
+        use rand::Rng;
+        let var_pos = rng.gen_range(0, chain_len);
+        let mut seq = template.clone();
+        seq[var_pos] = match rng.gen::<u8>() % 3 {
+            0 => {
+                debug!("Ins");
+                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
+            }
+            1 => {
+                debug!("Del");
+                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
+            }
+            2 => {
+                debug!("Subs");
+                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
+            }
+            _ => panic!(),
+        };
+        // let seq: Vec<_> = template
+        //     .iter()
+        //     .map(|e| gen_sample::introduce_randomness(e, &mut rng, &p))
+        //     .collect();
         templates.push(seq);
     }
     use sandbox::generate_mul_data;
@@ -70,9 +69,6 @@ fn main() -> std::io::Result<()> {
         .iter_mut()
         .zip(answer.iter())
         .for_each(|(x, &ans)| x.cluster = ans as usize);
-    // let (_, asn) = (0..3)
-    //     .map(|i| {
-    // let seed = seed as u64 * i as u64;
     let unit = definitions::Unit {
         id: 0,
         seq: String::new(),

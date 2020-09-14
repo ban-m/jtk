@@ -39,6 +39,16 @@ impl MultiplicityEstimation for DataSet {
         use super::Assemble;
         let assemble_config = super::AssembleConfig::default();
         let graphs = self.assemble_as_graph(&assemble_config);
+        if let Some(mut file) = config
+            .path
+            .as_ref()
+            .and_then(|path| std::fs::File::create(path).ok())
+            .map(std::io::BufWriter::new)
+        {
+            use std::io::Write;
+            let gfa = self.assemble_as_gfa(&assemble_config);
+            writeln!(&mut file, "{}", gfa).unwrap();
+        }
         debug!("GRAPH\tID\tCoverage\tMean\tLen");
         let estimated_cluster_num: HashMap<u64, usize> = graphs
             .iter()

@@ -56,7 +56,6 @@ impl ClusteringCorrection for DataSet {
                 if let Some(unit) = self.selected_chunks.iter().find(|u| u.id == unit_id) {
                     let k = unit.cluster_num;
                     let mut config = Config::new(repeat_num, SEED, k, unit_id, coverage_thr);
-                    config.repeat_num = 0;
                     let new_clustering = clustering(&self.selected_chunks, &reads, &config);
                     if log_enabled!(log::Level::Debug) {
                         for cl in 0..k {
@@ -110,7 +109,7 @@ pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Ve
         .collect();
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.focal * SEED);
     let (asn, lk) = em_clustering(units, reads, weights, config);
-    let (asn, lk) = (0..REPEAT_NUM)
+    let (asn, lk) = (0..config.repeat_num)
         .map(|_| {
             let weights: Vec<_> = reads
                 .iter()

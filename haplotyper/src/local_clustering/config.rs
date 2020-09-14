@@ -1,7 +1,7 @@
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-const STABLE_LIMIT: u32 = 7;
+const STABLE_LIMIT: u32 = 6;
 const VARIANT_NUMBER: usize = 2;
 const P_VALUE: f64 = 0.01;
 const RETRY_LIMIT: u64 = 4;

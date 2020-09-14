@@ -6,33 +6,7 @@ fn main() {
     let ds = get_input_file().unwrap();
     let end = std::time::Instant::now();
     eprintln!("{:?}", end - start);
-    // let count: Vec<_> = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .flat_map(|read| {
-    //         read.nodes.iter().map(|node| {
-    //             haplotyper::node_to_subchunks(&node, 100)
-    //                 .into_iter()
-    //                 .count()
-    //         })
-    //     })
-    //     .collect();
-    // let hist = histgram_viz::Histgram::new(&count);
-    // println!("{}", hist.format(20, 20));
-    // let mut count = HashMap::<Vec<u64>, usize>::new();
     let k = 4;
-    // for read in ds.encoded_reads.iter() {
-    //     for kmer in read.nodes.windows(k) {
-    //         let mut kmer: Vec<_> = kmer.iter().map(|u| u.unit).collect();
-    //         if kmer.last().unwrap() <= kmer.first().unwrap() {
-    //             kmer.reverse();
-    //         }
-    //         *count.entry(kmer).or_default() += 1;
-    //     }
-    // }
-    // let count: Vec<_> = count.values().copied().collect();
-    // let hist = histgram_viz::Histgram::new(&count);
-    // println!("{}", hist.format(20, 20));
     let mut count: HashMap<_, HashMap<_, usize>> = HashMap::new();
     let is_hap_a: HashMap<_, _> = ds
         .raw_reads
