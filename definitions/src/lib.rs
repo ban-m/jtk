@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DataSet {
+    pub input_file: String,
     pub raw_reads: Vec<RawRead>,
     pub hic_pairs: Vec<HiCPair>,
     pub selected_chunks: Vec<Unit>,
@@ -14,7 +15,19 @@ pub struct DataSet {
 }
 
 impl DataSet {
+    pub fn with_minimum_data(input_file: &str, raw_reads: Vec<RawRead>) -> Self {
+        Self {
+            input_file: input_file.to_string(),
+            raw_reads,
+            hic_pairs: vec![],
+            selected_chunks: vec![],
+            encoded_reads: vec![],
+            hic_edges: vec![],
+            assignments: vec![],
+        }
+    }
     pub fn with_param(
+        input_file: String,
         raw_reads: Vec<RawRead>,
         hic_pairs: Vec<HiCPair>,
         selected_chunks: Vec<Unit>,
@@ -23,6 +36,7 @@ impl DataSet {
         assignments: Vec<Assignment>,
     ) -> Self {
         Self {
+            input_file,
             raw_reads,
             hic_pairs,
             selected_chunks,
@@ -88,8 +102,8 @@ impl Unit {
 pub struct EncodedRead {
     pub id: u64,
     pub original_length: usize,
-    pub leading_gap: usize,
-    pub trailing_gap: usize,
+    pub leading_gap: Vec<u8>,
+    pub trailing_gap: Vec<u8>,
     pub edges: Vec<Edge>,
     pub nodes: Vec<Node>,
 }

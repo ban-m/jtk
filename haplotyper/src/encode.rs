@@ -26,6 +26,7 @@ impl Encode for definitions::DataSet {
         self
     }
 }
+
 fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
@@ -95,6 +96,7 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
     if !lastal.status.success() {
         panic!("lastal-{:?}", String::from_utf8_lossy(&lastal.stderr));
     }
+    // Last-split and Maf-convert.
     let alignments: Vec<_> = String::from_utf8_lossy(&lastal.stdout)
         .lines()
         .filter(|e| !e.starts_with('#'))
@@ -122,8 +124,6 @@ pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option
         let q_direction = aln.seq2_direction().is_forward();
         buckets.entry((r_name, q_direction)).or_default().push(aln);
     }
-    // let mut buckets: Vec<_> = buckets.values().collect();
-    // buckets.sort_by_key(|alns| alns.iter().map(|aln| aln.seq1_start()).min().unwrap_or(0));
     let mut nodes: Vec<_> = buckets
         .values()
         .filter_map(|alns| encode_alignment(alns, units, read))
@@ -133,15 +133,22 @@ pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option
         .windows(2)
         .map(|w| Edge::from_nodes(w, read.seq()))
         .collect();
-    let leading_gap = nodes.first()?.position_from_start;
+    let leading_gap = {
+        let start = nodes.first()?.position_from_start;
+        read.seq()[..start].to_vec()
+    };
     let trailing_gap = {
-        let last = nodes.last()?;
-        read.seq().len() - last.position_from_start - last.seq.len()
+        let end = nodes.last()?;
+        let end = end.position_from_start + end.seq.len();
+        read.seq()[end..].to_vec()
     };
     let len = nodes.iter().map(|n| n.seq.len()).sum::<usize>() as i64;
     let edge_len = edges.iter().map(|n| n.offset).sum::<i64>();
     let chunked_len = (len + edge_len) as usize;
-    assert_eq!(read.seq().len(), chunked_len + leading_gap + trailing_gap);
+    assert_eq!(
+        read.seq().len(),
+        chunked_len + leading_gap.len() + trailing_gap.len()
+    );
     Some(EncodedRead {
         original_length: read.seq().len(),
         id: read.id,
@@ -196,8 +203,6 @@ enum DAGNode<'a> {
 // Query start, Query sequence, Cigar.
 type Alignment = (usize, String, Vec<Op>);
 fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> Option<Alignment> {
-    assert!(!alns.is_empty());
-    // Compute anchor position.
     assert!(!alns.is_empty());
     let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
     dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
@@ -258,22 +263,52 @@ fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> 
         query_end -= l;
         cigar.pop();
     }
-    // if query_end - query_start > unit.seq().len() * 11 / 10 {
-    //     debug!("LEN:{}", query_end - query_start);
-    //     for aln in alns.iter() {
-    //         debug!("DUMP\t{}", aln);
-    //     }
-    //     let query = &read[query_start..query_end];
-    //     let (q, op, r) = recover(query, unit.seq(), &cigar);
-    //     for ((q, op), r) in q.chunks(100).zip(op.chunks(100)).zip(r.chunks(100)) {
-    //         eprintln!("{}", String::from_utf8_lossy(q));
-    //         eprintln!("{}", String::from_utf8_lossy(op));
-    //         eprintln!("{}", String::from_utf8_lossy(r));
-    //     }
-    // }
     assert_eq!(consumed_reference_length(&cigar), unit.seq().len());
     let query = String::from_utf8_lossy(&read[query_start..query_end]).to_string();
     Some((query_start, query, cigar))
+}
+
+/// Public interface.
+pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, usize, Vec<Op>) {
+    assert!(!alns.is_empty());
+    let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
+    dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
+    let chain = chaining(&dag_nodes, refr.len());
+    let (query_start, refr_start) = {
+        let first_chain = chain
+            .iter()
+            .filter_map(|n| match n {
+                DAGNode::Aln(aln) => Some(aln),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        // First aln.
+        let query_start = first_chain.seq2_start();
+        let refr_start = first_chain.seq1_start();
+        (query_start, refr_start)
+    };
+    let (mut q_pos, mut r_pos) = (query_start, refr_start);
+    let mut cigar = vec![];
+    assert!(match *chain[0] {
+        DAGNode::Start => true,
+        _ => false,
+    });
+    for node in chain.iter().skip(1) {
+        let (q_target, r_target) = match node {
+            &&DAGNode::End => break,
+            DAGNode::Aln(x) => (x.seq2_start(), x.seq1_start()),
+            _ => panic!(),
+        };
+        let (query, refr) = (&read[q_pos..q_target], &refr[r_pos..r_target]);
+        cigar.extend(alignment(query, refr, 1, -1, -1));
+        if let DAGNode::Aln(x) = node {
+            cigar.extend(convert_aln_to_cigar(x));
+            r_pos = x.seq1_start() + x.seq1_matchlen();
+            q_pos = x.seq2_start() + x.seq2_matchlen();
+        }
+    }
+    (query_start, refr_start, cigar)
 }
 
 pub fn recover(query: &[u8], refr: &[u8], ops: &[Op]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
@@ -341,6 +376,14 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
         })
         .collect();
     let order = topological_sort(&edges);
+    // for &i in order.iter() {
+    //     match nodes[i] {
+    //         DAGNode::Aln(aln) => debug!("{}", aln),
+    //         DAGNode::Start => debug!("{}\tstart", i),
+    //         _ => debug!("{}\tend", i),
+    //     }
+    // }
+    // debug!("Chaining...");
     // By initializing by 0, we assume that we can start anywhere...
     let (mut dp, mut parent) = (vec![-1; nodes.len()], vec![0; nodes.len()]);
     for i in order {
@@ -369,6 +412,13 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
     }
     path.push(&nodes[current_node]);
     path.reverse();
+    // for c in path.iter() {
+    //     match c {
+    //         DAGNode::Aln(aln) => debug!("{}", aln),
+    //         DAGNode::Start => debug!("start"),
+    //         _ => debug!("end"),
+    //     }
+    // }
     path
 }
 
@@ -376,18 +426,8 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
 fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, _unit_len: usize) -> Option<i64> {
     match u {
         DAGNode::End => None,
-        // We can start anywhere.
         DAGNode::Start => Some(0),
-        // DAGNode::Start => match v {
-        //     DAGNode::Aln(aln) => Some(-((aln.seq2_start() - x + aln.seq1_start()) as i64)),
-        //     _ => None,
-        // },
         DAGNode::Aln(aln1) => match v {
-            // DAGNode::End(x) => {
-            //     let refr_remain = unit_len - aln1.seq1_start() - aln1.seq1_matchlen();
-            //     let query_remain = x - aln1.seq2_start() - aln1.seq2_matchlen();
-            //     Some(-((refr_remain + query_remain) as i64))
-            // }
             DAGNode::End => Some(0),
             DAGNode::Start => None,
             DAGNode::Aln(aln2) => {
@@ -409,6 +449,7 @@ fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, _unit_len: usize) -> Optio
 fn topological_sort(edges: &[Vec<(usize, i64)>]) -> Vec<usize> {
     let len = edges.len();
     let mut arrived = vec![false; len];
+    // 0 is the start node.
     let mut stack = vec![0];
     let mut order = vec![];
     'dfs: while !stack.is_empty() {

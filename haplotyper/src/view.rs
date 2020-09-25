@@ -12,7 +12,11 @@ impl View for definitions::DataSet {
         println!("Name:{}", name);
         println!("ID:{}", encoded.id,);
         println!("Length:{}", encoded.original_length);
-        println!("{}-(Align)-{}", encoded.leading_gap, encoded.trailing_gap);
+        println!(
+            "{}-(Align)-{}",
+            encoded.leading_gap.len(),
+            encoded.trailing_gap.len()
+        );
         println!("Encoded Rate:{:.3}", encoded.encoded_rate());
         for (idx, node) in encoded.nodes.iter().enumerate() {
             println!("{}-th unit, unit id is {}", idx, node.unit);

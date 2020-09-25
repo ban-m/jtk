@@ -1,11 +1,11 @@
 pub trait Entry {
-    fn new(seqs: Vec<bio_utils::fasta::Record>) -> Self;
+    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record]) -> Self;
 }
 
 impl Entry for definitions::DataSet {
-    fn new(seqs: Vec<bio_utils::fasta::Record>) -> Self {
-        let raw_reads: Vec<_> = seqs
-            .into_iter()
+    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record]) -> Self {
+        let raw_reads: Vec<_> = raw_data
+            .iter()
             .enumerate()
             .map(|(idx, read)| definitions::RawRead {
                 name: read.id().to_string(),
@@ -18,6 +18,7 @@ impl Entry for definitions::DataSet {
                     .collect::<String>(),
             })
             .collect();
-        definitions::DataSet::with_param(raw_reads, vec![], vec![], vec![], vec![], vec![])
+        use definitions::DataSet;
+        DataSet::with_minimum_data(input_file, raw_reads)
     }
 }

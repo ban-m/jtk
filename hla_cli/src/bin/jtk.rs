@@ -17,6 +17,15 @@ fn subcommand_entry() -> App<'static, 'static> {
                 .multiple(true)
                 .help("Debug mode"),
         )
+        .arg(
+            Arg::with_name("input")
+                .long("input")
+                .short("r")
+                .value_name("READS")
+                .takes_value(true)
+                .required(true)
+                .help("Input FASTA file."),
+        )
 }
 
 fn subcommand_extract() -> App<'static, 'static> {
@@ -456,6 +465,16 @@ fn subcommand_assembly() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("window_size")
+                .short("w")
+                .long("window_size")
+                .required(false)
+                .value_name("WINDOW_SIZE")
+                .help("Size of the window to take consensus sequences.")
+                .default_value(&"100")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("output")
                 .short("o")
                 .long("output")
@@ -662,13 +681,13 @@ fn subcommand_pipeline() -> App<'static, 'static> {
         )
 }
 
-fn entry(_matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
+fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     debug!("Entry");
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
+    let file = matches.value_of("input").unwrap();
+    let reader = std::fs::File::open(file).map(BufReader::new)?;
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
     debug!("Encoding {} reads", seqs.len());
-    Ok(DataSet::new(seqs))
+    Ok(DataSet::new(file, &seqs))
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -927,6 +946,10 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let window_size: usize = matches
+        .value_of("window_size")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
@@ -935,7 +958,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
     }
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
-    let config = AssembleConfig::default();
+    let config = AssembleConfig::new(threads, window_size);
     let gfa = dataset.assemble_as_gfa(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

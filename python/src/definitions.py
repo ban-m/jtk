@@ -6,6 +6,7 @@ class DataSet:
     
     Attributes 
     --------------------
+    input_file: path to input file (relative or absolute).
     raw_reads: list of `RawRead`
     selected_chunks: list of `Unit`
     encoded_reads: list of `EncodedRead`
@@ -13,14 +14,15 @@ class DataSet:
     hic_pairs: list of `HiCPair`
     hic_edges: list of `HiCEdge`
     """
-    def __init__(self, raw_reads, selected_chunks, encoded_reads, assignments,
-                 hic_pairs, hic_edges):
+    def __init__(self, input_file, raw_reads, selected_chunks,
+                 encoded_reads, assignments,hic_pairs, hic_edges):
         """
         The initialization method.
         Usually, users should not call this method directlly.
         Rather, it is recommended to parse this type from a JSON file.
         See `as_dataset` for more details.
         """
+        self.input_file = input_file
         self.raw_reads = raw_reads
         self.selected_chunks = selected_chunks
         self.encoded_reads = encoded_reads
@@ -80,10 +82,10 @@ class EncodedRead:
         The id number of the corresponding raw reads.
     original_length: int
         The length of the corresponding raw reads.
-    leading_gap:int
-        The length of un-encoded segment at the beggining in the read.
-    trailing_gap:int 
-        The length of un-encoded segment at the end of the read.
+    leading_gap: str
+        The un-encoded segment at the beggining in the read.
+    trailing_gap: str
+        The un-encoded segment at the end of the read.
     nodes: list of `Node`
     edges: list of `Edge`
     """
@@ -221,7 +223,8 @@ def as_dataset(dct):
        'assignments' in dct and\
        'hic_pairs' in dct and \
        'hic_edges' in dct:
-        return DataSet(raw_reads = dct['raw_reads'],
+        return DataSet(input_file=dct['input_file'],
+                       raw_reads = dct['raw_reads'],
                        selected_chunks = dct['selected_chunks'],
                        encoded_reads = dct['encoded_reads'],
                        assignments = dct['assignments'],
@@ -285,6 +288,7 @@ class DataSetEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, DataSet):
             return {
+                'input_file': obj.input_file,
                 'raw_reads':list(map(self.default, obj.raw_reads)),
                 'selected_chunks':list(map(self.default, obj.selected_chunks)),
                 'encoded_reads':list(map(self.default, obj.encoded_reads)),

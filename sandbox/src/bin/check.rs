@@ -13,7 +13,7 @@ fn main() -> std::io::Result<()> {
     // c.read_type = haplotyper::ReadType::CCS;
     // let profile = gen_sample::CCS_PROFILE;
     let args: Vec<_> = std::env::args().collect();
-    let (seed, test_num, clusters, errors, probs) = {
+    let (seed, test_num, clusters, _errors, probs) = {
         let seed: usize = args[1].parse().unwrap();
         let test_num: usize = args[2].parse().unwrap();
         let clusters: usize = args[3].parse().unwrap();
@@ -30,11 +30,11 @@ fn main() -> std::io::Result<()> {
     let template: Vec<_> = (0..chain_len)
         .map(|_| gen_sample::generate_seq(&mut rng, len))
         .collect::<Vec<_>>();
-    let p = gen_sample::Profile {
-        sub: errors / 3.,
-        ins: errors / 3.,
-        del: errors / 3.,
-    };
+    // let p = gen_sample::Profile {
+    //     sub: errors / 3.,
+    //     ins: errors / 3.,
+    //     del: errors / 3.,
+    // };
     let mut templates = vec![template.clone()];
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {

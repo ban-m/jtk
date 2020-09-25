@@ -1,6 +1,5 @@
 use definitions::*;
 use rayon::prelude::*;
-const REPEAT_NUM: usize = 10;
 const SEED: u64 = 1221;
 use rand::Rng;
 use rand::SeedableRng;
@@ -55,7 +54,7 @@ impl ClusteringCorrection for DataSet {
                     .unzip();
                 if let Some(unit) = self.selected_chunks.iter().find(|u| u.id == unit_id) {
                     let k = unit.cluster_num;
-                    let mut config = Config::new(repeat_num, SEED, k, unit_id, coverage_thr);
+                    let config = Config::new(repeat_num, SEED, k, unit_id, coverage_thr);
                     let new_clustering = clustering(&self.selected_chunks, &reads, &config);
                     if log_enabled!(log::Level::Debug) {
                         for cl in 0..k {

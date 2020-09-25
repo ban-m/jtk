@@ -1,4 +1,4 @@
-mod assemble;
+pub mod assemble;
 mod determine_units;
 pub mod em_correction;
 pub mod encode;

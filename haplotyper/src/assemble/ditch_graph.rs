@@ -1,20 +1,22 @@
 use super::AssembleConfig;
 use crate::find_union;
 use definitions::{Edge, EncodedRead};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
 /// Ditch Graph
 /// Each unit of the dataset consists of a pair of node, named
 /// tail-node and head-node, and it is represented as a 'node'in a
 /// Ditch graph.
 /// Each node has several edges, induced by the connection inside reads.
 #[derive(Clone)]
-pub struct DitchGraph<'a, 'b> {
-    nodes: Vec<DitchNode<'a, 'b>>,
+pub struct DitchGraph<'a, 'b, 'c> {
+    nodes: Vec<DitchNode<'a, 'b, 'c>>,
     index: HashMap<NodeIndex, usize>,
 }
 
-impl<'a, 'b> std::fmt::Display for DitchGraph<'a, 'b> {
+impl<'a, 'b, 'c> std::fmt::Display for DitchGraph<'a, 'b, 'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         use histgram_viz::Histgram;
         let nodes = self.nodes.len();
@@ -46,7 +48,7 @@ impl<'a, 'b> std::fmt::Display for DitchGraph<'a, 'b> {
     }
 }
 
-impl<'a, 'b> std::fmt::Debug for DitchGraph<'a, 'b> {
+impl<'a, 'b, 'c> std::fmt::Debug for DitchGraph<'a, 'b, 'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let edge = self.nodes.iter().map(|e| e.edges.len()).sum::<usize>();
         writeln!(f, "Nodes:{}\tEdges:{}\n", self.nodes.len(), edge)?;
@@ -73,15 +75,16 @@ impl<'a, 'b> std::fmt::Debug for DitchGraph<'a, 'b> {
 /// Here, x and z are unit, y and w are cluster, and h and t are
 /// head or tail.
 #[derive(Debug, Clone)]
-pub struct DitchNode<'a, 'b> {
+pub struct DitchNode<'a, 'b, 'c> {
     unit: u64,
     cluster: u64,
     // CAUTION!!!!!! The `unit` and `cluster` members should not be look-upped!
     nodes: Vec<&'a definitions::Node>,
     edges: Vec<DitchEdge<'b>>,
+    tips: Vec<DitchTip<'c>>,
 }
 
-impl<'a, 'b> std::fmt::Display for DitchNode<'a, 'b> {
+impl<'a, 'b, 'c> std::fmt::Display for DitchNode<'a, 'b, 'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "---------{}:{}---------", self.unit, self.cluster)?;
         writeln!(f, "Seq:")?;
@@ -93,14 +96,41 @@ impl<'a, 'b> std::fmt::Display for DitchNode<'a, 'b> {
     }
 }
 
-impl<'a, 'b> DitchNode<'a, 'b> {
+impl<'a, 'b, 'c> DitchNode<'a, 'b, 'c> {
     fn new(unit: u64, cluster: u64) -> Self {
         Self {
             unit,
             cluster,
             nodes: vec![],
             edges: vec![],
+            tips: vec![],
         }
+    }
+    fn consensus(&self) -> String {
+        let result = self.consensus_with(100, 10);
+        String::from_utf8(result).unwrap()
+    }
+    fn consensus_with(&self, len: usize, num: usize) -> Vec<u8> {
+        let chunks: Vec<_> = self
+            .nodes
+            .iter()
+            .map(|n| crate::local_clustering::node_to_subchunks(n, len))
+            .collect();
+        let max_pos = chunks
+            .iter()
+            .flat_map(|cs| cs.iter().map(|c| c.pos).max())
+            .max()
+            .unwrap();
+        let mut subseqs = vec![vec![]; max_pos + 1];
+        for cs in chunks.iter() {
+            for c in cs.iter() {
+                subseqs[c.pos].push(c.seq.as_slice());
+            }
+        }
+        subseqs
+            .par_iter()
+            .flat_map(|subseq| consensus(subseq, num))
+            .collect()
     }
 }
 
@@ -153,6 +183,23 @@ impl<'a> DitchEdge<'a> {
     }
     fn push(&mut self, x: (&'a Edge, bool)) {
         self.edges.push(x);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DitchTip<'a> {
+    seq: &'a [u8],
+    position: Position,
+    in_direction: bool,
+}
+
+impl<'a> DitchTip<'a> {
+    fn new(seq: &'a [u8], position: Position, in_direction: bool) -> Self {
+        Self {
+            seq,
+            position,
+            in_direction,
+        }
     }
 }
 
@@ -260,62 +307,82 @@ pub struct ContigElement {
     pub strand: bool,
 }
 
-impl<'a> DitchGraph<'a, 'a> {
-    pub fn new(reads: &[&'a EncodedRead], _c: &AssembleConfig) -> Self {
+impl<'a> DitchGraph<'a, 'a, 'a> {
+    pub fn new(reads: &[&'a EncodedRead], c: &AssembleConfig) -> Self {
         // Allocate all nodes.
-        let (index, mut nodes) = {
-            let mut index = HashMap::new();
-            let mut nodes = vec![];
-            for node in reads.iter().flat_map(|r| r.nodes.iter()) {
-                let node_index = NodeIndex::new(node.unit, node.cluster);
-                index.entry(node_index).or_insert_with(|| {
-                    nodes.push(DitchNode::new(node.unit, node.cluster));
-                    nodes.len() - 1
-                });
-                let node_index = *index.get(&node_index).unwrap();
-                nodes[node_index].nodes.push(node);
-            }
-            (index, nodes)
-        };
+        let mut index = HashMap::new();
+        let mut nodes = vec![];
+        for node in reads.iter().flat_map(|r| r.nodes.iter()) {
+            let node_index = NodeIndex::new(node.unit, node.cluster);
+            index.entry(node_index).or_insert_with(|| {
+                nodes.push(DitchNode::new(node.unit, node.cluster));
+                nodes.len() - 1
+            });
+            let node_index = *index.get(&node_index).unwrap();
+            nodes[node_index].nodes.push(node);
+        }
+        let mut graph = Self { index, nodes };
         // Append edges.
         for read in reads.iter() {
-            if read.nodes.len() != read.edges.len() + 1 {
-                debug!("{}\t{}\t{}", read.id, read.nodes.len(), read.edges.len());
-            }
-            for (pairs, edge) in read.nodes.windows(2).zip(read.edges.iter()) {
-                let (from, to) = (&pairs[0], &pairs[1]);
-                let from_index = *index.get(&NodeIndex::new(from.unit, from.cluster)).unwrap();
-                let to_index = *index.get(&NodeIndex::new(to.unit, to.cluster)).unwrap();
-                let from_pos = if from.is_forward {
-                    Position::Tail
-                } else {
-                    Position::Head
-                };
-                let to_pos = if to.is_forward {
-                    Position::Head
-                } else {
-                    Position::Tail
-                };
-                let mut dedg = DitchEdge::new(from_pos, from_index, to_pos, to_index);
-                match nodes[from_index].edges.iter_mut().find(|x| x == &&dedg) {
-                    Some(res) => res.push((edge, true)),
-                    None => {
-                        dedg.push((edge, true));
-                        nodes[from_index].edges.push(dedg);
-                    }
+            graph.append_read(read, c);
+            graph.append_tip(read, c);
+        }
+        graph
+    }
+    fn append_tip(&mut self, read: &'a EncodedRead, _c: &AssembleConfig) -> Option<()> {
+        use Position::*;
+        if let Some(first) = read.nodes.first() {
+            let index = *self.index.get(&NodeIndex::new(first.unit, first.cluster))?;
+            let direction = true;
+            let position = if first.is_forward { Head } else { Tail };
+            self.nodes[index]
+                .tips
+                .push(DitchTip::new(&read.leading_gap, position, direction));
+        }
+        if let Some(last) = read.nodes.last() {
+            let index = *self.index.get(&NodeIndex::new(last.unit, last.cluster))?;
+            let direction = true;
+            let position = if last.is_forward { Head } else { Tail };
+            self.nodes[index]
+                .tips
+                .push(DitchTip::new(&read.trailing_gap, position, direction));
+        }
+        Some(())
+    }
+    fn append_read(&mut self, read: &'a EncodedRead, _c: &AssembleConfig) -> Option<()> {
+        for (pairs, edge) in read.nodes.windows(2).zip(read.edges.iter()) {
+            let (from, to) = (&pairs[0], &pairs[1]);
+            let from_index = *self.index.get(&NodeIndex::new(from.unit, from.cluster))?;
+            let to_index = *self.index.get(&NodeIndex::new(to.unit, to.cluster))?;
+            use Position::*;
+            let from_pos = if from.is_forward { Tail } else { Head };
+            let to_pos = if to.is_forward { Head } else { Tail };
+            let mut dedg = DitchEdge::new(from_pos, from_index, to_pos, to_index);
+            match self.nodes[from_index]
+                .edges
+                .iter_mut()
+                .find(|x| x == &&dedg)
+            {
+                Some(res) => res.push((edge, true)),
+                None => {
+                    dedg.push((edge, true));
+                    self.nodes[from_index].edges.push(dedg);
                 }
-                let mut dedg = DitchEdge::new(to_pos, to_index, from_pos, from_index);
-                match nodes[to_index].edges.iter_mut().find(|x| x == &&dedg) {
-                    Some(res) => res.push((edge, false)),
-                    None => {
-                        dedg.push((edge, false));
-                        nodes[to_index].edges.push(dedg);
-                    }
+            }
+            let mut dedg = DitchEdge::new(to_pos, to_index, from_pos, from_index);
+            match self.nodes[to_index].edges.iter_mut().find(|x| x == &&dedg) {
+                Some(res) => res.push((edge, false)),
+                None => {
+                    dedg.push((edge, false));
+                    self.nodes[to_index].edges.push(dedg);
                 }
             }
         }
-        Self { index, nodes }
+        Some(())
     }
+}
+
+impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
     fn enumerate_candidates(&self) -> Vec<(usize, Position)> {
         let mut selected = vec![false; self.nodes.len()];
         let mut primary_candidates: Vec<_> = (0..self.nodes.len())
@@ -696,16 +763,15 @@ impl<'a> DitchGraph<'a, 'a> {
             })
             .collect();
         let (mut node, mut position) = (start, start_position);
-        let mut seq = String::new();
+        let mut seq = self.initial_sequence(start, start_position);
         // Start traveresing.
         let mut unit_names = vec![];
         loop {
             arrived[node] = true;
             // Move forward.
-            let xs: Vec<_> = self.nodes[node].nodes.iter().map(|n| n.seq()).collect();
             let cons = match position {
-                Position::Head => consensus(&xs),
-                Position::Tail => revcmp_str(&consensus(&xs)),
+                Position::Head => self.nodes[node].consensus(),
+                Position::Tail => revcmp_str(&self.nodes[node].consensus()),
             };
             {
                 let direction = match position {
@@ -760,8 +826,12 @@ impl<'a> DitchGraph<'a, 'a> {
                             }
                         })
                         .collect();
-                    let xs: Vec<_> = xs.iter().map(|x| x.as_slice()).collect();
-                    consensus(&xs)
+                    let xs: Vec<_> = xs
+                        .iter()
+                        .map(|x| x.as_slice())
+                        .filter(|x| !x.is_empty())
+                        .collect();
+                    consensus(&xs, 10).into_iter().map(|x| x as char).collect()
                 };
                 (offset, label)
             };
@@ -785,6 +855,7 @@ impl<'a> DitchGraph<'a, 'a> {
             node = next;
             position = next_position;
         }
+        seq += &self.trailing_sequence(node, position);
         let summary = ContigSummary::new(&seqname, &unit_names);
         // Register start and tail node.
         if start == node {
@@ -825,43 +896,88 @@ impl<'a> DitchGraph<'a, 'a> {
         edges.extend(tail_edges);
         (seg, edges, summary)
     }
+    fn initial_sequence(&self, node: usize, position: Position) -> String {
+        let num_edges = self.nodes[node]
+            .edges
+            .iter()
+            .filter(|e| e.from_position == position)
+            .count();
+        if num_edges > 0 {
+            String::new()
+        } else {
+            let mut seq: Vec<_> = self.nodes[node]
+                .tips
+                .iter()
+                .filter(|tip| tip.position == position && !tip.seq.is_empty())
+                .map(|tip| match tip.in_direction {
+                    true => tip.seq.to_vec(),
+                    false => bio_utils::revcmp(tip.seq),
+                })
+                .collect();
+            seq.sort_by_key(|x| x.len());
+            seq.reverse();
+            let result = super::naive_consensus::consensus(&seq);
+            String::from_utf8(result).unwrap()
+        }
+    }
+    fn trailing_sequence(&self, node: usize, position: Position) -> String {
+        let num_edges = self.nodes[node]
+            .edges
+            .iter()
+            .filter(|e| e.from_position == position)
+            .count();
+        if num_edges > 0 {
+            String::new()
+        } else {
+            let mut seq: Vec<_> = self.nodes[node]
+                .tips
+                .iter()
+                .filter(|tip| tip.position == position && !tip.seq.is_empty())
+                .map(|tip| match tip.in_direction {
+                    true => bio_utils::revcmp(tip.seq),
+                    false => tip.seq.to_vec(),
+                })
+                .collect();
+            seq.sort_by_key(|x| x.len());
+            seq.reverse();
+            String::from_utf8(super::naive_consensus::consensus(&seq)).unwrap()
+        }
+    }
 }
 
-fn consensus(xs: &[&[u8]]) -> String {
-    // if xs.len() < 10 {
-    String::from_utf8_lossy(&xs[0]).to_string()
-    // }
-    // let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
-    // use rand_xoshiro::Xoroshiro128StarStar;
-    // use rayon::prelude::*;
-    // let cs: Vec<_> = (0..15u64)
-    //     .into_par_iter()
-    //     .map(|s| {
-    //         use rand::seq::SliceRandom;
-    //         let mut rng: Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(s);
-    //         let mut cs: Vec<_> = xs.to_vec();
-    //         cs.shuffle(&mut rng);
-    //         let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
-    //         let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
-    //         cs.iter()
-    //             .fold(poa_hmm::POA::default(), |x, y| {
-    //                 let res = if x.nodes().len() > node_num_thr {
-    //                     x.add(y, 1., param).remove_node(0.4)
-    //                 } else {
-    //                     x.add(y, 1., param)
-    //                 };
-    //                 res
-    //             })
-    //             .remove_node(0.4)
-    //             .finalize()
-    //             .consensus()
-    //     })
-    //     .collect();
-    // let cs: Vec<_> = cs.iter().map(|cs| cs.as_slice()).collect();
-    // let c = poa_hmm::POA::default()
-    //     .update_thr(&cs, &vec![1.; cs.len()], param, 0.8, 1.5)
-    //     .consensus();
-    // String::from_utf8(c).unwrap()
+pub fn consensus(xs: &[&[u8]], num: usize) -> Vec<u8> {
+    if xs.iter().any(|x| x.is_empty()) || xs.is_empty() {
+        return vec![];
+    }
+    let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
+    use rand_xoshiro::Xoroshiro128StarStar;
+    let cs: Vec<_> = (0..num as u64)
+        .into_par_iter()
+        .map(|s| {
+            use rand::seq::SliceRandom;
+            let mut rng: Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(s);
+            let mut cs: Vec<_> = xs.to_vec();
+            cs.shuffle(&mut rng);
+            let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
+            let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
+            cs.iter()
+                .fold(poa_hmm::POA::default(), |x, y| {
+                    let res = if x.nodes().len() > node_num_thr {
+                        x.add(y, 1., param).remove_node(0.4)
+                    } else {
+                        x.add(y, 1., param)
+                    };
+                    res
+                })
+                .remove_node(0.4)
+                .finalize()
+                .consensus()
+        })
+        .collect();
+    let cs: Vec<_> = cs.iter().map(|cs| cs.as_slice()).collect();
+    poa_hmm::POA::default()
+        .update_thr(&cs, &vec![1.; cs.len()], param, 0.8, 1.5)
+        .consensus()
 }
 
 #[cfg(test)]

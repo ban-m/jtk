@@ -346,6 +346,7 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     }
 }
 
+#[allow(dead_code)]
 fn likelihoods<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     data: &mut Vec<ChunkedUnit>,
     (cluster_num, chain_len): (usize, usize),
@@ -378,6 +379,7 @@ fn likelihoods<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         .sum::<f64>()
 }
 
+#[allow(dead_code)]
 fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;

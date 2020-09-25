@@ -17,8 +17,7 @@ LOG=${2}.log
 STAT=${2}.stat
 THREADS=23
 
-cat ${TARGET} |\
-    jtk entry |\
+jtk entry --input ${TARGET} |\
     jtk select_unit -vv -t ${THREADS} --read_type CLR |\
     jtk encode -vv --threads ${THREADS} |\
     jtk multiplicity_estimation -vv --threads ${THREADS} \
@@ -30,5 +29,5 @@ cat ${TARGET} |\
         --retain_current_clustering |\
     jtk clustering_correction -vv --threads ${THREADS} |\
     jtk global_clustering -vv --threads ${THREADS} |\
-    jtk stats -vv -f ${STAT} |\
-    jtk assemble -t2 -vv --output ${GFA} > ${RESULT}
+    jtk stats -vv -f ${STAT} > ${RESULT}
+cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} > /dev/null
