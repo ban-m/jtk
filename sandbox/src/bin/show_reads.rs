@@ -1,30 +1,30 @@
-use definitions::*;
 use std::collections::HashMap;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    use std::io::BufReader;
     let args: Vec<_> = std::env::args().collect();
-    let ds = BufReader::new(std::fs::File::open(&args[1])?);
-    let ds: DataSet = serde_json::de::from_reader(ds).unwrap();
-    let unit: u64 = args[2].parse().unwrap();
-    let cluster: Option<u64> = args[3].parse().ok();
-    let is_hap_a: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|read| (read.id, if read.name.contains("hapA") { 1 } else { 0 }))
+    let sam: Vec<_> = bio_utils::sam::load_sam_file(&args[1]).unwrap();
+    let reference: HashMap<_, _> = bio_utils::fasta::parse_into_vec(&args[2])
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.id().to_string(), r))
         .collect();
-    for read in ds.encoded_reads.iter() {
-        if read
-            .nodes
-            .iter()
-            .any(|n| n.unit == unit && (Some(n.cluster) == cluster || cluster.is_none()))
-        {
-            let line: Vec<_> = read
-                .nodes
-                .iter()
-                .map(|n| format!("{}-{}", n.unit, n.cluster))
-                .collect();
-            println!("{}\t{}\t{}", read.id, is_hap_a[&read.id], line.join(":"));
+    for record in sam {
+        let seq = record.seq().as_bytes();
+        if seq.len() > 1 && record.pos() < 100 {
+            let cigar = record.cigar();
+            let refr = match reference.get(record.r_name()) {
+                Some(res) => res.seq(),
+                None => {
+                    eprintln!("{}", record.r_name());
+                    continue;
+                }
+            };
+            let (q, o, r) = bio_utils::sam::recover_alignment(&cigar, seq, &refr, record.pos());
+            for ((q, o), r) in q.chunks(150).zip(o.chunks(150)).zip(r.chunks(150)).take(1) {
+                println!("{}", String::from_utf8_lossy(q));
+                println!("{}", String::from_utf8_lossy(o));
+                println!("{}\n", String::from_utf8_lossy(r));
+            }
         }
     }
     Ok(())

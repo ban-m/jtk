@@ -1,5 +1,5 @@
 mod ditch_graph;
-mod pileup;
+pub mod pileup;
 use definitions::*;
 mod naive_consensus;
 use bio_utils::lasttab::LastTAB;
@@ -208,9 +208,8 @@ fn assemble(
                 let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
                 let segment = polish_segment(ds, segment, summary, c);
                 let segment = polish_segment(ds, &segment, summary, c);
-                let segment = polish_segment(ds, &segment, summary, c);
                 let segment = correct_short_indels(ds, &segment, summary, c);
-                polish_segment(ds, &segment, summary, c)
+                segment
             })
             .collect()
     } else {
@@ -225,7 +224,8 @@ fn polish_segment(
     summary: &ContigSummary,
     c: &AssembleConfig,
 ) -> gfa::Segment {
-    let reads = get_reads_in_cluster(ds, summary, c);
+    let reads = get_reads_in_cluster(ds, summary);
+    debug!("Aligning {} reads", reads.len());
     let alignments = match align_reads(segment, &reads, c) {
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
@@ -234,11 +234,7 @@ fn polish_segment(
     gfa::Segment::from(segment.sid.clone(), seq.len(), Some(seq))
 }
 
-fn get_reads_in_cluster<'a>(
-    ds: &'a DataSet,
-    summary: &ContigSummary,
-    _c: &AssembleConfig,
-) -> Vec<&'a RawRead> {
+fn get_reads_in_cluster<'a>(ds: &'a DataSet, summary: &ContigSummary) -> Vec<&'a RawRead> {
     let contained_unit: HashSet<(u64, u64)> = summary
         .summary
         .iter()
@@ -266,7 +262,7 @@ fn correct_short_indels(
     summary: &ContigSummary,
     c: &AssembleConfig,
 ) -> gfa::Segment {
-    let reads = get_reads_in_cluster(ds, summary, c);
+    let reads = get_reads_in_cluster(ds, summary);
     let alignments = match align_reads(segment, &reads, c) {
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
@@ -390,7 +386,7 @@ pub fn invoke_last(
     Ok(alignments)
 }
 
-fn polish_by_chunking(
+pub fn polish_by_chunking(
     alignments: &[LastTAB],
     segment: &gfa::Segment,
     reads: &[&RawRead],
@@ -418,22 +414,27 @@ fn polish_by_chunking(
             }
         }
     }
-    for (_, chunk) in chunks.iter_mut().enumerate().filter(|x| !x.1.is_empty()) {
-        let mut lens: Vec<_> = chunk.iter().map(|seq| seq.len()).collect();
-        lens.sort();
-        let median = lens[lens.len() / 2];
-        lens.sort_by_key(|x| x.max(&median) - x.min(&median));
-        let mad = median.max(lens[lens.len() / 2]) - median.min(lens[lens.len() / 2]);
-        let min = median.max(mad * 10) - mad * 10;
-        let max = median + mad * 10;
-        chunk.retain(|seq| min < seq.len() && seq.len() < max);
-    }
     chunks
-        .par_iter()
+        .into_par_iter()
         .enumerate()
-        .flat_map(|(idx, cs)| {
+        .flat_map(|(idx, mut cs)| {
+            if cs.is_empty() {
+                return vec![];
+            }
+            let mut lens: Vec<_> = cs.iter().map(|seq| seq.len()).collect();
+            lens.sort();
+            // let last = *lens.last().unwrap();
+            let median = lens[lens.len() / 2];
+            lens.sort_by_key(|x| x.max(&median) - x.min(&median));
+            let mad = median.max(lens[lens.len() / 2]) - median.min(lens[lens.len() / 2]);
+            let mad = mad.max(1);
+            let min = median.max(mad * 5) - mad * 5;
+            let max = median + mad * 5;
+            cs.retain(|seq| min < seq.len() && seq.len() < max);
             let template = &segment[idx * len..((idx + 1) * len).min(segment.len())];
-            consensus(template, cs, 10)
+            let cns = consensus(template, &cs, 10);
+            // debug!("CNS\t{}\t{}\t{}\t{}\t{}", idx, cns.len(), median, max, last);
+            cns
         })
         .collect()
 }
@@ -532,7 +533,6 @@ pub fn split_reads(
     let mut target = (ref_start / len + 1) * len;
     ops.reverse();
     let mut chunk_position = vec![query_start];
-    // let mut scores = vec![0];
     let (query_total, refr_total) = ops.iter().fold((q_pos, r_pos), |(q, r), &x| match x {
         Op::Match(l) => (q + l, r + l),
         Op::Del(l) => (q, r + l),
@@ -540,7 +540,6 @@ pub fn split_reads(
     });
     loop {
         // Pop until target.
-        // let mut score = 0;
         let last_op = {
             loop {
                 match ops.pop() {
@@ -570,33 +569,21 @@ pub fn split_reads(
             match last_op {
                 Op::Del(_) => {
                     ops.push(Op::Del(overflow));
-                    // Maybe bug.
-                    // score += 2 * overflow as i64
                     r_pos -= overflow;
                 }
                 Op::Match(_) => {
                     ops.push(Op::Match(overflow));
                     r_pos -= overflow;
                     q_pos -= overflow;
-                    // score -= overflow as i64;
                 }
                 _ => unreachable!(),
             }
         }
         chunk_position.push(q_pos);
-        // scores.push(score);
         // Move to next iteration
         let rest = refr_total - r_pos;
         let query_rest = query_total - q_pos;
         if rest < len && query_rest > 0 {
-            // let score = ops
-            //     .iter()
-            //     .map(|op| match op {
-            //         Op::Ins(l) | Op::Del(l) => -2 * *l as i64,
-            //         Op::Match(l) => *l as i64,
-            //     })
-            //     .sum::<i64>();
-            // scores.push(score);
             chunk_position.push(query_total);
             break;
         } else if rest < len && query_rest == 0 {
@@ -605,14 +592,10 @@ pub fn split_reads(
             target += len;
         }
     }
-    // assert_eq!(scores.len(), chunk_position.len());
     let offset = ref_start / len;
     chunk_position
         .windows(2)
-        // .zip(scores.windows(2))
         .enumerate()
-        // .filter(|(_, (_, s))| s[1] > 0)
-        //.map(|(idx, (w, _))| (idx + offset, read[w[0]..w[1]].to_vec()))
         .map(|(idx, w)| (idx + offset, read[w[0]..w[1]].to_vec()))
         .collect()
 }

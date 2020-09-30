@@ -1,6 +1,11 @@
 #!/bin/bash
 data=/grid/yoshimura/HG002/PacBio_CCS_15kb_20kb_chemistry2/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.fasta
-qsub -o ./logfiles/real_read.out -e ./logfiles/real_read.log\
+qsub -o ./logfiles/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.out -j y\
      ./script/pipeline.sh \
      ${data} \
-     ${PWD}/result/HG002_HLA
+     ${PWD}/result/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
+data=/data/hacone/MHC-KIR/split/Ashkenazi_Son.MHC.fa
+qsub -o ./logfiles/Ashkenazi_Son.MHC.out -j y\
+     ./script/pipeline_clr.sh \
+     ${data} \
+     ${PWD}/result/Ashkenazi_Son.MHC

@@ -2,6 +2,7 @@ use bio_utils::lasttab;
 use bio_utils::lasttab::LastTAB;
 use rayon::prelude::*;
 use std::collections::HashMap;
+const MARGIN: usize = 100;
 pub trait Encode {
     fn encode(self, threads: usize) -> Self;
 }
@@ -273,7 +274,16 @@ pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, u
     assert!(!alns.is_empty());
     let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
     dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
+    // for aln in alns.iter() {
+    //     println!("{}", aln);
+    // }
     let chain = chaining(&dag_nodes, refr.len());
+    // println!("TO");
+    // for aln in chain.iter() {
+    //     if let DAGNode::Aln(aln) = aln {
+    //         println!("{}", aln);
+    //     }
+    // }
     let (query_start, refr_start) = {
         let first_chain = chain
             .iter()
@@ -300,8 +310,21 @@ pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, u
             DAGNode::Aln(x) => (x.seq2_start(), x.seq1_start()),
             _ => panic!(),
         };
-        let (query, refr) = (&read[q_pos..q_target], &refr[r_pos..r_target]);
-        cigar.extend(alignment(query, refr, 1, -1, -1));
+        assert!(q_pos <= q_target);
+        if r_pos <= r_target {
+            // Usual chaining
+            let (query, refr) = (&read[q_pos..q_target], &refr[r_pos..r_target]);
+            cigar.extend(alignment(query, refr, 1, -1, -1));
+        } else {
+            // Step back a little bit.
+            // trace!("Step back {} bases", r_pos - r_target);
+            let query_pop_len = pop_cigar_by(&mut cigar, r_pos - r_target);
+            // println!(
+            //     "Insert {} base from the query.",
+            //     q_target - q_pos + query_pop_len
+            // );
+            cigar.push(Op::Ins(q_target - q_pos + query_pop_len));
+        }
         if let DAGNode::Aln(x) = node {
             cigar.extend(convert_aln_to_cigar(x));
             r_pos = x.seq1_start() + x.seq1_matchlen();
@@ -309,6 +332,38 @@ pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, u
         }
     }
     (query_start, refr_start, cigar)
+}
+
+fn pop_cigar_by(cigar: &mut Vec<Op>, ref_len: usize) -> usize {
+    assert!(ref_len > 0);
+    let mut query_pop_len = 0;
+    let mut refr_pop_len = 0;
+    let mut op = None;
+    while refr_pop_len < ref_len {
+        op = cigar.pop();
+        match op {
+            Some(Op::Del(l)) => refr_pop_len += l,
+            Some(Op::Ins(l)) => query_pop_len += l,
+            Some(Op::Match(l)) => {
+                refr_pop_len += l;
+                query_pop_len += l;
+            }
+            None => panic!("{}", line!()),
+        }
+    }
+    let overflow = refr_pop_len - ref_len;
+    if overflow > 0 {
+        match op {
+            Some(Op::Del(_)) => cigar.push(Op::Del(overflow)),
+            Some(Op::Match(_)) => {
+                assert!(query_pop_len >= overflow);
+                query_pop_len -= overflow;
+                cigar.push(Op::Match(overflow))
+            }
+            _ => panic!("{}", line!()),
+        }
+    }
+    query_pop_len
 }
 
 pub fn recover(query: &[u8], refr: &[u8], ops: &[Op]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
@@ -376,14 +431,6 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
         })
         .collect();
     let order = topological_sort(&edges);
-    // for &i in order.iter() {
-    //     match nodes[i] {
-    //         DAGNode::Aln(aln) => debug!("{}", aln),
-    //         DAGNode::Start => debug!("{}\tstart", i),
-    //         _ => debug!("{}\tend", i),
-    //     }
-    // }
-    // debug!("Chaining...");
     // By initializing by 0, we assume that we can start anywhere...
     let (mut dp, mut parent) = (vec![-1; nodes.len()], vec![0; nodes.len()]);
     for i in order {
@@ -423,6 +470,9 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
 }
 
 // Compute edge score between from u to v. If no edge possible, return None.
+// Caution: It accepts `slippy` alignments, in other words,
+// sometimes an edge would be drawn even if aln1's end position is larger than
+// aln2's start position.
 fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, _unit_len: usize) -> Option<i64> {
     match u {
         DAGNode::End => None,
@@ -431,7 +481,7 @@ fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, _unit_len: usize) -> Optio
             DAGNode::End => Some(0),
             DAGNode::Start => None,
             DAGNode::Aln(aln2) => {
-                let u_refr_end = aln1.seq1_start() + aln1.seq1_matchlen();
+                let u_refr_end = (aln1.seq1_start() + aln1.seq1_matchlen()).max(MARGIN) - MARGIN;
                 let u_query_end = aln1.seq2_start() + aln1.seq2_matchlen();
                 let v_refr_start = aln2.seq1_start();
                 let v_query_start = aln2.seq2_start();
@@ -477,8 +527,6 @@ fn alignment(query: &[u8], refr: &[u8], mat: i64, mism: i64, gap: i64) -> Vec<Op
     }
     for (i, row) in dp.iter_mut().enumerate() {
         row[0] = i as i64 * gap;
-        // for i in 0..=refr.len() {
-        // dp[i][0] = i as i64 * gap;
     }
     for (i, r) in refr.iter().enumerate() {
         for (j, q) in query.iter().enumerate() {
@@ -553,22 +601,6 @@ fn convert_aln_to_cigar(aln: &lasttab::LastTAB) -> Vec<Op> {
             lasttab::Op::Match(l) => Op::Match(l),
         })
         .collect()
-    // let mut cigar = if aln.seq1_start_from_forward() != 0 {
-    //     vec![Op::Del(aln.seq1_start_from_forward())]
-    // } else {
-    //     vec![]
-    // };
-    // cigar.extend(aln.alignment().into_iter().map(|op| match op {
-    //     lasttab::Op::Seq1In(l) => Op::Ins(l),
-    //     lasttab::Op::Seq2In(l) => Op::Del(l),
-    //     lasttab::Op::Match(l) => Op::Match(l),
-    // }));
-    // let reflen = consumed_reference_length(&cigar);
-    // assert!(reflen <= aln.seq1_len(), "{} > {}", reflen, aln.seq1_len());
-    // if aln.seq1_len() > reflen {
-    //     cigar.push(Op::Del(aln.seq1_len() - reflen))
-    // }
-    // cigar
 }
 
 fn consumed_reference_length(cigar: &[Op]) -> usize {

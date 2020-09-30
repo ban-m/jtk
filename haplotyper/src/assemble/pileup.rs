@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use bio_utils::lasttab::LastTAB;
 use std::collections::HashMap;
 
@@ -15,45 +16,6 @@ pub struct Pileups<'a> {
     deletions: Vec<u32>,
     length: usize,
 }
-
-// pub struct PileupIterator<'a> {
-//     inner: &'a Pileups,
-//     position: usize,
-// }
-
-// pub struct Pileup<'a> {
-//     inner: &'a Pileups,
-//     position: usize,
-// }
-
-// impl<'a> std::iter::Iterator for PileupIterator<'a> {
-//     type Item = Pileup<'a>;
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.position < self.inner.length {
-//             self.position += 1;
-//             Some(Pileup {
-//                 inner: self.inner,
-//                 position: self.position - 1,
-//             })
-//         } else {
-//             None
-//         }
-//     }
-// }
-// impl<'a> Pileup<'a> {
-//     pub fn generate(&self, _seq: &mut Vec<u8>) {
-
-//     }
-// }
-
-// impl Pileups {
-//     pub fn iter(&self) -> PileupIterator {
-//         PileupIterator {
-//             inner: &self,
-//             position: 0,
-//         }
-//     }
-// }
 
 use definitions::RawRead;
 impl<'a> Pileups<'a> {
@@ -128,27 +90,34 @@ impl<'a> Pileups<'a> {
                 .map(|x| x.iter().sum::<u32>())
                 .sum::<u32>();
             let coverage = total_coverage / (end - start) as u32;
-            let base_count = self.matches[start..end]
-                .iter()
-                .map(|x| x[BASE_TABLE[base as usize]])
-                .sum::<u32>()
-                + self.insertions[start..=end]
-                    .iter()
-                    .map(|x| x[BASE_TABLE[base as usize]])
-                    .sum::<u32>();
-            let rep_num = (base_count + coverage / 2) / coverage;
-            // for _ in start..end.max(start + rep_num as usize) {
+            // let base_count = self.matches[start..end]
+            //     .iter()
+            //     .map(|x| x[BASE_TABLE[base as usize]])
+            //     .sum::<u32>()
+            //     + self.insertions[start..=end]
+            //         .iter()
+            //         .map(|x| x[BASE_TABLE[base as usize]])
+            //         .sum::<u32>();
             for i in start..end {
                 debug!(
                     "DUMP\t{}\t{}\t{:?}\t{:?}\t{}",
                     i, base as char, self.matches[i], self.insertions[i], self.deletions[i]
                 );
             }
-            debug!(
-                "DET\t{}\t{}\t{}\t{}\t{}\t{}",
-                base_count, coverage, total_coverage, start, end, rep_num
-            );
+            let ins = self.insertions[start..=end]
+                .iter()
+                .map(|x| x[BASE_TABLE[base as usize]])
+                .sum::<u32>();
+            let rep_num = if ins > coverage / 2 { 1 } else { 0 };
+            //let rep_num = (base_count + coverage / 2) / coverage;
+            // debug!(
+            //     "DET\t{}\t{}\t{}\t{}\t{}\t{}",
+            //     base_count, coverage, total_coverage, start, end, rep_num
+            // );
             for _ in start..end {
+                seq.push(base);
+            }
+            for _ in 0..rep_num {
                 seq.push(base);
             }
             pos = end;
