@@ -1,13 +1,12 @@
-use std::collections::HashMap;
 fn main() {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
     let sam: Vec<_> = bio_utils::sam::load_sam_file(&args[1]).unwrap();
-    let reference: HashMap<_, _> = bio_utils::fasta::parse_into_vec(&args[2])
-        .unwrap()
-        .into_iter()
-        .map(|r| (r.id().to_string(), r))
-        .collect();
+    // let _reference: HashMap<_, _> = bio_utils::fasta::parse_into_vec(&args[2])
+    //     .unwrap()
+    //     .into_iter()
+    //     .map(|r| (r.id().to_string(), r))
+    //     .collect();
     println!("RefName\tMat\tMism\tIns\tDel");
     for record in sam {
         let (mut ins, mut del, mut mat, mut mism) = (0, 0, 0, 0);
@@ -49,7 +48,15 @@ fn main() {
             }
         }
         // println!("{}\t{}", max_ins, max_del);
-        println!("{}\t{}\t{}\t{}\t{}", record.r_name(), mat, mism, ins, del);
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            record.r_name(),
+            record.q_name(),
+            mat,
+            mism,
+            ins,
+            del
+        );
         // let seq = record.seq().as_bytes();
         // if seq.len() > 1 {
         //     let cigar = record.cigar();

@@ -11,7 +11,10 @@ fn main() {
     let is_hap_a: HashMap<_, _> = ds
         .raw_reads
         .iter()
-        .map(|read| (read.id, if read.name.contains("hapA") { 1 } else { 0 }))
+        .map(|read| {
+            let desc = if read.desc.contains("252v2") { 1 } else { 0 };
+            (read.id, desc)
+        })
         .collect();
     for read in ds.encoded_reads.iter().filter(|r| r.nodes.len() >= 4) {
         let cluster = is_hap_a[&read.id];
@@ -23,20 +26,31 @@ fn main() {
                 .or_default() += 1;
         }
     }
+    let cluster_num: HashMap<_, _> = ds
+        .selected_chunks
+        .iter()
+        .map(|unit| (unit.id, unit.cluster_num))
+        .collect();
     let mut count: Vec<_> = count.into_iter().collect();
     count.sort_by_key(|x| x.0);
     for (slot, result) in count {
-        let mut line = vec![];
-        for ans in 0..=1 {
-            for pred in 0..=1 {
-                match result.get(&(ans, pred)) {
-                    Some(count) => line.push(format!("{}", count)),
-                    None => line.push("0".to_string()),
-                }
+        // let mut line = vec![];
+        let cluster_num = cluster_num[&slot] as u64;
+        println!("UNIT\t{}\t{}", slot, cluster_num);
+        for ans in 0..cluster_num {
+            for pred in 0..cluster_num {
+                let count = match result.get(&(ans, pred)) {
+                    Some(count) => count,
+                    None => &0,
+                };
+                print!("\t{}", count);
             }
+            println!();
         }
-        let total = result.values().sum::<usize>();
-        println!("UNIT\t{}\t{}\t{}", slot, line.join("\t"), total);
+        println!();
+        // let total = result.values().sum::<usize>();
+        // let line = line.join("\t");
+        // println!("UNIT\t{}\t{}\t{}\t{}", slot, line, total, cluster_num);
     }
     let mut count = HashMap::new();
     for read in ds.encoded_reads.iter() {

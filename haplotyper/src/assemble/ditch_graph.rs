@@ -4,7 +4,8 @@ use definitions::{Edge, EncodedRead};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
-
+const DRAFT_COVERAGE: usize = 20;
+const DRAFT_REP_NUM: usize = 7;
 /// Ditch Graph
 /// Each unit of the dataset consists of a pair of node, named
 /// tail-node and head-node, and it is represented as a 'node'in a
@@ -107,13 +108,14 @@ impl<'a, 'b, 'c> DitchNode<'a, 'b, 'c> {
         }
     }
     fn consensus(&self) -> String {
-        let result = self.consensus_with(100, 10);
+        let result = self.consensus_with(100, DRAFT_REP_NUM);
         String::from_utf8(result).unwrap()
     }
     fn consensus_with(&self, len: usize, num: usize) -> Vec<u8> {
         let chunks: Vec<_> = self
             .nodes
             .iter()
+            .take(DRAFT_COVERAGE)
             .map(|n| crate::local_clustering::node_to_subchunks(n, len))
             .collect();
         let max_pos = chunks
@@ -296,7 +298,7 @@ impl std::fmt::Display for ContigSummary {
             .iter()
             .map(|n| format!("{}-{}", n.unit, n.cluster))
             .collect();
-        writeln!(f, "{}\t{}", self.id, line.join(":"))
+        write!(f, "{}\t{}", self.id, line.join(":"))
     }
 }
 
@@ -587,9 +589,9 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
                 .filter(|&x| cluster.find(x).unwrap() == node)
                 .count();
             if count < thr {
-                for component in 0..self.nodes.len() {
+                for (component, to_remove) in to_remove.iter_mut().enumerate() {
                     if cluster.find(component).unwrap() == node {
-                        to_remove[component] = true;
+                        *to_remove = true;
                     }
                 }
             }
@@ -815,23 +817,35 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
                 let label = if offset <= 0 {
                     String::new()
                 } else {
-                    let xs: Vec<_> = selected_edge
+                    selected_edge
                         .edges
                         .iter()
-                        .map(|&(ref e, is_forward)| {
+                        .max_by_key(|x| x.0.label().len())
+                        .and_then(|&(ref e, is_forward)| {
                             if is_forward {
-                                e.label().to_vec()
+                                String::from_utf8(e.label().to_vec()).ok()
                             } else {
-                                bio_utils::revcmp(e.label())
+                                String::from_utf8(bio_utils::revcmp(e.label())).ok()
                             }
                         })
-                        .collect();
-                    let xs: Vec<_> = xs
-                        .iter()
-                        .map(|x| x.as_slice())
-                        .filter(|x| !x.is_empty())
-                        .collect();
-                    consensus(&xs, 10).into_iter().map(|x| x as char).collect()
+                        .unwrap_or_else(String::new)
+                    // let xs: Vec<_> = selected_edge
+                    //     .edges
+                    //     .iter()
+                    //     .map(|&(ref e, is_forward)| {
+                    //         if is_forward {
+                    //             e.label().to_vec()
+                    //         } else {
+                    //             bio_utils::revcmp(e.label())
+                    //         }
+                    //     })
+                    //     .collect();
+                    // let xs: Vec<_> = xs
+                    //     .iter()
+                    //     .map(|x| x.as_slice())
+                    //     .filter(|x| !x.is_empty())
+                    //     .collect();
+                    // consensus(&xs, 10).into_iter().map(|x| x as char).collect()
                 };
                 (offset, label)
             };
@@ -905,7 +919,19 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         if num_edges > 0 {
             String::new()
         } else {
-            let mut seq: Vec<_> = self.nodes[node]
+            // let mut seq: Vec<_> = self.nodes[node]
+            //     .tips
+            //     .iter()
+            //     .filter(|tip| tip.position == position && !tip.seq.is_empty())
+            //     .map(|tip| match tip.in_direction {
+            //         true => tip.seq.to_vec(),
+            //         false => bio_utils::revcmp(tip.seq),
+            //     })
+            //     .collect();
+            // seq.sort_by_key(|x| x.len());
+            // seq.reverse();
+            // let result = super::naive_consensus::consensus(&seq);
+            self.nodes[node]
                 .tips
                 .iter()
                 .filter(|tip| tip.position == position && !tip.seq.is_empty())
@@ -913,11 +939,10 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
                     true => tip.seq.to_vec(),
                     false => bio_utils::revcmp(tip.seq),
                 })
-                .collect();
-            seq.sort_by_key(|x| x.len());
-            seq.reverse();
-            let result = super::naive_consensus::consensus(&seq);
-            String::from_utf8(result).unwrap()
+                .max_by_key(|x| x.len())
+                .and_then(|x| String::from_utf8(x).ok())
+                .unwrap_or_else(String::new)
+            //String::from_utf8(result).unwrap()
         }
     }
     fn trailing_sequence(&self, node: usize, position: Position) -> String {
@@ -929,7 +954,19 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         if num_edges > 0 {
             String::new()
         } else {
-            let mut seq: Vec<_> = self.nodes[node]
+            // let mut seq: Vec<_> = self.nodes[node]
+            //     .tips
+            //     .iter()
+            //     .filter(|tip| tip.position == position && !tip.seq.is_empty())
+            //     .map(|tip| match tip.in_direction {
+            //         true => bio_utils::revcmp(tip.seq),
+            //         false => tip.seq.to_vec(),
+            //     })
+            //     .collect();
+            // seq.sort_by_key(|x| x.len());
+            // seq.reverse();
+            // String::from_utf8(super::naive_consensus::consensus(&seq)).unwrap()
+            self.nodes[node]
                 .tips
                 .iter()
                 .filter(|tip| tip.position == position && !tip.seq.is_empty())
@@ -937,17 +974,18 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
                     true => bio_utils::revcmp(tip.seq),
                     false => tip.seq.to_vec(),
                 })
-                .collect();
-            seq.sort_by_key(|x| x.len());
-            seq.reverse();
-            String::from_utf8(super::naive_consensus::consensus(&seq)).unwrap()
+                .max_by_key(|x| x.len())
+                .and_then(|x| String::from_utf8(x).ok())
+                .unwrap_or_else(String::new)
         }
     }
 }
 
 pub fn consensus(xs: &[&[u8]], num: usize) -> Vec<u8> {
-    if xs.iter().any(|x| x.is_empty()) || xs.is_empty() {
+    if xs.is_empty() {
         return vec![];
+    } else if xs.iter().map(|xs| xs.len()).max().unwrap() < 10 {
+        return xs.iter().max_by_key(|x| x.len()).unwrap().to_vec();
     }
     let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
     use rand_xoshiro::Xoroshiro128StarStar;

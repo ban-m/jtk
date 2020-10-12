@@ -1,7 +1,7 @@
 mod ditch_graph;
 pub mod pileup;
 use definitions::*;
-mod naive_consensus;
+// mod naive_consensus;
 use bio_utils::lasttab::LastTAB;
 use ditch_graph::*;
 use gfa::GFA;
@@ -51,11 +51,11 @@ impl std::default::Default for AssembleConfig {
     }
 }
 impl AssembleConfig {
-    pub fn new(threads: usize, window_size: usize) -> Self {
+    pub fn new(threads: usize, window_size: usize, to_polish: bool) -> Self {
         Self {
             window_size,
             threads,
-            to_polish: true,
+            to_polish,
         }
     }
 }
@@ -79,7 +79,7 @@ impl Assemble for DataSet {
         cluster_and_num.sort_by_key(|x| x.1);
         cluster_and_num.reverse();
         let records: Vec<_> = cluster_and_num
-            .into_iter()
+            .into_par_iter()
             .filter(|&(cl, num)| {
                 if num < 10 {
                     debug!("Detected small group:{}(cluster:{})", num, cl);
@@ -163,7 +163,7 @@ impl Assemble for DataSet {
                     })
                     .collect();
                 for summary in summaries.iter() {
-                    debug!("{}", summary);
+                    debug!("SUMMARY\t{}", summary);
                 }
                 Graph { nodes, edges }
             })
@@ -208,8 +208,7 @@ fn assemble(
                 let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
                 let segment = polish_segment(ds, segment, summary, c);
                 let segment = polish_segment(ds, &segment, summary, c);
-                let segment = correct_short_indels(ds, &segment, summary, c);
-                segment
+                correct_short_indels(ds, &segment, summary, c)
             })
             .collect()
     } else {
@@ -397,7 +396,10 @@ pub fn polish_by_chunking(
     let segment = segment.sequence.as_ref().unwrap().as_bytes();
     let alignments: HashMap<_, Vec<_>> = {
         let mut result: HashMap<_, Vec<_>> = HashMap::new();
-        for aln in alignments {
+        for aln in alignments
+            .into_iter()
+            .filter(|aln| aln.seq1_matchlen() > crate::encode::MARGIN)
+        {
             result
                 .entry(aln.seq2_name().to_string())
                 .or_default()
@@ -432,9 +434,9 @@ pub fn polish_by_chunking(
             let max = median + mad * 5;
             cs.retain(|seq| min < seq.len() && seq.len() < max);
             let template = &segment[idx * len..((idx + 1) * len).min(segment.len())];
-            let cns = consensus(template, &cs, 10);
+            consensus(template, &cs, 10)
             // debug!("CNS\t{}\t{}\t{}\t{}\t{}", idx, cns.len(), median, max, last);
-            cns
+            //cns
         })
         .collect()
 }
@@ -442,6 +444,8 @@ pub fn polish_by_chunking(
 fn consensus(_template: &[u8], xs: &[Vec<u8>], num: usize) -> Vec<u8> {
     if xs.is_empty() {
         return vec![];
+    } else if xs.iter().map(|xs| xs.len()).max().unwrap() < 10 {
+        return xs.iter().max_by_key(|x| x.len()).unwrap().to_vec();
     }
     let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
     use rand_xoshiro::Xoroshiro128StarStar;
@@ -541,6 +545,7 @@ pub fn split_reads(
     loop {
         // Pop until target.
         let last_op = {
+            let rest = refr_total - r_pos;
             loop {
                 match ops.pop() {
                     Some(Op::Del(l)) => {
@@ -559,7 +564,13 @@ pub fn split_reads(
                             break Op::Match(l);
                         }
                     }
-                    None => unreachable!(),
+                    None => {
+                        debug!(
+                            "ERR\t{}\t{}\t{}\t{}\t{}\t{}",
+                            query_total, refr_total, q_pos, r_pos, target, rest
+                        );
+                        unreachable!()
+                    }
                 }
             }
         };

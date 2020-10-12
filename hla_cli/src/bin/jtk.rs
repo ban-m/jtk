@@ -832,7 +832,7 @@ fn multiplicity_estimation(
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = MultiplicityEstimationConfig::new(multiplicity, seed, path);
+    let config = MultiplicityEstimationConfig::new(threads, multiplicity, seed, path);
     Ok(dataset.estimate_multiplicity(&config))
 }
 
@@ -958,7 +958,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
     }
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
-    let config = AssembleConfig::new(threads, window_size);
+    let config = AssembleConfig::new(threads, window_size, true);
     let gfa = dataset.assemble_as_gfa(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

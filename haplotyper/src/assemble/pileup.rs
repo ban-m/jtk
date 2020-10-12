@@ -98,12 +98,12 @@ impl<'a> Pileups<'a> {
             //         .iter()
             //         .map(|x| x[BASE_TABLE[base as usize]])
             //         .sum::<u32>();
-            for i in start..end {
-                debug!(
-                    "DUMP\t{}\t{}\t{:?}\t{:?}\t{}",
-                    i, base as char, self.matches[i], self.insertions[i], self.deletions[i]
-                );
-            }
+            // for i in start..end {
+            //     debug!(
+            //         "DUMP\t{}\t{}\t{:?}\t{:?}\t{}",
+            //         i, base as char, self.matches[i], self.insertions[i], self.deletions[i]
+            //     );
+            // }
             let ins = self.insertions[start..=end]
                 .iter()
                 .map(|x| x[BASE_TABLE[base as usize]])

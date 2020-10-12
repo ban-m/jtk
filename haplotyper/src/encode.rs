@@ -2,7 +2,7 @@ use bio_utils::lasttab;
 use bio_utils::lasttab::LastTAB;
 use rayon::prelude::*;
 use std::collections::HashMap;
-const MARGIN: usize = 100;
+pub const MARGIN: usize = 100;
 pub trait Encode {
     fn encode(self, threads: usize) -> Self;
 }
@@ -120,7 +120,7 @@ fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>
 use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
 pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option<EncodedRead> {
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
-    for &aln in alignments {
+    for &aln in alignments.iter().filter(|aln| aln.seq1_matchlen() > MARGIN) {
         let r_name = aln.seq1_name().to_string();
         let q_direction = aln.seq2_direction().is_forward();
         buckets.entry((r_name, q_direction)).or_default().push(aln);
@@ -243,9 +243,17 @@ fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> 
             DAGNode::Aln(x) => (x.seq2_start(), x.seq1_start()),
             _ => panic!(),
         };
-        // Make them as parameters
-        let (query, refr) = (&read[q_pos..q_target], &unit.seq()[r_pos..r_target]);
-        cigar.extend(alignment(query, refr, 1, -1, -1));
+        assert!(q_pos <= q_target);
+        if r_pos <= r_target {
+            // Usual chaining
+            let query = &read[q_pos..q_target];
+            let refr = &unit.seq()[r_pos..r_target];
+            cigar.extend(alignment(query, refr, 1, -1, -1));
+        } else {
+            // Step back.
+            let query_pop_len = pop_cigar_by(&mut cigar, r_pos - r_target);
+            cigar.push(Op::Ins(q_target - q_pos + query_pop_len));
+        }
         if let DAGNode::Aln(x) = node {
             cigar.extend(convert_aln_to_cigar(x));
             r_pos = x.seq1_start() + x.seq1_matchlen();
@@ -274,16 +282,7 @@ pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, u
     assert!(!alns.is_empty());
     let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
     dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
-    // for aln in alns.iter() {
-    //     println!("{}", aln);
-    // }
     let chain = chaining(&dag_nodes, refr.len());
-    // println!("TO");
-    // for aln in chain.iter() {
-    //     if let DAGNode::Aln(aln) = aln {
-    //         println!("{}", aln);
-    //     }
-    // }
     let (query_start, refr_start) = {
         let first_chain = chain
             .iter()
@@ -317,12 +316,7 @@ pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, u
             cigar.extend(alignment(query, refr, 1, -1, -1));
         } else {
             // Step back a little bit.
-            // trace!("Step back {} bases", r_pos - r_target);
             let query_pop_len = pop_cigar_by(&mut cigar, r_pos - r_target);
-            // println!(
-            //     "Insert {} base from the query.",
-            //     q_target - q_pos + query_pop_len
-            // );
             cigar.push(Op::Ins(q_target - q_pos + query_pop_len));
         }
         if let DAGNode::Aln(x) = node {
@@ -348,7 +342,7 @@ fn pop_cigar_by(cigar: &mut Vec<Op>, ref_len: usize) -> usize {
                 refr_pop_len += l;
                 query_pop_len += l;
             }
-            None => panic!("{}", line!()),
+            None => panic!("{}\t{}\t{}", ref_len, refr_pop_len, line!()),
         }
     }
     let overflow = refr_pop_len - ref_len;
@@ -459,13 +453,6 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
     }
     path.push(&nodes[current_node]);
     path.reverse();
-    // for c in path.iter() {
-    //     match c {
-    //         DAGNode::Aln(aln) => debug!("{}", aln),
-    //         DAGNode::Start => debug!("start"),
-    //         _ => debug!("end"),
-    //     }
-    // }
     path
 }
 

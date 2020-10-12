@@ -89,7 +89,7 @@ impl UnitConfig {
 }
 
 pub trait DetermineUnit {
-    fn select_chunks_freq(self, config: &UnitConfig) -> Self;
+    // fn select_chunks_freq(self, config: &UnitConfig) -> Self;
     fn select_chunks(self, config: &UnitConfig) -> Self;
 }
 
@@ -99,13 +99,14 @@ impl DetermineUnit for definitions::DataSet {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
-        let mut units: Vec<_> = if config.read_type == ReadType::CCS {
-            reads
+        let units: Vec<_> = if config.read_type == ReadType::CCS {
+            let units: Vec<_> = reads
                 .iter()
                 .flat_map(|r| split_into(r, config))
                 .take(config.unit_num)
                 .map(|e| e.to_vec())
-                .collect()
+                .collect();
+            remove_overlapping_units(units, config)
         } else {
             let clr_config = {
                 let mut temp = config.clone();
@@ -135,66 +136,16 @@ impl DetermineUnit for definitions::DataSet {
                 .collect();
             self = self.encode(config.threads);
             self = self.polish_unit(&polish_config);
-            self = self.encode(config.threads);
-            self = self.polish_unit(&polish_config);
             debug!("Polished.");
-            self.selected_chunks
-                .iter()
-                .filter(|e| e.seq.len() > config.chunk_len)
-                .map(|e| e.seq.as_bytes()[..config.chunk_len].to_vec())
-                .collect()
+            let mut units = vec![];
+            while let Some(unit) = self.selected_chunks.pop() {
+                if unit.seq.len() > config.chunk_len {
+                    let Unit { seq, .. } = unit;
+                    units.push(seq.into_bytes());
+                }
+            }
+            remove_overlapping_units(units, &config)
         };
-        debug!("Collected {} units", units.len());
-        let k = config.k;
-        let kmer_vec: Vec<(Vec<_>, Vec<_>)> = units
-            .par_iter()
-            .map(|unit| {
-                let mut forward_finger = vec![false; 4usize.pow(k as u32)];
-                for kmer in unit.windows(k) {
-                    forward_finger[to_index(kmer)] = true;
-                }
-                let mut reverse_finger = vec![false; 4usize.pow(k as u32)];
-                let unit = bio_utils::revcmp(unit);
-                for kmer in unit.windows(k) {
-                    reverse_finger[to_index(kmer)] = true;
-                }
-                (forward_finger, reverse_finger)
-            })
-            .collect();
-        let edges: Vec<Vec<bool>> = (0..units.len())
-            .into_par_iter()
-            .map(|i| {
-                let kmer = &kmer_vec[i].0;
-                (0..i)
-                    .into_par_iter()
-                    .map(|j| {
-                        let &(ref f, ref r) = &kmer_vec[j];
-                        if compute_jaccard(kmer, f, config.jaccard_thr) {
-                            let aln = alignment(&units[i], &units[j]);
-                            aln > config.alignment_thr
-                        } else if compute_jaccard(kmer, r, config.jaccard_thr) {
-                            let rev = bio_utils::revcmp(&units[j]);
-                            let aln = alignment(&units[i], &rev);
-                            aln > config.alignment_thr
-                        } else {
-                            false
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
-        let num_edges = edges
-            .iter()
-            .map(|e| e.iter().filter(|&&b| b).count())
-            .sum::<usize>();
-        debug!("Graph constructed. {} edges.", num_edges);
-        let to_be_removed = approx_vertex_cover(edges, units.len());
-        let mut idx = 0;
-        units.retain(|_| {
-            idx += 1;
-            !to_be_removed[idx - 1]
-        });
-        debug!("Resulting {} units.", units.len());
         self.selected_chunks = units
             .into_iter()
             .enumerate()
@@ -210,15 +161,14 @@ impl DetermineUnit for definitions::DataSet {
             .collect();
         self
     }
-    fn select_chunks_freq(mut self, config: &UnitConfig) -> Self {
-        let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
-        reads.sort_by_key(|r| r.seq().len());
-        reads.reverse();
-        let mut units: Vec<Vec<u8>> = vec![];
-        let mut forward_kmer_vec: Vec<Vec<bool>> = vec![];
-        let k = config.k;
-        let mut hits = std::collections::VecDeque::new();
-        for unit in reads.iter().flat_map(|r| split_into(r, config)) {
+}
+
+fn remove_overlapping_units(mut units: Vec<Vec<u8>>, config: &UnitConfig) -> Vec<Vec<u8>> {
+    debug!("Collected {} units", units.len());
+    let k = config.k;
+    let kmer_vec: Vec<(Vec<_>, Vec<_>)> = units
+        .par_iter()
+        .map(|unit| {
             let mut forward_finger = vec![false; 4usize.pow(k as u32)];
             for kmer in unit.windows(k) {
                 forward_finger[to_index(kmer)] = true;
@@ -228,44 +178,44 @@ impl DetermineUnit for definitions::DataSet {
             for kmer in unit.windows(k) {
                 reverse_finger[to_index(kmer)] = true;
             }
-            let is_duplicate =
-                units
-                    .par_iter()
-                    .zip(forward_kmer_vec.par_iter())
-                    .any(|(_unit2, finger)| {
-                        let thr = config.jaccard_thr;
-                        compute_jaccard(finger, &forward_finger, thr)
-                            || compute_jaccard(finger, &reverse_finger, thr)
-                    });
-            hits.push_back(!is_duplicate);
-            if hits.len() > config.hits_range {
-                hits.pop_front();
-            }
-            if !is_duplicate {
-                units.push(unit.to_vec());
-                forward_kmer_vec.push(forward_finger);
-            }
-            let hitting_rate = hits.iter().filter(|&&b| b).count() as f64 / hits.len() as f64;
-            if hitting_rate < config.hits_thr {
-                break;
-            }
-        }
-        debug!("Resulting {} units.", units.len());
-        self.selected_chunks = units
-            .into_iter()
-            .enumerate()
-            .map(|(idx, seq)| {
-                let id = idx as u64;
-                let seq = String::from_utf8(seq).unwrap();
-                Unit {
-                    id,
-                    seq,
-                    cluster_num: config.min_cluster,
-                }
-            })
-            .collect();
-        self
-    }
+            (forward_finger, reverse_finger)
+        })
+        .collect();
+    let edges: Vec<Vec<bool>> = (0..units.len())
+        .into_par_iter()
+        .map(|i| {
+            let kmer = &kmer_vec[i].0;
+            (0..i)
+                .into_par_iter()
+                .map(|j| {
+                    let &(ref f, ref r) = &kmer_vec[j];
+                    if compute_jaccard(kmer, f, config.jaccard_thr) {
+                        let aln = alignment(&units[i], &units[j]);
+                        aln > config.alignment_thr
+                    } else if compute_jaccard(kmer, r, config.jaccard_thr) {
+                        let rev = bio_utils::revcmp(&units[j]);
+                        let aln = alignment(&units[i], &rev);
+                        aln > config.alignment_thr
+                    } else {
+                        false
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let num_edges = edges
+        .iter()
+        .map(|e| e.iter().filter(|&&b| b).count())
+        .sum::<usize>();
+    debug!("Graph constructed. {} edges.", num_edges);
+    let to_be_removed = approx_vertex_cover(edges, units.len());
+    let mut idx = 0;
+    units.retain(|_| {
+        idx += 1;
+        !to_be_removed[idx - 1]
+    });
+    debug!("Resulting {} units.", units.len());
+    units
 }
 
 fn compute_jaccard(kmer_vec1: &[bool], kmer_vec2: &[bool], thr: f64) -> bool {

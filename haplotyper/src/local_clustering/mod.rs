@@ -90,8 +90,8 @@ fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                 for (id, _, _) in units.iter().filter(|&(_, _, n)| n.cluster == cl) {
                     let name = id_to_name[&id];
                     match id_to_desc.get(&id) {
-                        Some(d) => debug!("{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, d),
-                        None => debug!("{}\t{}\t{}\t{}", unit_id, cl, id, name),
+                        Some(d) => debug!("CLUSTER\t{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, d),
+                        None => debug!("CLUSTER\t{}\t{}\t{}\t{}", unit_id, cl, id, name),
                     }
                 }
             }

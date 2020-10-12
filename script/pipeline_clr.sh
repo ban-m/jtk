@@ -16,12 +16,12 @@ DRAFT_GFA=${2}.draft.gfa
 LOG=${2}.log
 STAT=${2}.stat
 THREADS=23
-
 jtk entry --input ${TARGET} |\
-    jtk select_unit -vv -t ${THREADS} --read_type CLR |\
+    jtk select_unit -vv -t ${THREADS} --read_type CLR --take_num 10000 |\
     jtk encode -vv --threads ${THREADS} |\
+    tee ${2}.entry.json |\
     jtk multiplicity_estimation -vv --threads ${THREADS} \
-        --draft_assembly ${DRAFT_GFA} --max_multiplicity 3 |\
+        --draft_assembly ${DRAFT_GFA} --max_multiplicity 30 |\
     jtk local_clustering -vv --threads ${THREADS} --read_type CLR|\
     tee ${CLUSTERED} |\
     jtk clustering_correction -vv --threads ${THREADS} |\

@@ -4,14 +4,13 @@ fn main() -> std::io::Result<()> {
     let reference = bio_utils::fasta::parse_into_vec(&args[1])?;
     let reads = bio_utils::fasta::parse_into_vec(&args[2])?;
     let alignment = bio_utils::sam::load_sam_file(&args[3])?;
-    let reference = reference.iter().find(|r| r.id() == &args[4]).unwrap();
+    let reference = reference.iter().find(|r| r.id() == args[4]).unwrap();
     let alignment: Vec<_> = alignment
         .into_iter()
-        .filter(|aln| aln.r_name() == &args[4])
+        .filter(|aln| aln.r_name() == args[4])
         .collect();
     let mut profile: Vec<HashMap<_, HashMap<_, usize>>> = vec![HashMap::new(); 4];
     let reads: HashMap<_, _> = reads.iter().map(|r| (r.id().to_string(), r)).collect();
-    use rayon::prelude::*;
     let result: Vec<_> = alignment
         .iter()
         .filter(|aln| aln.is_primary() && aln.pos() > 0)
