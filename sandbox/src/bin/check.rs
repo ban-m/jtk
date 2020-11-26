@@ -1,5 +1,5 @@
-use haplotyper::clustering_by_kmeans;
 use haplotyper::ClusteringConfig;
+use log::*;
 use poa_hmm::*;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 fn main() -> std::io::Result<()> {
@@ -10,8 +10,6 @@ fn main() -> std::io::Result<()> {
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     c.read_type = haplotyper::ReadType::CLR;
     let profile = gen_sample::PROFILE.norm().mul(0.15);
-    // c.read_type = haplotyper::ReadType::CCS;
-    // let profile = gen_sample::CCS_PROFILE;
     let args: Vec<_> = std::env::args().collect();
     let (seed, test_num, clusters, _errors, probs) = {
         let seed: usize = args[1].parse().unwrap();
@@ -38,7 +36,6 @@ fn main() -> std::io::Result<()> {
     let mut templates = vec![template.clone()];
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {
-        use log::debug;
         use rand::Rng;
         let var_pos = rng.gen_range(0, chain_len);
         let mut seq = template.clone();
@@ -74,13 +71,14 @@ fn main() -> std::io::Result<()> {
         seq: String::new(),
         cluster_num: 2,
     };
-    clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
-    // let asn: Vec<_> = dataset.iter().map(|c| c.cluster).collect();
-    // (m, asn)
-    //     })
-    //     .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
-    //     .unwrap();
-    // dataset.iter_mut().zip(asn).for_each(|(x, y)| x.cluster = y);
+    //haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
+    haplotyper::clustering_by_kmeans_em(&mut dataset, chain_len, &c, &unit, 10);
+    // haplotyper::initial_clustering(&mut dataset, &unit, (2, chain_len), 0);
+    // use haplotyper::clustering_by_gibbs;
+    // clustering_by_gibbs(&mut dataset, chain_len, &c, &unit, 10);
+    // use haplotyper::clustering_by_assemble;
+    // let config = clustering_by_assemble::ClusteringConfig::default(chain_len, clusters);
+    // clustering_by_assemble::clustering_by_assemble(&mut dataset, &config);
     use std::collections::HashMap;
     let mut result: HashMap<_, u32> = HashMap::new();
     for (idx, (data, answer)) in dataset.iter().zip(answer).enumerate() {

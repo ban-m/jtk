@@ -88,9 +88,11 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
         wtr.flush().unwrap();
         param.into_os_string().into_string().unwrap()
     };
+    let num = format!("{}", ds.selected_chunks.len() / 2);
     let lastal = std::process::Command::new("lastal")
         .args(&[
-            "-f", "tab", "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name, &reads,
+            "-N", &num, "-f", "tab", "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name,
+            &reads,
         ])
         .output()
         .unwrap();

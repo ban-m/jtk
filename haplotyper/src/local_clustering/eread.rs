@@ -29,13 +29,13 @@ impl Elm {
     // }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChunkedUnit {
     pub cluster: usize,
     pub chunks: Vec<Chunk>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Chunk {
     pub pos: usize,
     pub seq: Vec<u8>,

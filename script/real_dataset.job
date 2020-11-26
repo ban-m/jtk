@@ -1,7 +1,7 @@
 #!/bin/bash
-data=/grid/yoshimura/HG002/PacBio_CCS_15kb_20kb_chemistry2/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.fasta
-OUTPUT=${PWD}/result/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
-mkdir -p ${OUTPUT}
+# data=/grid/yoshimura/HG002/PacBio_CCS_15kb_20kb_chemistry2/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.fasta
+# OUTPUT=${PWD}/result/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
+# mkdir -p ${OUTPUT}
 # qsub -o ./logfiles/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.out -j y\
 #      ./script/pipeline.sh \
 #      ${data} \

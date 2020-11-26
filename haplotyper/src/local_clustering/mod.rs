@@ -5,10 +5,12 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 mod config;
 pub use config::*;
+pub mod clustering_by_assemble;
 pub mod create_model;
 pub mod eread;
 pub mod variant_calling;
-const REPEAT_NUM: usize = 8;
+// const REPEAT_NUM: usize = 8;
+const REPEAT_NUM: usize = 3;
 
 use eread::*;
 use variant_calling::*;
@@ -71,6 +73,7 @@ fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let selected_chunks = ds.selected_chunks.clone();
     let id_to_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let id_to_desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    //let cluster_number: HashMap<_, _> =
     pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
         debug!("RECORD\t{}\t{}\tStart", unit_id, iteration);
         let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
@@ -82,7 +85,7 @@ fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             return;
         }
         assert!(units.iter().all(|n| n.2.unit == unit_id as u64));
-        unit_clustering(&mut units, c, ref_unit, iteration);
+        let _cluster_num = unit_clustering(&mut units, c, ref_unit, iteration);
         debug!("RECORD\t{}\t{}\tEnd", unit_id, iteration);
         if log_enabled!(log::Level::Debug) {
             for cl in 0..c.cluster_num.max(ref_unit.cluster_num) {
@@ -96,6 +99,7 @@ fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                 }
             }
         }
+        // Some((unit_id, cluster_num))
     });
 }
 
@@ -104,22 +108,23 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     c: &ClusteringConfig<F>,
     ref_unit: &Unit,
     iteration: u64,
-) {
+) -> usize {
     if ref_unit.cluster_num == 1 {
         units.iter_mut().for_each(|x| x.2.cluster = 0);
-        return;
+        return ref_unit.cluster_num;
     }
     let len = if ref_unit.seq().len() % c.subchunk_length == 0 {
         ref_unit.seq().len() / c.subchunk_length
     } else {
         ref_unit.seq().len() / c.subchunk_length + 1
     };
-    let (min_length, max_length) = (c.subchunk_length * 9 / 10, c.subchunk_length * 11 / 10);
+    let (min_length, max_length) = ((c.subchunk_length * 9) / 10, c.subchunk_length * 11 / 10);
     let mut data: Vec<_> = units
         .iter()
         .map(|&(_, _, ref node)| {
             let mut chunks = node_to_subchunks(node, c.subchunk_length);
             chunks.retain(|chunk| min_length < chunk.seq.len() && chunk.seq.len() < max_length);
+            assert!(chunks.iter().all(|x| !x.seq.is_empty()), "{:?}", chunks);
             let cluster = if c.retain_current_clustering {
                 node.cluster as usize
             } else {
@@ -130,9 +135,11 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         .collect();
     let seed = ref_unit.id * iteration;
     clustering_by_kmeans(&mut data, len, &c, ref_unit, seed);
+    // clustering_by_kmeans_em(&mut data, len, &c, ref_unit, seed);
     for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
         n.cluster = d.cluster as u64;
     }
+    ref_unit.cluster_num
 }
 
 pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
@@ -291,6 +298,133 @@ fn update_by_precomputed_lks<R: Rng>(
         .sum::<u32>()
 }
 
+pub fn clustering_by_gibbs<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    data: &mut Vec<ChunkedUnit>,
+    chain_len: usize,
+    c: &ClusteringConfig<F>,
+    _ref_unit: &Unit,
+    seed: u64,
+) -> f64 {
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
+    let rng = &mut rng;
+    let len = data.len();
+    data.iter_mut().for_each(|d| d.cluster = 0);
+    let use_position = vec![true; chain_len];
+    let prior = create_model::get_models(data, (1, chain_len), rng, c, &use_position, None)
+        .pop()
+        .unwrap();
+    let alpha = 0.5;
+    let (mut num_data, mut num_cluster) = (vec![data.len()], 1);
+    for t in 0..100 {
+        debug!("The {}-th iteration.", t);
+        assert_eq!(data.len(), num_data.iter().sum::<usize>());
+        assert_eq!(num_data.len(), num_cluster);
+        for i in 0..len {
+            // Remove the i-th reads from cluster.
+            num_data[data[i].cluster] -= 1;
+            if num_data[data[i].cluster] == 0 {
+                // Remove this cluste.
+                let removed = data[i].cluster;
+                let last = num_data.pop().unwrap();
+                num_data[removed] = last;
+                data.iter_mut()
+                    .filter(|d| d.cluster == last)
+                    .for_each(|d| d.cluster = removed);
+            }
+            let models = create_model::get_models(
+                data,
+                (num_cluster, chain_len),
+                rng,
+                c,
+                &use_position,
+                Some(i),
+            );
+            let mut posterior: Vec<_> = num_data
+                .iter()
+                .zip(models.iter())
+                .map(|(&n, model)| {
+                    let lk = data[i]
+                        .chunks
+                        .iter()
+                        .map(|ch| model[ch.pos].forward(&ch.seq, &c.poa_config))
+                        .sum::<f64>();
+                    let dirichlet = (n as f64).ln() - (data.len() as f64 - 1. + alpha).ln();
+                    lk + dirichlet
+                })
+                .collect();
+            // We can pre-compute this value, right?
+            let new_lk = data[i]
+                .chunks
+                .iter()
+                .map(|ch| prior[ch.pos].forward(&ch.seq, &c.poa_config))
+                .sum::<f64>();
+            let new_cluster = alpha.ln() - (data.len() as f64 - 1. + alpha).ln();
+            posterior.push(new_lk + new_cluster);
+            use rand::seq::SliceRandom;
+            debug!("{:?}", posterior);
+            let sum = logsumexp(&posterior);
+            posterior.iter_mut().for_each(|x| *x = (*x - sum).exp());
+            debug!("{:?}", posterior);
+            let picked = {
+                let choises: Vec<_> = (0..num_cluster + 1).collect();
+                *choises.choose_weighted(rng, |&k| posterior[k]).unwrap()
+            };
+            if num_cluster < picked {
+                num_cluster += 1;
+                num_data.push(0);
+            }
+            data[i].cluster = picked;
+            num_data[data[i].cluster] += 1;
+        }
+    }
+    0.
+}
+
+pub fn clustering_by_kmeans_em<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    data: &mut Vec<ChunkedUnit>,
+    chain_len: usize,
+    c: &ClusteringConfig<F>,
+    ref_unit: &Unit,
+    seed: u64,
+) -> usize {
+    let mut labels = vec![vec![]; data.len()];
+    let tn = 3;
+    for i in 0..tn {
+        clustering_by_kmeans(data, chain_len, c, ref_unit, seed + i);
+        for (i, d) in data.iter().enumerate() {
+            labels[i].push(d.cluster);
+        }
+    }
+    // for (i, d) in labels.iter().enumerate() {
+    //     trace!("{}\t{:?}", i, d);
+    // }
+    assert!(labels.iter().all(|xs| xs.len() == tn as usize));
+    let (asn, _) = (0..4)
+        .map(|s| {
+            let param = (s, tn as usize, ref_unit.cluster_num);
+            em_clustering(&labels, ref_unit.cluster_num, param)
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+        .unwrap();
+
+    // let (asn, _) = ((ref_unit.cluster_num / 2).max(1)..=ref_unit.cluster_num * 2)
+    //     .flat_map(|cl| {
+    //         (0..4)
+    //             .map(|s| {
+    //                 let param = (cl as u64 + s, tn as usize, ref_unit.cluster_num);
+    //                 em_clustering(&labels, cl, param)
+    //             })
+    //             .collect::<Vec<_>>()
+    //     })
+    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+    //     .unwrap();
+    let cluster_num = *asn.iter().max().unwrap();
+    for (a, x) in asn.into_iter().zip(data.iter_mut()) {
+        x.cluster = a;
+    }
+    cluster_num
+}
+
 pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     data: &mut Vec<ChunkedUnit>,
     chain_len: usize,
@@ -313,19 +447,21 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     } else {
         REPEAT_NUM
     };
-    let (pos, lks, margin) = (0..repeat_num)
-        .map(|_| {
-            if !c.retain_current_clustering {
-                data.iter_mut().for_each(|cs| {
-                    cs.cluster = rng.gen_range(0, dim.0);
-                });
-            }
-            let vn = 3 * c.variant_num;
-            let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
-            (pos, lks, margin)
-        })
-        .max_by(|x, y| (x.2).partial_cmp(&y.2).unwrap())
-        .unwrap();
+    let (pos, lks, margin) = // (0..repeat_num).map(|r|
+    {
+        if !c.retain_current_clustering {
+            // TODO: We can take more sophisticated strategy.
+            initial_clustering(data, ref_unit, dim, seed);
+            // data.iter_mut().for_each(|cs| {
+            //     cs.cluster = rng.gen_range(0, dim.0);
+            // });
+        }
+        let vn = 3 * c.variant_num;
+        let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
+        (pos, lks, margin)
+    };
+    // ).max_by(|x, y| (x.2).partial_cmp(&y.2).unwrap())
+    // .unwrap();
     trace!("Init Margin:{}", margin);
     let lks = average_correction(lks, dim);
     update_by_precomputed_lks(data, dim, 0., &pos, &lks, rng);
@@ -344,6 +480,220 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             break margin;
         }
     }
+}
+
+// ()
+pub fn initial_clustering(
+    data: &mut [ChunkedUnit],
+    _ref_unit: &Unit,
+    (cluster, chain_len): (usize, usize),
+    seed: u64,
+) {
+    let maf = convert_to_maf(data, cluster, chain_len, seed);
+    // for (i, r) in maf.iter().enumerate() {
+    //     let seq: String = r.iter().map(|&x| if x == 1 { '1' } else { '0' }).collect();
+    //     eprintln!("{:03} {}", i, seq);
+    // }
+    let length = maf[0].len();
+    let (assignments, _) = (5..10)
+        .map(|i| em_clustering(&maf, cluster, (seed + i, length, 2)))
+        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+        .unwrap();
+    for (d, a) in data.iter_mut().zip(assignments) {
+        d.cluster = a;
+    }
+}
+
+fn convert_to_maf(
+    data: &[ChunkedUnit],
+    cluster: usize,
+    chain_len: usize,
+    seed: u64,
+) -> Vec<Vec<usize>> {
+    let mut chunks = vec![vec![]; chain_len];
+    for d in data.iter() {
+        for c in d.chunks.iter() {
+            if !c.seq.is_empty() {
+                chunks[c.pos].push(c.seq.as_slice());
+            }
+        }
+    }
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
+    let consensus: Vec<_> = chunks
+        .iter_mut()
+        .map(|cs| {
+            if cs.is_empty() {
+                vec![]
+            } else {
+                let cs: Vec<_> = (0..10)
+                    .map(|_| {
+                        use rand::seq::SliceRandom;
+                        cs.shuffle(&mut rng);
+                        let cs = &cs[..cs.len().min(15)];
+                        poa_hmm::POA::from_slice_default(cs).consensus()
+                    })
+                    .collect();
+                poa_hmm::POA::from_vec_default(&cs).consensus()
+            }
+        })
+        .collect();
+    use bio::alignment::pairwise::Aligner;
+    if data
+        .iter()
+        .any(|d| d.chunks.iter().any(|c| c.pos >= consensus.len()))
+    {
+        debug!("Error");
+        debug!("{}\t{}", consensus.len(), chain_len);
+        for (i, d) in data.iter().enumerate() {
+            let c: Vec<_> = d.chunks.iter().map(|c| (c.pos, c.seq.len())).collect();
+            debug!("{}\t{:?}", i, c);
+        }
+        for (i, c) in chunks.iter().enumerate() {
+            debug!("CHUNK\t{}\t{}", i, c.len());
+        }
+        panic!();
+    }
+    let mut aligner = Aligner::new(-3, -1, |x, y| if x == y { 2 } else { -5 });
+    let maf: Vec<HashMap<usize, Vec<u8>>> = data
+        .iter()
+        .map(|d| {
+            d.chunks
+                .iter()
+                .map(|c| (c.pos, alignment(&mut aligner, &c.seq, &consensus[c.pos])))
+                .collect()
+        })
+        .collect();
+    let mut summary: Vec<Vec<[u32; 5]>> = {
+        let mut lens = vec![vec![]; chain_len];
+        for aln in maf.iter() {
+            for (&pos, c) in aln.iter() {
+                lens[pos].push(c.len());
+            }
+        }
+        lens.iter()
+            .map(|lens| {
+                let max = *lens.iter().max().unwrap_or(&0);
+                vec![[0; 5]; max]
+            })
+            .collect()
+    };
+    for aln in maf.iter() {
+        for (&pos, c) in aln.iter() {
+            for (i, &x) in c.iter().enumerate() {
+                let x = match x {
+                    b'A' => 0,
+                    b'C' => 1,
+                    b'G' => 2,
+                    b'T' => 3,
+                    _ => 4,
+                };
+                summary[pos][i][x] += 1;
+            }
+        }
+    }
+    let mut fractions: Vec<_> = summary
+        .iter()
+        .flat_map(|smry| {
+            smry.iter().map(|clm| {
+                let tot = clm.iter().sum::<u32>();
+                let (argmax, _) = clm.iter().enumerate().max_by_key(|x| x.1).unwrap();
+                let (_, next) = clm
+                    .iter()
+                    .enumerate()
+                    .filter(|x| x.0 != argmax)
+                    .max_by_key(|x| x.1)
+                    .unwrap();
+                (next + 1) as f64 / (tot + 1) as f64
+            })
+        })
+        .collect();
+    fractions.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    fractions.reverse();
+    // eprintln!("{:?}", &fractions[..10]);
+    let thr = fractions[fractions.len() / 1000];
+    let summary: HashMap<(usize, usize), u8> = summary
+        .into_iter()
+        .enumerate()
+        .flat_map(|(idx, smry)| {
+            smry.into_iter()
+                .enumerate()
+                .filter_map(|(pos, column)| {
+                    let (argmax, _) = column.iter().enumerate().max_by_key(|x| x.1).unwrap();
+                    let (_, next) = column
+                        .iter()
+                        .enumerate()
+                        .filter(|x| x.0 != argmax)
+                        .max_by_key(|x| x.1)
+                        .unwrap();
+                    let tot = column.iter().sum::<u32>();
+                    let frac = (next + 1) as f64 / (tot + 1) as f64;
+                    let base = match argmax {
+                        0 => b'A',
+                        1 => b'C',
+                        2 => b'G',
+                        3 => b'T',
+                        _ => b'-',
+                    };
+                    if frac > thr {
+                        Some(((idx, pos), base))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    maf.iter()
+        .map(|aln| {
+            summary
+                .iter()
+                .map(|(&(chunk, pos), mj)| match aln.get(&chunk) {
+                    Some(aln) if aln[pos] == *mj => 1,
+                    _ => 0,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn alignment<F: bio::alignment::pairwise::MatchFunc>(
+    aligner: &mut bio::alignment::pairwise::Aligner<F>,
+    query: &[u8],
+    template: &[u8],
+) -> Vec<u8> {
+    let aln = aligner.global(&query, &template);
+    let mut seq = vec![];
+    let mut ins = vec![b'-'; template.len()];
+    let (mut rpos, mut qpos) = (0, 0);
+    let mut prev = None;
+    for &op in aln.operations.iter() {
+        use bio::alignment::AlignmentOperation::*;
+        match op {
+            Del => {
+                seq.push(b'-');
+                rpos += 1;
+            }
+            Ins => {
+                if prev != Some(Ins) && rpos < ins.len() {
+                    ins[rpos] = query[qpos];
+                }
+                qpos += 1;
+            }
+            Subst | Match => {
+                seq.push(query[qpos]);
+                rpos += 1;
+                qpos += 1;
+            }
+            _ => panic!(),
+        }
+        prev = Some(op);
+    }
+    let mut result = vec![];
+    for (x, y) in seq.into_iter().zip(ins) {
+        result.push(x);
+        result.push(y);
+    }
+    result
 }
 
 #[allow(dead_code)]
@@ -439,4 +789,101 @@ fn report(id: u64, data: &[ChunkedUnit], count: u32, lk: f64, beta: f64, c: u32)
         c,
         counts
     );
+}
+
+pub fn em_clustering(
+    xs: &[Vec<usize>],
+    cluster: usize,
+    (seed, trial_number, cluster_num): (u64, usize, usize),
+) -> (Vec<usize>, f64) {
+    let seed = 11 * seed + cluster as u64;
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
+    let mut weights: Vec<_> = xs
+        .iter()
+        .map(|_| {
+            let mut ws = vec![0.; cluster];
+            ws[rng.gen::<usize>() % cluster] = 1.;
+            ws
+        })
+        .collect();
+    let mut lk = std::f64::NEG_INFINITY;
+    let mut parameters: Vec<Vec<Vec<f64>>>;
+    let mut fractions: Vec<f64>;
+    loop {
+        // Update parameters.
+        let cluster_weights: Vec<_> = (0..cluster)
+            .map(|cl| weights.iter().map(|ws| ws[cl]).sum::<f64>() + 0.001)
+            .collect();
+        fractions = cluster_weights
+            .iter()
+            .map(|w| w / xs.len() as f64)
+            .collect();
+        parameters = (0..cluster)
+            .map(|cl| {
+                (0..trial_number)
+                    .map(|tr| {
+                        (0..cluster_num)
+                            .map(|t| {
+                                let sum = xs
+                                    .iter()
+                                    .zip(weights.iter())
+                                    .filter(|(x, _)| x[tr] == t)
+                                    .map(|(_, ws)| ws[cl])
+                                    .sum::<f64>();
+                                //(sum + 1.) / (cluster_weights[cl] + k as f64)
+                                (sum + 0.000001) / cluster_weights[cl]
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+        // Update weights
+        let mut next_lk = 0.;
+        weights = xs
+            .iter()
+            .map(|x| {
+                let log_prob: Vec<_> = (0..cluster)
+                    .map(|cl| {
+                        fractions[cl].ln()
+                            + x.iter()
+                                .zip(parameters[cl].iter())
+                                .map(|(&x, ps)| ps[x].ln())
+                                .sum::<f64>()
+                    })
+                    .collect();
+                let tot = logsumexp(&log_prob);
+                next_lk += tot;
+                log_prob.iter().map(|p| (p - tot).exp()).collect()
+            })
+            .collect();
+        // Check log-LK.
+        assert!(next_lk + 0.00001 > lk, "{}=>{}", lk, next_lk);
+        if next_lk - lk < 0.00001 {
+            break;
+        }
+        lk = next_lk;
+    }
+    let num_parameters = cluster * (1 + trial_number * (cluster_num - 1)) - 1;
+    let neg_aic = lk - num_parameters as f64;
+    trace!("{}\t{:.2}\t{}\t{:.2}", cluster, lk, num_parameters, neg_aic);
+    // let fs: Vec<_> = fractions.iter().map(|x| format!("{:.2}", x)).collect();
+    // trace!("{}", fs.join(","));
+    let assignments: Vec<_> = weights
+        .iter()
+        .filter_map(|ws| {
+            ws.iter()
+                .enumerate()
+                .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+        })
+        .map(|x| x.0)
+        .collect();
+    let mut cluster: HashMap<_, usize> = HashMap::new();
+    for a in assignments.iter() {
+        if !cluster.contains_key(a) {
+            cluster.insert(*a, cluster.len());
+        }
+    }
+    let assignments: Vec<_> = assignments.iter().map(|x| cluster[x]).collect();
+    (assignments, neg_aic)
 }

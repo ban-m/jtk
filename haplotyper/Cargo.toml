@@ -24,3 +24,4 @@ histgram_viz = {path = "../histgram_viz"}
 mcl = {path = "../mcl"}
 gfa = {path = "../gfa_rust"}
 edlib_sys = {path = "../edlib-sys"}
+bio = "*"

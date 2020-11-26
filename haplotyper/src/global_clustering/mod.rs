@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub mod error_correction;
 use super::unit_correlation;
+mod clustering;
 use de_bruijn_graph::*;
 use definitions::DataSet;
 use std::collections::{HashMap, HashSet};
@@ -136,7 +137,17 @@ impl GlobalClustering for definitions::DataSet {
             }
         }
         let reads = error_correction::local_correction(&self, c);
-        // let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
+        {
+            let (clusters, num) = clustering::clustering_by_exact_match(&reads);
+            for c in 0..num {
+                for read in self.raw_reads.iter() {
+                    match clusters.get(&read.id) {
+                        Some(&cl) if c == cl => debug!("ALNCL\t{}\t{}", cl, read.name),
+                        _ => {}
+                    }
+                }
+            }
+        }
         let mut graph = DeBruijnGraph::from(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             debug!("------Corrected reads------");

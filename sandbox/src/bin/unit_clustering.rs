@@ -1,65 +1,71 @@
-use definitions::*;
-#[macro_use]
-extern crate log;
-fn main() -> std::io::Result<()> {
-    env_logger::init();
-    use std::io::BufReader;
-    let args: Vec<_> = std::env::args().collect();
-    let ds = BufReader::new(std::fs::File::open(&args[1])?);
-    let unit: u64 = args[2].parse().unwrap();
-    debug!("Started");
-    let mut dataset: DataSet = serde_json::de::from_reader(ds).unwrap();
-    let c = haplotyper::ClusteringConfig::clr(&dataset, 2, 100, 1000, 10, false);
-    let ref_unit = dataset
-        .selected_chunks
-        .iter()
-        .find(|u| u.id == unit)
-        .unwrap()
-        .clone();
-    use std::collections::HashMap;
-    let id2name: HashMap<_, _> = dataset
-        .raw_reads
-        .iter()
-        .map(|r| (r.id, r.name.clone()))
+use log::*;
+use poa_hmm::gen_sample;
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+const CLUSTER_NUM: usize = 2;
+fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
+    debug!("Start");
+    let len = 100;
+    let chain = 20;
+    let seed = 923;
+    let num = 20;
+    let div = gen_sample::Profile {
+        sub: 0.001 / 3.,
+        ins: 0.001 / 3.,
+        del: 0.001 / 3.,
+    };
+    let p = gen_sample::PROFILE;
+    let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
+    let template: Vec<_> = (0..chain)
+        .map(|_| gen_sample::generate_seq(&mut rng, len))
         .collect();
-    let mut units: Vec<_> = dataset
-        .encoded_reads
-        .iter_mut()
-        .filter_map(|read| {
-            let id = read.id;
-            read.nodes
-                .iter_mut()
-                .enumerate()
-                .find(|(_, n)| n.unit == unit)
-                .map(|(idx, n)| (id, idx, n))
+    let templates: Vec<Vec<_>> = (0..CLUSTER_NUM)
+        .map(|_| {
+            template
+                .iter()
+                .map(|t| gen_sample::introduce_randomness(t, &mut rng, &div))
+                .collect()
         })
-        .enumerate()
-        // .inspect(|(idx, (id, _, _))| {
-        //     let cl = if id2name[id].contains("hapA") { 1 } else { 0 };
-        //     eprintln!("{}\t{}\t{}", idx, id2name[id], cl);
-        // })
-        .map(|(_, x)| x)
         .collect();
-    haplotyper::unit_clustering(&mut units, &c, &ref_unit, 10);
-    let mut result: Vec<_> = units
+    for (i, t) in templates.iter().enumerate() {
+        for (j, s) in templates.iter().enumerate().skip(i + 1) {
+            let dist = t
+                .iter()
+                .zip(s)
+                .map(|(a, b)| bio::alignment::distance::levenshtein(a, b))
+                .sum::<u32>();
+            eprintln!("DIST\t{}\t{}\t{}", i, j, dist);
+        }
+    }
+    use sandbox::clustering;
+    let reads = gen_reads(&templates, num, &mut rng, &p);
+    let assignments = clustering(&reads, chain, CLUSTER_NUM, 21);
+    println!("ID\tANSWER\tPRED");
+    for (idx, asn) in assignments.iter().enumerate() {
+        println!("{}\t{}\t{}", idx, idx / num, asn);
+    }
+}
+
+fn gen_reads<R: rand::Rng>(
+    templates: &[Vec<Vec<u8>>],
+    num: usize,
+    rng: &mut R,
+    p: &gen_sample::Profile,
+) -> Vec<(usize, Vec<Vec<u8>>)> {
+    templates
         .iter()
-        .map(|(id, _, unit)| (&id2name[&id], unit.cluster))
-        // .inspect(|(id, cl)| eprintln!("{}\t{}", id, cl))
-        .collect();
-    result.sort_by_key(|x| x.1);
-    let mut counts: HashMap<_, usize> = HashMap::new();
-    for (i, x) in result {
-        if i.contains("hapA") {
-            *counts.entry((x, 0)).or_default() += 1;
-        } else {
-            *counts.entry((x, 1)).or_default() += 1;
-        }
-    }
-    for pred in 0..=1 {
-        for ans in 0..=1 {
-            print!("{}\t", counts.get(&(pred, ans)).unwrap_or(&0));
-        }
-    }
-    println!();
-    Ok(())
+        .enumerate()
+        .flat_map(|(idx, t)| {
+            (0..num)
+                .map(|_| {
+                    let seq: Vec<_> = t
+                        .iter()
+                        .map(|s| gen_sample::introduce_randomness(s, rng, p))
+                        .collect();
+                    (idx, seq)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }

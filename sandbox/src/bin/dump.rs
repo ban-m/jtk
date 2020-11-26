@@ -12,7 +12,7 @@ fn main() {
         .raw_reads
         .iter()
         .map(|read| {
-            let desc = if read.desc.contains("252v2") { 1 } else { 0 };
+            let desc = if read.name.contains("hapA") { 1 } else { 0 };
             (read.id, desc)
         })
         .collect();

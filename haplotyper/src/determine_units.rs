@@ -53,9 +53,9 @@ impl UnitConfig {
             chunk_len,
             skip_len,
             margin,
-            k: 7,
+            k: 9,
             unit_num,
-            jaccard_thr: 0.2,
+            jaccard_thr: 0.1,
             alignment_thr: 0.4,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
@@ -89,7 +89,6 @@ impl UnitConfig {
 }
 
 pub trait DetermineUnit {
-    // fn select_chunks_freq(self, config: &UnitConfig) -> Self;
     fn select_chunks(self, config: &UnitConfig) -> Self;
 }
 
@@ -106,7 +105,7 @@ impl DetermineUnit for definitions::DataSet {
                 .take(config.unit_num)
                 .map(|e| e.to_vec())
                 .collect();
-            remove_overlapping_units(units, config)
+            remove_overlapping_units(units, config, true)
         } else {
             let clr_config = {
                 let mut temp = config.clone();
@@ -121,6 +120,13 @@ impl DetermineUnit for definitions::DataSet {
                 .take(clr_config.unit_num)
                 .map(|e| e.to_vec())
                 .collect();
+            debug!("Take {} units.", units.len());
+            let units = {
+                let mut config = config.clone();
+                config.jaccard_thr /= 4.;
+                remove_overlapping_units(units, &config, false)
+            };
+            debug!("Removed overlapping units->{}", units.len());
             self.selected_chunks = units
                 .iter()
                 .enumerate()
@@ -144,7 +150,7 @@ impl DetermineUnit for definitions::DataSet {
                     units.push(seq.into_bytes());
                 }
             }
-            remove_overlapping_units(units, &config)
+            remove_overlapping_units(units, &config, true)
         };
         self.selected_chunks = units
             .into_iter()
@@ -163,22 +169,48 @@ impl DetermineUnit for definitions::DataSet {
     }
 }
 
-fn remove_overlapping_units(mut units: Vec<Vec<u8>>, config: &UnitConfig) -> Vec<Vec<u8>> {
+fn to_u64(kmer: &[u8]) -> u64 {
+    let mut res = 0;
+    for x in kmer {
+        res = res << 2;
+        res += match x {
+            b'A' | b'a' => 0,
+            b'C' | b'c' => 1,
+            b'G' | b'g' => 2,
+            b'T' | b't' => 3,
+            _ => 0,
+        };
+    }
+    res
+}
+
+// fn to_index(kmer: &[u8]) -> usize {
+//     kmer.iter().fold(0, |x, y| match y {
+//         b'A' => (x << 2),
+//         b'C' => (x << 2) + 1,
+//         b'G' => (x << 2) + 2,
+//         b'T' => (x << 2) + 3,
+//         _ => panic!(),
+//     })
+// }
+
+fn remove_overlapping_units(
+    mut units: Vec<Vec<u8>>,
+    config: &UnitConfig,
+    followup: bool,
+) -> Vec<Vec<u8>> {
     debug!("Collected {} units", units.len());
     let k = config.k;
     let kmer_vec: Vec<(Vec<_>, Vec<_>)> = units
         .par_iter()
         .map(|unit| {
-            let mut forward_finger = vec![false; 4usize.pow(k as u32)];
-            for kmer in unit.windows(k) {
-                forward_finger[to_index(kmer)] = true;
-            }
-            let mut reverse_finger = vec![false; 4usize.pow(k as u32)];
-            let unit = bio_utils::revcmp(unit);
-            for kmer in unit.windows(k) {
-                reverse_finger[to_index(kmer)] = true;
-            }
-            (forward_finger, reverse_finger)
+            let mut forward: Vec<_> = unit.windows(k).map(to_u64).collect();
+            forward.sort();
+            forward.dedup();
+            let mut reverse: Vec<_> = bio_utils::revcmp(unit).windows(k).map(to_u64).collect();
+            reverse.sort();
+            reverse.dedup();
+            (forward, reverse)
         })
         .collect();
     let edges: Vec<Vec<bool>> = (0..units.len())
@@ -189,15 +221,15 @@ fn remove_overlapping_units(mut units: Vec<Vec<u8>>, config: &UnitConfig) -> Vec
                 .into_par_iter()
                 .map(|j| {
                     let &(ref f, ref r) = &kmer_vec[j];
-                    if compute_jaccard(kmer, f, config.jaccard_thr) {
-                        let aln = alignment(&units[i], &units[j]);
-                        aln > config.alignment_thr
-                    } else if compute_jaccard(kmer, r, config.jaccard_thr) {
-                        let rev = bio_utils::revcmp(&units[j]);
-                        let aln = alignment(&units[i], &rev);
-                        aln > config.alignment_thr
+                    if !followup {
+                        compute_jaccard(kmer, f) > config.jaccard_thr
+                            || compute_jaccard(kmer, r) > config.jaccard_thr
                     } else {
-                        false
+                        (compute_jaccard(kmer, f) > config.jaccard_thr
+                            && alignment(&units[i], &units[j]) > config.alignment_thr)
+                            || (compute_jaccard(kmer, r) > config.jaccard_thr
+                                && alignment(&units[i], &bio_utils::revcmp(&units[j]))
+                                    > config.alignment_thr)
                     }
                 })
                 .collect()
@@ -218,25 +250,41 @@ fn remove_overlapping_units(mut units: Vec<Vec<u8>>, config: &UnitConfig) -> Vec
     units
 }
 
-fn compute_jaccard(kmer_vec1: &[bool], kmer_vec2: &[bool], thr: f64) -> bool {
-    let (mut union, mut intersection) = (0, 0);
-    for (x, y) in kmer_vec1.iter().zip(kmer_vec2.iter()) {
-        union += (x | y) as u32;
-        intersection += (x & y) as u32;
+fn compute_jaccard(kmer1: &[u64], kmer2: &[u64]) -> f64 {
+    let mut union = 0;
+    let mut intersection = 0;
+    let (mut p1, mut p2) = (0, 0);
+    while p1 < kmer1.len() && p2 < kmer2.len() {
+        union += 1;
+        use std::cmp::Ordering::*;
+        match kmer1[p1].cmp(&kmer2[p2]) {
+            Equal => {
+                intersection += 1;
+                p1 += 1;
+                p2 += 1;
+            }
+            Less => {
+                p1 += 1;
+            }
+            Greater => {
+                p2 += 1;
+            }
+        }
     }
-    intersection as f64 / union as f64 > thr
+    union += (kmer1.len() - p1 - 1) + (kmer2.len() - p2 - 1);
+    intersection as f64 / union as f64
 }
 
-fn to_index(kmer: &[u8]) -> usize {
-    kmer.iter().fold(0, |x, y| match y {
-        b'A' => (x << 2),
-        b'C' => (x << 2) + 1,
-        b'G' => (x << 2) + 2,
-        b'T' => (x << 2) + 3,
-        _ => panic!(),
-    })
-}
+// fn compute_jaccard(kmer_vec1: &[bool], kmer_vec2: &[bool], thr: f64) -> bool {
+//     let (mut union, mut intersection) = (0, 0);
+//     for (x, y) in kmer_vec1.iter().zip(kmer_vec2.iter()) {
+//         union += (x | y) as u32;
+//         intersection += (x & y) as u32;
+//     }
+//     intersection as f64 / union as f64 > thr
+// }
 
+// Overlapping alignment.
 fn alignment(seq1: &[u8], seq2: &[u8]) -> f64 {
     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
     for i in 1..seq1.len() + 1 {

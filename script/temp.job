@@ -1,0 +1,9 @@
+#!/bin/bash
+#$ -S /bin/bash
+#$ -N Temp
+#$ -cwd
+#$ -pe smp 23
+#$ -j y
+#$ -m e 
+#$ -V
+RUST_LOG=trace ${PWD}/target/release/check ${2} ${1} 2 0.001 0.5 0.5

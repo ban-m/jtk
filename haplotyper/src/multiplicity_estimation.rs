@@ -230,7 +230,7 @@ fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
                 })
                 .collect();
             let mut lk = std::f64::NEG_INFINITY;
-            for i in 0.. {
+            for _ in 0.. {
                 let model = Model::new(data, &weight, k);
                 let new_lk = model.lk(data);
                 let diff = new_lk - lk;
@@ -239,9 +239,9 @@ fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
                 }
                 lk = new_lk;
                 weight = data.iter().map(|&d| model.new_weight(d)).collect();
-                if i % 100 == 0 {
-                    debug!("EM\t{}\t{}\t{}", k, i, lk);
-                }
+                // if i % 100 == 0 {
+                //     debug!("EM\t{}\t{}\t{}", k, i, lk);
+                // }
             }
             (weight, lk)
         })
