@@ -1,4 +1,4 @@
-use super::local_clustering::ReadType;
+use definitions::ReadType;
 use definitions::*;
 use poa_hmm::POA;
 use rand::{seq::SliceRandom, SeedableRng};
@@ -15,17 +15,10 @@ pub struct PolishUnitConfig {
 }
 
 impl PolishUnitConfig {
-    pub fn new(readtype: &str, consensus_size: usize, iteration: usize) -> Self {
-        let read_type = match readtype {
-            "ONT" => ReadType::ONT,
-            "CCS" => ReadType::CCS,
-            "CLR" => ReadType::CLR,
-            _ => unreachable!(),
-        };
-        let seed = 349309;
+    pub fn new(read_type: ReadType, consensus_size: usize, iteration: usize) -> Self {
         Self {
             rep_num: iteration,
-            seed,
+            seed: 342309,
             read_type,
             filter_size: consensus_size,
             consensus_size,
@@ -62,10 +55,17 @@ impl PolishUnit for DataSet {
         }
         let result: HashMap<_, _> = pileups
             .par_iter()
-            .filter(|(_, pileup)| pileup.len() > c.filter_size)
             .filter_map(|(id, pileup)| {
                 let len = subchunk_len[id];
-                consensus(pileup, len, c).map(|c| (id, c))
+                if pileup.len() > c.filter_size {
+                    let c = consensus(pileup, len, c).map(|c| (id, c));
+                    // let l = c.as_ref().map(|x| x.1.len() as i32).unwrap_or(-1);
+                    // debug!("Polish\t{}\t{}\t{}", id, pileup.len(), l);
+                    c
+                } else {
+                    // debug!("Polish\t{}\t{}\t-1", id, pileup.len());
+                    None
+                }
             })
             .collect();
         debug!("{}=>{}", pileups.len(), result.len());

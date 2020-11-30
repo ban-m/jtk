@@ -1,3 +1,4 @@
+use definitions::ReadType;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,13 +20,6 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub p_value: f64,
     pub retry_limit: u64,
     pub retain_current_clustering: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadType {
-    CCS,
-    CLR,
-    ONT,
 }
 
 impl ClusteringConfig<fn(u8, u8) -> i32> {
@@ -58,7 +52,7 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             id,
             stable_limit: STABLE_LIMIT,
             variant_num: VARIANT_NUMBER,
-            read_type: ReadType::CCS,
+            read_type: dataset.read_type,
             p_value: P_VALUE,
             retry_limit: retry,
             retain_current_clustering: retain,

@@ -52,39 +52,39 @@ impl ClusteringCorrection for DataSet {
                     .enumerate()
                     .filter(|(_, r)| r.nodes.iter().any(|n| n.unit == unit_id))
                     .unzip();
-                if let Some(unit) = self.selected_chunks.iter().find(|u| u.id == unit_id) {
-                    let k = unit.cluster_num;
-                    let config = Config::new(repeat_num, SEED, k, unit_id, coverage_thr);
-                    let new_clustering = clustering(&self.selected_chunks, &reads, &config);
-                    if log_enabled!(log::Level::Debug) {
-                        for cl in 0..k {
-                            for (read, &cluster) in reads.iter().zip(new_clustering.iter()) {
-                                let id = read.id;
-                                if cluster == cl {
-                                    let name = id_to_name[&id];
-                                    let desc = match id_to_desc.get(&id) {
-                                        Some(res) => res.as_str(),
-                                        None => "",
-                                    };
-                                    debug!("IMP\t{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, desc);
-                                }
-                            }
-                        }
-                    }
-                    let mut result = vec![];
-                    for ((read, read_idx), cluster) in
-                        reads.into_iter().zip(read_indices).zip(new_clustering)
-                    {
-                        for (idx, node) in read.nodes.iter().enumerate() {
-                            if node.unit == unit_id {
-                                result.push((read_idx, read.id, idx, node.unit, cluster));
-                            }
-                        }
-                    }
-                    result
-                } else {
-                    vec![]
+                let k = ref_unit.cluster_num;
+                let config = Config::new(repeat_num, SEED, k, unit_id, coverage_thr);
+                if reads.is_empty() {
+                    debug!("Unit {} does not appear in any read.", unit_id);
+                    return vec![];
                 }
+                let new_clustering = clustering(&self.selected_chunks, &reads, &config);
+                if log_enabled!(log::Level::Debug) {
+                    for cl in 0..k {
+                        for (read, &cluster) in reads.iter().zip(new_clustering.iter()) {
+                            let id = read.id;
+                            if cluster == cl {
+                                let name = id_to_name[&id];
+                                let desc = match id_to_desc.get(&id) {
+                                    Some(res) => res.as_str(),
+                                    None => "",
+                                };
+                                debug!("IMP\t{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, desc);
+                            }
+                        }
+                    }
+                }
+                let mut result = vec![];
+                for ((read, read_idx), cluster) in
+                    reads.into_iter().zip(read_indices).zip(new_clustering)
+                {
+                    for (idx, node) in read.nodes.iter().enumerate() {
+                        if node.unit == unit_id {
+                            result.push((read_idx, read.id, idx, node.unit, cluster));
+                        }
+                    }
+                }
+                result
             })
             .collect();
         for (read_idx, read_id, position, unit_id, cluster) in result {
@@ -159,7 +159,7 @@ fn em_clustering(
         let new_lk = reads.iter().map(|read| model.lk(read)).sum::<f64>();
         trace!("LK:{}", lk);
         diff = new_lk - lk;
-        assert!(diff > -0.0000001, "{}", diff);
+        assert!(diff > -0.01, "{}", diff);
         lk = new_lk;
     }
     for (idx, w) in weights.iter().enumerate() {
@@ -211,7 +211,14 @@ impl Model {
             .iter()
             .map(|f| f / weights.len() as f64 + SMALL_WEIGHT)
             .collect();
-        assert!((1. - fraction.iter().sum::<f64>()).abs() < 0.0001);
+        let sums_to_one = (1. - fraction.iter().sum::<f64>()).abs() < 0.0001;
+        assert!(
+            sums_to_one,
+            "{:?}\t{}\t{}",
+            fraction,
+            weights.len(),
+            reads.len(),
+        );
         let mut category_fraction: Vec<HashMap<_, Vec<f64>>> = (0..k)
             .map(|_| {
                 category_num

@@ -12,6 +12,15 @@ pub struct DataSet {
     pub encoded_reads: Vec<EncodedRead>,
     pub hic_edges: Vec<HiCEdge>,
     pub assignments: Vec<Assignment>,
+    pub read_type: ReadType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
+pub enum ReadType {
+    CCS,
+    CLR,
+    ONT,
+    None,
 }
 
 impl DataSet {
@@ -24,6 +33,7 @@ impl DataSet {
             encoded_reads: vec![],
             hic_edges: vec![],
             assignments: vec![],
+            read_type: ReadType::None,
         }
     }
     pub fn with_param(
@@ -34,6 +44,7 @@ impl DataSet {
         encoded_reads: Vec<EncodedRead>,
         hic_edges: Vec<HiCEdge>,
         assignments: Vec<Assignment>,
+        read_type: ReadType,
     ) -> Self {
         Self {
             input_file,
@@ -43,6 +54,7 @@ impl DataSet {
             encoded_reads,
             hic_edges,
             assignments,
+            read_type,
         }
     }
 }

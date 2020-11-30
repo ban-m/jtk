@@ -7,7 +7,7 @@ fn main() -> std::io::Result<()> {
     c.cluster_num = 2;
     c.stable_limit = 6;
     c.variant_num = 2;
-    c.read_type = haplotyper::ReadType::CLR;
+    c.read_type =definitions::ReadType::CLR;
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     let profile = gen_sample::PROFILE.norm().mul(0.20);
     let args: Vec<_> = std::env::args().collect();

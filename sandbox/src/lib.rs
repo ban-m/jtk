@@ -79,7 +79,7 @@ pub fn clustering(reads: &[(usize, Vec<Vec<u8>>)], chain: usize, k: usize, s: u6
     use haplotyper::local_clustering::clustering_by_kmeans_em;
     let mut c = haplotyper::local_clustering::ClusteringConfig::default();
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
-    c.read_type = haplotyper::ReadType::CLR;
+    c.read_type = definitions::ReadType::CLR;
     c.variant_num = 2;
     c.cluster_num = k;
     clustering_by_kmeans_em(&mut data, chain, &c, &unit, s);

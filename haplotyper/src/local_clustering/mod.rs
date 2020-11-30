@@ -10,7 +10,7 @@ pub mod create_model;
 pub mod eread;
 pub mod variant_calling;
 // const REPEAT_NUM: usize = 8;
-const REPEAT_NUM: usize = 3;
+// const REPEAT_NUM: usize = 3;
 
 use eread::*;
 use variant_calling::*;
@@ -441,12 +441,13 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         ReadType::CCS => (data.len() as f64 * 0.02).max(1.).floor() as u32,
         ReadType::ONT => (data.len() as f64 * 0.1).max(4.).floor() as u32,
         ReadType::CLR => (data.len() as f64 * 0.1).max(4.).floor() as u32,
+        ReadType::None => (data.len() as f64 * 0.1).max(4.).floor() as u32,
     };
-    let repeat_num = if c.retain_current_clustering {
-        1
-    } else {
-        REPEAT_NUM
-    };
+    // let repeat_num = if c.retain_current_clustering {
+    //     1
+    // } else {
+    //     REPEAT_NUM
+    // };
     let (pos, lks, margin) = // (0..repeat_num).map(|r|
     {
         if !c.retain_current_clustering {
@@ -506,7 +507,7 @@ pub fn initial_clustering(
 
 fn convert_to_maf(
     data: &[ChunkedUnit],
-    cluster: usize,
+    _cluster: usize,
     chain_len: usize,
     seed: u64,
 ) -> Vec<Vec<usize>> {

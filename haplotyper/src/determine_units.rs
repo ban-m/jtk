@@ -1,7 +1,7 @@
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
 use super::Encode;
-use super::ReadType;
+use definitions::*;
 use rayon::prelude::*;
 #[derive(Debug, Clone)]
 pub struct UnitConfig {
@@ -31,10 +31,10 @@ impl UnitConfig {
             chunk_len,
             skip_len,
             margin,
-            k: 7,
+            k: 9,
             unit_num,
             jaccard_thr: 0.2,
-            alignment_thr: 0.4,
+            alignment_thr: 0.3,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
             read_type: ReadType::CCS,
@@ -56,7 +56,7 @@ impl UnitConfig {
             k: 9,
             unit_num,
             jaccard_thr: 0.1,
-            alignment_thr: 0.4,
+            alignment_thr: 0.3,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
             read_type: ReadType::CLR,
@@ -92,7 +92,6 @@ pub trait DetermineUnit {
     fn select_chunks(self, config: &UnitConfig) -> Self;
 }
 
-use definitions::*;
 impl DetermineUnit for definitions::DataSet {
     fn select_chunks(mut self, config: &UnitConfig) -> Self {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
@@ -105,7 +104,14 @@ impl DetermineUnit for definitions::DataSet {
                 .take(config.unit_num)
                 .map(|e| e.to_vec())
                 .collect();
-            remove_overlapping_units(units, config, true)
+            let units = {
+                let mut config = config.clone();
+                config.jaccard_thr /= 4.;
+                //remove_overlapping_units(units, &config, false)
+                remove_overlapping_units_mm2(units, &config, false).unwrap()
+            };
+            //remove_overlapping_units(units, config, true)
+            remove_overlapping_units_mm2(units, config, true).unwrap()
         } else {
             let clr_config = {
                 let mut temp = config.clone();
@@ -113,7 +119,7 @@ impl DetermineUnit for definitions::DataSet {
                 debug!("Calib length {}->{}", config.chunk_len, temp.chunk_len);
                 temp
             };
-            let polish_config = PolishUnitConfig::new("CLR", 7, 10);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 7, 10);
             let units: Vec<_> = reads
                 .iter()
                 .flat_map(|r| split_into(r, &clr_config))
@@ -124,23 +130,19 @@ impl DetermineUnit for definitions::DataSet {
             let units = {
                 let mut config = config.clone();
                 config.jaccard_thr /= 4.;
-                remove_overlapping_units(units, &config, false)
+                //remove_overlapping_units(units, &config, false)
+                remove_overlapping_units_mm2(units, &config, false).unwrap()
             };
-            debug!("Removed overlapping units->{}", units.len());
             self.selected_chunks = units
                 .iter()
                 .enumerate()
-                .map(|(idx, seq)| {
-                    let id = idx as u64;
-                    let seq = String::from_utf8_lossy(seq).to_string();
-                    Unit {
-                        id,
-                        seq,
-                        cluster_num: config.min_cluster,
-                    }
+                .map(|(idx, seq)| Unit {
+                    id: idx as u64,
+                    seq: String::from_utf8_lossy(seq).to_string(),
+                    cluster_num: config.min_cluster,
                 })
                 .collect();
-            self = self.encode(config.threads);
+            self = self.encode(config.threads, true);
             self = self.polish_unit(&polish_config);
             debug!("Polished.");
             let mut units = vec![];
@@ -150,25 +152,52 @@ impl DetermineUnit for definitions::DataSet {
                     units.push(seq.into_bytes());
                 }
             }
-            remove_overlapping_units(units, &config, true)
+            //remove_overlapping_units(units, &config, true)
+            remove_overlapping_units_mm2(units, &config, true).unwrap()
         };
+        // TODO: Make as parameters.
         self.selected_chunks = units
-            .into_iter()
+            .iter()
             .enumerate()
-            .map(|(idx, seq)| {
-                let id = idx as u64;
-                let seq = String::from_utf8(seq).unwrap();
-                Unit {
-                    id,
-                    seq,
-                    cluster_num: config.min_cluster,
-                }
+            .map(|(idx, seq)| Unit {
+                id: idx as u64,
+                seq: String::from_utf8_lossy(seq).to_string(),
+                cluster_num: config.min_cluster,
             })
             .collect();
+        self = self.encode(config.threads, true);
+        use std::collections::HashMap;
+        let mut count: HashMap<_, u32> = HashMap::new();
+        for r in self.encoded_reads.iter() {
+            for n in r.nodes.iter() {
+                *count.entry(n.unit).or_default() += 1;
+            }
+        }
+        // Cut upper/lower 1 percent units.
+        let mut covs: Vec<_> = count.values().copied().collect();
+        covs.sort();
+        let (lower, upper) = (covs[covs.len() / 100], covs[covs.len() * 99 / 100]);
+        let lower = lower.max(5);
+        debug!("Taking{}-{}", lower, upper);
+        self.selected_chunks = self
+            .selected_chunks
+            .into_iter()
+            .filter(|unit| match count.get(&unit.id) {
+                Some(&count) => lower < count && count < upper,
+                None => false,
+            })
+            .enumerate()
+            .map(|(idx, unit)| Unit {
+                id: idx as u64,
+                ..unit
+            })
+            .collect();
+        debug!("Final:{} units", self.selected_chunks.len());
         self
     }
 }
 
+#[allow(dead_code)]
 fn to_u64(kmer: &[u8]) -> u64 {
     let mut res = 0;
     for x in kmer {
@@ -194,6 +223,85 @@ fn to_u64(kmer: &[u8]) -> u64 {
 //     })
 // }
 
+fn remove_overlapping_units_mm2(
+    mut units: Vec<Vec<u8>>,
+    config: &UnitConfig,
+    followup: bool,
+) -> Option<Vec<Vec<u8>>> {
+    use rand::{thread_rng, Rng};
+    let mut rng = thread_rng();
+    let id: u64 = rng.gen::<u64>() % 100_000_000;
+    let mut c_dir = std::env::current_dir().ok()?;
+    c_dir.push(format!("{}", id));
+    debug!("Creating {:?}.", c_dir);
+    std::fs::create_dir(&c_dir).ok()?;
+    let unit = {
+        use bio_utils::fasta::Writer;
+        let mut path = c_dir.clone();
+        path.push("units.fa");
+        let mut wtr = std::fs::File::create(&path).map(Writer::new).ok()?;
+        for (i, unit) in units.iter().enumerate() {
+            let id = format!("{}", i);
+            let record = bio_utils::fasta::Record::with_data(&id, &None, unit);
+            wtr.write_record(&record).ok()?;
+        }
+        path.into_os_string().into_string().ok()?
+    };
+    let preset = if config.read_type == ReadType::CCS || followup {
+        "asm10"
+    } else {
+        "ava-pb"
+    };
+    let mm2 = crate::minimap2::minimap2(&unit, &unit, config.threads, preset, true, false);
+    let mm2: Vec<_> = String::from_utf8(mm2)
+        .unwrap()
+        .lines()
+        .filter_map(bio_utils::paf::PAF::new)
+        .collect();
+    debug!("{} Alignments.", mm2.len());
+    debug!("Removing {:?}", c_dir);
+    std::fs::remove_dir_all(c_dir).ok()?;
+    let mut edges: Vec<_> = (0..units.len()).map(|i| vec![false; i]).collect();
+    // TODO: Make as parameters.
+    for aln in mm2
+        .iter()
+        .filter(|a| a.matchnum > 1000 && a.qname != a.tname)
+    {
+        let qname: usize = aln.qname.parse().ok()?;
+        let rname: usize = aln.tname.parse().ok()?;
+        let thr = 100;
+        let is_overlap = if aln.relstrand {
+            (aln.qstart < thr && aln.tlen - aln.tend < thr)
+                || (aln.qlen - aln.qend < thr && aln.tstart < thr)
+        } else {
+            (aln.qlen - aln.qend < thr && aln.tlen - aln.tend < thr)
+                || (aln.qstart < thr && aln.tstart < thr)
+        };
+        if is_overlap {
+            let (i, j) = if qname < rname {
+                (rname, qname)
+            } else {
+                (qname, rname)
+            };
+            edges[i][j] = true;
+        }
+    }
+    let num_edges = edges
+        .iter()
+        .map(|e| e.iter().filter(|&&b| b).count())
+        .sum::<usize>();
+    debug!("Graph constructed. {} edges.", num_edges);
+    let to_be_removed = approx_vertex_cover(edges, units.len());
+    let mut idx = 0;
+    units.retain(|_| {
+        idx += 1;
+        !to_be_removed[idx - 1]
+    });
+    debug!("Resulting {} units.", units.len());
+    Some(units)
+}
+
+#[allow(dead_code)]
 fn remove_overlapping_units(
     mut units: Vec<Vec<u8>>,
     config: &UnitConfig,
@@ -250,6 +358,7 @@ fn remove_overlapping_units(
     units
 }
 
+#[allow(dead_code)]
 fn compute_jaccard(kmer1: &[u64], kmer2: &[u64]) -> f64 {
     let mut union = 0;
     let mut intersection = 0;
@@ -285,6 +394,7 @@ fn compute_jaccard(kmer1: &[u64], kmer2: &[u64]) -> f64 {
 // }
 
 // Overlapping alignment.
+#[allow(dead_code)]
 fn alignment(seq1: &[u8], seq2: &[u8]) -> f64 {
     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
     for i in 1..seq1.len() + 1 {

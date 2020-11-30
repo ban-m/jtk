@@ -4,14 +4,21 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 pub const MARGIN: usize = 100;
 pub trait Encode {
-    fn encode(self, threads: usize) -> Self;
+    fn encode(self, threads: usize, last: bool) -> Self;
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(mut self, threads: usize) -> Self {
-        let alignments = match last_alignment(&self, threads) {
-            Ok(res) => res,
-            Err(why) => panic!("{:?}:Encoding step", why),
+    fn encode(mut self, threads: usize, last: bool) -> Self {
+        let alignments = if last {
+            match last_alignment(&self, threads) {
+                Ok(res) => res,
+                Err(why) => panic!("{:?}:Encoding step", why),
+            }
+        } else {
+            match mm2_alignment(&self, threads) {
+                Ok(res) => res,
+                Err(why) => panic!("{:?}:Encoding step", why),
+            }
         };
         let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(&alignments);
         let encoded_reads: Vec<_> = self
@@ -27,7 +34,74 @@ impl Encode for definitions::DataSet {
         self
     }
 }
-
+fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
+    use rand::{thread_rng, Rng};
+    let mut rng = thread_rng();
+    let id: u64 = rng.gen::<u64>() % 100_000_000;
+    let mut c_dir = std::env::current_dir()?;
+    c_dir.push(format!("{}", id));
+    debug!("Creating {:?}.", c_dir);
+    std::fs::create_dir(&c_dir)?;
+    // Create reference and reads.
+    let (reference, reads) = {
+        use bio_utils::fasta;
+        let mut reference = c_dir.clone();
+        reference.push("units.fa");
+        let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
+        for unit in ds.selected_chunks.iter() {
+            let id = format!("{}", unit.id);
+            let record = fasta::Record::with_data(&id, &None, unit.seq.as_bytes());
+            wtr.write_record(&record)?;
+        }
+        let mut reads = c_dir.clone();
+        reads.push("reads.fa");
+        let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
+        for read in ds.raw_reads.iter() {
+            let id = read.name.to_string();
+            let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
+            wtr.write_record(&record)?;
+        }
+        let reference = reference.into_os_string().into_string().unwrap();
+        let reads = reads.into_os_string().into_string().unwrap();
+        (reference, reads)
+    };
+    use definitions::ReadType;
+    let preset = match ds.read_type {
+        ReadType::CCS => "asm5",
+        ReadType::ONT => "map-ont",
+        ReadType::CLR | _ => "map-pb",
+    };
+    let mm2 = crate::minimap2::minimap2(&reads, &reference, p, preset, false, true);
+    let mut header = HashMap::new();
+    let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
+        .lines()
+        .filter_map(|line| {
+            if line.starts_with("@SQ") {
+                let mut line = line.split('\t');
+                line.next();
+                let name = line.next()?.split(':').nth(1)?.to_string();
+                let length: usize = line.next()?.split(':').nth(1)?.parse().ok()?;
+                header.insert(name, length);
+                None
+            } else {
+                bio_utils::sam::Sam::new(&line)
+            }
+        })
+        .collect();
+    let alignments: Vec<_> = alignments
+        .iter()
+        .filter_map(|aln| match lasttab::try_from(&aln, &header) {
+            Ok(res) => Some(res),
+            Err(why) => {
+                debug!("{:?}", why);
+                None
+            }
+        })
+        .collect();
+    debug!("Removing {:?}", c_dir);
+    std::fs::remove_dir_all(c_dir)?;
+    Ok(alignments)
+}
 fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
@@ -585,9 +659,9 @@ fn convert_aln_to_cigar(aln: &lasttab::LastTAB) -> Vec<Op> {
     aln.alignment()
         .into_iter()
         .map(|op| match op {
-            lasttab::Op::Seq1In(l) => Op::Ins(l),
-            lasttab::Op::Seq2In(l) => Op::Del(l),
-            lasttab::Op::Match(l) => Op::Match(l),
+            lasttab::Op::Seq1In(l) => Op::Ins(*l),
+            lasttab::Op::Seq2In(l) => Op::Del(*l),
+            lasttab::Op::Match(l) => Op::Match(*l),
         })
         .collect()
 }

@@ -67,7 +67,7 @@ where
         ref score,
     } = &c.alnparam;
     let param = (ins, del, score);
-    use super::config::ReadType;
+    use definitions::ReadType;
     let base = base
         .as_ref()
         .map(|e| POA::new(&e.consensus(), 1.))

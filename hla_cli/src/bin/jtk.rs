@@ -26,6 +26,14 @@ fn subcommand_entry() -> App<'static, 'static> {
                 .required(true)
                 .help("Input FASTA file."),
         )
+        .arg(
+            Arg::with_name("read_type")
+                .long("read_type")
+                .takes_value(true)
+                .default_value(&"CLR")
+                .possible_values(&["CCS", "CLR", "ONT"])
+                .help("Read type. CCS, CLR, or ONT."),
+        )
 }
 
 fn subcommand_extract() -> App<'static, 'static> {
@@ -131,14 +139,6 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .default_value(&"1")
                 .help("number of threads"),
         )
-        .arg(
-            Arg::with_name("read_type")
-                .long("read_type")
-                .takes_value(true)
-                .default_value(&"CCS")
-                .possible_values(&["CCS", "CLR", "ONT"])
-                .help("Read type. CCS, CLR, or ONT."),
-        )
 }
 
 fn subcommand_polish_unit() -> App<'static, 'static> {
@@ -159,14 +159,6 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
                 .takes_value(true)
                 .default_value(&"1")
                 .help("number of threads"),
-        )
-        .arg(
-            Arg::with_name("read_type")
-                .long("read_type")
-                .takes_value(true)
-                .default_value(&"CCS")
-                .possible_values(&["CCS", "CLR", "ONT"])
-                .help("Read type. CCS, CLR, or ONT."),
         )
         .arg(
             Arg::with_name("consensus_size")
@@ -202,6 +194,13 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .help("Number of threads")
                 .takes_value(true)
                 .default_value(&"1"),
+        )
+        .arg(
+            Arg::with_name("aligner")
+                .long("aligner")
+                .help("Aligner to be used.")
+                .default_value(&"LAST")
+                .possible_values(&["LAST", "Minimap2"]),
         )
 }
 
@@ -302,13 +301,6 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .help("The length of sub-chunks")
                 .default_value(&"100")
                 .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("read_type")
-                .long("read_type")
-                .takes_value(true)
-                .default_value(&"CCS")
-                .help("Read type. CCS, CLR, or ONT."),
         )
         .arg(
             Arg::with_name("retry")
@@ -491,6 +483,14 @@ fn subcommand_pipeline() -> App<'static, 'static> {
         .author("BanshoMasutani")
         .about("Exec JTK pipeline.")
         .arg(
+            Arg::with_name("read_type")
+                .long("read_type")
+                .takes_value(true)
+                .default_value(&"CCS")
+                .possible_values(&["CCS", "CLR", "ONT"])
+                .help("Read type. CCS, CLR, or ONT."),
+        )
+        .arg(
             Arg::with_name("verbose")
                 .short("v")
                 .multiple(true)
@@ -532,14 +532,6 @@ fn subcommand_pipeline() -> App<'static, 'static> {
                 .takes_value(true)
                 .default_value(&"500")
                 .help("Margin at the both end of a read."),
-        )
-        .arg(
-            Arg::with_name("read_type")
-                .long("read_type")
-                .takes_value(true)
-                .default_value(&"CCS")
-                .possible_values(&["CCS", "CLR", "ONT"])
-                .help("Read type. CCS, CLR, or ONT."),
         )
         .arg(
             Arg::with_name("max_multiplicity")
@@ -760,11 +752,12 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
     {
         debug!("{:?}:If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = match matches.value_of("read_type").unwrap() {
-        "CCS" => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds),
-        "CLR" => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds),
-        "ONT" => UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds),
-        _ => unreachable!(),
+    let config = match dataset.read_type {
+        ReadType::CCS => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds),
+        ReadType::CLR => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds),
+        ReadType::ONT | ReadType::None => {
+            UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds)
+        }
     };
     Ok(dataset.select_chunks(&config))
 }
@@ -775,13 +768,14 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
+    let last = matches.value_of("aligner") == Some("LAST");
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    Ok(dataset.encode(threads))
+    Ok(dataset.encode(threads, last))
 }
 
 fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -798,14 +792,13 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         .value_of("iteration")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
-    let readtype = matches.value_of("read_type").unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = PolishUnitConfig::new(readtype, consensus_size, iteration);
+    let config = PolishUnitConfig::new(dataset.read_type, consensus_size, iteration);
     Ok(dataset.polish_unit(&config))
 }
 fn multiplicity_estimation(
@@ -866,12 +859,8 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Re
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = match matches.value_of("read_type").unwrap() {
-        "CCS" => ClusteringConfig::ccs(&dataset, cluster_num, length, limit, retry, retain),
-        "CLR" => ClusteringConfig::clr(&dataset, cluster_num, length, limit, retry, retain),
-        "ONT" => ClusteringConfig::ont(&dataset, cluster_num, length, limit, retry, retain),
-        _ => unreachable!(),
-    };
+    let config =
+        ClusteringConfig::with_default(&dataset, cluster_num, length, limit, retry, retain);
     Ok(dataset.local_clustering(&config))
 }
 

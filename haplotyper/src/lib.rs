@@ -7,6 +7,7 @@ mod extract;
 pub mod find_union;
 pub mod global_clustering;
 pub mod local_clustering;
+pub mod minimap2;
 pub mod multiplicity_estimation;
 mod polish_clustering;
 mod polish_units;
