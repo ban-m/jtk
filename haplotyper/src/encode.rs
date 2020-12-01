@@ -93,7 +93,7 @@ fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<Las
         .filter_map(|aln| match lasttab::try_from(&aln, &header) {
             Ok(res) => Some(res),
             Err(why) => {
-                debug!("{:?}", why);
+                // debug!("{:?}", why);
                 None
             }
         })

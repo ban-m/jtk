@@ -1,5 +1,5 @@
 use definitions::*;
-// use std::collections::HashMap;
+use std::collections::HashMap;
 use std::io::BufReader;
 
 fn main() -> std::io::Result<()> {
@@ -7,17 +7,24 @@ fn main() -> std::io::Result<()> {
     // let args: Vec<_> = std::env::args().collect();
     // let unit: u64 = args[1].parse().unwrap();
     eprintln!("{}\t{}", ds.raw_reads.len(), ds.input_file);
+    let ids: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .map(|r| (r.id, r.name.clone()))
+        .collect();
     for read in ds.encoded_reads.iter()
     // .filter(|r| r.nodes.iter().any(|n| n.unit == unit))
     {
         let line: Vec<_> = read.nodes.iter().map(|n| format!("{}", n.unit)).collect();
-        println!(
-            "{}\t{}\t{}\t{}",
-            line.join("-"),
-            read.original_length,
-            read.leading_gap.len(),
-            read.trailing_gap.len()
-        );
+        let name = ids.get(&read.id).unwrap();
+        println!("{}\t{}", name, line.join("-"));
+        // println!(
+        //     "{}\t{}\t{}\t{}",
+        //     line.join("-"),
+        // read.original_length,
+        // read.leading_gap.len(),
+        // read.trailing_gap.len()
+        // );
     }
     Ok(())
 }

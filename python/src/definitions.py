@@ -15,7 +15,7 @@ class DataSet:
     hic_edges: list of `HiCEdge`
     """
     def __init__(self, input_file, raw_reads, selected_chunks,
-                 encoded_reads, assignments,hic_pairs, hic_edges):
+                 encoded_reads, assignments,hic_pairs, hic_edges, read_type):
         """
         The initialization method.
         Usually, users should not call this method directlly.
@@ -29,6 +29,7 @@ class DataSet:
         self.assignments = assignments
         self.hic_pairs = hic_pairs
         self.hic_edges = hic_edges
+        self.read_type = read_type
 
 class RawRead:
     """
@@ -222,6 +223,7 @@ def as_dataset(dct):
        'encoded_reads'in dct and\
        'assignments' in dct and\
        'hic_pairs' in dct and \
+       'read_type' in dct and \
        'hic_edges' in dct:
         return DataSet(input_file=dct['input_file'],
                        raw_reads = dct['raw_reads'],
@@ -229,7 +231,9 @@ def as_dataset(dct):
                        encoded_reads = dct['encoded_reads'],
                        assignments = dct['assignments'],
                        hic_pairs = dct['hic_pairs'],
-                       hic_edges = dct['hic_edges'])
+                       hic_edges = dct['hic_edges'],
+                       read_type = dct['read_type'],
+        )
     elif 'name' in dct and \
          'desc' in dct and \
          'id' in dct and \
@@ -295,6 +299,7 @@ class DataSetEncoder(json.JSONEncoder):
                 'assignments':list(map(self.default, obj.assignments)),
                 'hic_pairs':list(map(self.default, obj.hic_pairs)),
                 'hic_edges':list(map(self.default, obj.hic_edges)),
+                'read_type': obj.read_type,
             }
         elif isinstance(obj, RawRead):
             return {

@@ -2,21 +2,7 @@
 // use nalgebra::*;
 // use rand::Rng;
 // use rand_xoshiro::Xoshiro256PlusPlus;
-use definitions::*;
-// use std::collections::HashMap;
 use std::io::BufReader;
-fn get_input_file() -> std::io::Result<DataSet> {
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
-    match serde_json::de::from_reader(reader) {
-        Err(why) => {
-            eprintln!("{:?}", why);
-            eprintln!("Invalid Input from STDIN.");
-            Err(std::io::Error::from(std::io::ErrorKind::Other))
-        }
-        Ok(res) => Ok(res),
-    }
-}
 
 fn main() {
     use std::io::BufRead;

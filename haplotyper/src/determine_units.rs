@@ -119,7 +119,6 @@ impl DetermineUnit for definitions::DataSet {
                 debug!("Calib length {}->{}", config.chunk_len, temp.chunk_len);
                 temp
             };
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 7, 10);
             let units: Vec<_> = reads
                 .iter()
                 .flat_map(|r| split_into(r, &clr_config))
@@ -127,12 +126,12 @@ impl DetermineUnit for definitions::DataSet {
                 .map(|e| e.to_vec())
                 .collect();
             debug!("Take {} units.", units.len());
-            let units = {
-                let mut config = config.clone();
-                config.jaccard_thr /= 4.;
-                //remove_overlapping_units(units, &config, false)
-                remove_overlapping_units_mm2(units, &config, false).unwrap()
-            };
+            // let units = {
+            //     let mut config = config.clone();
+            //     config.jaccard_thr /= 4.;
+            //     //remove_overlapping_units(units, &config, false)
+            //     remove_overlapping_units_mm2(units, &config, false).unwrap()
+            // };
             self.selected_chunks = units
                 .iter()
                 .enumerate()
@@ -142,7 +141,9 @@ impl DetermineUnit for definitions::DataSet {
                     cluster_num: config.min_cluster,
                 })
                 .collect();
-            self = self.encode(config.threads, true);
+            // Minimap2 polishing.
+            self = self.encode(config.threads, false);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10);
             self = self.polish_unit(&polish_config);
             debug!("Polished.");
             let mut units = vec![];
@@ -250,7 +251,7 @@ fn remove_overlapping_units_mm2(
     let preset = if config.read_type == ReadType::CCS || followup {
         "asm10"
     } else {
-        "ava-pb"
+        "map-pb"
     };
     let mm2 = crate::minimap2::minimap2(&unit, &unit, config.threads, preset, true, false);
     let mm2: Vec<_> = String::from_utf8(mm2)

@@ -6,35 +6,35 @@
 #      ./script/pipeline.sh \
 #      ${data} \
 #      ${OUTPUT}/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
-data=/data/hacone/MHC-KIR/split/Ashkenazi_Son.MHC.fa
-OUTPUT=${PWD}/result/Ashkenazi_Son.MHC
-mkdir -p ${OUTPUT}
-qsub -o ./logfiles/Ashkenazi_Son.MHC.out -j y\
-     ./script/pipeline_clr.sh \
-     ${data} \
-     ${OUTPUT}/Ashkenazi_Son.MHC
+# data=/data/hacone/MHC-KIR/split/Ashkenazi_Son.MHC.fa
+# OUTPUT=${PWD}/result/Ashkenazi_Son.MHC
+# mkdir -p ${OUTPUT}
+# qsub -o ./logfiles/Ashkenazi_Son.MHC.out -j y\
+#      ./script/pipeline_clr.sh \
+#      ${data} \
+#      ${OUTPUT}/Ashkenazi_Son.MHC
 
 data=/work/ryought/mhc/data/KIR/filter/all.KIR.fa
 OUTPUT=${PWD}/result/KIR
 mkdir -p ${OUTPUT}
 qsub -o ./logfiles/KIR.out -j y\
-     ./script/pipeline_clr.sh \
+     ./script/pipeline.sh \
      ${data} \
      ${OUTPUT}/KIR
 
-data=/data/hacone/shared/all.HLA.fa
-OUTPUT=${PWD}/result/HG002_HLA
-mkdir -p ${OUTPUT}
-qsub -o ./logfiles/HLA_HG002.out -j y\
-     ./script/pipeline_clr.sh \
-     ${data} \
-     ${OUTPUT}/HG002_HLA
+# data=/data/hacone/shared/all.HLA.fa
+# OUTPUT=${PWD}/result/HG002_HLA
+# mkdir -p ${OUTPUT}
+# qsub -o ./logfiles/HLA_HG002.out -j y\
+#      ./script/pipeline_clr.sh \
+#      ${data} \
+#      ${OUTPUT}/HG002_HLA
 
-data=/data/hacone/shared/all_CLR.HLA.fa
-OUTPUT=${PWD}/result/HG002_HLA_CLR
-mkdir -p ${OUTPUT}
-qsub -o ./logfiles/HLA_HG002_CLR.out -j y\
-     ./script/pipeline_clr.sh \
-     ${data} \
-     ${OUTPUT}/HG002_HLA_CLR
+# data=/data/hacone/shared/all_CLR.HLA.fa
+# OUTPUT=${PWD}/result/HG002_HLA_CLR
+# mkdir -p ${OUTPUT}
+# qsub -o ./logfiles/HLA_HG002_CLR.out -j y\
+#      ./script/pipeline_clr.sh \
+#      ${data} \
+#      ${OUTPUT}/HG002_HLA_CLR
 

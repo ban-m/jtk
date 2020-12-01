@@ -58,12 +58,8 @@ impl PolishUnit for DataSet {
             .filter_map(|(id, pileup)| {
                 let len = subchunk_len[id];
                 if pileup.len() > c.filter_size {
-                    let c = consensus(pileup, len, c).map(|c| (id, c));
-                    // let l = c.as_ref().map(|x| x.1.len() as i32).unwrap_or(-1);
-                    // debug!("Polish\t{}\t{}\t{}", id, pileup.len(), l);
-                    c
+                    consensus(pileup, len, c).map(|c| (id, c))
                 } else {
-                    // debug!("Polish\t{}\t{}\t-1", id, pileup.len());
                     None
                 }
             })

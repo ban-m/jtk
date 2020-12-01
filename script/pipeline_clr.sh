@@ -18,7 +18,7 @@ STAT=${2}.stat
 THREADS=23
 jtk entry --input ${TARGET} --read_type CLR |\
     jtk select_unit -vv -t ${THREADS} --take_num 10000 |\
-    jtk encode -vv --threads ${THREADS} --aligner Minimap2 |\
+    jtk encode -vv --threads ${THREADS} --aligner LAST |\
     tee ${2}.entry.json |\
     jtk multiplicity_estimation -vv --threads ${THREADS} \
         --draft_assembly ${DRAFT_GFA} --max_multiplicity 30 |\
