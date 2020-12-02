@@ -1,4 +1,4 @@
-import definitions
+import jtk_definitions
 import json
 import sys
 if __name__ == "__main__":

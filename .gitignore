@@ -17,3 +17,6 @@ script/*.sh
 !.gitignore
 venv
 **__*
+python/build
+python/dist
+python/jtk_definitions.egg-info

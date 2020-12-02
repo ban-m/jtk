@@ -166,7 +166,7 @@ impl DetermineUnit for definitions::DataSet {
                 cluster_num: config.min_cluster,
             })
             .collect();
-        self = self.encode(config.threads, true);
+        self = self.encode(config.threads, false);
         use std::collections::HashMap;
         let mut count: HashMap<_, u32> = HashMap::new();
         for r in self.encoded_reads.iter() {
