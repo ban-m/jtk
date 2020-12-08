@@ -24,7 +24,13 @@ pub enum ReadType {
 }
 
 impl DataSet {
-    pub fn with_minimum_data(input_file: &str, raw_reads: Vec<RawRead>) -> Self {
+    pub fn with_minimum_data(input_file: &str, raw_reads: Vec<RawRead>, rt: &str) -> Self {
+        let read_type = match rt {
+            "CLR" => ReadType::CLR,
+            "CCS" => ReadType::CCS,
+            "ONT" => ReadType::ONT,
+            _ => ReadType::None,
+        };
         Self {
             input_file: input_file.to_string(),
             raw_reads,
@@ -33,7 +39,7 @@ impl DataSet {
             encoded_reads: vec![],
             hic_edges: vec![],
             assignments: vec![],
-            read_type: ReadType::None,
+            read_type,
         }
     }
     pub fn with_param(
@@ -61,9 +67,13 @@ impl DataSet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawRead {
+    /// Name of the read. It is the `id` in the fasta/fastq file.
     pub name: String,
     pub desc: String,
+    /// The id of the read. It is automatically given by jtk program.
     pub id: u64,
+    /// Sequence. It is a string on an alphabet of A,C,G,T,a,c,g,t.
+    /// (i.e., lowercase included)
     pub seq: String,
 }
 
@@ -100,6 +110,7 @@ impl HiCPair {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct Unit {
     pub id: u64,
+    /// Unit sequence. This is a string on a alphabet A,C,G,T,a,c,g,t
     pub seq: String,
     pub cluster_num: usize,
 }
@@ -150,6 +161,7 @@ pub struct Edge {
     pub from: u64,
     pub to: u64,
     pub offset: i64,
+    /// This is a string on an alphabet of A,C,G,T. There should not be any lowercase character.
     pub label: String,
 }
 
@@ -184,6 +196,7 @@ pub struct Node {
     pub position_from_start: usize,
     pub unit: u64,
     pub cluster: u64,
+    /// Sequence. A string on an alphabet of A,C,G,T. No lowercase included.
     pub seq: String,
     pub is_forward: bool,
     pub cigar: Vec<Op>,

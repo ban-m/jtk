@@ -2,21 +2,67 @@
 // use nalgebra::*;
 // use rand::Rng;
 // use rand_xoshiro::Xoshiro256PlusPlus;
+use definitions::*;
+use serde_json;
+use std::collections::HashMap;
 use std::io::BufReader;
-
-fn main() {
-    use std::io::BufRead;
+fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
-    let file: Vec<_> = std::fs::File::open(&args[1])
-        .map(BufReader::new)
-        .unwrap()
-        .lines()
-        .filter_map(|e| e.ok())
-        .filter_map(|s| bio_utils::paf::PAF::new(&s))
-        .collect();
-    for rec in file {
-        println!("{:?}", rec.tags);
+    let dataset: DataSet =
+        serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new).unwrap())
+            .unwrap();
+    for read in dataset.encoded_reads.iter() {
+        let mut units: HashMap<_, u32> = HashMap::new();
+        for node in read.nodes.iter() {
+            *units.entry(node.unit).or_default() += 1;
+        }
+        if units.values().any(|&x| x > 1) {
+            let r: Vec<_> = read.nodes.iter().map(|n| format!("{}", n.unit)).collect();
+            eprintln!("{}", r.join("-"));
+        }
+        for (&unit_id, _) in units.iter().filter(|&(_, &val)| val > 1) {
+            let unit = dataset
+                .selected_chunks
+                .iter()
+                .find(|u| u.id == unit_id)
+                .unwrap();
+            for node in read.nodes.iter() {
+                eprintln!("DUMP Alignment {}", unit_id);
+                let (q, a, r) = node.recover(unit);
+                for ((q, a), r) in q.chunks(100).zip(a.chunks(100)).zip(r.chunks(100)) {
+                    eprintln!("{}", String::from_utf8_lossy(q));
+                    eprintln!("{}", String::from_utf8_lossy(a));
+                    eprintln!("{}", String::from_utf8_lossy(r));
+                    eprintln!();
+                }
+            }
+        }
     }
+    // let num_encoded = dataset.encoded_reads.len();
+    // let num_nodes = dataset
+    //     .encoded_reads
+    //     .iter()
+    //     .map(|er| er.nodes.len())
+    //     .sum::<usize>();
+    // eprintln!("{}", num_nodes);
+    // eprintln!(
+    //     "{} encodes out of {}, {} units.",
+    //     dataset.raw_reads.len(),
+    //     num_encoded,
+    //     num_nodes
+    // );
+    // let mut counts: HashMap<_, usize> = HashMap::new();
+    // for read in dataset.encoded_reads.iter() {
+    //     for node in read.nodes.iter() {
+    //         *counts.entry(node.unit).or_default() += 1;
+    //     }
+    // }
+    // let mut counts: Vec<_> = counts.into_iter().collect();
+    // counts.sort_by_key(|x| x.0);
+    // for (u, v) in counts.iter() {
+    //     eprintln!("{}\t{}", u, v);
+    // }
+    Ok(())
 }
 
 //     let args: Vec<_> = std::env::args().collect();

@@ -92,7 +92,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
     SubCommand::with_name("select_unit")
         .version("0.1")
         .author("BanshoMasutani")
-        .about("Selecting units")
+        .about("Pick subsequence from raw reads.")
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -139,6 +139,13 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .default_value(&"1")
                 .help("number of threads"),
         )
+        .arg(
+            Arg::with_name("exclude")
+                .long("exclude")
+                .takes_value(true)
+                .default_value(&"0.4")
+                .help("filter out unit having more than [exclude] repetitiveness."),
+        )
 }
 
 fn subcommand_polish_unit() -> App<'static, 'static> {
@@ -176,6 +183,50 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_repeatmasking() -> App<'static, 'static> {
+    SubCommand::with_name("repeat_masking")
+        .version("0.1")
+        .author("Bansho Masutani")
+        .about("Mask Repeat(i.e., frequent k-mer)")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .long("threads")
+                .short("t")
+                .help("Number of threads")
+                .takes_value(true)
+                .default_value(&"1"),
+        )
+        .arg(
+            Arg::with_name("k")
+                .short("k")
+                .help("K-mer size(<32)")
+                .takes_value(true)
+                .default_value(&"15"),
+        )
+        .arg(
+            Arg::with_name("freq")
+                .short("f")
+                .long("freq")
+                .help("Mask top [freq] k-mer")
+                .takes_value(true)
+                .default_value("0.0002"),
+        )
+        .arg(
+            Arg::with_name("min")
+                .short("m")
+                .long("min")
+                .help("Prevent k-mer occuring less than [min] times from masking.")
+                .takes_value(true)
+                .default_value("10"),
+        )
+}
+
 fn subcommand_encode() -> App<'static, 'static> {
     SubCommand::with_name("encode")
         .version("0.1")
@@ -201,6 +252,43 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .help("Aligner to be used.")
                 .default_value(&"LAST")
                 .possible_values(&["LAST", "Minimap2"]),
+        )
+}
+
+fn subcommand_filter_unit() -> App<'static, 'static> {
+    SubCommand::with_name("filter_unit")
+        .version("0.1")
+        .author("Bansho Masutani")
+        .about("Discard (in)-frequent units.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .long("threads")
+                .short("t")
+                .help("Number of threads")
+                .takes_value(true)
+                .default_value(&"1"),
+        )
+        .arg(
+            Arg::with_name("upper")
+                .short("u")
+                .long("upper")
+                .help("Discard units with occurence more than or equal to [upper].")
+                .takes_value(true)
+                .default_value("500"),
+        )
+        .arg(
+            Arg::with_name("lower")
+                .short("l")
+                .long("lower")
+                .help("Discard units with occurence less than or equal to [upper].")
+                .takes_value(true)
+                .default_value("3"),
         )
 }
 
@@ -347,7 +435,7 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("KMER_SIZE")
                 .help("The size of the kmer")
-                .default_value(&"3")
+                .default_value(&"4")
                 .takes_value(true),
         )
         .arg(
@@ -679,7 +767,8 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     let reader = std::fs::File::open(file).map(BufReader::new)?;
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
     debug!("Encoding {} reads", seqs.len());
-    Ok(DataSet::new(file, &seqs))
+    let read_type = matches.value_of("read_type").unwrap();
+    Ok(DataSet::new(file, &seqs, read_type))
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -746,6 +835,10 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .expect("threads");
+    let filter: f64 = matches
+        .value_of("exclude")
+        .and_then(|e| e.parse().ok())
+        .expect("exclude");
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(thrds)
         .build_global()
@@ -753,13 +846,41 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         debug!("{:?}:If you run `pipeline` module, this is Harmless.", why);
     }
     let config = match dataset.read_type {
-        ReadType::CCS => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds),
-        ReadType::CLR => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds),
+        ReadType::CCS => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds, filter),
+        ReadType::CLR => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds, filter),
         ReadType::ONT | ReadType::None => {
-            UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds)
+            UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds, filter)
         }
     };
     Ok(dataset.select_chunks(&config))
+}
+
+fn repeat_masking(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("Start masking repeat.");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    let k: usize = matches.value_of("k").and_then(|l| l.parse().ok()).unwrap();
+    if k > 32 {
+        panic!("K should be less than 32.");
+    }
+    let freq: f64 = matches
+        .value_of("freq")
+        .and_then(|l| l.parse().ok())
+        .unwrap();
+    let min: u32 = matches
+        .value_of("min")
+        .and_then(|l| l.parse().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    let config = haplotyper::RepeatMaskConfig::new(k, freq, min);
+    Ok(dataset.mask_repeat(&config))
 }
 
 fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -776,6 +897,29 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     Ok(dataset.encode(threads, last))
+}
+
+fn filter_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("Start Encoding step");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    let upper: usize = matches
+        .value_of("upper")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    let lower: usize = matches
+        .value_of("lower")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    Ok(dataset.filter_unit(upper, lower))
 }
 
 fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -1010,6 +1154,8 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_clustering_correction())
         .subcommand(subcommand_assembly())
         .subcommand(subcommand_pipeline())
+        .subcommand(subcommand_repeatmasking())
+        .subcommand(subcommand_filter_unit())
         .get_matches();
     if let Some(sub_m) = matches.subcommand().1 {
         let level = match sub_m.occurrences_of("verbose") {
@@ -1037,6 +1183,8 @@ fn main() -> std::io::Result<()> {
         ("global_clustering", Some(sub_m)) => global_clustering(sub_m, ds),
         ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
+        ("repeat_masking", Some(sub_m)) => repeat_masking(sub_m, ds),
+        ("filter_unit", Some(sub_m)) => filter_unit(sub_m, ds),
         _ => unreachable!(),
     };
     result.and_then(|x| flush_file(&x))

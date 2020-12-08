@@ -107,6 +107,12 @@ impl<'a, 'b, 'c> DitchNode<'a, 'b, 'c> {
             tips: vec![],
         }
     }
+    fn seq(&self) -> String {
+        self.nodes
+            .get(0)
+            .map(|node| node.seq.clone())
+            .unwrap_or_else(String::new)
+    }
     fn consensus(&self) -> String {
         let result = self.consensus_with(100, DRAFT_REP_NUM);
         String::from_utf8(result).unwrap()
@@ -733,7 +739,7 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         start: usize,
         start_position: Position,
         seqname: String,
-        _c: &AssembleConfig,
+        c: &AssembleConfig,
     ) -> (gfa::Segment, Vec<gfa::Edge>, ContigSummary) {
         // Find edges.
         let mut edges: Vec<_> = self.nodes[start]
@@ -772,8 +778,10 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
             arrived[node] = true;
             // Move forward.
             let cons = match position {
-                Position::Head => self.nodes[node].consensus(),
-                Position::Tail => revcmp_str(&self.nodes[node].consensus()),
+                Position::Head if c.to_polish => self.nodes[node].consensus(),
+                Position::Head => self.nodes[node].seq(),
+                Position::Tail if c.to_polish => revcmp_str(&self.nodes[node].consensus()),
+                Position::Tail => revcmp_str(&self.nodes[node].seq()),
             };
             {
                 let direction = match position {

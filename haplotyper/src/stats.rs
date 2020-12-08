@@ -89,7 +89,7 @@ impl Stats for definitions::DataSet {
         }
         // Unit statistics
         if !self.encoded_reads.is_empty() {
-            let units: Vec<(u64, usize)> = {
+            let mut units: Vec<(u64, usize)> = {
                 use std::collections::HashMap;
                 let mut count: HashMap<u64, usize> = HashMap::new();
                 for read in self.encoded_reads.iter() {
@@ -101,17 +101,20 @@ impl Stats for definitions::DataSet {
                 count.sort_by_key(|e| e.0);
                 count
             };
-            let max = units.iter().map(|e| e.1).max().unwrap();
-            let min = units.iter().map(|e| e.1).min().unwrap();
+            units.sort_by_key(|e| e.1);
+            let (argmax, max) = *units.last().unwrap_or(&(0, 0));
+            let (argmin, min) = *units.first().unwrap_or(&(0, 0));
             let sum = units.iter().map(|e| e.1).sum::<usize>();
             let ave = sum as f64 / units.len() as f64;
             writeln!(&mut wtr, "Encoding summary")?;
-            writeln!(&mut wtr, "Min:{}\tMax:{}\tAve:{:.2}", min, max, ave)?;
-            let mut units: Vec<usize> = units.iter().map(|x| x.1).collect();
-            units.sort();
+            writeln!(
+                &mut wtr,
+                "Min:({},{})\tMax:({},{})\tAve:{:.2}",
+                min, argmin, max, argmax, ave
+            )?;
             let top_20: Vec<_> = units.iter().rev().take(20).copied().collect();
-            let last = *top_20.last().unwrap();
-            let units: Vec<_> = units.into_iter().filter(|&x| x < last).collect();
+            let take_len = units.len() - 20.min(units.len());
+            let units: Vec<_> = units.iter().take(take_len).map(|x| x.1).collect();
             let hist = histgram_viz::Histgram::new(&units);
             writeln!(&mut wtr, "Top 20 Occurences:{:?}", top_20)?;
             writeln!(&mut wtr, "The rest of the Units\n{}", hist.format(40, 20))?;

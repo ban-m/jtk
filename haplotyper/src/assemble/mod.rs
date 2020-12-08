@@ -89,11 +89,11 @@ impl Assemble for DataSet {
                 }
             })
             .flat_map(|(cl, _)| {
-                let (nodes, edges, group, summaries) = assemble(self, cl, c);
+                let (nodes, edges, group, _summaries) = assemble(self, cl, c);
                 let mut records = vec![];
-                for summary in summaries {
-                    debug!("{}", summary);
-                }
+                // for summary in summaries {
+                //     debug!("{}", summary);
+                // }
                 let nodes = nodes
                     .into_iter()
                     .map(gfa::Content::Seg)

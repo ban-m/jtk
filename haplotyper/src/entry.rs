@@ -1,9 +1,9 @@
 pub trait Entry {
-    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record]) -> Self;
+    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record], rt: &str) -> Self;
 }
 
 impl Entry for definitions::DataSet {
-    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record]) -> Self {
+    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record], rt: &str) -> Self {
         let raw_reads: Vec<_> = raw_data
             .iter()
             .enumerate()
@@ -19,6 +19,6 @@ impl Entry for definitions::DataSet {
             })
             .collect();
         use definitions::DataSet;
-        DataSet::with_minimum_data(input_file, raw_reads)
+        DataSet::with_minimum_data(input_file, raw_reads, rt)
     }
 }

@@ -14,9 +14,9 @@ pub struct UnitConfig {
     pub alignment_thr: f64,
     pub hits_thr: f64,
     pub hits_range: usize,
-    pub read_type: ReadType,
     pub threads: usize,
     pub min_cluster: usize,
+    pub exclude_repeats: f64,
 }
 const DEFAULT_RNG: usize = 200;
 impl UnitConfig {
@@ -26,6 +26,7 @@ impl UnitConfig {
         skip_len: usize,
         margin: usize,
         threads: usize,
+        exclude_repeats: f64,
     ) -> Self {
         Self {
             chunk_len,
@@ -37,9 +38,10 @@ impl UnitConfig {
             alignment_thr: 0.3,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
-            read_type: ReadType::CCS,
+            // read_type: ReadType::CCS,
             threads,
             min_cluster: 2,
+            exclude_repeats,
         }
     }
     pub fn new_clr(
@@ -48,28 +50,7 @@ impl UnitConfig {
         skip_len: usize,
         margin: usize,
         threads: usize,
-    ) -> Self {
-        Self {
-            chunk_len,
-            skip_len,
-            margin,
-            k: 9,
-            unit_num,
-            jaccard_thr: 0.1,
-            alignment_thr: 0.3,
-            hits_range: DEFAULT_RNG,
-            hits_thr: 0.3,
-            read_type: ReadType::CLR,
-            threads,
-            min_cluster: 2,
-        }
-    }
-    pub fn new_ont(
-        chunk_len: usize,
-        unit_num: usize,
-        skip_len: usize,
-        margin: usize,
-        threads: usize,
+        exclude_repeats: f64,
     ) -> Self {
         Self {
             chunk_len,
@@ -81,9 +62,38 @@ impl UnitConfig {
             alignment_thr: 0.4,
             hits_range: DEFAULT_RNG,
             hits_thr: 0.3,
-            read_type: ReadType::ONT,
             threads,
             min_cluster: 2,
+            exclude_repeats,
+            // k: 9,
+            // jaccard_thr: 0.1,
+            // alignment_thr: 0.3,
+            // hits_thr: 0.3,
+            // min_cluster: 2,
+        }
+    }
+    pub fn new_ont(
+        chunk_len: usize,
+        unit_num: usize,
+        skip_len: usize,
+        margin: usize,
+        threads: usize,
+        exclude_repeats: f64,
+    ) -> Self {
+        Self {
+            chunk_len,
+            skip_len,
+            margin,
+            k: 6,
+            unit_num,
+            jaccard_thr: 0.15,
+            alignment_thr: 0.4,
+            hits_range: DEFAULT_RNG,
+            hits_thr: 0.3,
+            // read_type: ReadType::ONT,
+            threads,
+            min_cluster: 2,
+            exclude_repeats,
         }
     }
 }
@@ -97,20 +107,15 @@ impl DetermineUnit for definitions::DataSet {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
-        let units: Vec<_> = if config.read_type == ReadType::CCS {
+        debug!("Select Unit: Configuration:{:?}", config);
+        let units: Vec<_> = if self.read_type == ReadType::CCS {
             let units: Vec<_> = reads
                 .iter()
                 .flat_map(|r| split_into(r, config))
+                .filter(|u| !is_repetitive(u, config))
                 .take(config.unit_num)
                 .map(|e| e.to_vec())
                 .collect();
-            let units = {
-                let mut config = config.clone();
-                config.jaccard_thr /= 4.;
-                //remove_overlapping_units(units, &config, false)
-                remove_overlapping_units_mm2(units, &config, false).unwrap()
-            };
-            //remove_overlapping_units(units, config, true)
             remove_overlapping_units_mm2(units, config, true).unwrap()
         } else {
             let clr_config = {
@@ -122,16 +127,11 @@ impl DetermineUnit for definitions::DataSet {
             let units: Vec<_> = reads
                 .iter()
                 .flat_map(|r| split_into(r, &clr_config))
+                .filter(|u| !is_repetitive(u, config))
                 .take(clr_config.unit_num)
                 .map(|e| e.to_vec())
                 .collect();
             debug!("Take {} units.", units.len());
-            // let units = {
-            //     let mut config = config.clone();
-            //     config.jaccard_thr /= 4.;
-            //     //remove_overlapping_units(units, &config, false)
-            //     remove_overlapping_units_mm2(units, &config, false).unwrap()
-            // };
             self.selected_chunks = units
                 .iter()
                 .enumerate()
@@ -141,8 +141,7 @@ impl DetermineUnit for definitions::DataSet {
                     cluster_num: config.min_cluster,
                 })
                 .collect();
-            // Minimap2 polishing.
-            self = self.encode(config.threads, false);
+            self = self.encode(config.threads, true);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10);
             self = self.polish_unit(&polish_config);
             debug!("Polished.");
@@ -153,7 +152,6 @@ impl DetermineUnit for definitions::DataSet {
                     units.push(seq.into_bytes());
                 }
             }
-            //remove_overlapping_units(units, &config, true)
             remove_overlapping_units_mm2(units, &config, true).unwrap()
         };
         // TODO: Make as parameters.
@@ -166,36 +164,42 @@ impl DetermineUnit for definitions::DataSet {
                 cluster_num: config.min_cluster,
             })
             .collect();
-        self = self.encode(config.threads, false);
-        use std::collections::HashMap;
-        let mut count: HashMap<_, u32> = HashMap::new();
-        for r in self.encoded_reads.iter() {
-            for n in r.nodes.iter() {
-                *count.entry(n.unit).or_default() += 1;
-            }
-        }
+        // self = self.encode(config.threads, true);
+        // use std::collections::HashMap;
+        // let mut count: HashMap<_, u32> = HashMap::new();
+        // for r in self.encoded_reads.iter() {
+        //     for n in r.nodes.iter() {
+        //         *count.entry(n.unit).or_default() += 1;
+        //     }
+        // }
         // Cut upper/lower 1 percent units.
-        let mut covs: Vec<_> = count.values().copied().collect();
-        covs.sort();
-        let (lower, upper) = (covs[covs.len() / 100], covs[covs.len() * 99 / 100]);
-        let lower = lower.max(5);
-        debug!("Taking{}-{}", lower, upper);
-        self.selected_chunks = self
-            .selected_chunks
-            .into_iter()
-            .filter(|unit| match count.get(&unit.id) {
-                Some(&count) => lower < count && count < upper,
-                None => false,
-            })
-            .enumerate()
-            .map(|(idx, unit)| Unit {
-                id: idx as u64,
-                ..unit
-            })
-            .collect();
+        // let mut covs: Vec<_> = count.values().copied().collect();
+        // covs.sort();
+        // let (lower, upper) = (covs[covs.len() / 10], covs[covs.len() * 9 / 10]);
+        // let lower = lower.max(5);
+        // debug!("Taking{}-{}", lower, upper);
+        // self.selected_chunks = self
+        //     .selected_chunks
+        //     .into_iter()
+        //     .filter(|unit| match count.get(&unit.id) {
+        //         Some(&count) => lower < count && count < upper,
+        //         None => false,
+        //     })
+        //     .enumerate()
+        //     .map(|(idx, unit)| Unit {
+        //         id: idx as u64,
+        //         ..unit
+        //     })
+        //     .collect();
         debug!("Final:{} units", self.selected_chunks.len());
         self
     }
+}
+
+fn is_repetitive(unit: &[u8], config: &UnitConfig) -> bool {
+    let tot = unit.len();
+    let lowercase = unit.iter().filter(|c| c.is_ascii_lowercase()).count();
+    lowercase as f64 / tot as f64 > config.exclude_repeats
 }
 
 #[allow(dead_code)]
@@ -248,11 +252,7 @@ fn remove_overlapping_units_mm2(
         }
         path.into_os_string().into_string().ok()?
     };
-    let preset = if config.read_type == ReadType::CCS || followup {
-        "asm10"
-    } else {
-        "map-pb"
-    };
+    let preset = if followup { "asm10" } else { "map-pb" };
     let mm2 = crate::minimap2::minimap2(&unit, &unit, config.threads, preset, true, false);
     let mm2: Vec<_> = String::from_utf8(mm2)
         .unwrap()
@@ -400,7 +400,8 @@ fn alignment(seq1: &[u8], seq2: &[u8]) -> f64 {
     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
     for i in 1..seq1.len() + 1 {
         for j in 1..seq2.len() + 1 {
-            let m = if seq1[i - 1] == seq2[j - 1] { 1 } else { -1 };
+            let is_match = seq1[i - 1].to_ascii_uppercase() == seq2[j - 1].to_ascii_uppercase();
+            let m = if is_match { 1 } else { -1 };
             dp[i][j] = (dp[i - 1][j] - 1)
                 .max(dp[i][j - 1] - 1)
                 .max(dp[i - 1][j - 1] + m);

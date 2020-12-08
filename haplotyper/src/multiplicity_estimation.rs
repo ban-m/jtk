@@ -128,6 +128,7 @@ fn estimate_graph_multiplicity(
     debug!("LAMBDAS:{:?}", model.lambdas);
     debug!("PREDCT:{:?}", repeat_num);
     let mut result = vec![];
+    debug!("REPEATNUM\tID\tMULTP\tCLUSTER");
     for (&cl, contig) in assignments.iter().zip(graph.nodes.iter()) {
         let repeat_num = repeat_num[cl];
         debug!("REPEATNUM\t{}\t{}\t{}", contig.id, repeat_num, cl);

@@ -31,8 +31,22 @@ impl Encode for definitions::DataSet {
             .collect();
         debug!("Encoded {} reads.", encoded_reads.len());
         self.encoded_reads = encoded_reads;
+        // Sanity Check!
+        assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
         self
     }
+}
+
+fn is_uppercase(read: &definitions::EncodedRead) -> bool {
+    let nodes = read
+        .nodes
+        .iter()
+        .all(|node| node.seq.chars().all(|c| c.is_ascii_uppercase()));
+    let edges = read
+        .edges
+        .iter()
+        .all(|edge| edge.label.chars().all(|c| c.is_ascii_uppercase()));
+    nodes && edges
 }
 fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
     use rand::{thread_rng, Rng};
@@ -92,7 +106,7 @@ fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<Las
         .iter()
         .filter_map(|aln| match lasttab::try_from(&aln, &header) {
             Ok(res) => Some(res),
-            Err(why) => {
+            Err(_) => {
                 // debug!("{:?}", why);
                 None
             }
@@ -100,6 +114,11 @@ fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<Las
         .collect();
     debug!("Removing {:?}", c_dir);
     std::fs::remove_dir_all(c_dir)?;
+    // debug!(
+    //     "{} Alignments({} per read)",
+    //     alignments.len(),
+    //     alignments.len() / reads.len()
+    // );
     Ok(alignments)
 }
 fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
@@ -162,11 +181,14 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
         wtr.flush().unwrap();
         param.into_os_string().into_string().unwrap()
     };
-    let num = format!("{}", ds.selected_chunks.len());
+    //let num = format!("{}", ds.selected_chunks.len());
     let lastal = std::process::Command::new("lastal")
+        // .args(&[
+        //     "-N", &num, "-f", "tab", "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name,
+        //     &reads,
+        // ])
         .args(&[
-            "-N", &num, "-f", "tab", "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name,
-            &reads,
+            "-f", "tab", "-P", &p, "-R", "00", "-p", &param, &db_name, &reads,
         ])
         .output()
         .unwrap();
@@ -184,7 +206,7 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
     Ok(alignments)
 }
 
-fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>> {
+pub fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>> {
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
     for alignment in alignments {
         let q_name = alignment.seq2_name().to_string();
@@ -201,23 +223,26 @@ pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option
         let q_direction = aln.seq2_direction().is_forward();
         buckets.entry((r_name, q_direction)).or_default().push(aln);
     }
-    let mut nodes: Vec<_> = buckets
-        .values()
-        .filter_map(|alns| encode_alignment(alns, units, read))
-        .collect();
+    let seq: Vec<_> = read.seq().iter().map(|c| c.to_ascii_uppercase()).collect();
+    let mut nodes: Vec<Node> = vec![];
+    for (_, alns) in buckets {
+        if let Some(mut ns) = encode_alignment(alns, units, &seq) {
+            nodes.append(&mut ns);
+        }
+    }
     nodes.sort_by_key(|e| e.position_from_start);
     let edges: Vec<_> = nodes
         .windows(2)
-        .map(|w| Edge::from_nodes(w, read.seq()))
+        .map(|w| Edge::from_nodes(w, &seq))
         .collect();
-    let leading_gap = {
+    let leading_gap: Vec<_> = {
         let start = nodes.first()?.position_from_start;
-        read.seq()[..start].to_vec()
+        seq[..start].to_vec()
     };
-    let trailing_gap = {
+    let trailing_gap: Vec<_> = {
         let end = nodes.last()?;
         let end = end.position_from_start + end.seq.len();
-        read.seq()[end..].to_vec()
+        seq[end..].to_vec()
     };
     let len = nodes.iter().map(|n| n.seq.len()).sum::<usize>() as i64;
     let edge_len = edges.iter().map(|n| n.offset).sum::<i64>();
@@ -236,38 +261,47 @@ pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option
     })
 }
 
-fn encode_alignment(alns: &[&LastTAB], units: &[Unit], read: &RawRead) -> Option<Node> {
-    let aln = alns.get(0)?;
-    let is_forward = aln.seq2_direction().is_forward();
-    let seq = if is_forward {
-        read.seq().to_vec()
-    } else {
-        bio_utils::revcmp(read.seq())
+fn encode_alignment(mut alns: Vec<&LastTAB>, units: &[Unit], seq: &[u8]) -> Option<Vec<Node>> {
+    let (is_forward, unit_id): (_, u64) = {
+        let aln = alns.get(0)?;
+        let is_forward = aln.seq2_direction().is_forward();
+        let unit_id = aln.seq1_name().parse().ok()?;
+        (is_forward, unit_id)
     };
-    let unit_id: u64 = aln.seq1_name().parse().ok()?;
+    let seq = if is_forward {
+        seq.to_vec()
+    } else {
+        bio_utils::revcmp(seq)
+    };
     let unit = units.iter().find(|u| u.id == unit_id)?;
-    encode_alignment_by_chaining(alns, unit, &seq).map(|(position_from_start, seq, cigar)| {
-        if is_forward {
+    let mut result = vec![];
+    // while let Some((position_from_start, s, cigar)) =
+    if let Some((position_from_start, s, cigar)) =
+        encode_alignment_by_chaining(&mut alns, unit, &seq)
+    {
+        let node = if is_forward {
             Node {
                 position_from_start,
                 unit: unit_id,
                 cluster: 0,
-                seq,
+                seq: s,
                 is_forward,
                 cigar,
             }
         } else {
-            let position_from_start = read.seq().len() - position_from_start - seq.len();
+            let position_from_start = seq.len() - position_from_start - s.len();
             Node {
                 position_from_start,
                 unit: unit_id,
                 cluster: 0,
-                seq,
+                seq: s,
                 is_forward,
                 cigar,
             }
-        }
-    })
+        };
+        result.push(node);
+    }
+    Some(result)
 }
 
 #[derive(Debug, Clone)]
@@ -279,8 +313,15 @@ enum DAGNode<'a> {
 
 // Query start, Query sequence, Cigar.
 type Alignment = (usize, String, Vec<Op>);
-fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> Option<Alignment> {
-    assert!(!alns.is_empty());
+fn encode_alignment_by_chaining(
+    alns: &mut Vec<&LastTAB>,
+    unit: &Unit,
+    read: &[u8],
+) -> Option<Alignment> {
+    if alns.is_empty() {
+        return None;
+    };
+    let unitseq: Vec<_> = unit.seq().iter().map(|x| x.to_ascii_uppercase()).collect();
     let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
     dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
     let chain = chaining(&dag_nodes, unit.seq().len());
@@ -323,7 +364,7 @@ fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> 
         if r_pos <= r_target {
             // Usual chaining
             let query = &read[q_pos..q_target];
-            let refr = &unit.seq()[r_pos..r_target];
+            let refr = &unitseq[r_pos..r_target];
             cigar.extend(alignment(query, refr, 1, -1, -1));
         } else {
             // Step back.
@@ -350,6 +391,15 @@ fn encode_alignment_by_chaining(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> 
     }
     assert_eq!(consumed_reference_length(&cigar), unit.seq().len());
     let query = String::from_utf8_lossy(&read[query_start..query_end]).to_string();
+    // Remove used alignment.
+    let chain: Vec<&LastTAB> = chain
+        .iter()
+        .filter_map(|n| match n {
+            DAGNode::Aln(a) => Some(*a),
+            _ => None,
+        })
+        .collect();
+    alns.retain(|aln| !chain.contains(aln));
     Some((query_start, query, cigar))
 }
 
@@ -584,6 +634,8 @@ fn topological_sort(edges: &[Vec<(usize, i64)>]) -> Vec<usize> {
 }
 
 fn alignment(query: &[u8], refr: &[u8], mat: i64, mism: i64, gap: i64) -> Vec<Op> {
+    assert!(query.iter().all(|c| c.is_ascii_uppercase()));
+    assert!(refr.iter().all(|c| c.is_ascii_uppercase()));
     let mut dp = vec![vec![0; query.len() + 1]; refr.len() + 1];
     for j in 0..=query.len() {
         dp[0][j] = j as i64 * gap;
