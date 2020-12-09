@@ -32,3 +32,4 @@ jtk entry --input ${TARGET} --read_type CLR |\
     jtk global_clustering -vv --threads ${THREADS} |\
     jtk stats -vv -f ${STAT} > ${RESULT}
 cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} > /dev/null
+cat ${GFA} | awk '($1 ~ /S/)' | awk 'BEGIN{OFS="\n"}{print ">" $2, $4}' > ${GFA%.gfa}.fa

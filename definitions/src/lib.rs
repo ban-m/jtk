@@ -217,10 +217,15 @@ impl Node {
     }
     pub fn recover(&self, unit: &Unit) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let (read, unit) = (self.seq(), unit.seq());
-        // println!("R:{}", String::from_utf8_lossy(read));
-        // println!("Q:{}", String::from_utf8_lossy(unit));
         let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
         let (mut q_pos, mut r_pos) = (0, 0);
+        let match_char = |(x, y): (&u8, &u8)| {
+            if x.to_ascii_uppercase() == y.to_ascii_uppercase() {
+                b'|'
+            } else {
+                b'X'
+            }
+        };
         for op in self.cigar.iter() {
             match *op {
                 Op::Match(l) => {
@@ -228,7 +233,7 @@ impl Node {
                         read[q_pos..q_pos + l]
                             .iter()
                             .zip(&unit[r_pos..r_pos + l])
-                            .map(|(x, y)| if x == y { b'|' } else { b'X' }),
+                            .map(match_char),
                     );
                     q.extend(read[q_pos..q_pos + l].iter().copied());
                     r.extend(unit[r_pos..r_pos + l].iter().copied());

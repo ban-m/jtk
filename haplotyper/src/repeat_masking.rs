@@ -54,6 +54,39 @@ impl RepeatMask for definitions::DataSet {
     }
 }
 
+pub fn mask_repeat_in_seq(seq: &mut [u8], config: &RepeatMaskConfig) {
+    let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
+    assert!(config.k <= 32);
+    for w in seq.windows(config.k) {
+        let idx = to_idx(w);
+        *count.entry(idx).or_default() += 1;
+    }
+    let mask = create_mask(&count, config);
+    mask_repeats(seq, &mask, config.k);
+}
+
+pub fn mask_repeats_in_reads(seqs: &mut [Vec<u8>], config: &RepeatMaskConfig) {
+    let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
+    assert!(config.k <= 32);
+    let kmers = seqs
+        .into_par_iter()
+        .map(|seq| seq.windows(config.k).map(|w| to_idx(w)))
+        .fold(Vec::new, |mut x, y| {
+            x.extend(y);
+            x
+        })
+        .reduce(Vec::new, |mut x, mut y| {
+            x.append(&mut y);
+            x
+        });
+    for idx in kmers {
+        *count.entry(idx).or_default() += 1;
+    }
+    let mask = create_mask(&count, config);
+    seqs.par_iter_mut()
+        .for_each(|mut read| mask_repeats(&mut read, &mask, config.k));
+}
+
 use definitions::*;
 fn kmer_counting(reads: &[RawRead], config: &RepeatMaskConfig) -> HashMap<u64, u32> {
     let k = config.k;

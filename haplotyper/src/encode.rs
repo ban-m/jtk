@@ -106,21 +106,14 @@ fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<Las
         .iter()
         .filter_map(|aln| match lasttab::try_from(&aln, &header) {
             Ok(res) => Some(res),
-            Err(_) => {
-                // debug!("{:?}", why);
-                None
-            }
+            Err(_) => None,
         })
         .collect();
     debug!("Removing {:?}", c_dir);
     std::fs::remove_dir_all(c_dir)?;
-    // debug!(
-    //     "{} Alignments({} per read)",
-    //     alignments.len(),
-    //     alignments.len() / reads.len()
-    // );
     Ok(alignments)
 }
+
 fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
@@ -160,7 +153,7 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
     };
     // Create database - train - align
     let lastdb = std::process::Command::new("lastdb")
-        .args(&["-R", "00", "-Q", "0", &db_name, &reference])
+        .args(&["-R", "11", "-Q", "0", &db_name, &reference])
         .output()?;
     if !lastdb.status.success() {
         panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
@@ -181,14 +174,9 @@ fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<La
         wtr.flush().unwrap();
         param.into_os_string().into_string().unwrap()
     };
-    //let num = format!("{}", ds.selected_chunks.len());
     let lastal = std::process::Command::new("lastal")
-        // .args(&[
-        //     "-N", &num, "-f", "tab", "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name,
-        //     &reads,
-        // ])
         .args(&[
-            "-f", "tab", "-P", &p, "-R", "00", "-p", &param, &db_name, &reads,
+            "-f", "tab", "-P", &p, "-R", "11", "-p", &param, &db_name, &reads,
         ])
         .output()
         .unwrap();
@@ -275,8 +263,8 @@ fn encode_alignment(mut alns: Vec<&LastTAB>, units: &[Unit], seq: &[u8]) -> Opti
     };
     let unit = units.iter().find(|u| u.id == unit_id)?;
     let mut result = vec![];
-    // while let Some((position_from_start, s, cigar)) =
-    if let Some((position_from_start, s, cigar)) =
+    while let Some((position_from_start, s, cigar)) =
+        // if let Some((position_from_start, s, cigar)) =
         encode_alignment_by_chaining(&mut alns, unit, &seq)
     {
         let node = if is_forward {
@@ -399,12 +387,20 @@ fn encode_alignment_by_chaining(
             _ => None,
         })
         .collect();
-    alns.retain(|aln| !chain.contains(aln));
+    alns.retain(|&aln| {
+        chain
+            .iter()
+            .all(|&a| a as *const LastTAB != aln as *const LastTAB)
+    });
     Some((query_start, query, cigar))
 }
 
 /// Public interface.
-pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, usize, Vec<Op>) {
+pub fn join_alignments(
+    alns: &mut Vec<&LastTAB>,
+    refr: &[u8],
+    read: &[u8],
+) -> (usize, usize, Vec<Op>) {
     assert!(!alns.is_empty());
     let mut dag_nodes = vec![DAGNode::Start, DAGNode::End];
     dag_nodes.extend(alns.iter().map(|&a| DAGNode::Aln(a)));
@@ -451,6 +447,18 @@ pub fn join_alignments(alns: &[&LastTAB], refr: &[u8], read: &[u8]) -> (usize, u
             q_pos = x.seq2_start() + x.seq2_matchlen();
         }
     }
+    let chain: Vec<&LastTAB> = chain
+        .iter()
+        .filter_map(|node| match node {
+            DAGNode::Aln(x) => Some(*x),
+            _ => None,
+        })
+        .collect();
+    alns.retain(|&aln| {
+        chain
+            .iter()
+            .all(|&a| a as *const LastTAB != aln as *const LastTAB)
+    });
     (query_start, refr_start, cigar)
 }
 

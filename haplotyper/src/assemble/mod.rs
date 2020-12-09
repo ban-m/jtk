@@ -286,20 +286,34 @@ fn align_reads(
     std::fs::create_dir(&c_dir)?;
     // Create reference and reads.
     let (reference, reads) = {
-        use bio_utils::fasta;
+        // use bio_utils::fasta;
         let mut reference = c_dir.clone();
         reference.push("segment.fa");
-        let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
-        let seq = segment.sequence.as_ref().unwrap().as_bytes();
-        let record = fasta::Record::with_data(&segment.sid, &None, seq);
-        wtr.write_record(&record)?;
+        use std::io::{BufWriter, Write};
+        let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
+        let mut seq = segment.sequence.as_ref().unwrap().as_bytes().to_vec();
+        // TODO: Should be tuned.
+        let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 20);
+        crate::repeat_masking::mask_repeat_in_seq(&mut seq, &repeat_masking_config);
+        let seq = String::from_utf8_lossy(&seq);
+        writeln!(&mut wtr, ">{}\n{}", &segment.sid, seq)?;
+        // let record = fasta::Record::with_data(&segment.sid, &None, seq);
+        // wtr.write_record(&record)?;
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
-        let mut wtr = fasta::Writer::new(std::fs::File::create(&reads_dir)?);
-        for read in reads.iter() {
-            let id = read.name.to_string();
-            let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
-            wtr.write_record(&record)?;
+        // let mut wtr = fasta::Writer::new(std::fs::File::create(&reads_dir)?);
+        let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
+        let mut read_seqs: Vec<Vec<u8>> = reads.iter().map(|r| r.seq.as_bytes().to_vec()).collect();
+        // TODO: Should be tuned.
+        let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 200);
+        crate::repeat_masking::mask_repeats_in_reads(&mut read_seqs, &repeat_masking_config);
+        // TODO:Here mask repeat.
+        for (read, seq) in reads.iter().zip(read_seqs) {
+            let seq = String::from_utf8_lossy(&seq);
+            writeln!(&mut wtr, ">{}\n{}", read.name, seq)?;
+            // let id = read.name.to_string();
+            // let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
+            // wtr.write_record(&record)?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();
@@ -311,6 +325,7 @@ fn align_reads(
     debug!("Alignment done");
     alignment
 }
+
 pub fn invoke_last(
     reference: &str,
     reads: &str,
@@ -323,7 +338,7 @@ pub fn invoke_last(
     let db_name = db_name.into_os_string().into_string().unwrap();
     // Create database - train - align
     let lastdb = std::process::Command::new("lastdb")
-        .args(&["-R", "00", "-Q", "0", &db_name, &reference])
+        .args(&["-R", "11", "-Q", "0", &db_name, &reference])
         .output()?;
     if !lastdb.status.success() {
         panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
@@ -346,7 +361,7 @@ pub fn invoke_last(
     };
     let lastal = std::process::Command::new("lastal")
         .args(&[
-            "-P", &p, "-R", "00", "-Q", "0", "-p", &param, &db_name, &reads,
+            "-P", &p, "-R", "11", "-Q", "0", "-p", &param, &db_name, &reads,
         ])
         .stdout(std::process::Stdio::piped())
         .spawn();
@@ -369,7 +384,7 @@ pub fn invoke_last(
         Err(why) => panic!("last_split {:?}", why),
     };
     let maf_convert = match std::process::Command::new("maf-convert")
-        .arg("tab")
+        .args(&["tab", "-j", "1000"])
         .stdin(std::process::Stdio::from(last_split))
         .output()
     {
@@ -481,6 +496,7 @@ fn consensus(_template: &[u8], xs: &[Vec<u8>], num: usize) -> Vec<u8> {
 }
 
 // Maybe we can use encoding module to this functionality?
+// Or, maybe we just pick the most possible alignment...?
 fn into_chunks<'a>(
     alignments: &[&LastTAB],
     read: &'a RawRead,
@@ -488,41 +504,64 @@ fn into_chunks<'a>(
     len: usize,
 ) -> Vec<(usize, Vec<u8>)> {
     // Determine the direction,
-    let read = read.seq();
+    // alignments
+    //     .iter()
+    //     .flat_map(|aln| {
+    //         let read: Vec<_> = if aln.seq2_direction().is_forward() {
+    //             read.seq().iter().map(|x| x.to_ascii_uppercase()).collect()
+    //         } else {
+    //             let seq: Vec<_> = read.seq().iter().map(|x| x.to_ascii_uppercase()).collect();
+    //             bio_utils::revcmp(&seq)
+    //         };
+    //         let query_start = aln.seq2_start();
+    //         let ref_start = aln.seq1_start();
+    //         use bio_utils::lasttab;
+    //         let ops: Vec<_> = aln
+    //             .alignment()
+    //             .into_iter()
+    //             .map(|op| match op {
+    //                 lasttab::Op::Seq1In(l) => Op::Ins(*l),
+    //                 lasttab::Op::Seq2In(l) => Op::Del(*l),
+    //                 lasttab::Op::Match(l) => Op::Match(*l),
+    //             })
+    //             .collect();
+    //         split_reads(&read, query_start, ref_start, ops, len)
+    //     })
+    //     .collect()
+    let read: Vec<_> = read.seq().iter().map(|x| x.to_ascii_uppercase()).collect();
+    use crate::encode::join_alignments;
     let merged = [true, false]
         .iter()
         .filter_map(|&direction| {
-            let read = if direction {
-                read.to_vec()
-            } else {
-                bio_utils::revcmp(read)
-            };
-            let alns: Vec<_> = alignments
+            let mut alns: Vec<&LastTAB> = alignments
                 .iter()
                 .copied()
                 .filter(|aln| aln.seq2_direction().is_forward() == direction)
                 .collect();
             if alns.is_empty() {
-                None
-            } else {
-                use crate::encode::join_alignments;
-                let (qpos, rpos, ops) = join_alignments(&alns, segment, &read);
-                let score = ops
-                    .iter()
-                    .map(|&e| match e {
-                        Op::Del(l) => l as i32 * -2,
-                        Op::Ins(l) => l as i32 * -2,
-                        Op::Match(l) => l as i32,
-                    })
-                    .sum::<i32>();
-                Some((qpos, rpos, ops, read, score, direction))
+                return None;
             }
+            let read: Vec<_> = if direction {
+                read.clone()
+            } else {
+                bio_utils::revcmp(&read)
+            };
+            let (qpos, rpos, ops) = join_alignments(&mut alns, segment, &read);
+            let score = ops
+                .iter()
+                .map(|&e| match e {
+                    Op::Del(l) => l as i32 * -2,
+                    Op::Ins(l) => l as i32 * -2,
+                    Op::Match(l) => l as i32,
+                })
+                .sum::<i32>();
+            Some((qpos, rpos, ops, read, score, direction))
         })
         .max_by_key(|x| x.4);
     if let Some((query_start, refr_start, ops, read, _, _)) = merged {
         split_reads(&read, query_start, refr_start, ops, len)
     } else {
-        vec![]
+        Vec::with_capacity(0)
     }
 }
 
