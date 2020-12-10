@@ -3,7 +3,7 @@ set -ue
 ROOT=${PWD}
 for diploid in dip-A-D dip-A-C dip-A-DS dip-A-CS
 do
-    output=${ROOT}/result/${diploid}/jtk_rm
+    output=${ROOT}/result/${diploid}/jtk
     mkdir -p ${output}
     reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS.fa
     rm -f ${output}/${diploid}.CCS.log

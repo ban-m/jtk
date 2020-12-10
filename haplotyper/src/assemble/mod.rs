@@ -79,7 +79,7 @@ impl Assemble for DataSet {
         cluster_and_num.sort_by_key(|x| x.1);
         cluster_and_num.reverse();
         let records: Vec<_> = cluster_and_num
-            .into_par_iter()
+            .into_iter()
             .filter(|&(cl, num)| {
                 if num < 10 {
                     debug!("Detected small group:{}(cluster:{})", num, cl);
@@ -91,9 +91,6 @@ impl Assemble for DataSet {
             .flat_map(|(cl, _)| {
                 let (nodes, edges, group, _summaries) = assemble(self, cl, c);
                 let mut records = vec![];
-                // for summary in summaries {
-                //     debug!("{}", summary);
-                // }
                 let nodes = nodes
                     .into_iter()
                     .map(gfa::Content::Seg)
@@ -120,7 +117,7 @@ impl Assemble for DataSet {
         }
         debug!("There is {} clusters.", cluster_and_num.len());
         cluster_and_num
-            .into_par_iter()
+            .into_iter()
             .filter(|&(cl, num)| {
                 if num < 10 {
                     debug!("Detected small group:{}(cluster:{})", num, cl);
@@ -307,7 +304,6 @@ fn align_reads(
         // TODO: Should be tuned.
         let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 200);
         crate::repeat_masking::mask_repeats_in_reads(&mut read_seqs, &repeat_masking_config);
-        // TODO:Here mask repeat.
         for (read, seq) in reads.iter().zip(read_seqs) {
             let seq = String::from_utf8_lossy(&seq);
             writeln!(&mut wtr, ">{}\n{}", read.name, seq)?;
