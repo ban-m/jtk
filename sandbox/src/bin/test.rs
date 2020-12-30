@@ -1,77 +1,186 @@
 // use bio::alignment::pairwise::Aligner;
 // use nalgebra::*;
 // use rand::Rng;
-// use rand_xoshiro::Xoshiro256PlusPlus;
-use definitions::*;
-use rayon::prelude::*;
-use serde_json;
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+// use definitions::*;
+// use rayon::prelude::*;
+// use serde_json;
 use std::collections::HashMap;
+// use haplotyper::assemble::string_graph::StringGraph;
+use log::*;
 fn main() -> std::io::Result<()> {
-    let now = std::time::Instant::now();
-    eprintln!("Begin");
+    env_logger::init();
+    debug!("Begin");
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
+    let ds: definitions::DataSet = std::fs::File::open(&args[1])
         .map(std::io::BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    use std::io::BufRead;
-    let alns: Vec<_> = std::fs::File::open(&args[2])
-        .map(std::io::BufReader::new)?
-        .lines()
-        .filter_map(|line| line.ok())
-        .filter_map(|line| bio_utils::lasttab::LastTAB::from_line(&line))
-        .collect();
-    let buckets = haplotyper::encode::distribute(&alns);
-    eprintln!("Encoding:{}", (std::time::Instant::now() - now).as_secs());
-    let read_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    //Filter needed.
-    let encoded_reads: Vec<_> = ds
-        .raw_reads
-        .par_iter()
-        .filter_map(|read| {
-            let alns = buckets.get(&read.name)?;
-            haplotyper::encode::encode(&read, alns, &ds.selected_chunks)
-        })
-        .collect();
-    eprintln!("Encoded:{}", (std::time::Instant::now() - now).as_secs());
-    for encoded in encoded_reads.iter() {
-        let mut counts: HashMap<_, u32> = HashMap::new();
-        for node in encoded.nodes.iter() {
-            *counts.entry((node.unit, node.is_forward)).or_default() += 1;
+    debug!("Open json");
+    let ereads = &ds.encoded_reads;
+    let max = ds
+        .selected_chunks
+        .iter()
+        .map(|u| u.id as usize + 1)
+        .max()
+        .unwrap();
+    let mut cluster_num = vec![0; max];
+    for unit in ds.selected_chunks.iter() {
+        cluster_num[unit.id as usize] = unit.cluster_num;
+    }
+    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    use haplotyper::global_clustering::path_clustering::Graph;
+    let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(934802948);
+    let mut graph = Graph::new(&ereads, &cluster_num, 2, 1, &mut rng);
+    for _ in 0..10 {
+        let (lk, asns) = graph.gibbs_sampling(&mut rng, 10_000_000);
+        // Ans -> Pred
+        let mut counts = vec![vec![0; 2]; 2];
+        for (&asn, read) in asns.iter().zip(ereads.iter()) {
+            let correct_cls = id2name[&read.id].contains("hapA") as usize;
+            counts[correct_cls][asn] += 1;
         }
-        if counts.values().any(|&val| val > 1) {
-            let units: Vec<_> = encoded
-                .nodes
-                .iter()
-                .map(|n| format!("({},{})", n.unit, n.is_forward as u8))
-                .collect();
-            let id = encoded.id;
-            let name = read_name[&id];
-            println!("{}\t{}\t{}", id, name, units.join("-"));
-        }
-        for (&(unit_id, strand), _) in counts.iter().filter(|&(_, &val)| val > 1) {
-            let chunk_len = 150;
-            let unit = ds.selected_chunks.iter().find(|u| u.id == unit_id).unwrap();
-            for node in encoded
-                .nodes
-                .iter()
-                .filter(|n| n.unit == unit_id && strand == n.is_forward)
-            {
-                println!("{}\t{}", unit_id, node.is_forward);
-                let (q, a, r) = node.recover(&unit);
-                for ((q, a), r) in q
-                    .chunks(chunk_len)
-                    .zip(a.chunks(chunk_len))
-                    .zip(r.chunks(chunk_len))
-                {
-                    println!("{}", String::from_utf8_lossy(q));
-                    println!("{}", String::from_utf8_lossy(a));
-                    println!("{}", String::from_utf8_lossy(r));
-                }
-            }
+        debug!("LK\t{}", lk);
+        for cs in counts.iter() {
+            debug!("{:?}", cs);
         }
     }
+    debug!("{}", graph);
+    // let units = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .map(|r| r.nodes.len())
+    //     .sum::<usize>();
+    // debug!("{} reads {} units", eread, units);
+    // let alns: Vec<_> = std::fs::File::open(&args[2])
+    //     .map(std::io::BufReader::new)?
+    //     .lines()
+    //     .filter_map(|l| l.ok())
+    //     .filter_map(|l| bio_utils::lasttab::LastTAB::from_line(&l))
+    //     .collect();
+    // let eread = ds.encoded_reads.len();
+    // let units = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .map(|r| r.nodes.len())
+    //     .sum::<usize>();
+    // let ds = haplotyper::encode::encode_by(ds, &alns);
+    // debug!("{} reads {} units", eread, units);
+    // let ds = haplotyper::encode::encode_by_mm2(ds, 24)?;
+    // let eread = ds.encoded_reads.len();
+    // let units = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .map(|r| r.nodes.len())
+    //     .sum::<usize>();
+    // debug!("{} reads {} units", eread, units);
+    // let mut graph = StringGraph::new(&ds.encoded_reads);
+    // assert!(graph.sanity_check());
+    // debug!("{:?}", graph);
+    // graph.transitive_edge_reduction();
+    // assert!(graph.sanity_check());
+    // debug!("{:?}", graph);
+    // graph.simple_path_reduction();
+    // assert!(graph.sanity_check());
+    // debug!("{:?}", graph);
+    // let gfa = graph.assemble_as_gfa();
+    // let mut wtr = std::fs::File::create("./result/KIR/kir.temp.before.gfa").map(BufWriter::new)?;
+    // writeln!(&mut wtr, "{}", gfa)?;
+    // let ds = haplotyper::encode::encode_by(ds, &alns);
+    // let eread = ds.encoded_reads.len();
+    // let units = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .map(|r| r.nodes.len())
+    //     .sum::<usize>();
+    // debug!("{} reads {} units", eread, units);
+    // let mut graph = StringGraph::new(&ds.encoded_reads);
+    // assert!(graph.sanity_check());
+    // debug!("{:?}", graph);
+    // graph.transitive_edge_reduction();
+    // assert!(graph.sanity_check());
+    // debug!("{:?}", graph);
+    // graph.simple_path_reduction();
+    // assert!(graph.sanity_check());
+    // debug!("{:?}", graph);
+    // let gfa = graph.assemble_as_gfa();
+    // let mut wtr = std::fs::File::create("./result/KIR/kir.temp.after.gfa").map(BufWriter::new)?;
+    // writeln!(&mut wtr, "{}", gfa)?;
     Ok(())
 }
+
+// fn aln(r: &[u64], q: &[u64]) {
+//     eprintln!("R:{:?}\nQ:{:?}", r, q);
+//     let r: Vec<_> = r.iter().copied().map(|x| (x, 0)).collect();
+//     let q: Vec<_> = q.iter().copied().map(|x| (x, 0)).collect();
+//     use haplotyper::assemble::string_graph;
+//     eprintln!("{:?}", string_graph::unit_alignment(&r, &q));
+// }
+
+// let now = std::time::Instant::now();
+// eprintln!("Begin");
+// let args: Vec<_> = std::env::args().collect();
+// let ds: DataSet = std::fs::File::open(&args[1])
+//     .map(std::io::BufReader::new)
+//     .map(|r| serde_json::de::from_reader(r).unwrap())?;
+// use std::io::BufRead;
+// let alns: Vec<_> = std::fs::File::open(&args[2])
+//     .map(std::io::BufReader::new)?
+//     .lines()
+//     .filter_map(|line| line.ok())
+//     .filter_map(|line| bio_utils::lasttab::LastTAB::from_line(&line))
+//     .collect();
+// let buckets = haplotyper::encode::distribute(&alns);
+// eprintln!("Encoding:{}", (std::time::Instant::now() - now).as_secs());
+// let read_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+// //Filter needed.
+// let encoded_reads: Vec<_> = ds
+//     .raw_reads
+//     .par_iter()
+//     .filter_map(|read| {
+//         let alns = buckets.get(&read.name)?;
+//         haplotyper::encode::encode(&read, alns, &ds.selected_chunks)
+//     })
+//     .collect();
+// eprintln!("Encoded:{}", (std::time::Instant::now() - now).as_secs());
+// for encoded in encoded_reads.iter() {
+//     let mut counts: HashMap<_, u32> = HashMap::new();
+//     for node in encoded.nodes.iter() {
+//         *counts.entry((node.unit, node.is_forward)).or_default() += 1;
+//     }
+//     if counts.values().any(|&val| val > 1) {
+//         let units: Vec<_> = encoded
+//             .nodes
+//             .iter()
+//             .map(|n| format!("({},{})", n.unit, n.is_forward as u8))
+//             .collect();
+//         let id = encoded.id;
+//         let name = read_name[&id];
+//         println!("{}\t{}\t{}", id, name, units.join("-"));
+//     }
+//     for (&(unit_id, strand), _) in counts.iter().filter(|&(_, &val)| val > 1) {
+//         let chunk_len = 150;
+//         let unit = ds.selected_chunks.iter().find(|u| u.id == unit_id).unwrap();
+//         for node in encoded
+//             .nodes
+//             .iter()
+//             .filter(|n| n.unit == unit_id && strand == n.is_forward)
+//         {
+//             println!("{}\t{}", unit_id, node.is_forward);
+//             let (q, a, r) = node.recover(&unit);
+//             for ((q, a), r) in q
+//                 .chunks(chunk_len)
+//                 .zip(a.chunks(chunk_len))
+//                 .zip(r.chunks(chunk_len))
+//             {
+//                 println!("{}", String::from_utf8_lossy(q));
+//                 println!("{}", String::from_utf8_lossy(a));
+//                 println!("{}", String::from_utf8_lossy(r));
+//             }
+//         }
+//     }
+// }
+// }
 
 //     let args: Vec<_> = std::env::args().collect();
 //     let mut buf = String::new();

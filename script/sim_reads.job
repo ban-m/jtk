@@ -5,11 +5,12 @@ for diploid in dip-A-D dip-A-C dip-A-DS dip-A-CS
 do
     output=${ROOT}/result/${diploid}/jtk
     mkdir -p ${output}
-    reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS.fa
+    cat /data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS*.fa \
+        > ${PWD}/data/${diploid}.CCS.fa
     rm -f ${output}/${diploid}.CCS.log
     qsub -j y -o ${output}/${diploid}.CCS.log \
          ./script/pipeline.sh \
-         ${reads} \
+         ${PWD}/data/${diploid}.CCS.fa \
          ${output}/${diploid}.CCS
     reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CLR.fa
     rm -f ${output}/${diploid}.CLR.log

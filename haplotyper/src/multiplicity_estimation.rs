@@ -5,17 +5,17 @@ use serde::*;
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiplicityEstimationConfig {
-    max_multiplicity: usize,
+    max_cluster: usize,
     seed: u64,
     path: Option<String>,
     thread: usize,
 }
 
 impl MultiplicityEstimationConfig {
-    pub fn new(thread: usize, max_multiplicity: usize, seed: u64, path: Option<&str>) -> Self {
+    pub fn new(thread: usize, max_cluster: usize, seed: u64, path: Option<&str>) -> Self {
         Self {
             thread,
-            max_multiplicity,
+            max_cluster,
             seed,
             path: path.map(|x| x.to_string()),
         }
@@ -94,7 +94,7 @@ fn estimate_graph_multiplicity(
         })
         .collect();
     use rayon::prelude::*;
-    let (model, aic): (Model, f64) = (1..c.max_multiplicity)
+    let (model, aic): (Model, f64) = (1..c.max_cluster)
         .into_par_iter()
         .map(|k| {
             let seed = k as u64 + c.seed;
@@ -109,15 +109,26 @@ fn estimate_graph_multiplicity(
     debug!("AIC\t{}", aic);
     let assignments: Vec<_> = covs.iter().map(|&d| model.assign(d)).collect();
     let single_copy_coverage = {
-        let mut number_of_units: HashMap<usize, usize> = HashMap::new();
-        for (&asn, contig) in assignments.iter().zip(graph.nodes.iter()) {
-            let num = contig.segments.len();
-            *number_of_units.entry(asn).or_default() += num;
-        }
-        let (&max_cluster, num) = number_of_units.iter().max_by_key(|x| x.1).unwrap();
-        let coverage = model.lambdas[max_cluster];
-        debug!("DIPLOID\t{}\t{}\t{}", max_cluster, num, coverage);
-        // As it is diploid coverage, we divide it by 2.
+        let min = model
+            .lambdas
+            .iter()
+            .min_by(|a, b| a.partial_cmp(&b).unwrap())
+            .unwrap();
+        let coverage = model
+            .lambdas
+            .iter()
+            .filter(|&x| (x - min).abs() > 0.01)
+            .min_by(|a, b| a.partial_cmp(&b).unwrap())
+            .unwrap_or(min);
+        // let mut number_of_units: HashMap<usize, usize> = HashMap::new();
+        // for (&asn, contig) in assignments.iter().zip(graph.nodes.iter()) {
+        //     let num = contig.segments.len();
+        //     *number_of_units.entry(asn).or_default() += num;
+        // }
+        // let (&max_cluster, num) = number_of_units.iter().max_by_key(|x| x.1).unwrap();
+        // let coverage = model.lambdas[max_cluster];
+        debug!("DIPLOID\t{}", coverage);
+        // // As it is diploid coverage, we divide it by 2.
         coverage / 2.
     };
     let repeat_num: Vec<_> = model
@@ -221,7 +232,7 @@ fn logsumexp(xs: &[f64]) -> f64 {
 
 fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
-    let (weight, lk) = (0..10)
+    let (weight, lk) = (0..5)
         .map(|_| {
             let mut weight: Vec<_> = (0..data.len())
                 .map(|_| {
@@ -240,9 +251,6 @@ fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
                 }
                 lk = new_lk;
                 weight = data.iter().map(|&d| model.new_weight(d)).collect();
-                // if i % 100 == 0 {
-                //     debug!("EM\t{}\t{}\t{}", k, i, lk);
-                // }
             }
             (weight, lk)
         })

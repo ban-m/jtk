@@ -28,3 +28,18 @@ pub fn minimap2(
         aln.stdout
     }
 }
+
+pub fn minimap2_args(target: &str, query: &str, args: &[&str]) -> Vec<u8> {
+    let mut args = args.to_vec();
+    args.push(target);
+    args.push(query);
+    let aln = std::process::Command::new("minimap2")
+        .args(&args)
+        .output()
+        .unwrap();
+    if !aln.status.success() {
+        panic!("Minimap2,{:?}", String::from_utf8_lossy(&aln.stderr));
+    } else {
+        aln.stdout
+    }
+}

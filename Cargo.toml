@@ -1,5 +1,6 @@
 [workspace]
 members = [
+        "pathhap",
         "definitions",
         "hla_cli",
         "bio_utils",

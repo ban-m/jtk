@@ -16,3 +16,6 @@
 [submodule "edlib-sys"]
 	path = edlib-sys
 	url = git@github.com:ban-m/edlib-sys.git
+[submodule "pathhap"]
+	path = pathhap
+	url = git@github.com:ban-m/pathhap.git

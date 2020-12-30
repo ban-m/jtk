@@ -7,19 +7,18 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 #[derive(Debug, Clone, Copy)]
 pub struct PolishUnitConfig {
-    read_type: ReadType,
     consensus_size: usize,
     filter_size: usize,
     rep_num: usize,
     seed: u64,
 }
 
+// TODO: Remove Readtype from the argument.
 impl PolishUnitConfig {
-    pub fn new(read_type: ReadType, consensus_size: usize, iteration: usize) -> Self {
+    pub fn new(_read_type: ReadType, consensus_size: usize, iteration: usize) -> Self {
         Self {
             rep_num: iteration,
             seed: 342309,
-            read_type,
             filter_size: consensus_size,
             consensus_size,
         }

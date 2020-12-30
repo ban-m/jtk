@@ -1,3 +1,4 @@
+#![feature(is_sorted)]
 pub mod assemble;
 mod determine_units;
 pub mod em_correction;
@@ -22,7 +23,6 @@ pub use encode::Encode;
 pub use entry::Entry;
 pub use extract::Extract;
 pub use extract::ExtractTarget;
-pub use filter_unit::FilterUnit;
 pub use repeat_masking::{RepeatMask, RepeatMaskConfig};
 pub use view::View;
 pub mod stats;

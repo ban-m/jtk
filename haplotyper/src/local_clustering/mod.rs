@@ -4,6 +4,7 @@ use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
 use std::collections::HashMap;
 mod config;
+mod var_clustering;
 pub use config::*;
 pub mod clustering_by_assemble;
 pub mod create_model;
@@ -49,7 +50,7 @@ impl LocalClustering for DataSet {
     }
 }
 
-fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+pub fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     ds: &mut DataSet,
     c: &ClusteringConfig<F>,
     positions: &HashMap<u64, bool>,
@@ -73,8 +74,10 @@ fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let selected_chunks = ds.selected_chunks.clone();
     let id_to_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let id_to_desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    let read_type = ds.read_type;
     //let cluster_number: HashMap<_, _> =
-    pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
+    //pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
+    pileups.iter_mut().for_each(|(&unit_id, mut units)| {
         debug!("RECORD\t{}\t{}\tStart", unit_id, iteration);
         let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
             Some(res) => res,
@@ -85,7 +88,10 @@ fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             return;
         }
         assert!(units.iter().all(|n| n.2.unit == unit_id as u64));
-        let _cluster_num = unit_clustering(&mut units, c, ref_unit, iteration);
+        let _cluster_num = match read_type {
+            ReadType::CCS => unit_clustering_ccs(&mut units, c, ref_unit, iteration),
+            _ => unit_clustering(&mut units, c, ref_unit, iteration),
+        };
         debug!("RECORD\t{}\t{}\tEnd", unit_id, iteration);
         if log_enabled!(log::Level::Debug) {
             for cl in 0..c.cluster_num.max(ref_unit.cluster_num) {
@@ -135,11 +141,142 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         .collect();
     let seed = ref_unit.id * iteration;
     clustering_by_kmeans(&mut data, len, &c, ref_unit, seed);
-    // clustering_by_kmeans_em(&mut data, len, &c, ref_unit, seed);
     for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
         n.cluster = d.cluster as u64;
     }
     ref_unit.cluster_num
+}
+
+fn to_pileup(node: &Node, unit: &Unit) -> Vec<u8> {
+    let mut slots = vec![0; unit.seq().len()];
+    let qseq = node.seq();
+    let (mut qpos, mut rpos) = (0, 0);
+    for op in node.cigar.iter() {
+        match *op {
+            Op::Del(l) => rpos += l,
+            Op::Ins(l) => qpos += l,
+            Op::Match(l) => {
+                for p in 0..l {
+                    slots[rpos + p] = qseq[qpos + p];
+                }
+                rpos += l;
+                qpos += l;
+            }
+        }
+    }
+    slots
+}
+
+fn clustering_variant_vector(vars: &[Vec<i8>], k: usize) -> Vec<u64> {
+    use var_clustering::clustering_variant_to;
+    let (mut asn, mut aic) = (vec![], std::f64::NEG_INFINITY);
+    for cl in k..2 * k {
+        for s in 0..10 {
+            let (new_asn, new_aic) = clustering_variant_to(vars, cl, s + cl as u64);
+            if new_aic > aic {
+                asn = new_asn;
+                aic = new_aic;
+            }
+        }
+    }
+    asn
+}
+
+pub fn unit_clustering_ccs<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    units: &mut [(u64, usize, &mut Node)],
+    c: &ClusteringConfig<F>,
+    ref_unit: &Unit,
+    _iteration: u64,
+) -> usize {
+    let pileup: Vec<Vec<u8>> = units
+        .iter()
+        .map(|(_, _, unit)| to_pileup(unit, ref_unit))
+        .collect();
+    let variants: Vec<(usize, u8, u8)> = {
+        let mut maf_fractions: Vec<_> = (0..ref_unit.seq().len())
+            .filter_map(|pos| {
+                let bases: Vec<u8> = pileup
+                    .iter()
+                    .filter(|pi| pi[pos] != 0)
+                    .map(|pi| pi[pos])
+                    .collect();
+                let coverage = bases.len();
+                if coverage * 3 < pileup.len() {
+                    return None;
+                }
+                let mut count = vec![0; 4];
+                for base in bases.iter() {
+                    match *base {
+                        b'A' => count[0] += 1,
+                        b'C' => count[1] += 1,
+                        b'G' => count[2] += 1,
+                        b'T' => count[3] += 1,
+                        x => panic!("{}\t{}", x, line!()),
+                    }
+                }
+                let (major, _) = count.iter().enumerate().max_by_key(|x| x.1).unwrap();
+                let (minor, minor_count) = count
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| i != major)
+                    .max_by_key(|x| x.1)
+                    .unwrap();
+                let frac = *minor_count as f64 / coverage as f64;
+                let major = match major {
+                    0 => b'A',
+                    1 => b'C',
+                    2 => b'G',
+                    3 => b'T',
+                    _ => panic!(),
+                };
+                let minor = match minor {
+                    0 => b'A',
+                    1 => b'C',
+                    2 => b'G',
+                    3 => b'T',
+                    _ => panic!(),
+                };
+                Some((pos, frac, major, minor))
+            })
+            .collect();
+        maf_fractions.sort_by(|x, y| (x.1).partial_cmp(&y.1).unwrap());
+        maf_fractions
+            .into_iter()
+            .rev()
+            .take(20)
+            .take_while(|&(_, frac, _, _)| frac > 0.2)
+            .map(|(pos, _, major, minor)| (pos, major, minor))
+            .collect()
+    };
+    let variant_vector: Vec<Vec<_>> = pileup
+        .iter()
+        .map(|pl| {
+            variants
+                .iter()
+                .map(|&(pos, major, minor)| match pl[pos] {
+                    x if x == major => 1,
+                    x if x == minor => 0,
+                    _ => -1,
+                })
+                .collect()
+        })
+        .collect();
+    for (i, var) in variant_vector.iter().enumerate() {
+        let var: String = var
+            .iter()
+            .map(|x| match *x {
+                1 => '1',
+                0 => '0',
+                _ => '-',
+            })
+            .collect();
+        debug!("{}\t{}\t{}", ref_unit.id, i, var);
+    }
+    let clusters = clustering_variant_vector(&variant_vector, c.cluster_num);
+    for (cl, (_, _, unit)) in clusters.iter().zip(units.iter_mut()) {
+        unit.cluster = *cl;
+    }
+    c.cluster_num
 }
 
 pub fn node_to_subchunks(node: &Node, len: usize) -> Vec<Chunk> {
@@ -361,10 +498,10 @@ pub fn clustering_by_gibbs<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             let new_cluster = alpha.ln() - (data.len() as f64 - 1. + alpha).ln();
             posterior.push(new_lk + new_cluster);
             use rand::seq::SliceRandom;
-            debug!("{:?}", posterior);
+            // debug!("{:?}", posterior);
             let sum = logsumexp(&posterior);
             posterior.iter_mut().for_each(|x| *x = (*x - sum).exp());
-            debug!("{:?}", posterior);
+            // debug!("{:?}", posterior);
             let picked = {
                 let choises: Vec<_> = (0..num_cluster + 1).collect();
                 *choises.choose_weighted(rng, |&k| posterior[k]).unwrap()
@@ -483,7 +620,6 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     }
 }
 
-// ()
 pub fn initial_clustering(
     data: &mut [ChunkedUnit],
     _ref_unit: &Unit,
@@ -491,10 +627,6 @@ pub fn initial_clustering(
     seed: u64,
 ) {
     let maf = convert_to_maf(data, cluster, chain_len, seed);
-    // for (i, r) in maf.iter().enumerate() {
-    //     let seq: String = r.iter().map(|&x| if x == 1 { '1' } else { '0' }).collect();
-    //     eprintln!("{:03} {}", i, seq);
-    // }
     let length = maf[0].len();
     let (assignments, _) = (5..10)
         .map(|i| em_clustering(&maf, cluster, (seed + i, length, 2)))

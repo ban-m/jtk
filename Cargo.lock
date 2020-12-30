@@ -900,6 +900,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7151b083b0664ed58ed669fcdd92f01c3d2fdbf10af4931a301474950b52bfa9"
 
 [[package]]
+name = "path_phasing"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "env_logger 0.6.2",
+ "log",
+ "rayon",
+]
+
+[[package]]
 name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

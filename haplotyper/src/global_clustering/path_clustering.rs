@@ -1,78 +1,179 @@
-// #![allow(dead_code)]
-// use rand::Rng;
-// use rand::SeedableRng;
-// use rand_xoshiro::Xoshiro256StarStar;
-// pub struct Graph {
-//     nodes: Vec<GNode>,
-// }
+#![allow(dead_code)]
+use rand::Rng;
+pub struct Graph {
+    // TODO: Maybe it should be the sum of the read length?
+    haploid_reads: Vec<u32>,
+    // Ploidy. For diploid, 2.
+    ploidy: usize,
+    // Choises.
+    haplotypes: Vec<usize>,
+    cluster_num: Vec<usize>,
+    //Prior.
+    mock_count: u32,
+    // Haplotype -> Position -> Cluster
+    counts: Vec<Vec<Vec<u32>>>,
+    // Total counts: Haplotype -> Position
+    total_counts: Vec<Vec<u32>>,
+    reads: Vec<Vec<(usize, usize)>>,
+    assignments: Vec<usize>,
+}
 
-// impl Graph {
-//     fn new<R: Rng>(
-//         reads: &[Vec<usize>],
-//         cs: &[usize],
-//         cluster: usize,
-//         _r: &mut R,
-//         remove: usize,
-//     ) -> Self {
-//         let max = *reads
-//             .iter()
-//             .flat_map(|read| read.iter().max())
-//             .max()
-//             .unwrap();
-//         let nodes: Vec<_> = (0..=max).map(|_| GNode::new()).collect();
-//         let graph = Graph { nodes };
-//         reads
-//             .iter()
-//             .zip(cs)
-//             .enumerate()
-//             .filter(|&(idx, (_, &cl))| cl == cluster && idx != remove)
-//             .fold(graph, |g, (_, (r, _))| g.register(r))
-//             .finalize()
-//     }
-//     fn register(mut self, read: &[usize]) -> Self {
-//         for w in read.windows(2) {
-//             self.nodes[w[0]].register(w[1]);
-//             self.nodes[w[1]].register(w[0]);
-//         }
-//         self
-//     }
-//     fn finalize(mut self) -> Self {
-//         self.nodes
-//             .iter_mut()
-//             .filter(|n| n.total > 0.0001)
-//             .for_each(|node| {
-//                 let total = node.total;
-//                 node.edges.iter_mut().for_each(|e| e.weight /= total);
-//             });
-//         self
-//     }
-//     fn score(&self, path: &[usize]) -> f64 {
-//         if path.is_empty() {
-//             1.
-//         } else if path.len() == 1 {
-//             self.nodes[path[0]].total
-//         } else {
-//             path.windows(2)
-//                 .map(|w| {
-//                     self.nodes[w[0]]
-//                         .edges
-//                         .iter()
-//                         .find(|e| e.to == w[1])
-//                         .map(|e| e.weight)
-//                         .unwrap_or(0.)
-//                 })
-//                 .sum::<f64>()
-//         }
-//     }
-// }
+pub trait IntoPath {
+    // Into (Position, Cluster)
+    fn into_path(&self) -> Vec<(usize, usize)>;
+}
 
-// impl std::fmt::Display for Graph {
-//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-//         let node_num = self.nodes.len();
-//         let edge_num = self.nodes.iter().map(|n| n.edges.len()).sum::<usize>();
-//         write!(f, "NodeNum:{}\tEdgeNum:{}", node_num, edge_num)
-//     }
-// }
+impl IntoPath for definitions::EncodedRead {
+    fn into_path(&self) -> Vec<(usize, usize)> {
+        self.nodes
+            .iter()
+            .map(|n| (n.unit as usize, n.cluster as usize))
+            .collect()
+    }
+}
+
+impl Graph {
+    pub fn new<R: Rng, T: IntoPath>(
+        reads: &[T],
+        // If some position(unit) is missing, it should be zero.
+        cluster_num: &[usize],
+        ploidy: usize,
+        mock_count: u32,
+        r: &mut R,
+    ) -> Self {
+        let reads: Vec<Vec<_>> = reads
+            .iter()
+            .map(IntoPath::into_path)
+            .map(|r| r.into_iter().map(|(u, c)| (u as usize, c)).collect())
+            .collect();
+        let assignments: Vec<usize> = reads.iter().map(|_| r.gen::<usize>() % ploidy).collect();
+        let mut counts: Vec<Vec<Vec<u32>>> = (0..ploidy)
+            .map(|_| cluster_num.iter().map(|&c| vec![mock_count; c]).collect())
+            .collect();
+        let mut haploid_reads = vec![mock_count; ploidy];
+        let mut total_counts: Vec<Vec<u32>> = (0..ploidy)
+            .map(|_| cluster_num.iter().map(|&c| mock_count * c as u32).collect())
+            .collect();
+        for (read, &a) in reads.iter().zip(assignments.iter()) {
+            haploid_reads[a] += 1;
+            for &(unit, cluster) in read.iter() {
+                counts[a][unit][cluster] += 1;
+                total_counts[a][unit] += 1;
+            }
+        }
+        let haplotypes: Vec<_> = (0..ploidy).collect();
+        Self {
+            haplotypes,
+            haploid_reads,
+            ploidy,
+            cluster_num: cluster_num.to_vec(),
+            mock_count,
+            counts,
+            total_counts,
+            reads,
+            assignments,
+        }
+    }
+    pub fn sanity_check(&self) {
+        for (total, counts) in self.total_counts.iter().zip(self.counts.iter()) {
+            for (&t, c) in total.iter().zip(counts) {
+                assert_eq!(t, c.iter().sum::<u32>());
+            }
+        }
+    }
+    pub fn gibbs_sampling<R: Rng>(&mut self, rng: &mut R, iter_num: usize) -> (f64, &[usize]) {
+        let mut idx = 0;
+        for _ in 0..iter_num {
+            self.sanity_check();
+            self.update_ith(idx, rng);
+            idx += 1;
+            idx %= self.reads.len();
+        }
+        (self.lk(), self.assignments())
+    }
+    fn update_ith<R: Rng>(&mut self, idx: usize, rng: &mut R) {
+        // Remove the i-th read.
+        let ans = self.assignments[idx];
+        self.haploid_reads[ans] -= 1;
+        for &(unit, cluster) in self.reads[idx].iter() {
+            self.counts[ans][unit][cluster] -= 1;
+            self.total_counts[ans][unit] -= 1;
+        }
+        // Compute the i-th read's likelihood.
+        let lks: Vec<_> = self.lk_of_the_ith(idx);
+        // Select cluster.
+        let lk = logsumexp(&lks);
+        let weights: Vec<_> = lks.iter().map(|x| (x - lk).exp()).collect();
+        assert!((1. - weights.iter().sum::<f64>()).abs() < 0.001);
+        use rand::seq::SliceRandom;
+        let k = *self
+            .haplotypes
+            .choose_weighted(rng, |&k| weights[k])
+            .unwrap();
+        // Add the i-th read.
+        for &(unit, cluster) in self.reads[idx].iter() {
+            self.counts[k][unit][cluster] += 1;
+            self.total_counts[k][unit] += 1;
+        }
+        self.haploid_reads[k] += 1;
+        self.assignments[idx] = k;
+    }
+    fn lk_of_the_ith(&self, i: usize) -> Vec<f64> {
+        let total_hap = self.haploid_reads.iter().sum::<u32>();
+        let read = &self.reads[i];
+        self.haploid_reads
+            .iter()
+            .zip(self.counts.iter())
+            .zip(self.total_counts.iter())
+            .map(|((&f, counts), tot)| {
+                let hap_frac = (f as f64 / total_hap as f64).ln();
+                let read_lk = read
+                    .iter()
+                    .map(|&(u, c)| (counts[u][c] as f64 / tot[u] as f64).ln())
+                    .sum::<f64>();
+                hap_frac + read_lk
+            })
+            .collect()
+    }
+    pub fn lk(&self) -> f64 {
+        (0..self.reads.len())
+            .map(|i| logsumexp(&self.lk_of_the_ith(i)))
+            .sum::<f64>()
+    }
+    pub fn assignments(&self) -> &[usize] {
+        &self.assignments
+    }
+}
+
+fn logsumexp(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.;
+    }
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
+    assert!(sum >= 0., "{:?}->{}", xs, sum);
+    max + sum
+}
+
+impl std::fmt::Display for Graph {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let fractions: Vec<_> = self
+            .haploid_reads
+            .iter()
+            .map(|&c| c as f64 / self.reads.len() as f64)
+            .enumerate()
+            .map(|(i, x)| format!("{}:{:.3}", i, x))
+            .collect();
+        writeln!(f, "{}", fractions.join(","))?;
+        for (k, cs) in self.counts.iter().enumerate() {
+            writeln!(f, "{}-th haplotype", k)?;
+            for (p, c) in cs.iter().enumerate() {
+                writeln!(f, "{}\t{:?}", p, c)?;
+            }
+        }
+        write!(f, "MockCount:{}, LK:{}", self.mock_count, self.lk())
+    }
+}
 
 // struct GNode {
 //     edges: Vec<GEdge>,

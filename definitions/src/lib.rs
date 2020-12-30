@@ -131,6 +131,17 @@ pub struct EncodedRead {
     pub nodes: Vec<Node>,
 }
 
+impl std::fmt::Display for EncodedRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "{}({}bp)", self.id, self.original_length)?;
+        write!(f, "{}->", self.leading_gap.len())?;
+        for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
+            write!(f, "-{}:{}-", n, e)?;
+        }
+        write!(f, "->{}", self.trailing_gap.len())
+    }
+}
+
 impl EncodedRead {
     pub fn is_gappy(&self) -> bool {
         self.nodes.is_empty()
@@ -156,6 +167,7 @@ impl EncodedRead {
     }
 }
 
+// TODO: We do not need `from` and `to`, actually.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Edge {
     pub from: u64,
@@ -163,6 +175,12 @@ pub struct Edge {
     pub offset: i64,
     /// This is a string on an alphabet of A,C,G,T. There should not be any lowercase character.
     pub label: String,
+}
+
+impl std::fmt::Display for Edge {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}-({})>{}", self.from, self.offset, self.to)
+    }
 }
 
 impl Edge {
@@ -200,6 +218,20 @@ pub struct Node {
     pub seq: String,
     pub is_forward: bool,
     pub cigar: Vec<Op>,
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}-{}({}bp,{},{})",
+            self.unit,
+            self.cluster,
+            self.seq.as_bytes().len(),
+            self.is_forward as u8,
+            self.position_from_start,
+        )
+    }
 }
 
 impl Node {

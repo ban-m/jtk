@@ -1,40 +1,181 @@
 use bio_utils::lasttab;
 use bio_utils::lasttab::LastTAB;
+use definitions::DataSet;
 use rayon::prelude::*;
 use std::collections::HashMap;
-pub const MARGIN: usize = 100;
+use std::io::*;
+pub const MARGIN: usize = 50;
 pub trait Encode {
-    fn encode(self, threads: usize, last: bool) -> Self;
+    fn encode(self, threads: usize) -> Self;
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(mut self, threads: usize, last: bool) -> Self {
-        let alignments = if last {
-            match last_alignment(&self, threads) {
-                Ok(res) => res,
-                Err(why) => panic!("{:?}:Encoding step", why),
-            }
-        } else {
-            match mm2_alignment(&self, threads) {
-                Ok(res) => res,
-                Err(why) => panic!("{:?}:Encoding step", why),
-            }
-        };
-        let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(&alignments);
-        let encoded_reads: Vec<_> = self
-            .raw_reads
-            .par_iter()
-            .filter_map(|read| {
-                let alns = alignments_each_reads.get(&read.name)?;
-                encode(read, alns, &self.selected_chunks)
-            })
-            .collect();
-        debug!("Encoded {} reads.", encoded_reads.len());
-        self.encoded_reads = encoded_reads;
+    fn encode(mut self, threads: usize) -> Self {
+        // let alignments = match last_alignment(&self, threads) {
+        //     Ok(res) => res,
+        //     Err(why) => panic!("{:?}:Encoding step", why),
+        // };
+        // let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(&alignments);
+        // let encoded_reads: Vec<_> = self
+        //     .raw_reads
+        //     .par_iter()
+        //     .filter_map(|read| {
+        //         let alns = alignments_each_reads.get(&read.name)?;
+        //         encode(read, alns, &self.selected_chunks)
+        //     })
+        //     .collect();
+        self = encode_by_mm2(self, threads).unwrap();
+        debug!("Encoded {} reads.", self.encoded_reads.len());
+        // self.encoded_reads = encoded_reads;
         // Sanity Check!
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
         self
     }
+}
+
+pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet {
+    let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
+    for aln in alignments.iter() {
+        bucket.entry(aln.qname.clone()).or_default().push(aln);
+    }
+    bucket.values_mut().for_each(|alns| {
+        alns.sort_by_key(|aln| aln.qstart);
+    });
+    ds.encoded_reads = ds
+        .raw_reads
+        .par_iter()
+        .filter_map(|read| {
+            let alns = bucket.get(&read.name)?;
+            encode_read_by_paf(read, alns)
+        })
+        .collect();
+    ds
+}
+
+pub fn encode_by_mm2(mut ds: definitions::DataSet, p: usize) -> std::io::Result<DataSet> {
+    let mm2 = mm2_alignment(&ds, p)?;
+    let thr = 200;
+    let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
+        .lines()
+        .filter_map(|l| bio_utils::paf::PAF::new(&l))
+        .filter(|a| a.tstart < thr && a.tlen - a.tend < thr)
+        .collect();
+    let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
+    for aln in alignments.iter() {
+        bucket.entry(aln.qname.clone()).or_default().push(aln);
+    }
+    bucket.values_mut().for_each(|alns| {
+        alns.sort_by_key(|aln| aln.qstart);
+    });
+    ds.encoded_reads = ds
+        .raw_reads
+        .par_iter()
+        .filter_map(|read| {
+            let alns = bucket.get(&read.name)?;
+            encode_read_by_paf(read, alns)
+        })
+        .collect();
+    Ok(ds)
+}
+
+fn encode_read_by_paf(read: &RawRead, alns: &[&bio_utils::paf::PAF]) -> Option<EncodedRead> {
+    let mut seq: Vec<_> = read.seq().to_vec();
+    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+    let nodes: Vec<_> = alns
+        .iter()
+        .filter_map(|aln| {
+            let unit = aln.tname.parse().ok()?;
+            let seq = &seq[aln.qstart..aln.qend];
+            let seq = if aln.relstrand {
+                String::from_utf8_lossy(seq).to_string()
+            } else {
+                String::from_utf8(bio_utils::revcmp(seq)).unwrap()
+            };
+            use bio_utils::sam;
+            let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
+            let mut ops = if aln.tstart > 0 {
+                vec![Op::Del(aln.tstart)]
+            } else {
+                vec![]
+            };
+            for op in cigar {
+                let op = match op {
+                    sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
+                    sam::Op::Insertion(l) => Op::Ins(l),
+                    sam::Op::Deletion(l) => Op::Del(l),
+                    _ => panic!("{:?}", op),
+                };
+                ops.push(op);
+            }
+            if aln.tlen != aln.tend {
+                ops.push(Op::Del(aln.tlen - aln.tend));
+            }
+            Some(Node {
+                position_from_start: aln.qstart,
+                unit,
+                cluster: 0,
+                is_forward: aln.relstrand,
+                seq,
+                cigar: ops,
+            })
+        })
+        .collect();
+    let edges: Vec<_> = nodes
+        .windows(2)
+        .map(|w| Edge::from_nodes(w, &seq))
+        .collect();
+    let leading_gap = seq[..alns.first()?.qstart].to_vec();
+    let trailing_gap = seq[alns.last()?.qend..].to_vec();
+    Some(EncodedRead {
+        id: read.id,
+        original_length: read.seq.as_bytes().len(),
+        leading_gap,
+        trailing_gap,
+        nodes,
+        edges,
+    })
+}
+
+fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<u8>> {
+    use rand::{thread_rng, Rng};
+    let mut rng = thread_rng();
+    let id: u64 = rng.gen::<u64>() % 100_000_000;
+    let mut c_dir = std::env::current_dir()?;
+    c_dir.push(format!("{}", id));
+    debug!("Creating {:?}.", c_dir);
+    std::fs::create_dir(&c_dir)?;
+    // Create reference and reads.
+    let (reference, reads) = {
+        let mut reference = c_dir.clone();
+        reference.push("units.fa");
+        let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
+        for unit in ds.selected_chunks.iter() {
+            writeln!(&mut wtr, ">{}\n{}", unit.id, &unit.seq)?;
+        }
+        let mut reads = c_dir.clone();
+        reads.push("reads.fa");
+        let mut wtr = std::fs::File::create(&reads).map(BufWriter::new)?;
+        for read in ds.raw_reads.iter() {
+            writeln!(&mut wtr, ">{}\n{}", read.name, &read.seq)?;
+        }
+        let reference = reference.into_os_string().into_string().unwrap();
+        let reads = reads.into_os_string().into_string().unwrap();
+        (reference, reads)
+    };
+    use crate::minimap2;
+    let threads = format!("{}", p);
+    use definitions::ReadType;
+    let mut args = vec!["-t", &threads, "-c", "-P"];
+    match ds.read_type {
+        ReadType::CCS => args.extend(vec!["-H"]),
+        ReadType::CLR => args.extend(vec!["-H", "-k", "12"]),
+        ReadType::ONT => args.extend(vec!["-k", "12"]),
+        _ => {}
+    };
+    let mm2 = minimap2::minimap2_args(&reference, &reads, &args);
+    debug!("Removing {:?}", c_dir);
+    std::fs::remove_dir_all(c_dir)?;
+    Ok(mm2)
 }
 
 fn is_uppercase(read: &definitions::EncodedRead) -> bool {
@@ -48,151 +189,85 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
         .all(|edge| edge.label.chars().all(|c| c.is_ascii_uppercase()));
     nodes && edges
 }
-fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
-    use rand::{thread_rng, Rng};
-    let mut rng = thread_rng();
-    let id: u64 = rng.gen::<u64>() % 100_000_000;
-    let mut c_dir = std::env::current_dir()?;
-    c_dir.push(format!("{}", id));
-    debug!("Creating {:?}.", c_dir);
-    std::fs::create_dir(&c_dir)?;
-    // Create reference and reads.
-    let (reference, reads) = {
-        use bio_utils::fasta;
-        let mut reference = c_dir.clone();
-        reference.push("units.fa");
-        let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
-        for unit in ds.selected_chunks.iter() {
-            let id = format!("{}", unit.id);
-            let record = fasta::Record::with_data(&id, &None, unit.seq.as_bytes());
-            wtr.write_record(&record)?;
-        }
-        let mut reads = c_dir.clone();
-        reads.push("reads.fa");
-        let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
-        for read in ds.raw_reads.iter() {
-            let id = read.name.to_string();
-            let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
-            wtr.write_record(&record)?;
-        }
-        let reference = reference.into_os_string().into_string().unwrap();
-        let reads = reads.into_os_string().into_string().unwrap();
-        (reference, reads)
-    };
-    use definitions::ReadType;
-    let preset = match ds.read_type {
-        ReadType::CCS => "asm5",
-        ReadType::ONT => "map-ont",
-        ReadType::CLR | _ => "map-pb",
-    };
-    let mm2 = crate::minimap2::minimap2(&reads, &reference, p, preset, false, true);
-    let mut header = HashMap::new();
-    let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
-        .lines()
-        .filter_map(|line| {
-            if line.starts_with("@SQ") {
-                let mut line = line.split('\t');
-                line.next();
-                let name = line.next()?.split(':').nth(1)?.to_string();
-                let length: usize = line.next()?.split(':').nth(1)?.parse().ok()?;
-                header.insert(name, length);
-                None
-            } else {
-                bio_utils::sam::Sam::new(&line)
-            }
-        })
-        .collect();
-    let alignments: Vec<_> = alignments
-        .iter()
-        .filter_map(|aln| match lasttab::try_from(&aln, &header) {
-            Ok(res) => Some(res),
-            Err(_) => None,
-        })
-        .collect();
-    debug!("Removing {:?}", c_dir);
-    std::fs::remove_dir_all(c_dir)?;
-    Ok(alignments)
-}
 
-fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
-    use rand::{thread_rng, Rng};
-    let mut rng = thread_rng();
-    let id: u64 = rng.gen::<u64>() % 100_000_000;
-    let mut c_dir = std::env::current_dir()?;
-    use std::io::{BufWriter, Write};
-    c_dir.push(format!("{}", id));
-    debug!("Creating {:?}.", c_dir);
-    std::fs::create_dir(&c_dir)?;
-    // Create reference and reads.
-    let (reference, reads) = {
-        use bio_utils::fasta;
-        let mut reference = c_dir.clone();
-        reference.push("units.fa");
-        let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
-        for unit in ds.selected_chunks.iter() {
-            let id = format!("{}", unit.id);
-            let record = fasta::Record::with_data(&id, &None, unit.seq.as_bytes());
-            wtr.write_record(&record)?;
-        }
-        let mut reads = c_dir.clone();
-        reads.push("reads.fa");
-        let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
-        for read in ds.raw_reads.iter() {
-            let id = read.name.to_string();
-            let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
-            wtr.write_record(&record)?;
-        }
-        let reference = reference.into_os_string().into_string().unwrap();
-        let reads = reads.into_os_string().into_string().unwrap();
-        (reference, reads)
-    };
-    let db_name = {
-        let mut temp = c_dir.clone();
-        temp.push("reference");
-        temp.into_os_string().into_string().unwrap()
-    };
-    // Create database - train - align
-    let lastdb = std::process::Command::new("lastdb")
-        .args(&["-R", "11", "-Q", "0", &db_name, &reference])
-        .output()?;
-    if !lastdb.status.success() {
-        panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
-    }
-    let p = format!("{}", p);
-    let last_train = std::process::Command::new("last-train")
-        .args(&["-P", &p, "-Q", "0", &db_name, &reads])
-        .output()
-        .unwrap();
-    if !last_train.status.success() {
-        panic!("last-train-{}", String::from_utf8_lossy(&last_train.stderr));
-    }
-    let param = {
-        let mut param = c_dir.clone();
-        param.push("param.par");
-        let mut wtr = BufWriter::new(std::fs::File::create(&param).unwrap());
-        wtr.write_all(&last_train.stdout).unwrap();
-        wtr.flush().unwrap();
-        param.into_os_string().into_string().unwrap()
-    };
-    let lastal = std::process::Command::new("lastal")
-        .args(&[
-            "-f", "tab", "-P", &p, "-R", "11", "-p", &param, &db_name, &reads,
-        ])
-        .output()
-        .unwrap();
-    if !lastal.status.success() {
-        panic!("lastal-{:?}", String::from_utf8_lossy(&lastal.stderr));
-    }
-    // Last-split and Maf-convert.
-    let alignments: Vec<_> = String::from_utf8_lossy(&lastal.stdout)
-        .lines()
-        .filter(|e| !e.starts_with('#'))
-        .filter_map(|e| LastTAB::from_line(&e))
-        .collect();
-    debug!("Removing {:?}", c_dir);
-    std::fs::remove_dir_all(c_dir)?;
-    Ok(alignments)
-}
+// fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
+//     use rand::{thread_rng, Rng};
+//     let mut rng = thread_rng();
+//     let id: u64 = rng.gen::<u64>() % 100_000_000;
+//     let mut c_dir = std::env::current_dir()?;
+//     c_dir.push(format!("{}", id));
+//     debug!("Creating {:?}.", c_dir);
+//     std::fs::create_dir(&c_dir)?;
+//     // Create reference and reads.
+//     let (reference, reads) = {
+//         use bio_utils::fasta;
+//         let mut reference = c_dir.clone();
+//         reference.push("units.fa");
+//         let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
+//         for unit in ds.selected_chunks.iter() {
+//             let id = format!("{}", unit.id);
+//             let record = fasta::Record::with_data(&id, &None, unit.seq.as_bytes());
+//             wtr.write_record(&record)?;
+//         }
+//         let mut reads = c_dir.clone();
+//         reads.push("reads.fa");
+//         let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
+//         for read in ds.raw_reads.iter() {
+//             let id = read.name.to_string();
+//             let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
+//             wtr.write_record(&record)?;
+//         }
+//         let reference = reference.into_os_string().into_string().unwrap();
+//         let reads = reads.into_os_string().into_string().unwrap();
+//         (reference, reads)
+//     };
+//     let db_name = {
+//         let mut temp = c_dir.clone();
+//         temp.push("reference");
+//         temp.into_os_string().into_string().unwrap()
+//     };
+//     // Create database - train - align
+//     let lastdb = std::process::Command::new("lastdb")
+//         .args(&["-R", "11", "-Q", "0", &db_name, &reference])
+//         .output()?;
+//     if !lastdb.status.success() {
+//         panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
+//     }
+//     let p = format!("{}", p);
+//     let last_train = std::process::Command::new("last-train")
+//         .args(&["-P", &p, "-Q", "0", &db_name, &reads])
+//         .output()
+//         .unwrap();
+//     if !last_train.status.success() {
+//         panic!("last-train-{}", String::from_utf8_lossy(&last_train.stderr));
+//     }
+//     let param = {
+//         let mut param = c_dir.clone();
+//         param.push("param.par");
+//         let mut wtr = BufWriter::new(std::fs::File::create(&param).unwrap());
+//         wtr.write_all(&last_train.stdout).unwrap();
+//         wtr.flush().unwrap();
+//         param.into_os_string().into_string().unwrap()
+//     };
+//     let lastal = std::process::Command::new("lastal")
+//         .args(&[
+//             "-f", "tab", "-P", &p, "-R", "11", "-p", &param, &db_name, &reads,
+//         ])
+//         .output()
+//         .unwrap();
+//     if !lastal.status.success() {
+//         panic!("lastal-{:?}", String::from_utf8_lossy(&lastal.stderr));
+//     }
+//     // Last-split and Maf-convert.
+//     let alignments: Vec<_> = String::from_utf8_lossy(&lastal.stdout)
+//         .lines()
+//         .filter(|e| !e.starts_with('#'))
+//         .filter_map(|e| LastTAB::from_line(&e))
+//         .collect();
+//     debug!("Removing {:?}", c_dir);
+//     std::fs::remove_dir_all(c_dir)?;
+//     Ok(alignments)
+// }
 
 pub fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>> {
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
@@ -264,7 +339,6 @@ fn encode_alignment(mut alns: Vec<&LastTAB>, units: &[Unit], seq: &[u8]) -> Opti
     let unit = units.iter().find(|u| u.id == unit_id)?;
     let mut result = vec![];
     while let Some((position_from_start, s, cigar)) =
-        // if let Some((position_from_start, s, cigar)) =
         encode_alignment_by_chaining(&mut alns, unit, &seq)
     {
         let node = if is_forward {
@@ -350,7 +424,6 @@ fn encode_alignment_by_chaining(
         };
         assert!(q_pos <= q_target);
         if r_pos <= r_target {
-            // Usual chaining
             let query = &read[q_pos..q_target];
             let refr = &unitseq[r_pos..r_target];
             cigar.extend(alignment(query, refr, 1, -1, -1));
@@ -604,9 +677,15 @@ fn compute_edge<'a>(u: &DAGNode<'a>, v: &DAGNode<'a>, _unit_len: usize) -> Optio
             DAGNode::Aln(aln2) => {
                 let u_refr_end = (aln1.seq1_start() + aln1.seq1_matchlen()).max(MARGIN) - MARGIN;
                 let u_query_end = aln1.seq2_start() + aln1.seq2_matchlen();
+                let u_refr_end_radius = u_refr_end + MARGIN;
+                let u_query_end_radius = u_query_end + MARGIN;
                 let v_refr_start = aln2.seq1_start();
                 let v_query_start = aln2.seq2_start();
-                if u_refr_end <= v_refr_start && u_query_end <= v_query_start {
+                if u_refr_end <= v_refr_start
+                    && v_refr_start < u_refr_end_radius
+                    && u_query_end <= v_query_start
+                    && v_query_start < u_query_end_radius
+                {
                     Some(-((v_refr_start - u_refr_end + v_query_start - u_query_end) as i64))
                 } else {
                     None

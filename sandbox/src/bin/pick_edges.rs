@@ -18,25 +18,17 @@ fn main() -> std::io::Result<()> {
             Some((unit, cluster))
         })
         .collect();
-    let color = 40;
     for read in ds.encoded_reads.iter() {
         if read
             .nodes
             .iter()
             .any(|n| units.contains(&(n.unit, n.cluster)))
         {
-            let line: Vec<_> = read
-                .nodes
-                .iter()
-                .map(|n| {
-                    if units.contains(&(n.unit, n.cluster)) {
-                        format!("\x1b[38;5;{}m{}\x1b[m ", color, n.unit)
-                    } else {
-                        format!("{}", n.unit)
-                    }
-                })
-                .collect();
-            println!("{}", line.join(":"));
+            let mut line = vec![];
+            for (w, e) in read.nodes.windows(2).zip(read.edges.iter()) {
+                line.push(format!("{}({}){}", w[0].unit, e.offset, w[1].unit));
+            }
+            println!("{}", line.join("-"));
         }
     }
     Ok(())

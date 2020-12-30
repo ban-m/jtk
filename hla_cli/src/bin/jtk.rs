@@ -146,6 +146,22 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .default_value(&"0.4")
                 .help("filter out unit having more than [exclude] repetitiveness."),
         )
+        .arg(
+            Arg::with_name("upper")
+                .short("u")
+                .long("upper")
+                .help("Discard units with occurence more than or equal to [upper].")
+                .takes_value(true)
+                .default_value("250"),
+        )
+        .arg(
+            Arg::with_name("lower")
+                .short("l")
+                .long("lower")
+                .help("Discard units with occurence less than or equal to [upper].")
+                .takes_value(true)
+                .default_value("3"),
+        )
 }
 
 fn subcommand_polish_unit() -> App<'static, 'static> {
@@ -246,51 +262,44 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .takes_value(true)
                 .default_value(&"1"),
         )
-        .arg(
-            Arg::with_name("aligner")
-                .long("aligner")
-                .help("Aligner to be used.")
-                .default_value(&"LAST")
-                .possible_values(&["LAST", "Minimap2"]),
-        )
 }
 
-fn subcommand_filter_unit() -> App<'static, 'static> {
-    SubCommand::with_name("filter_unit")
-        .version("0.1")
-        .author("Bansho Masutani")
-        .about("Discard (in)-frequent units.")
-        .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
-                .help("Debug mode"),
-        )
-        .arg(
-            Arg::with_name("threads")
-                .long("threads")
-                .short("t")
-                .help("Number of threads")
-                .takes_value(true)
-                .default_value(&"1"),
-        )
-        .arg(
-            Arg::with_name("upper")
-                .short("u")
-                .long("upper")
-                .help("Discard units with occurence more than or equal to [upper].")
-                .takes_value(true)
-                .default_value("500"),
-        )
-        .arg(
-            Arg::with_name("lower")
-                .short("l")
-                .long("lower")
-                .help("Discard units with occurence less than or equal to [upper].")
-                .takes_value(true)
-                .default_value("3"),
-        )
-}
+// fn subcommand_filter_unit() -> App<'static, 'static> {
+//     SubCommand::with_name("filter_unit")
+//         .version("0.1")
+//         .author("Bansho Masutani")
+//         .about("Discard (in)-frequent units.")
+//         .arg(
+//             Arg::with_name("verbose")
+//                 .short("v")
+//                 .multiple(true)
+//                 .help("Debug mode"),
+//         )
+//         .arg(
+//             Arg::with_name("threads")
+//                 .long("threads")
+//                 .short("t")
+//                 .help("Number of threads")
+//                 .takes_value(true)
+//                 .default_value(&"1"),
+//         )
+//         .arg(
+//             Arg::with_name("upper")
+//                 .short("u")
+//                 .long("upper")
+//                 .help("Discard units with occurence more than or equal to [upper].")
+//                 .takes_value(true)
+//                 .default_value("250"),
+//         )
+//         .arg(
+//             Arg::with_name("lower")
+//                 .short("l")
+//                 .long("lower")
+//                 .help("Discard units with occurence less than or equal to [upper].")
+//                 .takes_value(true)
+//                 .default_value("3"),
+//         )
+// }
 
 fn subcommand_multiplicity_estimation() -> App<'static, 'static> {
     SubCommand::with_name("multiplicity_estimation")
@@ -309,12 +318,12 @@ fn subcommand_multiplicity_estimation() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("max_multiplicity")
+            Arg::with_name("max_cluster_size")
                 .short("m")
-                .long("max_multiplicity")
+                .long("max_cluster_size")
                 .required(false)
-                .value_name("MULTIPLICITY")
-                .help("Maximum number of multiplicity")
+                .value_name("MAXCLUSTER")
+                .help("Maximum number of cluster")
                 .default_value(&"2")
                 .takes_value(true),
         )
@@ -555,208 +564,18 @@ fn subcommand_assembly() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("no_polish")
+                .short("n")
+                .long("no_polish")
+                .help("If this flag is given, polishing stage would be skipped."),
+        )
+        .arg(
             Arg::with_name("output")
                 .short("o")
                 .long("output")
                 .required(true)
                 .value_name("PATH")
                 .help("Output file name")
-                .takes_value(true),
-        )
-}
-
-fn subcommand_pipeline() -> App<'static, 'static> {
-    SubCommand::with_name("pipeline")
-        .version("0.1")
-        .author("BanshoMasutani")
-        .about("Exec JTK pipeline.")
-        .arg(
-            Arg::with_name("read_type")
-                .long("read_type")
-                .takes_value(true)
-                .default_value(&"CCS")
-                .possible_values(&["CCS", "CLR", "ONT"])
-                .help("Read type. CCS, CLR, or ONT."),
-        )
-        .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
-                .help("Debug mode"),
-        )
-        .arg(
-            Arg::with_name("threads")
-                .long("threads")
-                .required(false)
-                .value_name("THREADS")
-                .help("Number of Threads")
-                .default_value(&"1")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("chunk_len")
-                .long("chunk_len")
-                .takes_value(true)
-                .default_value(&"2000")
-                .help("Length of a chunk"),
-        )
-        .arg(
-            Arg::with_name("skip_len")
-                .long("skip_len")
-                .takes_value(true)
-                .default_value(&"2000")
-                .help("Margin between units"),
-        )
-        .arg(
-            Arg::with_name("take_num")
-                .long("take_num")
-                .takes_value(true)
-                .default_value(&"2000")
-                .help("Number of units. 2*Genome size / chunk_len would be nice."),
-        )
-        .arg(
-            Arg::with_name("margin")
-                .long("margin")
-                .takes_value(true)
-                .default_value(&"500")
-                .help("Margin at the both end of a read."),
-        )
-        .arg(
-            Arg::with_name("max_multiplicity")
-                .long("max_multiplicity")
-                .required(false)
-                .value_name("MULTIPLICITY")
-                .help("Maximum number of multiplicity")
-                .default_value(&"2")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("seed")
-                .long("seed")
-                .required(false)
-                .value_name("SEED")
-                .help("Seed for pseudorandon number generators.")
-                .default_value(&"24")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("draft_assembly")
-                .long("draft_assembly")
-                .required(false)
-                .value_name("PATH")
-                .help("If given, output draft GFA to PATH.")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("limit")
-                .long("limit")
-                .required(false)
-                .value_name("LIMIT")
-                .help("Maximum Execution time(sec)")
-                .default_value(&"600")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("cluster_num")
-                .long("cluster_num")
-                .required(false)
-                .value_name("CLUSTER_NUM")
-                .help("Minimum cluster number.")
-                .default_value(&"2")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("retry")
-                .long("retry")
-                .required(false)
-                .value_name("RETRY")
-                .help("If clustering fails, retry [RETRY] times.")
-                .default_value(&"5")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("retain_current_clustering")
-                .long("retain_current_clustering")
-                .help("Use current clusterings as a initial value."),
-        )
-        .arg(
-            Arg::with_name("subchunk_len")
-                .long("subchunk_len")
-                .required(false)
-                .value_name("SubChunkLength")
-                .help("The length of sub-chunks")
-                .default_value(&"100")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("repeat_num")
-                .long("repeat_num")
-                .required(false)
-                .value_name("REPEAT_NUM")
-                .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value(&"10")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("coverage_threshold")
-                .long("threshold")
-                .required(false)
-                .value_name("THRESHOLD")
-                .help("Unit with less that this coverage would be ignored.")
-                .default_value(&"5")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("k")
-                .long("kmer_size")
-                .required(false)
-                .value_name("KMER_SIZE")
-                .help("The size of the kmer")
-                .default_value(&"3")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("min_cluster_size")
-                .long("min_cluster_size")
-                .required(false)
-                .value_name("MIN_CLUSTER_SIZE")
-                .help("The minimum size of a cluster")
-                .default_value(&"50")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("mat_score")
-                .long("match_score")
-                .required(false)
-                .value_name("MATCH_SCORE")
-                .help("The match score")
-                .default_value(&"1")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("mismat_score")
-                .long("mismatch_score")
-                .required(false)
-                .value_name("MISMATCH_SCORE")
-                .help("The mismatch score")
-                .default_value(&"1")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("gap_score")
-                .long("gap_score")
-                .required(false)
-                .value_name("GAP_SCORE")
-                .help("The gap penalty(< 0)")
-                .default_value(&"2")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("output")
-                .long("output")
-                .required(true)
-                .value_name("PATH")
-                .help("Output GFA File name")
                 .takes_value(true),
         )
 }
@@ -839,18 +658,26 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         .value_of("exclude")
         .and_then(|e| e.parse().ok())
         .expect("exclude");
+    let upper: usize = matches
+        .value_of("upper")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    let lower: usize = matches
+        .value_of("lower")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(thrds)
         .build_global()
     {
         debug!("{:?}:If you run `pipeline` module, this is Harmless.", why);
     }
+    use ReadType::*;
+    let (cl, tn) = (chunk_len, take_num);
     let config = match dataset.read_type {
-        ReadType::CCS => UnitConfig::new_ccs(chunk_len, take_num, skip_len, margin, thrds, filter),
-        ReadType::CLR => UnitConfig::new_clr(chunk_len, take_num, skip_len, margin, thrds, filter),
-        ReadType::ONT | ReadType::None => {
-            UnitConfig::new_ont(chunk_len, take_num, skip_len, margin, thrds, filter)
-        }
+        CCS => UnitConfig::new_ccs(cl, tn, skip_len, margin, thrds, filter, upper, lower),
+        CLR => UnitConfig::new_clr(cl, tn, skip_len, margin, thrds, filter, upper, lower),
+        _ => UnitConfig::new_ont(cl, tn, skip_len, margin, thrds, filter, upper, lower),
     };
     Ok(dataset.select_chunks(&config))
 }
@@ -889,38 +716,37 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
-    let last = matches.value_of("aligner") == Some("LAST");
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    Ok(dataset.encode(threads, last))
+    Ok(dataset.encode(threads))
 }
 
-fn filter_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Encoding step");
-    let threads: usize = matches
-        .value_of("threads")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
-    let upper: usize = matches
-        .value_of("upper")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
-    let lower: usize = matches
-        .value_of("lower")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
-    if let Err(why) = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build_global()
-    {
-        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
-    }
-    Ok(dataset.filter_unit(upper, lower))
-}
+// fn filter_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+//     debug!("Start Encoding step");
+//     let threads: usize = matches
+//         .value_of("threads")
+//         .and_then(|e| e.parse::<usize>().ok())
+//         .unwrap();
+//     let upper: usize = matches
+//         .value_of("upper")
+//         .and_then(|e| e.parse::<usize>().ok())
+//         .unwrap();
+//     let lower: usize = matches
+//         .value_of("lower")
+//         .and_then(|e| e.parse::<usize>().ok())
+//         .unwrap();
+//     if let Err(why) = rayon::ThreadPoolBuilder::new()
+//         .num_threads(threads)
+//         .build_global()
+//     {
+//         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+//     }
+//     Ok(dataset.filter_unit(upper, lower))
+// }
 
 fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start polishing units");
@@ -954,8 +780,8 @@ fn multiplicity_estimation(
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .unwrap();
-    let multiplicity: usize = matches
-        .value_of("max_multiplicity")
+    let max_cluster_size: usize = matches
+        .value_of("max_cluster_size")
         .and_then(|e| e.parse().ok())
         .unwrap();
     let seed: u64 = matches
@@ -969,7 +795,7 @@ fn multiplicity_estimation(
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = MultiplicityEstimationConfig::new(threads, multiplicity, seed, path);
+    let config = MultiplicityEstimationConfig::new(threads, max_cluster_size, seed, path);
     Ok(dataset.estimate_multiplicity(&config))
 }
 
@@ -1089,25 +915,13 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
+    let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
-    let config = AssembleConfig::new(threads, window_size, true);
+    let config = AssembleConfig::new(threads, window_size, !skip_polish);
     let gfa = dataset.assemble_as_gfa(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)
-}
-
-fn pipeline(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
-    // TODO: after clustering correction, retry local clustering with `--retain_current_clustering` flag.
-    // Maybe we should invoke local clustering manually.
-    entry(matches)
-        .and_then(|ds| select_unit(matches, ds))
-        .and_then(|ds| encode(matches, ds))
-        .and_then(|ds| multiplicity_estimation(matches, ds))
-        .and_then(|ds| local_clustering(matches, ds))
-        .and_then(|ds| clustering_correction(matches, ds))
-        .and_then(|ds| global_clustering(matches, ds))
-        .and_then(|ds| assembly(matches, ds))
 }
 
 fn get_input_file() -> std::io::Result<DataSet> {
@@ -1153,9 +967,8 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_global_clustering())
         .subcommand(subcommand_clustering_correction())
         .subcommand(subcommand_assembly())
-        .subcommand(subcommand_pipeline())
+        // .subcommand(subcommand_pipeline())
         .subcommand(subcommand_repeatmasking())
-        .subcommand(subcommand_filter_unit())
         .get_matches();
     if let Some(sub_m) = matches.subcommand().1 {
         let level = match sub_m.occurrences_of("verbose") {
@@ -1168,9 +981,10 @@ fn main() -> std::io::Result<()> {
     }
     if let ("entry", Some(sub_m)) = matches.subcommand() {
         return entry(sub_m).and_then(|x| flush_file(&x));
-    } else if let ("pipeline", Some(sub_m)) = matches.subcommand() {
-        return pipeline(sub_m).and_then(|x| flush_file(&x));
-    };
+    }//  else if let ("pipeline", Some(sub_m)) = matches.subcommand() {
+    //     return pipeline(sub_m).and_then(|x| flush_file(&x));
+    // }
+    ;
     let ds = get_input_file()?;
     let result = match matches.subcommand() {
         ("extract", Some(sub_m)) => extract(sub_m, ds),
@@ -1184,7 +998,6 @@ fn main() -> std::io::Result<()> {
         ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
         ("repeat_masking", Some(sub_m)) => repeat_masking(sub_m, ds),
-        ("filter_unit", Some(sub_m)) => filter_unit(sub_m, ds),
         _ => unreachable!(),
     };
     result.and_then(|x| flush_file(&x))

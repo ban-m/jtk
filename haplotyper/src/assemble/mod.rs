@@ -1,5 +1,6 @@
-mod ditch_graph;
+pub mod ditch_graph;
 pub mod pileup;
+pub mod string_graph;
 use definitions::*;
 // mod naive_consensus;
 use bio_utils::lasttab::LastTAB;
@@ -72,9 +73,22 @@ impl Assemble for DataSet {
             *cluster_and_num.entry(asn.cluster).or_default() += 1;
         }
         debug!("There is {} clusters.", cluster_and_num.len());
+        debug!("Start assembly");
+        // <============ String graph =================>
+        // let config = &string_graph::DEFAULT_CONFIG;
+        // let mut graph = string_graph::StringGraph::from_dataset(&self, config);
+        // assert!(graph.sanity_check());
+        // debug!("{:?}", graph);
+        // graph.transitive_edge_reduction();
+        // assert!(graph.sanity_check());
+        // debug!("{:?}", graph);
+        // graph.simple_path_reduction();
+        // assert!(graph.sanity_check());
+        // debug!("{:?}", graph);
+        // graph.assemble_as_gfa()
+        // <============ Ditch graph ======================>
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![]);
-        debug!("Start assembly");
         let mut cluster_and_num: Vec<_> = cluster_and_num.into_iter().collect();
         cluster_and_num.sort_by_key(|x| x.1);
         cluster_and_num.reverse();
@@ -436,7 +450,6 @@ pub fn polish_by_chunking(
             }
             let mut lens: Vec<_> = cs.iter().map(|seq| seq.len()).collect();
             lens.sort();
-            // let last = *lens.last().unwrap();
             let median = lens[lens.len() / 2];
             lens.sort_by_key(|x| x.max(&median) - x.min(&median));
             let mad = median.max(lens[lens.len() / 2]) - median.min(lens[lens.len() / 2]);
@@ -446,8 +459,6 @@ pub fn polish_by_chunking(
             cs.retain(|seq| min < seq.len() && seq.len() < max);
             let template = &segment[idx * len..((idx + 1) * len).min(segment.len())];
             consensus(template, &cs, 10)
-            // debug!("CNS\t{}\t{}\t{}\t{}\t{}", idx, cns.len(), median, max, last);
-            //cns
         })
         .collect()
 }
