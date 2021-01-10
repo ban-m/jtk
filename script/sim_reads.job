@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ue
 ROOT=${PWD}
-for diploid in dip-A-D dip-A-C dip-A-DS dip-A-CS
+for diploid in dip-A-CS # dip-A-D dip-A-C dip-A-DS dip-A-CS
 do
     output=${ROOT}/result/${diploid}/jtk
     mkdir -p ${output}

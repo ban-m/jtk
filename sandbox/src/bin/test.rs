@@ -1,51 +1,40 @@
-// use bio::alignment::pairwise::Aligner;
-// use nalgebra::*;
-// use rand::Rng;
-use rand::SeedableRng;
-use rand_xoshiro::Xoshiro256PlusPlus;
-// use definitions::*;
-// use rayon::prelude::*;
-// use serde_json;
-use std::collections::HashMap;
-// use haplotyper::assemble::string_graph::StringGraph;
 use log::*;
+use rand::SeedableRng;
+use rand_distr::{Distribution, Normal};
+use rand_xoshiro::Xoshiro256PlusPlus;
+use std::collections::HashMap;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     debug!("Begin");
-    let args: Vec<_> = std::env::args().collect();
-    let ds: definitions::DataSet = std::fs::File::open(&args[1])
-        .map(std::io::BufReader::new)
-        .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    debug!("Open json");
-    let ereads = &ds.encoded_reads;
-    let max = ds
-        .selected_chunks
-        .iter()
-        .map(|u| u.id as usize + 1)
-        .max()
-        .unwrap();
-    let mut cluster_num = vec![0; max];
-    for unit in ds.selected_chunks.iter() {
-        cluster_num[unit.id as usize] = unit.cluster_num;
+    let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(239);
+    let data_num = 100;
+    let cluster = 4;
+    let models: Vec<Vec<_>> = vec![
+        vec![(0., 0.5), (0., 0.5), (0., 1.), (2., 1.)],
+        vec![(2., 0.5), (0., 0.5), (2., 1.), (0., 1.)],
+        vec![(0., 0.5), (2., 0.5), (0., 1.), (0., 1.)],
+        vec![(1., 0.5), (0., 0.5), (0., 1.), (-3., 1.)],
+    ]
+    .into_iter()
+    .map(|params| {
+        params
+            .into_iter()
+            .map(|(mean, sd)| Normal::new(mean, sd).unwrap())
+            .collect()
+    })
+    .collect();
+    let data: Vec<Vec<f64>> = (0..cluster)
+        .flat_map(|k| {
+            (0..data_num)
+                .map(|_| models[k].iter().map(|m| m.sample(&mut rng)).collect())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let features = haplotyper::local_clustering::pca::pca(&data, 2);
+    for (n, fs) in features.iter().enumerate() {
+        let fs: Vec<_> = fs.iter().map(|x| format!("{:.3}", x)).collect();
+        println!("{}\t{}\t{}", n, n / data_num, fs.join("\t"));
     }
-    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    use haplotyper::global_clustering::path_clustering::Graph;
-    let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(934802948);
-    let mut graph = Graph::new(&ereads, &cluster_num, 2, 1, &mut rng);
-    for _ in 0..10 {
-        let (lk, asns) = graph.gibbs_sampling(&mut rng, 10_000_000);
-        // Ans -> Pred
-        let mut counts = vec![vec![0; 2]; 2];
-        for (&asn, read) in asns.iter().zip(ereads.iter()) {
-            let correct_cls = id2name[&read.id].contains("hapA") as usize;
-            counts[correct_cls][asn] += 1;
-        }
-        debug!("LK\t{}", lk);
-        for cs in counts.iter() {
-            debug!("{:?}", cs);
-        }
-    }
-    debug!("{}", graph);
     // let units = ds
     //     .encoded_reads
     //     .iter()

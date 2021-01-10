@@ -37,7 +37,7 @@ fn main() -> std::io::Result<()> {
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {
         use rand::Rng;
-        let var_pos = rng.gen_range(0, chain_len);
+        let var_pos = rng.gen_range(0..chain_len);
         let mut seq = template.clone();
         seq[var_pos] = match rng.gen::<u8>() % 3 {
             0 => {

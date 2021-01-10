@@ -366,7 +366,7 @@ mod tests {
         } = conf;
         (0..num)
             .map(|i| {
-                let cluster = r.gen_range(0, cl) as u64;
+                let cluster = r.gen_range(0..cl) as u64;
                 let len = r.gen::<usize>() % (max_len - min_len) + min_len;
                 let start = r.gen::<usize>() % (unit_len - len);
                 let units: Vec<_> = if r.gen_bool(0.5) {

@@ -1,179 +1,120 @@
-use super::ChunkedUnit;
-use super::ClusteringConfig;
-use poa_hmm::*;
-use rand::seq::SliceRandom;
+//! A small K-means clustering algorithm.
+//! It run several times, pick the best one.
 use rand::Rng;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
-use rayon::prelude::*;
-use std::collections::VecDeque;
-const CAP: usize = 50;
-const INIT: usize = 30;
-#[derive(Debug)]
-struct Model {
-    cluster_num: usize,
-    chain_len: usize,
-    weights: Vec<usize>,
-    // Cluster -> Position -> Sequence.
-    sequences: Vec<Vec<VecDeque<Vec<u8>>>>,
+pub fn kmeans(data: &[Vec<f64>], k: usize, seed: Option<u64>) -> Vec<usize> {
+    let data: Vec<_> = data.iter().map(|x| x.as_slice()).collect();
+    kmeans_slice(&data, k, seed)
 }
 
-impl Model {
-    fn initial_model<R: rand::Rng, F: Fn(u8, u8) -> i32>(
-        data: &[ChunkedUnit],
-        rng: &mut R,
-        chain_len: usize,
-        c: &ClusteringConfig<F>,
-    ) -> Self {
-        let cluster_num = c.cluster_num;
-        let weights = vec![CAP; cluster_num];
-        let sequences: Vec<_> = (0..cluster_num)
-            .map(|_| {
-                let mut chains = vec![VecDeque::with_capacity(CAP + 1); chain_len];
-                for read in (0..INIT).filter_map(|_| data.choose(rng)) {
-                    for chunk in read.chunks.iter() {
-                        chains[chunk.pos].push_back(chunk.seq.to_vec());
-                    }
-                }
-                chains
-            })
-            .collect();
-        Self {
-            cluster_num,
-            weights,
-            sequences,
-            chain_len,
+pub fn kmeans_slice(data: &[&[f64]], k: usize, seed: Option<u64>) -> Vec<usize> {
+    let mut rng: Xoshiro256StarStar = match seed {
+        Some(seed) => SeedableRng::seed_from_u64(seed),
+        None => {
+            let mut rng = rand::thread_rng();
+            SeedableRng::seed_from_u64(rng.gen::<u64>())
         }
+    };
+    kmeans_with_rng(data, k, &mut rng)
+}
+
+fn kmeans_with_rng<R: Rng>(data: &[&[f64]], k: usize, rng: &mut R) -> Vec<usize> {
+    let mut assignments: Vec<_> = data.iter().map(|_| rng.gen::<usize>() % k).collect();
+    let len = data[0].len();
+    for d in data.iter() {
+        assert_eq!(d.len(), len);
     }
-    fn push_seq(&mut self, read: &ChunkedUnit) {
-        self.weights[read.cluster] += 1;
-        for chunk in read.chunks.iter() {
-            self.sequences[read.cluster][chunk.pos].push_back(chunk.seq.to_vec());
-            while self.sequences[read.cluster][chunk.pos].len() > CAP {
-                self.sequences[read.cluster][chunk.pos].pop_front();
+    let mut residual = std::f64::INFINITY;
+    let mut diff = std::f64::INFINITY;
+    while diff > 0.001 {
+        let mut centers: Vec<_> = vec![vec![0.; len]; k];
+        let mut counts: Vec<_> = vec![0; k];
+        for (&asn, xs) in assignments.iter().zip(data.iter()) {
+            for (i, x) in xs.iter().enumerate() {
+                centers[asn][i] += x;
             }
+            counts[asn] += 1;
         }
-    }
-    fn generate_poa<R: Rng, F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-        &self,
-        rng: &mut R,
-        c: &ClusteringConfig<F>,
-    ) -> Vec<Vec<POA>> {
-        let seeds: Vec<Vec<_>> = self
-            .sequences
-            .iter()
-            .map(|sequences| (0..sequences.len()).map(|_| rng.gen::<u64>()).collect())
-            .collect();
-        self.sequences
-            .par_iter()
-            .zip(seeds.par_iter())
-            .map(|(sequences, seeds)| {
-                sequences
-                    .par_iter()
-                    .zip(seeds.par_iter())
-                    .map(|(cs, s)| {
-                        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(*s);
-                        let mut cs: Vec<&[u8]> = cs.iter().map(|x| x.as_slice()).collect();
-                        cs.shuffle(&mut rng);
-                        // super::create_model::construct_poa(&None, &cs, c)
-                        let &super::AlignmentParameters {
-                            ins,
-                            del,
-                            ref score,
-                        } = &c.alnparam;
-                        let param = (ins, del, score);
-                        POA::default().update(&cs, &vec![1.; cs.len()], param)
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-}
-
-fn update_assignment<R: rand::Rng, F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    read: &mut ChunkedUnit,
-    models: &Model,
-    rng: &mut R,
-    c: &ClusteringConfig<F>,
-) {
-    let mut weights = get_weights(read, &models, rng, c);
-    let sum = weights.iter().sum::<f64>();
-    weights.iter_mut().for_each(|x| *x /= sum);
-    trace!("{:?}", weights);
-    let (new_assignment, _max) = weights
-        .iter()
-        .enumerate()
-        .max_by(|a, b| (a.1).partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap_or((0, &0.));
-    read.cluster = new_assignment;
-}
-
-fn get_weights<R: rand::Rng, F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    read: &mut ChunkedUnit,
-    models: &Model,
-    rng: &mut R,
-    c: &ClusteringConfig<F>,
-) -> Vec<f64> {
-    let poas = models.generate_poa(rng, c);
-    let likelihoods: Vec<(usize, Vec<_>)> = read
-        .chunks
-        .iter()
-        .map(|chunk| {
-            let lks: Vec<_> = poas
+        centers.iter_mut().zip(counts.iter()).for_each(|(xs, &c)| {
+            xs.iter_mut().for_each(|x| *x /= c as f64);
+        });
+        let mut next_residual = 0.;
+        for (asn, xs) in assignments.iter_mut().zip(data.iter()) {
+            let (new_asn, min_distance) = centers
                 .iter()
-                .map(|ms| ms[chunk.pos].forward(&chunk.seq, &c.poa_config))
-                .collect();
-            (chunk.pos, lks)
+                .map(|cs| {
+                    cs.iter()
+                        .zip(xs.iter())
+                        .map(|(c, x)| (c - x).powi(2i32))
+                        .sum::<f64>()
+                })
+                .enumerate()
+                .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+                .unwrap();
+            *asn = new_asn;
+            next_residual += min_distance;
+        }
+        diff = residual - next_residual;
+        assert!(
+            diff.is_sign_positive(),
+            "{},{},{}",
+            residual,
+            next_residual,
+            diff
+        );
+        residual = next_residual;
+    }
+    assignments
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rand_distr::{Distribution, Normal};
+    #[test]
+    fn works() {}
+    #[test]
+    fn k_means_test() {
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(239);
+        let data_num = 100;
+        let cluster = 4;
+        let models: Vec<Vec<_>> = vec![
+            vec![(0., 0.5), (0., 0.5), (0., 1.), (2., 1.)],
+            vec![(2., 0.5), (0., 0.5), (2., 1.), (0., 1.)],
+            vec![(0., 0.5), (2., 0.5), (0., 1.), (0., 1.)],
+            vec![(1., 0.5), (0., 0.5), (0., 1.), (-3., 1.)],
+        ]
+        .into_iter()
+        .map(|params| {
+            params
+                .into_iter()
+                .map(|(mean, sd)| Normal::new(mean, sd).unwrap())
+                .collect()
         })
         .collect();
-    (0..c.cluster_num)
-        .map(|l| {
-            (0..c.cluster_num)
-                .map(|k| {
-                    if k == l {
-                        return 0.;
-                    }
-                    // let (i, j) = (l.max(k), l.min(k));
-                    let prior = (models.weights[k] as f64 / models.weights[l] as f64).ln();
-                    prior
-                        + likelihoods
-                            .iter()
-                            .map(|&(_, ref lks)| (lks[k] - lks[l]))
-                            .sum::<f64>()
-                })
-                .map(|lkdiff| lkdiff.exp())
-                .sum::<f64>()
-                .recip()
-        })
-        .collect()
-}
-
-pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    data: &mut Vec<ChunkedUnit>,
-    chain_len: usize,
-    c: &ClusteringConfig<F>,
-    ref_unit: u64,
-) -> f64 {
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_unit);
-    let rng = &mut rng;
-    data.iter_mut()
-        .for_each(|x| x.cluster = rng.gen::<usize>() % c.cluster_num);
-    let mut models = Model::initial_model(data, rng, chain_len, c);
-    let mut count = 0;
-    // let mut margin = 0.;
-    //    while margin < 3. * data.len() as f64 || count == 0 {
-    while count < 10 {
-        for picked in rand::seq::index::sample(rng, data.len(), data.len()).into_iter() {
-            trace!("Pick {}, {:?}", picked, models.weights);
-            update_assignment(&mut data[picked], &models, rng, c);
-            models.push_seq(&data[picked]);
+        let data: Vec<Vec<f64>> = (0..cluster)
+            .flat_map(|k| {
+                (0..data_num)
+                    .map(|_| models[k].iter().map(|m| m.sample(&mut rng)).collect())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let asn = kmeans(&data, cluster, None);
+        let total_missed = asn
+            .chunks(data_num)
+            .map(|ax| {
+                let repr = ax[0];
+                ax.iter().filter(|&&x| x != repr).count()
+            })
+            .sum::<usize>();
+        let error = total_missed as f64 / asn.len() as f64;
+        if error > 0.05 {
+            eprintln!("{}\t{}\t{}", total_missed, asn.len(), error);
+            // for (i, a) in asn.iter().enumerate() {
+            //     eprintln!("{}\t{}", i, a,);
+            // }
+            panic!();
         }
-        let dim = (c.cluster_num, chain_len);
-        let (_, _, _, margin) =
-            super::variant_calling::get_variants(&data, dim, rng, c, c.variant_num);
-        count += 1;
-        trace!("Margin:{}", margin);
     }
-    0.
-    // margin
 }

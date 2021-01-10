@@ -22,7 +22,7 @@ jtk entry --input ${TARGET} --read_type CCS |\
     jtk encode -vv --threads ${THREADS}|\
     tee ${2}.entry.json |\
     jtk multiplicity_estimation -vv --threads ${THREADS} \
-        --draft_assembly ${DRAFT_GFA} --max_cluster_sze 6 |\
+        --draft_assembly ${DRAFT_GFA} --max_cluster_size 6 |\
     jtk local_clustering -vv --threads ${THREADS}|\
     tee ${CLUSTERED} |\
     jtk clustering_correction -vv --threads ${THREADS} |\

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+        "python",
         "pathhap",
         "definitions",
         "hla_cli",

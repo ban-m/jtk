@@ -26,6 +26,21 @@ jtk entry --input ${TARGET} --read_type CLR |\
     jtk local_clustering -vv --threads ${THREADS} |\
     tee ${CLUSTERED} |\
     jtk clustering_correction -vv --threads ${THREADS} |\
+    jtk global_clustering -vv --threads ${THREADS} |\
+    jtk stats -vv -f ${STAT} > ${RESULT}
+cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} > /dev/null
+cat ${GFA} | awk '($1 ~ /S/)' | awk 'BEGIN{OFS="\n"}{print ">" $2, $4}' > ${GFA%.gfa}.fa
+exit 0;
+jtk entry --input ${TARGET} --read_type CLR |\
+    jtk repeat_masking -k 15 -t ${THREADS} -vv |\
+    jtk select_unit -vv -t ${THREADS} --take_num 10000 |\
+    jtk encode -vv --threads ${THREADS} |\
+    tee ${2}.entry.json |\
+    jtk multiplicity_estimation -vv --threads ${THREADS} \
+        --draft_assembly ${DRAFT_GFA} --max_cluster_size 6 |\
+    jtk local_clustering -vv --threads ${THREADS} |\
+    tee ${CLUSTERED} |\
+    jtk clustering_correction -vv --threads ${THREADS} |\
     jtk local_clustering -vv --threads ${THREADS}  \
         --retain_current_clustering |\
     jtk clustering_correction -vv --threads ${THREADS} |\

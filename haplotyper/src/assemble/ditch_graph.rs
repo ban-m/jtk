@@ -1506,7 +1506,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        let (segment, _edge, _group) = graph.spell(&c, 0);
+        let (segment, _edge, _group, _) = graph.spell(&c, 0);
         eprintln!("{:?}", segment);
         eprintln!("{:?}", answer);
         assert_eq!(segment.len(), 1);
@@ -1519,7 +1519,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1560,7 +1560,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1601,7 +1601,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1634,7 +1634,7 @@ mod tests {
         eprintln!("{:?}", graph);
         graph.collapse_buddle(&c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1678,7 +1678,7 @@ mod tests {
         eprintln!("{:?}", graph);
         graph.collapse_buddle(&c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1722,7 +1722,7 @@ mod tests {
         eprintln!("{:?}", graph);
         graph.collapse_buddle(&c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1766,7 +1766,7 @@ mod tests {
         eprintln!("{:?}", graph);
         graph.collapse_buddle(&c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()
@@ -1810,7 +1810,7 @@ mod tests {
         eprintln!("{:?}", graph);
         graph.collapse_buddle(&c);
         eprintln!("{:?}", graph);
-        let (segments, edges, group) = graph.spell(&c, 0);
+        let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
         let nodes = segments
             .clone()

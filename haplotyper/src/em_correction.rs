@@ -114,7 +114,7 @@ pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Ve
                 .iter()
                 .map(|_| {
                     let mut weight = vec![0.; config.cluster_num];
-                    weight[rng.gen_range(0, config.cluster_num)] += 1.;
+                    weight[rng.gen_range(0..config.cluster_num)] += 1.;
                     weight
                 })
                 .collect();

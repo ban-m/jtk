@@ -9,6 +9,7 @@ pub use config::*;
 pub mod clustering_by_assemble;
 pub mod create_model;
 pub mod eread;
+pub mod pca;
 pub mod variant_calling;
 // const REPEAT_NUM: usize = 8;
 // const REPEAT_NUM: usize = 3;
