@@ -10,6 +10,6 @@ edition = "2018"
 
 
 [lib]
-name = "jtk"
+name = "libjtk"
 path = "src/lib.rs"
 crate_type = ["cdylib"]

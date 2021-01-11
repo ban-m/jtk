@@ -2,7 +2,6 @@ use log::*;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal};
 use rand_xoshiro::Xoshiro256PlusPlus;
-use std::collections::HashMap;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     debug!("Begin");
