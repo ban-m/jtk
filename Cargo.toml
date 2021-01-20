@@ -12,4 +12,5 @@ members = [
         "histgram_viz",
         "mcl",
         "gfa_rust",
+        "pathhap/gray_code",
 ]

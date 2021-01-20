@@ -19,3 +19,6 @@
 [submodule "pathhap"]
 	path = pathhap
 	url = git@github.com:ban-m/pathhap.git
+[submodule "gray_code"]
+	path = gray_code
+	url = git@github.com:ban-m/gray_code.git

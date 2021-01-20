@@ -557,6 +557,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 
 [[package]]
+name = "graycode"
+version = "0.1.0"
+
+[[package]]
 name = "haplotyper"
 version = "0.1.0"
 dependencies = [
@@ -923,6 +927,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "env_logger 0.8.2",
+ "graycode",
  "log",
  "rand 0.8.0",
  "rand_xoshiro",
