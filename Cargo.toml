@@ -1,16 +1,10 @@
 [workspace]
 members = [
         "python",
-        "pathhap",
         "definitions",
         "hla_cli",
-        "bio_utils",
         "haplotyper",
-        "partial_order_alignment",
-        "de_bruijn_graph",
         "sandbox",
-        "histgram_viz",
         "mcl",
-        "gfa_rust",
         "pathhap/gray_code",
 ]

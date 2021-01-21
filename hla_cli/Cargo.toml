@@ -12,7 +12,7 @@ definitions = {path = "../definitions"}
 log = "*"
 env_logger = "*"
 serde_json = "*"
-bio_utils = {path = "../bio_utils"}
+bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 haplotyper = {path = "../haplotyper"}
 rayon = "*"
-gfa = {path = "../gfa_rust"}
+gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}

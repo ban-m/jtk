@@ -1,21 +1,3 @@
-[submodule "bio_utils"]
-	path = bio_utils
-	url = git@github.com:ban-m/bio_utils.git
-[submodule "partial_order_alignment"]
-	path = partial_order_alignment
-	url = git@github.com:ban-m/partial_order_alignment.git
-[submodule "histgram_viz"]
-	path = histgram_viz
-	url = git@github.com:ban-m/histgram_viz.git
-[submodule "gfa_rust"]
-	path = gfa_rust
-	url = git@github.com:ban-m/gfa_rust.git
-[submodule "de_bruijn_graph"]
-	path = de_bruijn_graph
-	url = git@github.com:ban-m/de_bruijn_graph.git
-[submodule "edlib-sys"]
-	path = edlib-sys
-	url = git@github.com:ban-m/edlib-sys.git
 [submodule "pathhap"]
 	path = pathhap
 	url = git@github.com:ban-m/pathhap.git

@@ -10,18 +10,18 @@ edition = "2018"
 definitions = {path = "../definitions"}
 log = "*"
 env_logger = "*"
-bio_utils = {path = "../bio_utils"}
+bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 serde = {version = "1.0", features = ["derive"]}
 rayon = "*"
 rand = "*"
 rand_xoshiro = "*"
 rand_distr = "*"
-poa_hmm = {path = "../partial_order_alignment", features = ["poa_simd"]}
-de_bruijn_graph = {path = "../de_bruijn_graph"}
+poa_hmm = {git = "https://github.com/ban-m/partial_order_alignment.git", branch = "master", features = ["poa_simd"]}
+de_bruijn_graph = {git = "https://github.com/ban-m/de_bruijn_graph.git", branch = "hla_module"}
 nalgebra  = "*"
 serde_json = "*"
-histgram_viz = {path = "../histgram_viz"}
+histgram_viz = {git = "https://github.com/ban-m/histgram_viz", branch = "master"}
 mcl = {path = "../mcl"}
-gfa = {path = "../gfa_rust"}
-edlib_sys = {path = "../edlib-sys"}
+gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
+edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 bio = "*"
