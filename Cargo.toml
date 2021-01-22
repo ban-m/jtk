@@ -6,5 +6,4 @@ members = [
         "haplotyper",
         "sandbox",
         "mcl",
-        "pathhap/gray_code",
 ]

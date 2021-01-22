@@ -558,10 +558,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 
 [[package]]
-name = "graycode"
-version = "0.1.0"
-
-[[package]]
 name = "haplotyper"
 version = "0.1.0"
 dependencies = [
@@ -922,19 +918,6 @@ name = "paste"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5d65c4d95931acda4498f675e332fcbdc9a06705cd07086c510e9b6009cd1c1"
-
-[[package]]
-name = "path_phasing"
-version = "0.1.0"
-dependencies = [
- "clap",
- "env_logger 0.8.2",
- "graycode",
- "log",
- "rand 0.8.2",
- "rand_xoshiro",
- "rayon",
-]
 
 [[package]]
 name = "peeking_take_while"
