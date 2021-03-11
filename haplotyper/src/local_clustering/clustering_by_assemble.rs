@@ -124,8 +124,8 @@ fn clustering_with(data: &[ChunkedUnit], config: &ClusteringConfig, seed: u64) -
     //for _i in 0..config.repeat_number {
     loop {
         for (i, t) in templates.iter().enumerate().filter(|x| !x.1.is_empty()) {
-            for a in 0..k {
-                chunks[a][i].push(t.as_slice());
+            for slot in chunks.iter_mut().take(k) {
+                slot[i].push(t.as_slice());
             }
         }
         for (read, &asn) in data.iter().zip(assignments.iter()) {

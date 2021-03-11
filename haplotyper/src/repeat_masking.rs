@@ -121,7 +121,7 @@ fn to_idx(w: &[u8]) -> u64 {
         w[idx] <= w[w.len() - idx - 1]
     };
     let adder = |sum, &c| match c {
-        b'A' | b'a' => (sum << 2) | 0u64,
+        b'A' | b'a' => sum << 2,
         b'C' | b'c' => (sum << 2) | 1u64,
         b'G' | b'g' => (sum << 2) | 2u64,
         b'T' | b't' => (sum << 2) | 3u64,
@@ -131,7 +131,7 @@ fn to_idx(w: &[u8]) -> u64 {
         b'A' | b'a' => (sum << 2) | 3u64,
         b'C' | b'c' => (sum << 2) | 2u64,
         b'G' | b'g' => (sum << 2) | 1u64,
-        b'T' | b't' => (sum << 2) | 0u64,
+        b'T' | b't' => sum << 2,
         _ => (sum << 2),
     };
     if is_canonical {
@@ -153,7 +153,7 @@ fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> Hash
     } else {
         kmercount.values().copied().collect()
     };
-    counts.sort();
+    counts.sort_unstable();
     counts.reverse();
     let thr = counts[((counts.len() as f64) * config.freq).floor() as usize];
     let thr = thr.max(config.min);
@@ -172,8 +172,10 @@ fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) {
     for idx in 0..seq.len() - k + 1 {
         let kmer_position = to_idx(&seq[idx..idx + k]);
         if mask.contains(&kmer_position) {
-            for i in farthest.max(idx)..idx + k {
-                seq[i].make_ascii_lowercase();
+            for seq in seq.iter_mut().take(idx + k).skip(farthest.max(idx)) {
+                //for i in farthest.max(idx)..idx + k {
+                //seq[i].make_ascii_lowercase();
+                seq.make_ascii_lowercase();
             }
             farthest = idx + k - 1;
         }

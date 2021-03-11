@@ -122,13 +122,7 @@ impl<'a> StringGraph<'a> {
                     _ => false,
                 })
                 .count();
-            let contained = edges
-                .values()
-                .filter(|x| match x {
-                    Err(_) => true,
-                    _ => false,
-                })
-                .count();
+            let contained = edges.values().filter(|x| matches!(x, Err(_))).count();
             debug!("NODESUM\tTotal\tValid\tOrphan\tContained");
             debug!(
                 "NODESUM\t{}\t{}\t{}\t{}",

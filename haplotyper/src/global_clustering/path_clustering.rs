@@ -18,13 +18,13 @@ pub struct Graph {
     assignments: Vec<usize>,
 }
 
-pub trait IntoPath {
+pub trait ToPath {
     // Into (Position, Cluster)
-    fn into_path(&self) -> Vec<(usize, usize)>;
+    fn to_path(&self) -> Vec<(usize, usize)>;
 }
 
-impl IntoPath for definitions::EncodedRead {
-    fn into_path(&self) -> Vec<(usize, usize)> {
+impl ToPath for definitions::EncodedRead {
+    fn to_path(&self) -> Vec<(usize, usize)> {
         self.nodes
             .iter()
             .map(|n| (n.unit as usize, n.cluster as usize))
@@ -33,7 +33,7 @@ impl IntoPath for definitions::EncodedRead {
 }
 
 impl Graph {
-    pub fn new<R: Rng, T: IntoPath>(
+    pub fn new<R: Rng, T: ToPath>(
         reads: &[T],
         // If some position(unit) is missing, it should be zero.
         cluster_num: &[usize],
@@ -43,7 +43,7 @@ impl Graph {
     ) -> Self {
         let reads: Vec<Vec<_>> = reads
             .iter()
-            .map(IntoPath::into_path)
+            .map(ToPath::to_path)
             .map(|r| r.into_iter().map(|(u, c)| (u as usize, c)).collect())
             .collect();
         let assignments: Vec<usize> = reads.iter().map(|_| r.gen::<usize>() % ploidy).collect();

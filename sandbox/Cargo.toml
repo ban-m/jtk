@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-poa_hmm = {git = "https://github.com/ban-m/partial_order_alignment.git", branch = "master", features = ["poa_simd"]}
+poa_hmm = {version = "0.2.0", git = "https://github.com/ban-m/partial_order_alignment.git", branch = "master", features = ["poa_simd"]}
 rand = "*"
 rand_xoshiro = "*"
 rand_distr = "*"
@@ -24,3 +24,5 @@ rayon = "*"
 bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 bio = "*"
 nalgebra = "*"
+edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
+kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master"}

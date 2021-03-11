@@ -4,6 +4,12 @@
 #$ -cwd
 #$ -pe smp 23
 #$ -j y
+#$ -o log
 #$ -m e 
 #$ -V
-RUST_LOG=trace ${PWD}/target/release/check ${2} ${1} 2 0.001 0.5 0.5
+THREADS=24
+PATH="${PATH}:${PWD}/target/release/"
+cat ${PWD}/result/dip-A-CS/jtk/dip-A-CS.CLR.json |\
+    jtk local_clustering -vv --threads ${THREADS}  \
+        --retain_current_clustering |\
+    jtk clustering_correction -vv --threads ${THREADS} > ${PWD}/dip-A-CS.CLR.temp.json

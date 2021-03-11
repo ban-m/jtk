@@ -42,6 +42,7 @@ impl DataSet {
             read_type,
         }
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn with_param(
         input_file: String,
         raw_reads: Vec<RawRead>,

@@ -4,7 +4,15 @@ use definitions::DataSet;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::io::*;
+
 pub const MARGIN: usize = 50;
+// Any alignment having deletion longer than ALLOWED_END_GAP would be discarded.
+// Increasing this value would be more "abundant" encoding,
+// but it would be problem in local clustering, which requiring almost all the
+// unit is correctly globally aligned.
+const ALLOWED_END_GAP: usize = 50;
+// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
+pub const INDEL_THRESHOLD: usize = 20;
 pub trait Encode {
     fn encode(self, threads: usize) -> Self;
 }
@@ -26,8 +34,6 @@ impl Encode for definitions::DataSet {
         //     .collect();
         self = encode_by_mm2(self, threads).unwrap();
         debug!("Encoded {} reads.", self.encoded_reads.len());
-        // self.encoded_reads = encoded_reads;
-        // Sanity Check!
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
         self
     }
@@ -54,19 +60,15 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
 
 pub fn encode_by_mm2(mut ds: definitions::DataSet, p: usize) -> std::io::Result<DataSet> {
     let mm2 = mm2_alignment(&ds, p)?;
-    let thr = 200;
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
         .filter_map(|l| bio_utils::paf::PAF::new(&l))
-        .filter(|a| a.tstart < thr && a.tlen - a.tend < thr)
+        .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
         .collect();
     let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
     for aln in alignments.iter() {
         bucket.entry(aln.qname.clone()).or_default().push(aln);
     }
-    bucket.values_mut().for_each(|alns| {
-        alns.sort_by_key(|aln| aln.qstart);
-    });
     ds.encoded_reads = ds
         .raw_reads
         .par_iter()
@@ -81,45 +83,7 @@ pub fn encode_by_mm2(mut ds: definitions::DataSet, p: usize) -> std::io::Result<
 fn encode_read_by_paf(read: &RawRead, alns: &[&bio_utils::paf::PAF]) -> Option<EncodedRead> {
     let mut seq: Vec<_> = read.seq().to_vec();
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
-    let nodes: Vec<_> = alns
-        .iter()
-        .filter_map(|aln| {
-            let unit = aln.tname.parse().ok()?;
-            let seq = &seq[aln.qstart..aln.qend];
-            let seq = if aln.relstrand {
-                String::from_utf8_lossy(seq).to_string()
-            } else {
-                String::from_utf8(bio_utils::revcmp(seq)).unwrap()
-            };
-            use bio_utils::sam;
-            let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
-            let mut ops = if aln.tstart > 0 {
-                vec![Op::Del(aln.tstart)]
-            } else {
-                vec![]
-            };
-            for op in cigar {
-                let op = match op {
-                    sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
-                    sam::Op::Insertion(l) => Op::Ins(l),
-                    sam::Op::Deletion(l) => Op::Del(l),
-                    _ => panic!("{:?}", op),
-                };
-                ops.push(op);
-            }
-            if aln.tlen != aln.tend {
-                ops.push(Op::Del(aln.tlen - aln.tend));
-            }
-            Some(Node {
-                position_from_start: aln.qstart,
-                unit,
-                cluster: 0,
-                is_forward: aln.relstrand,
-                seq,
-                cigar: ops,
-            })
-        })
-        .collect();
+    let nodes = encode_read_by_paf_to_nodes(&seq, alns);
     let edges: Vec<_> = nodes
         .windows(2)
         .map(|w| Edge::from_nodes(w, &seq))
@@ -134,6 +98,82 @@ fn encode_read_by_paf(read: &RawRead, alns: &[&bio_utils::paf::PAF]) -> Option<E
         nodes,
         edges,
     })
+}
+
+fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF) -> Option<Node> {
+    let unit = aln.tname.parse().ok()?;
+    let seq = &seq[aln.qstart..aln.qend];
+    let seq = if aln.relstrand {
+        String::from_utf8_lossy(seq).to_string()
+    } else {
+        String::from_utf8(bio_utils::revcmp(seq)).unwrap()
+    };
+    use bio_utils::sam;
+    let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
+    // If there's too large In/Dels, return None.
+    if cigar.iter().any(|op| match *op {
+        sam::Op::Insertion(l) | sam::Op::Deletion(l) => l > INDEL_THRESHOLD,
+        _ => false,
+    }) {
+        return None;
+    }
+    let mut ops = vec![];
+    if aln.tstart > 0 {
+        ops.push(Op::Del(aln.tstart));
+    }
+    for op in cigar {
+        let op = match op {
+            sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
+            sam::Op::Insertion(l) => Op::Ins(l),
+            sam::Op::Deletion(l) => Op::Del(l),
+            _ => panic!("{:?}", op),
+        };
+        ops.push(op);
+    }
+    if aln.tlen != aln.tend {
+        ops.push(Op::Del(aln.tlen - aln.tend));
+    }
+    Some(Node {
+        position_from_start: aln.qstart,
+        unit,
+        cluster: 0,
+        is_forward: aln.relstrand,
+        seq,
+        cigar: ops,
+    })
+}
+
+fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
+    fn score(n: &Node) -> i32 {
+        n.cigar
+            .iter()
+            .map(|op| match *op {
+                Op::Match(x) => x as i32,
+                Op::Del(x) | Op::Ins(x) => -(x as i32),
+            })
+            .sum::<i32>()
+    }
+    // Remove overlapping same units.
+    nodes.sort_by_key(|x| x.position_from_start);
+    let mut deduped_nodes = vec![];
+    let mut prev = nodes.remove(0);
+    for node in nodes {
+        let is_disjoint = prev.position_from_start + prev.query_length() < node.position_from_start;
+        if prev.unit != node.unit || prev.is_forward != node.is_forward || is_disjoint {
+            deduped_nodes.push(prev);
+            prev = node;
+        } else if score(&prev) < score(&node) {
+            // Previous node is inferior to the current.
+            prev = node;
+        }
+    }
+    deduped_nodes.push(prev);
+    deduped_nodes
+}
+
+fn encode_read_by_paf_to_nodes(seq: &[u8], alns: &[&bio_utils::paf::PAF]) -> Vec<Node> {
+    let nodes: Vec<_> = alns.iter().filter_map(|aln| encode_paf(seq, aln)).collect();
+    remove_slippy_alignment(nodes)
 }
 
 fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<u8>> {
@@ -269,7 +309,7 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
 //     Ok(alignments)
 // }
 
-pub fn distribute<'a>(alignments: &'a [LastTAB]) -> HashMap<String, Vec<&'a LastTAB>> {
+pub fn distribute(alignments: &[LastTAB]) -> HashMap<String, Vec<&LastTAB>> {
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
     for alignment in alignments {
         let q_name = alignment.seq2_name().to_string();
@@ -412,10 +452,7 @@ fn encode_alignment_by_chaining(
     }
     let (mut q_pos, mut r_pos) = (query_start, 0);
     let mut cigar = vec![];
-    assert!(match *chain[0] {
-        DAGNode::Start => true,
-        _ => false,
-    });
+    assert!(matches!(*chain[0], DAGNode::Start));
     for node in chain.iter().skip(1) {
         let (q_target, r_target) = match node {
             &&DAGNode::End => (query_end, unit.seq().len()),
@@ -481,11 +518,10 @@ pub fn join_alignments(
     let (query_start, refr_start) = {
         let first_chain = chain
             .iter()
-            .filter_map(|n| match n {
+            .find_map(|n| match n {
                 DAGNode::Aln(aln) => Some(aln),
                 _ => None,
             })
-            .next()
             .unwrap();
         // First aln.
         let query_start = first_chain.seq2_start();
@@ -494,10 +530,7 @@ pub fn join_alignments(
     };
     let (mut q_pos, mut r_pos) = (query_start, refr_start);
     let mut cigar = vec![];
-    assert!(match *chain[0] {
-        DAGNode::Start => true,
-        _ => false,
-    });
+    assert!(matches!(*chain[0], DAGNode::Start));
     for node in chain.iter().skip(1) {
         let (q_target, r_target) = match node {
             &&DAGNode::End => break,
@@ -648,10 +681,7 @@ fn chaining<'a, 'b>(nodes: &'b [DAGNode<'a>], unit_len: usize) -> Vec<&'b DAGNod
         }
     }
     // i <= 1, tracing back from the end node.
-    assert!(match nodes[1] {
-        DAGNode::End => true,
-        _ => false,
-    });
+    assert!(matches!(nodes[1], DAGNode::End));
     let mut path = vec![];
     let mut current_node = 1;
     while current_node != 0 {
@@ -762,12 +792,14 @@ fn alignment(query: &[u8], refr: &[u8], mat: i64, mism: i64, gap: i64) -> Vec<Op
             r_pos -= 1;
         }
     }
-    for _ in 0..q_pos {
-        ops.push(1);
-    }
-    for _ in 0..r_pos {
-        ops.push(2);
-    }
+    ops.extend(std::iter::repeat(1).take(q_pos));
+    ops.extend(std::iter::repeat(2).take(r_pos));
+    // for _ in 0..q_pos {
+    //     ops.push(1);
+    // }
+    // for _ in 0..r_pos {
+    //     ops.push(2);
+    // }
     compress(ops)
 }
 
@@ -796,7 +828,7 @@ fn compress(mut ops: Vec<u8>) -> Vec<Op> {
 
 fn convert_aln_to_cigar(aln: &lasttab::LastTAB) -> Vec<Op> {
     aln.alignment()
-        .into_iter()
+        .iter()
         .map(|op| match op {
             lasttab::Op::Seq1In(l) => Op::Ins(*l),
             lasttab::Op::Seq2In(l) => Op::Del(*l),

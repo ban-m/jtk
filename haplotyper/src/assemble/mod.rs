@@ -8,6 +8,7 @@ use ditch_graph::*;
 use gfa::GFA;
 use rayon::prelude::*;
 use serde::*;
+use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
     pub nodes: Vec<Node>,
@@ -35,7 +36,38 @@ pub struct Edge {
     pub to_tail: bool,
 }
 
-use std::collections::{HashMap, HashSet};
+impl Graph {
+    pub fn enumerate_connected_components(&self) -> Vec<Vec<&Node>> {
+        use crate::find_union::FindUnion;
+        let mut fu = FindUnion::new(self.nodes.len());
+        let id2index: HashMap<_, usize> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (&node.id, index))
+            .collect();
+        // Merge edges.
+        for edge in self.edges.iter() {
+            let from = id2index[&edge.from];
+            let to = id2index[&edge.to];
+            fu.unite(from, to);
+        }
+        // Take components.
+        id2index
+            .iter()
+            .filter_map(|(_, &index)| {
+                (fu.find(index).unwrap() == index).then(|| {
+                    self.nodes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, node)| (fu.find(i).unwrap() == index).then(|| node))
+                        .collect::<Vec<&Node>>()
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AssembleConfig {
     threads: usize,
@@ -92,6 +124,13 @@ impl Assemble for DataSet {
         let mut cluster_and_num: Vec<_> = cluster_and_num.into_iter().collect();
         cluster_and_num.sort_by_key(|x| x.1);
         cluster_and_num.reverse();
+        let coverage: HashMap<(u64, u64), u32> = {
+            let mut coverage = HashMap::new();
+            for node in self.encoded_reads.iter().flat_map(|read| read.nodes.iter()) {
+                *coverage.entry((node.unit, node.cluster)).or_default() += 1;
+            }
+            coverage
+        };
         let records: Vec<_> = cluster_and_num
             .into_iter()
             .filter(|&(cl, num)| {
@@ -103,12 +142,35 @@ impl Assemble for DataSet {
                 }
             })
             .flat_map(|(cl, _)| {
-                let (nodes, edges, group, _summaries) = assemble(self, cl, c);
+                let (nodes, edges, group, summaries) = assemble(self, cl, c);
                 let mut records = vec![];
-                let nodes = nodes
-                    .into_iter()
-                    .map(gfa::Content::Seg)
-                    .map(|n| gfa::Record::from_contents(n, vec![]));
+                let nodes = nodes.into_iter().map(|node| {
+                    let tags = match summaries.iter().find(|x| x.id == node.sid) {
+                        Some(contigsummary) => {
+                            let nodes: Vec<_> = contigsummary
+                                .summary
+                                .iter()
+                                .map(|ContigElement { unit, cluster, .. }| {
+                                    format!("{}-{}", unit, cluster)
+                                })
+                                .collect();
+                            debug!("ASSEMBLE\t{}{}", node.sid, nodes.join("\t"));
+                            let (total, length) = contigsummary
+                                .summary
+                                .iter()
+                                .map(|&ContigElement { unit, cluster, .. }| {
+                                    coverage.get(&(unit, cluster)).copied().unwrap_or(0)
+                                })
+                                .fold((0, 0), |(total, length), cov| (total + cov, length + 1));
+                            let cov_tag = gfa::SamTag {
+                                inner: format!("cv:i:{}", total / length),
+                            };
+                            vec![cov_tag]
+                        }
+                        None => vec![],
+                    };
+                    gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+                });
                 records.extend(nodes);
                 let edges = edges
                     .into_iter()
@@ -212,6 +274,8 @@ fn assemble(
     graph.remove_small_component(5);
     debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
+    let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
+    debug!("{} segments({} bp in total).", segments.len(), total_base);
     let segments = if c.to_polish {
         segments
             .iter()
@@ -339,11 +403,11 @@ fn align_reads(
 pub fn invoke_last(
     reference: &str,
     reads: &str,
-    c_dir: &std::path::PathBuf,
+    c_dir: &std::path::Path,
     threads: usize,
 ) -> std::io::Result<Vec<LastTAB>> {
     use std::io::{BufWriter, Write};
-    let mut db_name = c_dir.clone();
+    let mut db_name = c_dir.to_path_buf();
     db_name.push("reference");
     let db_name = db_name.into_os_string().into_string().unwrap();
     // Create database - train - align
@@ -362,7 +426,7 @@ pub fn invoke_last(
         panic!("last-train-{}", String::from_utf8_lossy(&last_train.stderr));
     }
     let param = {
-        let mut param = c_dir.clone();
+        let mut param = c_dir.to_path_buf();
         param.push("param.par");
         let mut wtr = BufWriter::new(std::fs::File::create(&param).unwrap());
         wtr.write_all(&last_train.stdout).unwrap();
@@ -402,6 +466,7 @@ pub fn invoke_last(
         Ok(res) => panic!("maf-convert exit with status {}", res.status),
         Err(why) => panic!("maf_convert {:?}", why),
     };
+
     let alignments: Vec<_> = String::from_utf8_lossy(&maf_convert.stdout)
         .lines()
         .filter(|e| !e.starts_with('#'))
@@ -422,7 +487,7 @@ pub fn polish_by_chunking(
     let alignments: HashMap<_, Vec<_>> = {
         let mut result: HashMap<_, Vec<_>> = HashMap::new();
         for aln in alignments
-            .into_iter()
+            .iter()
             .filter(|aln| aln.seq1_matchlen() > crate::encode::MARGIN)
         {
             result
@@ -449,7 +514,7 @@ pub fn polish_by_chunking(
                 return vec![];
             }
             let mut lens: Vec<_> = cs.iter().map(|seq| seq.len()).collect();
-            lens.sort();
+            lens.sort_unstable();
             let median = lens[lens.len() / 2];
             lens.sort_by_key(|x| x.max(&median) - x.min(&median));
             let mad = median.max(lens[lens.len() / 2]) - median.min(lens[lens.len() / 2]);
@@ -482,7 +547,6 @@ fn consensus(_template: &[u8], xs: &[Vec<u8>], num: usize) -> Vec<u8> {
             let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
             cs.iter()
                 .filter(|c| !c.is_empty())
-                //.fold(poa_hmm::POA::new(template, 3.), |x, y| {
                 .fold(poa_hmm::POA::default(), |x, y| {
                     let res = if x.nodes().len() > node_num_thr {
                         x.add(y, 1., param).remove_node(0.4)

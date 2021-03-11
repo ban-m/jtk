@@ -135,7 +135,7 @@ impl<'a> Pileups<'a> {
         for (idx, &b) in template.iter().enumerate() {
             matches[idx][BASE_TABLE[b as usize]] += 1;
         }
-        let reads: HashMap<_, _> = reads.iter().map(|r| (r.id().clone(), r)).collect();
+        let reads: HashMap<_, _> = reads.iter().map(|r| (r.id(), r)).collect();
         for aln in alignment {
             if let Some(read) = reads.get(aln.seq2_name()) {
                 let seq = if aln.seq2_direction().is_forward() {

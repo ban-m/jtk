@@ -6,9 +6,7 @@ fn main() {
     let ds = get_input_file().unwrap();
     let end = std::time::Instant::now();
     eprintln!("{:?}", end - start);
-    let k = 4;
-    let mut count: HashMap<_, HashMap<_, usize>> = HashMap::new();
-    let is_hap_a: HashMap<_, _> = ds
+    let is_hap_a: HashMap<_, usize> = ds
         .raw_reads
         .iter()
         .map(|read| {
@@ -16,42 +14,39 @@ fn main() {
             (read.id, desc)
         })
         .collect();
-    for read in ds.encoded_reads.iter().filter(|r| r.nodes.len() >= 4) {
-        let cluster = is_hap_a[&read.id];
-        for node in read.nodes.iter() {
-            *count
-                .entry(node.unit)
-                .or_default()
-                .entry((cluster, node.cluster))
-                .or_default() += 1;
-        }
-    }
-    let cluster_num: HashMap<_, _> = ds
-        .selected_chunks
-        .iter()
-        .map(|unit| (unit.id, unit.cluster_num))
-        .collect();
-    let mut count: Vec<_> = count.into_iter().collect();
-    count.sort_by_key(|x| x.0);
-    for (slot, result) in count {
-        // let mut line = vec![];
-        let cluster_num = cluster_num[&slot] as u64;
-        println!("UNIT\t{}\t{}", slot, cluster_num);
-        for ans in 0..cluster_num {
-            for pred in 0..cluster_num {
-                let count = match result.get(&(ans, pred)) {
-                    Some(count) => count,
-                    None => &0,
-                };
-                print!("\t{}", count);
+    let count = {
+        let mut count: HashMap<_, HashMap<_, usize>> = HashMap::new();
+        for read in ds.encoded_reads.iter() {
+            let cluster = is_hap_a[&read.id];
+            for node in read.nodes.iter() {
+                *count
+                    .entry(node.unit)
+                    .or_default()
+                    .entry((cluster, node.cluster))
+                    .or_default() += 1;
             }
-            println!();
         }
+        let mut count: Vec<_> = count.into_iter().collect();
+        count.sort_by_key(|x| x.0);
+        count
+    };
+    // let cluster_num: HashMap<_, _> = ds
+    //     .selected_chunks
+    //     .iter()
+    //     .map(|unit| (unit.id, unit.cluster_num))
+    //     .collect();
+    for (slot, result) in count {
+        //let cluster_num = cluster_num[&slot] as u64;
+        let cluster_num = result.len() as u64;
+        println!("UNIT\t{}\t{}", slot, cluster_num);
+        let line: Vec<_> = result
+            .iter()
+            .map(|((a, p), count)| format!("({},{}):{}", a, p, count))
+            .collect();
+        println!("{}", line.join("\n"));
         println!();
-        // let total = result.values().sum::<usize>();
-        // let line = line.join("\t");
-        // println!("UNIT\t{}\t{}\t{}\t{}", slot, line, total, cluster_num);
     }
+    let k = 4;
     let mut count = HashMap::new();
     for read in ds.encoded_reads.iter() {
         for kmer in read.nodes.windows(k) {

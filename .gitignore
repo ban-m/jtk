@@ -20,3 +20,5 @@ venv
 python/build
 python/dist
 python/jtk_definitions.egg-info
+*~
+*.ipynb

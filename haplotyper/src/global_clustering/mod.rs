@@ -5,6 +5,7 @@ mod clustering;
 pub mod path_clustering;
 use de_bruijn_graph::*;
 use definitions::DataSet;
+use path_phasing::phase_with_lk;
 use std::collections::{HashMap, HashSet};
 struct ReadWrapper<'a>(&'a definitions::EncodedRead);
 struct FilteredRead {
@@ -108,10 +109,33 @@ impl GlobalClusteringConfig {
     }
 }
 pub trait GlobalClustering {
+    fn global_clustering_graph(self, c: &GlobalClusteringConfig) -> Self;
     fn global_clustering(self, c: &GlobalClusteringConfig) -> Self;
 }
 
 impl GlobalClustering for definitions::DataSet {
+    fn global_clustering_graph(mut self, _c: &GlobalClusteringConfig) -> Self {
+        let c = GlobalClusteringConfig::new(3, 10, 1, -1, -2);
+        let reads = error_correction::local_correction(&self, &c);
+        let paths: Vec<_> = reads
+            .into_iter()
+            .map(|read| {
+                let path: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+                (format!("{}", read.id), path)
+            })
+            .collect();
+        let (lk, phasing) = phase_with_lk(&paths, 20, 15, Some(200_000));
+        debug!("Likelihood:{:.3}", lk);
+        self.assignments = phasing
+            .into_iter()
+            .map(|(id, haplotype)| {
+                let id: u64 = id.parse().unwrap();
+                let cluster = haplotype as usize;
+                definitions::Assignment { id, cluster }
+            })
+            .collect();
+        self
+    }
     fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
         if log_enabled!(log::Level::Debug) {
             debug!("------Raw reads------");

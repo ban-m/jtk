@@ -152,7 +152,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .long("upper")
                 .help("Discard units with occurence more than or equal to [upper].")
                 .takes_value(true)
-                .default_value("250"),
+                .default_value("600"),
         )
         .arg(
             Arg::with_name("lower")
@@ -261,6 +261,36 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .help("Number of threads")
                 .takes_value(true)
                 .default_value(&"1"),
+        )
+}
+
+fn subcommand_pick_components() -> App<'static, 'static> {
+    SubCommand::with_name("pick_components")
+        .version("0.1")
+        .author("Bansho Masutani")
+        .about("Take top n largest components, discarding the rest and empty reads.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .long("threads")
+                .short("t")
+                .help("Number of threads")
+                .takes_value(true)
+                .default_value(&"1"),
+        )
+        .arg(
+            Arg::with_name("component_num")
+                .short("c")
+                .long("component_num")
+                .value_name("COMP")
+                .help("Take top [COMP] largest connected-components.")
+                .takes_value(true)
+                .default_value("1"),
         )
 }
 
@@ -725,6 +755,26 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
     Ok(dataset.encode(threads))
 }
 
+fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("Start picking components.");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    let component_num: usize = matches
+        .value_of("component_num")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let config = ComponentPickingConfig::new(component_num);
+    Ok(dataset.pick_top_n_component(&config))
+}
+
 // fn filter_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
 //     debug!("Start Encoding step");
 //     let threads: usize = matches
@@ -852,6 +902,7 @@ fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::R
         .value_of("mat_score")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    // Minus.
     let mismat_score: i32 = -matches
         .value_of("mismat_score")
         .and_then(|num| num.parse::<i32>().ok())
@@ -873,6 +924,7 @@ fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::R
         mismat_score,
         gap_score,
     );
+    //Ok(dataset.global_clustering_graph(&config))
     Ok(dataset.global_clustering(&config))
 }
 
@@ -967,6 +1019,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_global_clustering())
         .subcommand(subcommand_clustering_correction())
         .subcommand(subcommand_assembly())
+        .subcommand(subcommand_pick_components())
         // .subcommand(subcommand_pipeline())
         .subcommand(subcommand_repeatmasking())
         .get_matches();
@@ -998,6 +1051,7 @@ fn main() -> std::io::Result<()> {
         ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
         ("repeat_masking", Some(sub_m)) => repeat_masking(sub_m, ds),
+        ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),
         _ => unreachable!(),
     };
     result.and_then(|x| flush_file(&x))

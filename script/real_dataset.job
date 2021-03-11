@@ -16,11 +16,11 @@
 
 data=/work/ryought/mhc/data/KIR/filter/all.KIR.fa
 OUTPUT=${PWD}/result/KIR
-mkdir -p ${OUTPUT}
-qsub -o ./logfiles/KIR.out -j y\
-     ./script/pipeline.sh \
+mkdir -p ${OUTPUT}/jtk
+qsub -o ${OUTPUT}/jtk/KIR.out -j y\
+     ./script/kir_pipeline.job \
      ${data} \
-     ${OUTPUT}/KIR
+     ${OUTPUT}/jtk/KIR
 
 # data=/data/hacone/shared/all.HLA.fa
 # OUTPUT=${PWD}/result/HG002_HLA

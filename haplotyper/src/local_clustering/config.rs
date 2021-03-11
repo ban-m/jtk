@@ -207,34 +207,10 @@ fn summarize_operations(opss: Vec<Vec<Op>>, base_freq: [f64; 4]) -> poa_hmm::Con
     use Op::*;
     for ops in opss {
         num_seq += 1;
-        matchmis += ops
-            .iter()
-            .filter(|&e| match e {
-                Match | Mism => true,
-                _ => false,
-            })
-            .count();
-        num_mis += ops
-            .iter()
-            .filter(|&e| match e {
-                Mism => true,
-                _ => false,
-            })
-            .count();
-        num_del += ops
-            .iter()
-            .filter(|&e| match e {
-                Del => true,
-                _ => false,
-            })
-            .count();
-        num_in += ops
-            .iter()
-            .filter(|&e| match e {
-                In => true,
-                _ => false,
-            })
-            .count();
+        matchmis += ops.iter().filter(|&e| matches!(e, Match | Mism)).count();
+        num_mis += ops.iter().filter(|&e| matches!(e, Mism)).count();
+        num_del += ops.iter().filter(|&e| matches!(e, Del)).count();
+        num_in += ops.iter().filter(|&e| matches!(e, In)).count();
         for before_after in ops.windows(2) {
             let b = before_after[0];
             let a = before_after[1];

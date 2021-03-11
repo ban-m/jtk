@@ -82,6 +82,9 @@ pub struct DitchNode<'a, 'b, 'c> {
     // CAUTION!!!!!! The `unit` and `cluster` members should not be look-upped!
     nodes: Vec<&'a definitions::Node>,
     edges: Vec<DitchEdge<'b>>,
+    // "Tip" of reads. In other words, as we tiling a read by units,
+    // there is un-encoded regions at the both end of a read,
+    // and we allocate memories for them.
     tips: Vec<DitchTip<'c>>,
 }
 
@@ -391,6 +394,13 @@ impl<'a> DitchGraph<'a, 'a, 'a> {
 }
 
 impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
+    // Return tuples of node index and their position from which
+    // we can start simple-path-reduction.
+    // In other words, it returns the list of the position which
+    // does not has any edge in the opposite position.
+    // For example, if there is no edge from Position::Tail at the index 2,
+    // then, (2, Position::Head) would be included.
+    // Also, it returns the list of the node whose parent has two or more children.
     fn enumerate_candidates(&self) -> Vec<(usize, Position)> {
         let mut selected = vec![false; self.nodes.len()];
         let mut primary_candidates: Vec<_> = (0..self.nodes.len())
@@ -446,8 +456,7 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         primary_candidates.extend(secondary_candidates);
         primary_candidates
     }
-    // Assemble the ditch graph.
-    // In other words, it reduce the simple path, currently.
+    // Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
     pub fn spell(
         &self,
         c: &AssembleConfig,
@@ -731,7 +740,8 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         merged_nodes_ids.retain(|&x| x != first_id);
         ((first_id, !first_pos), merged_nodes_ids)
     }
-    // Traverse from the given `start` node.
+    // Traverse from the given `start` node of `start_position` Position.
+    // TODO:There should be a bug.
     fn traverse_from(
         &self,
         arrived: &mut [bool],
@@ -837,23 +847,6 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
                             }
                         })
                         .unwrap_or_else(String::new)
-                    // let xs: Vec<_> = selected_edge
-                    //     .edges
-                    //     .iter()
-                    //     .map(|&(ref e, is_forward)| {
-                    //         if is_forward {
-                    //             e.label().to_vec()
-                    //         } else {
-                    //             bio_utils::revcmp(e.label())
-                    //         }
-                    //     })
-                    //     .collect();
-                    // let xs: Vec<_> = xs
-                    //     .iter()
-                    //     .map(|x| x.as_slice())
-                    //     .filter(|x| !x.is_empty())
-                    //     .collect();
-                    // consensus(&xs, 10).into_iter().map(|x| x as char).collect()
                 };
                 (offset, label)
             };
@@ -989,7 +982,8 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
     }
 }
 
-pub fn consensus(xs: &[&[u8]], num: usize) -> Vec<u8> {
+pub fn consensus<T: std::borrow::Borrow<[u8]>>(xs: &[T], num: usize) -> Vec<u8> {
+    let xs: Vec<_> = xs.iter().map(|x| x.borrow()).collect();
     if xs.is_empty() {
         return vec![];
     } else if xs.iter().map(|xs| xs.len()).max().unwrap() < 10 {

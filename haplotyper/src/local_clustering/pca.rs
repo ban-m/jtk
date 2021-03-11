@@ -1,5 +1,4 @@
 //! Principal component analysis. Specifically, it reduces the dimension into K.
-use nalgebra;
 use nalgebra::{DMatrix, DVector};
 pub fn pca(data: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
     let len = data[0].len();
@@ -20,7 +19,7 @@ pub fn pca(data: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
         .map(|x| (x - mean.clone()) * (x - mean.clone()).transpose())
         .fold(DMatrix::zeros(len, len), |x, y| x + y)
         / data.len() as f64;
-    let eigens = covariance.clone().symmetric_eigen();
+    let eigens = covariance.symmetric_eigen();
     let mut eigen_and_eigenvec: Vec<_> = eigens
         .eigenvectors
         .column_iter()

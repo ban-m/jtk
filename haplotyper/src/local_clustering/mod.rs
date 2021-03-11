@@ -77,8 +77,8 @@ pub fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     let id_to_desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
     let read_type = ds.read_type;
     //let cluster_number: HashMap<_, _> =
-    //pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
-    pileups.iter_mut().for_each(|(&unit_id, mut units)| {
+    pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
+        // pileups.iter_mut().for_each(|(&unit_id, mut units)| {
         debug!("RECORD\t{}\t{}\tStart", unit_id, iteration);
         let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
             Some(res) => res,
@@ -157,9 +157,10 @@ fn to_pileup(node: &Node, unit: &Unit) -> Vec<u8> {
             Op::Del(l) => rpos += l,
             Op::Ins(l) => qpos += l,
             Op::Match(l) => {
-                for p in 0..l {
-                    slots[rpos + p] = qseq[qpos + p];
-                }
+                slots[rpos..rpos + l].clone_from_slice(&qseq[qpos..qpos + l]);
+                // for p in 0..l {
+                //     slots[rpos + p] = qseq[qpos + p];
+                // }
                 rpos += l;
                 qpos += l;
             }
@@ -181,6 +182,129 @@ fn clustering_variant_vector(vars: &[Vec<i8>], k: usize) -> Vec<u64> {
         }
     }
     asn
+}
+
+pub fn unit_clustering_ccs_kmervec<T: std::borrow::Borrow<[u8]>>(
+    xs: &[T],
+    cluster_num: u8,
+    k: u8,
+    initial_assignments: &[u8],
+) -> Vec<u8> {
+    let mut assignments = initial_assignments.to_vec();
+    let mut feature_vectors: Vec<_> = xs
+        .iter()
+        .map(|x| {
+            let mut slots = vec![0f64; 4usize.pow(k as u32)];
+            for w in x.borrow().windows(k as usize) {
+                let location = w
+                    .iter()
+                    .map(|&x| match x {
+                        b'A' | b'a' => 0,
+                        b'C' | b'c' => 1,
+                        b'G' | b'g' => 2,
+                        b'T' | b't' => 3,
+                        _ => 3,
+                    })
+                    .fold(0, |acc, x| (acc << 2) | x);
+                slots[location] += 1f64;
+            }
+            slots
+        })
+        .collect();
+    // Centering;
+    let mut center = vec![0f64; 4usize.pow(k as u32)];
+    for fv in feature_vectors.iter() {
+        for (x, &y) in center.iter_mut().zip(fv.iter()) {
+            *x += y;
+        }
+    }
+    // fn usize_to_kmer(x: usize, k: u8) -> Vec<u8> {
+    //     (0..k)
+    //         .fold((vec![], x), |(mut kmer, rest), _| {
+    //             match rest & 0b11 {
+    //                 0 => kmer.push(b'A'),
+    //                 1 => kmer.push(b'C'),
+    //                 2 => kmer.push(b'G'),
+    //                 _ => kmer.push(b'T'),
+    //             }
+    //             (kmer, rest >> 2)
+    //         })
+    //         .0
+    // }
+    // center
+    //     .iter_mut()
+    //     .for_each(|x| *x /= feature_vectors.len() as f64);
+    // for (idx, count) in center.iter().enumerate() {
+    //     if 2f64 < count * feature_vectors.len() as f64 {
+    //         let kmer = String::from_utf8(usize_to_kmer(idx, k)).unwrap();
+    //         println!("CENTER\t{}\t{}", kmer, count);
+    //     }
+    // }
+    // feature_vectors
+    //     .iter_mut()
+    //     .for_each(|fv| fv.iter_mut().zip(center.iter()).for_each(|(x, y)| *x -= y));
+    // for (idx, fv) in feature_vectors.iter().enumerate() {
+    //     for (kmer, val) in fv.iter().enumerate() {
+    //         if 0.25 < val.abs() {
+    //             let kmer = String::from_utf8(usize_to_kmer(kmer, k)).unwrap();
+    //             println!("FV\t{}\t{}\t{}", idx, kmer, val);
+    //         }
+    //     }
+    // }
+    let mask_kmer: Vec<_> = center.iter().map(|&count| 2f64 < count).collect();
+    feature_vectors.iter_mut().for_each(|fv| {
+        fv.iter_mut().zip(mask_kmer.iter()).for_each(|(x, &y)| {
+            if y {
+                *x = 0f64;
+            }
+        })
+    });
+    for i in 0..100 {
+        let mut centers = vec![vec![0f64; 4usize.pow(k as u32)]; cluster_num as usize];
+        let mut counts = vec![0; cluster_num as usize];
+        for (fv, &cl) in feature_vectors.iter().zip(assignments.iter()) {
+            for (x, y) in centers[cl as usize].iter_mut().zip(fv.iter()) {
+                *x += y;
+            }
+            counts[cl as usize] += 1;
+        }
+        for (center, &count) in centers.iter_mut().zip(counts.iter()) {
+            center.iter_mut().for_each(|x| *x /= count as f64);
+        }
+        let new_assignments: Vec<_> = feature_vectors
+            .iter()
+            .map(|fv| {
+                centers
+                    .iter()
+                    .enumerate()
+                    .map(|(cl, center)| {
+                        let dist = center
+                            .iter()
+                            .zip(fv.iter())
+                            .map(|(x, y)| (x - y).powi(2))
+                            .sum::<f64>();
+                        (cl as u8, dist)
+                    })
+                    .min_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+                    .unwrap()
+                    .0
+            })
+            .collect();
+        if new_assignments == assignments {
+            break;
+        } else {
+            assignments = new_assignments;
+        }
+        let nums: Vec<_> = (0..cluster_num)
+            .map(|cl| {
+                let count = bytecount::count(&assignments, cl);
+                // let count = assignments.iter().filter(|&&x| x == cl).count();
+                format!("{}", count)
+            })
+            .collect();
+        println!("ITER\t{}\t{}", i, nums.join("\t"));
+    }
+    assignments
 }
 
 pub fn unit_clustering_ccs<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
@@ -240,15 +364,22 @@ pub fn unit_clustering_ccs<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
                 Some((pos, frac, major, minor))
             })
             .collect();
-        maf_fractions.sort_by(|x, y| (x.1).partial_cmp(&y.1).unwrap());
+        maf_fractions.sort_by(|x, y| {
+            let x_var = (x.1) * (1f64 - x.1);
+            let y_var = (y.1) * (1f64 - y.1);
+            (x_var).partial_cmp(&y_var).unwrap()
+        });
         maf_fractions
             .into_iter()
             .rev()
-            .take(20)
-            .take_while(|&(_, frac, _, _)| frac > 0.2)
+            .take(10)
             .map(|(pos, _, major, minor)| (pos, major, minor))
             .collect()
     };
+    for &(pos, major, minor) in variants.iter() {
+        let (major, minor) = (major as char, minor as char);
+        debug!("VAR\t{}\t{}\t{}\t{}", ref_unit.id, pos, major, minor);
+    }
     let variant_vector: Vec<Vec<_>> = pileup
         .iter()
         .map(|pl| {
@@ -581,26 +712,15 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         ReadType::CLR => (data.len() as f64 * 0.1).max(4.).floor() as u32,
         ReadType::None => (data.len() as f64 * 0.1).max(4.).floor() as u32,
     };
-    // let repeat_num = if c.retain_current_clustering {
-    //     1
-    // } else {
-    //     REPEAT_NUM
-    // };
     let (pos, lks, margin) = // (0..repeat_num).map(|r|
     {
         if !c.retain_current_clustering {
-            // TODO: We can take more sophisticated strategy.
             initial_clustering(data, ref_unit, dim, seed);
-            // data.iter_mut().for_each(|cs| {
-            //     cs.cluster = rng.gen_range(0, dim.0);
-            // });
         }
         let vn = 3 * c.variant_num;
         let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
         (pos, lks, margin)
     };
-    // ).max_by(|x, y| (x.2).partial_cmp(&y.2).unwrap())
-    // .unwrap();
     trace!("Init Margin:{}", margin);
     let lks = average_correction(lks, dim);
     update_by_precomputed_lks(data, dim, 0., &pos, &lks, rng);

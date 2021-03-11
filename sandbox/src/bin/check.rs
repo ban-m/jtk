@@ -1,6 +1,7 @@
 use haplotyper::ClusteringConfig;
 use log::*;
 use poa_hmm::*;
+use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -36,7 +37,6 @@ fn main() -> std::io::Result<()> {
     let mut templates = vec![template.clone()];
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {
-        use rand::Rng;
         let var_pos = rng.gen_range(0..chain_len);
         let mut seq = template.clone();
         seq[var_pos] = match rng.gen::<u8>() % 3 {
@@ -71,14 +71,7 @@ fn main() -> std::io::Result<()> {
         seq: String::new(),
         cluster_num: 2,
     };
-    //haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
     haplotyper::clustering_by_kmeans_em(&mut dataset, chain_len, &c, &unit, 10);
-    // haplotyper::initial_clustering(&mut dataset, &unit, (2, chain_len), 0);
-    // use haplotyper::clustering_by_gibbs;
-    // clustering_by_gibbs(&mut dataset, chain_len, &c, &unit, 10);
-    // use haplotyper::clustering_by_assemble;
-    // let config = clustering_by_assemble::ClusteringConfig::default(chain_len, clusters);
-    // clustering_by_assemble::clustering_by_assemble(&mut dataset, &config);
     use std::collections::HashMap;
     let mut result: HashMap<_, u32> = HashMap::new();
     for (idx, (data, answer)) in dataset.iter().zip(answer).enumerate() {

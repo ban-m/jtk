@@ -1,6 +1,5 @@
 [workspace]
 members = [
-        "python",
         "definitions",
         "hla_cli",
         "haplotyper",
