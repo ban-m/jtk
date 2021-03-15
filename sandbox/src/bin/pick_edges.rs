@@ -1,6 +1,6 @@
 use definitions::*;
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();

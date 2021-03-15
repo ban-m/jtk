@@ -141,15 +141,16 @@ impl DetermineUnit for definitions::DataSet {
                     cluster_num: config.min_cluster,
                 })
                 .collect();
+            let seed = 20;
             debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
             self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, seed);
             self = self.polish_unit(&polish_config);
             self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 5, 10);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 5, 10, seed);
             self = self.polish_unit(&polish_config);
             self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, seed);
             self = self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED", self.selected_chunks.len());
             self.selected_chunks
@@ -174,7 +175,7 @@ impl DetermineUnit for definitions::DataSet {
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
         self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-        let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10);
+        let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 24);
         self = self.polish_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED", self.selected_chunks.len());
         let mut idx = 0;

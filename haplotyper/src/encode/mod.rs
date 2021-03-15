@@ -4,7 +4,7 @@ use definitions::DataSet;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::io::*;
-
+pub mod deletion_fill;
 pub const MARGIN: usize = 50;
 // Any alignment having deletion longer than ALLOWED_END_GAP would be discarded.
 // Increasing this value would be more "abundant" encoding,
@@ -12,7 +12,7 @@ pub const MARGIN: usize = 50;
 // unit is correctly globally aligned.
 const ALLOWED_END_GAP: usize = 50;
 // Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
-pub const INDEL_THRESHOLD: usize = 20;
+pub const INDEL_THRESHOLD: usize = 50;
 pub trait Encode {
     fn encode(self, threads: usize) -> Self;
 }
@@ -33,6 +33,10 @@ impl Encode for definitions::DataSet {
         //     })
         //     .collect();
         self = encode_by_mm2(self, threads).unwrap();
+        // We should correct unit deletion here.
+        if self.read_type != definitions::ReadType::CCS {
+            self = deletion_fill::correct_unit_deletion(self);
+        }
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
         self
@@ -52,7 +56,7 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
         .par_iter()
         .filter_map(|read| {
             let alns = bucket.get(&read.name)?;
-            encode_read_by_paf(read, alns)
+            encode_read_by_paf(read, alns, &ds.selected_chunks)
         })
         .collect();
     ds
@@ -74,25 +78,40 @@ pub fn encode_by_mm2(mut ds: definitions::DataSet, p: usize) -> std::io::Result<
         .par_iter()
         .filter_map(|read| {
             let alns = bucket.get(&read.name)?;
-            encode_read_by_paf(read, alns)
+            encode_read_by_paf(read, alns, &ds.selected_chunks)
         })
         .collect();
     Ok(ds)
 }
 
-fn encode_read_by_paf(read: &RawRead, alns: &[&bio_utils::paf::PAF]) -> Option<EncodedRead> {
+fn encode_read_by_paf(
+    read: &RawRead,
+    alns: &[&bio_utils::paf::PAF],
+    units: &[Unit],
+) -> Option<EncodedRead> {
     let mut seq: Vec<_> = read.seq().to_vec();
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
-    let nodes = encode_read_by_paf_to_nodes(&seq, alns);
+    let nodes = encode_read_to_nodes_by_paf(&seq, alns, units)?;
+    nodes_to_encoded_read(read.id, nodes, seq)
+}
+
+pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: Vec<u8>) -> Option<EncodedRead> {
+    let leading_gap = {
+        let start_pos = nodes.first()?.position_from_start;
+        seq[..start_pos].to_vec()
+    };
+    let trailing_gap = {
+        let last_node = nodes.last()?;
+        let end_pos = last_node.position_from_start + last_node.query_length();
+        seq[end_pos..].to_vec()
+    };
     let edges: Vec<_> = nodes
         .windows(2)
         .map(|w| Edge::from_nodes(w, &seq))
         .collect();
-    let leading_gap = seq[..alns.first()?.qstart].to_vec();
-    let trailing_gap = seq[alns.last()?.qend..].to_vec();
     Some(EncodedRead {
-        id: read.id,
-        original_length: read.seq.as_bytes().len(),
+        id,
+        original_length: seq.len(),
         leading_gap,
         trailing_gap,
         nodes,
@@ -100,14 +119,23 @@ fn encode_read_by_paf(read: &RawRead, alns: &[&bio_utils::paf::PAF]) -> Option<E
     })
 }
 
-fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF) -> Option<Node> {
-    let unit = aln.tname.parse().ok()?;
-    let seq = &seq[aln.qstart..aln.qend];
-    let seq = if aln.relstrand {
-        String::from_utf8_lossy(seq).to_string()
-    } else {
-        String::from_utf8(bio_utils::revcmp(seq)).unwrap()
-    };
+fn encode_read_to_nodes_by_paf(
+    seq: &[u8],
+    alns: &[&bio_utils::paf::PAF],
+    units: &[Unit],
+) -> Option<Vec<Node>> {
+    let nodes: Vec<_> = alns
+        .iter()
+        .filter_map(|aln| {
+            let tname = aln.tname.parse::<u64>().unwrap();
+            let unit = units.iter().find(|unit| unit.id == tname).unwrap();
+            encode_paf(seq, aln, unit)
+        })
+        .collect();
+    (!nodes.is_empty()).then(|| remove_slippy_alignment(nodes))
+}
+
+fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
     use bio_utils::sam;
     let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
     // If there's too large In/Dels, return None.
@@ -117,9 +145,41 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF) -> Option<Node> {
     }) {
         return None;
     }
+    // It is padded sequence. Should be adjusted.
+    let (mut leading, aligned, mut trailing) = if aln.relstrand {
+        let aligned = seq[aln.qstart..aln.qend].to_vec();
+        let start = aln.qstart.saturating_sub(2 * aln.tstart);
+        let end = (aln.qend + 2 * (aln.tlen - aln.tend)).min(seq.len());
+        let leading = seq[start..aln.qstart].to_vec();
+        let trailing = seq[aln.qend..end].to_vec();
+        (leading, aligned, trailing)
+    } else {
+        let aligned = bio_utils::revcmp(&seq[aln.qstart..aln.qend]);
+        let start = aln.qstart.saturating_sub(2 * (aln.tlen - aln.tend));
+        let end = (aln.qend + 2 * aln.tstart).min(seq.len());
+        let leading = bio_utils::revcmp(&seq[aln.qend..end]);
+        let trailing = bio_utils::revcmp(&seq[start..aln.qstart]);
+        (leading, aligned, trailing)
+    };
     let mut ops = vec![];
     if aln.tstart > 0 {
-        ops.push(Op::Del(aln.tstart));
+        let (_, mut lops) =
+            kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[..aln.tstart], &leading);
+        // Leading Operations
+        // Remove leading insertions.
+        while lops[0] == kiley::alignment::bialignment::Op::Ins {
+            leading.remove(0);
+            lops.remove(0);
+        }
+        // We should have some element, as there are `aln.tstart` reference sequences, and this value is positive.
+        assert!(!lops.is_empty());
+        // Compress the resulting elements.
+        ops.extend(compress_kiley_ops(&lops));
+    // ops.push(Op::Del(aln.tstart));
+    } else {
+        // If the alignment is propery starts from unit begining,
+        // we do not need leading sequence.
+        assert!(leading.is_empty());
     }
     for op in cigar {
         let op = match op {
@@ -131,16 +191,74 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF) -> Option<Node> {
         ops.push(op);
     }
     if aln.tlen != aln.tend {
-        ops.push(Op::Del(aln.tlen - aln.tend));
+        // Trailing operations
+        let (_, mut tops) =
+            kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[aln.tend..], &trailing);
+        // Remove while trailing insertions.
+        while tops.last() == Some(&kiley::alignment::bialignment::Op::Ins) {
+            tops.pop();
+            trailing.pop();
+        }
+        // We shoulud have remaining alignment.
+        assert!(!tops.is_empty());
+        ops.extend(compress_kiley_ops(&tops));
+    // ops.push(Op::Del(aln.tlen - aln.tend));
+    } else {
+        // Likewise, if the alignment propery stopped at the end of the units,
+        // we do not need trailing sequence.
+        assert!(trailing.is_empty());
     }
+    let position_from_start = if aln.relstrand {
+        aln.qstart - leading.len()
+    } else {
+        aln.qstart - trailing.len()
+    };
+    // Combine leading, aligned, and trailing sequences into one.
+    leading.extend(aligned);
+    leading.extend(trailing);
+    let query_length = ops
+        .iter()
+        .map(|op| match op {
+            Op::Ins(l) | Op::Match(l) => *l,
+            _ => 0,
+        })
+        .sum::<usize>();
+    assert_eq!(query_length, leading.len());
+    let aligned = String::from_utf8(leading).unwrap();
+    // let aligned = String::from_utf8(aligned).unwrap();
     Some(Node {
-        position_from_start: aln.qstart,
-        unit,
+        position_from_start,
+        unit: unit.id,
         cluster: 0,
         is_forward: aln.relstrand,
-        seq,
+        seq: aligned,
         cigar: ops,
     })
+}
+
+fn compress_kiley_ops(k_ops: &[kiley::alignment::bialignment::Op]) -> Vec<Op> {
+    assert!(!k_ops.is_empty());
+    let (mut current_op, mut len) = (k_ops[0], 1);
+    let mut ops = vec![];
+    for &op in k_ops.iter().skip(1) {
+        if op == current_op {
+            len += 1;
+        } else {
+            match current_op {
+                kiley::alignment::bialignment::Op::Del => ops.push(Op::Del(len)),
+                kiley::alignment::bialignment::Op::Ins => ops.push(Op::Ins(len)),
+                kiley::alignment::bialignment::Op::Mat => ops.push(Op::Match(len)),
+            }
+            current_op = op;
+            len = 1;
+        }
+    }
+    match current_op {
+        kiley::alignment::bialignment::Op::Del => ops.push(Op::Del(len)),
+        kiley::alignment::bialignment::Op::Ins => ops.push(Op::Ins(len)),
+        kiley::alignment::bialignment::Op::Mat => ops.push(Op::Match(len)),
+    }
+    ops
 }
 
 fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
@@ -169,11 +287,6 @@ fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
     }
     deduped_nodes.push(prev);
     deduped_nodes
-}
-
-fn encode_read_by_paf_to_nodes(seq: &[u8], alns: &[&bio_utils::paf::PAF]) -> Vec<Node> {
-    let nodes: Vec<_> = alns.iter().filter_map(|aln| encode_paf(seq, aln)).collect();
-    remove_slippy_alignment(nodes)
 }
 
 fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<u8>> {

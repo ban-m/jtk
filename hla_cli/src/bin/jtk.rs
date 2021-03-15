@@ -818,7 +818,7 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = PolishUnitConfig::new(dataset.read_type, consensus_size, iteration);
+    let config = PolishUnitConfig::new(dataset.read_type, consensus_size, iteration, 2309);
     Ok(dataset.polish_unit(&config))
 }
 fn multiplicity_estimation(

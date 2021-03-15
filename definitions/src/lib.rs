@@ -117,6 +117,13 @@ pub struct Unit {
 }
 
 impl Unit {
+    pub fn new(id: u64, seq: String, cluster_num: usize) -> Self {
+        Self {
+            id,
+            seq,
+            cluster_num,
+        }
+    }
     pub fn seq(&self) -> &[u8] {
         self.seq.as_bytes()
     }

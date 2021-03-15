@@ -154,7 +154,7 @@ impl Assemble for DataSet {
                                     format!("{}-{}", unit, cluster)
                                 })
                                 .collect();
-                            debug!("ASSEMBLE\t{}{}", node.sid, nodes.join("\t"));
+                            debug!("ASSEMBLE\t{}\t{}", node.sid, nodes.join("\t"));
                             let (total, length) = contigsummary
                                 .summary
                                 .iter()

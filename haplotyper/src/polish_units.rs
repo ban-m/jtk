@@ -11,16 +11,18 @@ pub struct PolishUnitConfig {
     filter_size: usize,
     rep_num: usize,
     seed: u64,
+    read_type: ReadType,
 }
 
 // TODO: Remove Readtype from the argument.
 impl PolishUnitConfig {
-    pub fn new(_read_type: ReadType, consensus_size: usize, iteration: usize) -> Self {
+    pub fn new(read_type: ReadType, filter_size: usize, rep_num: usize, seed: u64) -> Self {
         Self {
-            rep_num: iteration,
-            seed: 342309,
-            filter_size: consensus_size,
-            consensus_size,
+            read_type,
+            rep_num,
+            seed,
+            filter_size,
+            consensus_size: filter_size,
         }
     }
 }
@@ -31,9 +33,51 @@ impl PolishUnitConfig {
 /// newly poilished units again.
 pub trait PolishUnit {
     fn polish_unit(self, c: &PolishUnitConfig) -> Self;
+    fn polish_unit_kiley(self, c: &PolishUnitConfig) -> Self;
 }
 
 impl PolishUnit for DataSet {
+    fn polish_unit_kiley(mut self, c: &PolishUnitConfig) -> Self {
+        let mut pileups: HashMap<_, Vec<_>> = self
+            .selected_chunks
+            .iter()
+            .map(|unit| (unit.id, vec![]))
+            .collect();
+        let cluster_num: HashMap<_, _> = self
+            .selected_chunks
+            .iter()
+            .map(|unit| (unit.id, unit.cluster_num))
+            .collect();
+        for read in self.encoded_reads.iter() {
+            for node in read.nodes.iter() {
+                if let Some(res) = pileups.get_mut(&node.unit) {
+                    res.push(node.seq());
+                }
+            }
+        }
+        let mut pileups: Vec<_> = pileups.into_iter().collect();
+        pileups.sort_by_key(|x| x.0);
+        self.selected_chunks = pileups
+            .par_iter()
+            .filter_map(|&(id, ref pileup)| {
+                if c.filter_size < pileup.len() {
+                    let seq = kiley::consensus_bounded(pileup, c.seed, 3, 10, 50)?;
+                    let dists = pileup
+                        .iter()
+                        .map(|x| edlib_sys::global_dist(&seq, x))
+                        .sum::<u32>();
+                    debug!("POLISHED\tKiley\t{}\t{}", id, dists);
+                    let seq = String::from_utf8(seq).ok()?;
+                    Some(Unit::new(id, seq, cluster_num[&id]))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        debug!("{}=>{}", pileups.len(), self.selected_chunks.len());
+        self.encoded_reads.clear();
+        self
+    }
     fn polish_unit(mut self, c: &PolishUnitConfig) -> Self {
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks
@@ -57,7 +101,15 @@ impl PolishUnit for DataSet {
             .filter_map(|(id, pileup)| {
                 let len = subchunk_len[id];
                 if pileup.len() > c.filter_size {
-                    consensus(pileup, len, c).map(|c| (id, c))
+                    let cons = consensus(pileup, len, c);
+                    if let Some(ref seq) = &cons {
+                        let dists = pileup
+                            .iter()
+                            .map(|x| edlib_sys::global_dist(seq.as_bytes(), x.seq()))
+                            .sum::<u32>();
+                        debug!("POLISHED\tUsual\t{}\t{}", id, dists);
+                    }
+                    cons.map(|c| (id, c))
                 } else {
                     None
                 }

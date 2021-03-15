@@ -27,3 +27,5 @@ edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 path_phasing = {git = "https://github.com/ban-m/pathhap.git", branch = "main"}
 bio = "*"
 bytecount = "*"
+# kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master"}
+kiley = {path = "../../kiley"}
