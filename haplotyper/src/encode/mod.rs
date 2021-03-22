@@ -19,19 +19,6 @@ pub trait Encode {
 
 impl Encode for definitions::DataSet {
     fn encode(mut self, threads: usize) -> Self {
-        // let alignments = match last_alignment(&self, threads) {
-        //     Ok(res) => res,
-        //     Err(why) => panic!("{:?}:Encoding step", why),
-        // };
-        // let alignments_each_reads: HashMap<String, Vec<&LastTAB>> = distribute(&alignments);
-        // let encoded_reads: Vec<_> = self
-        //     .raw_reads
-        //     .par_iter()
-        //     .filter_map(|read| {
-        //         let alns = alignments_each_reads.get(&read.name)?;
-        //         encode(read, alns, &self.selected_chunks)
-        //     })
-        //     .collect();
         self = encode_by_mm2(self, threads).unwrap();
         // We should correct unit deletion here.
         if self.read_type != definitions::ReadType::CCS {
@@ -43,6 +30,16 @@ impl Encode for definitions::DataSet {
     }
 }
 
+pub fn encode_by_mm2(ds: definitions::DataSet, p: usize) -> std::io::Result<DataSet> {
+    let mm2 = mm2_alignment(&ds, p)?;
+    let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
+        .lines()
+        .filter_map(|l| bio_utils::paf::PAF::new(&l))
+        .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
+        .collect();
+    Ok(encode_by(ds, &alignments))
+}
+
 pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet {
     let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
     for aln in alignments.iter() {
@@ -51,37 +48,17 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
     bucket.values_mut().for_each(|alns| {
         alns.sort_by_key(|aln| aln.qstart);
     });
+    let chunks = &ds.selected_chunks;
     ds.encoded_reads = ds
         .raw_reads
         .par_iter()
         .filter_map(|read| {
-            let alns = bucket.get(&read.name)?;
-            encode_read_by_paf(read, alns, &ds.selected_chunks)
+            bucket
+                .get(&read.name)
+                .and_then(|alns| encode_read_by_paf(read, alns, chunks))
         })
-        .collect();
+        .collect::<Vec<_>>();
     ds
-}
-
-pub fn encode_by_mm2(mut ds: definitions::DataSet, p: usize) -> std::io::Result<DataSet> {
-    let mm2 = mm2_alignment(&ds, p)?;
-    let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
-        .lines()
-        .filter_map(|l| bio_utils::paf::PAF::new(&l))
-        .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
-        .collect();
-    let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
-    for aln in alignments.iter() {
-        bucket.entry(aln.qname.clone()).or_default().push(aln);
-    }
-    ds.encoded_reads = ds
-        .raw_reads
-        .par_iter()
-        .filter_map(|read| {
-            let alns = bucket.get(&read.name)?;
-            encode_read_by_paf(read, alns, &ds.selected_chunks)
-        })
-        .collect();
-    Ok(ds)
 }
 
 fn encode_read_by_paf(
@@ -92,10 +69,10 @@ fn encode_read_by_paf(
     let mut seq: Vec<_> = read.seq().to_vec();
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
     let nodes = encode_read_to_nodes_by_paf(&seq, alns, units)?;
-    nodes_to_encoded_read(read.id, nodes, seq)
+    nodes_to_encoded_read(read.id, nodes, &seq)
 }
 
-pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: Vec<u8>) -> Option<EncodedRead> {
+pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<EncodedRead> {
     let leading_gap = {
         let start_pos = nodes.first()?.position_from_start;
         seq[..start_pos].to_vec()
@@ -341,94 +318,6 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
         .iter()
         .all(|edge| edge.label.chars().all(|c| c.is_ascii_uppercase()));
     nodes && edges
-}
-
-// fn last_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<LastTAB>> {
-//     use rand::{thread_rng, Rng};
-//     let mut rng = thread_rng();
-//     let id: u64 = rng.gen::<u64>() % 100_000_000;
-//     let mut c_dir = std::env::current_dir()?;
-//     c_dir.push(format!("{}", id));
-//     debug!("Creating {:?}.", c_dir);
-//     std::fs::create_dir(&c_dir)?;
-//     // Create reference and reads.
-//     let (reference, reads) = {
-//         use bio_utils::fasta;
-//         let mut reference = c_dir.clone();
-//         reference.push("units.fa");
-//         let mut wtr = fasta::Writer::new(std::fs::File::create(&reference)?);
-//         for unit in ds.selected_chunks.iter() {
-//             let id = format!("{}", unit.id);
-//             let record = fasta::Record::with_data(&id, &None, unit.seq.as_bytes());
-//             wtr.write_record(&record)?;
-//         }
-//         let mut reads = c_dir.clone();
-//         reads.push("reads.fa");
-//         let mut wtr = fasta::Writer::new(std::fs::File::create(&reads)?);
-//         for read in ds.raw_reads.iter() {
-//             let id = read.name.to_string();
-//             let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
-//             wtr.write_record(&record)?;
-//         }
-//         let reference = reference.into_os_string().into_string().unwrap();
-//         let reads = reads.into_os_string().into_string().unwrap();
-//         (reference, reads)
-//     };
-//     let db_name = {
-//         let mut temp = c_dir.clone();
-//         temp.push("reference");
-//         temp.into_os_string().into_string().unwrap()
-//     };
-//     // Create database - train - align
-//     let lastdb = std::process::Command::new("lastdb")
-//         .args(&["-R", "11", "-Q", "0", &db_name, &reference])
-//         .output()?;
-//     if !lastdb.status.success() {
-//         panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
-//     }
-//     let p = format!("{}", p);
-//     let last_train = std::process::Command::new("last-train")
-//         .args(&["-P", &p, "-Q", "0", &db_name, &reads])
-//         .output()
-//         .unwrap();
-//     if !last_train.status.success() {
-//         panic!("last-train-{}", String::from_utf8_lossy(&last_train.stderr));
-//     }
-//     let param = {
-//         let mut param = c_dir.clone();
-//         param.push("param.par");
-//         let mut wtr = BufWriter::new(std::fs::File::create(&param).unwrap());
-//         wtr.write_all(&last_train.stdout).unwrap();
-//         wtr.flush().unwrap();
-//         param.into_os_string().into_string().unwrap()
-//     };
-//     let lastal = std::process::Command::new("lastal")
-//         .args(&[
-//             "-f", "tab", "-P", &p, "-R", "11", "-p", &param, &db_name, &reads,
-//         ])
-//         .output()
-//         .unwrap();
-//     if !lastal.status.success() {
-//         panic!("lastal-{:?}", String::from_utf8_lossy(&lastal.stderr));
-//     }
-//     // Last-split and Maf-convert.
-//     let alignments: Vec<_> = String::from_utf8_lossy(&lastal.stdout)
-//         .lines()
-//         .filter(|e| !e.starts_with('#'))
-//         .filter_map(|e| LastTAB::from_line(&e))
-//         .collect();
-//     debug!("Removing {:?}", c_dir);
-//     std::fs::remove_dir_all(c_dir)?;
-//     Ok(alignments)
-// }
-
-pub fn distribute(alignments: &[LastTAB]) -> HashMap<String, Vec<&LastTAB>> {
-    let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
-    for alignment in alignments {
-        let q_name = alignment.seq2_name().to_string();
-        buckets.entry(q_name).or_default().push(alignment);
-    }
-    buckets
 }
 
 use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
@@ -962,42 +851,41 @@ fn consumed_reference_length(cigar: &[Op]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[test]
     fn works() {}
-    #[test]
-    fn alignment_check() {
-        let query = b"AAAAA";
-        let reference = b"AAAAA";
-        let res = alignment(query, reference, 1, -1, -1);
-        assert_eq!(res, vec![Op::Match(query.len())]);
-        let query = b"AAAAA";
-        let reference = b"AACAA";
-        let res = alignment(query, reference, 1, -1, -1);
-        assert_eq!(res, vec![Op::Match(query.len())]);
-        let query = b"AACCAAAA";
-        let refer = b"AAGCAA";
-        let res = alignment(query, refer, 1, -1, -1);
-        assert_eq!(res, vec![Op::Match(refer.len()), Op::Ins(2)]);
-        let query = b"ACGCGCGCAA";
-        let refer = b"GCGCGC";
-        let res = alignment(query, refer, 1, -1, -1);
-        assert_eq!(res, vec![Op::Ins(2), Op::Match(6), Op::Ins(2)]);
-        let query = b"GCGCGC";
-        let refer = b"ACGCGCGCAA";
-        let res = alignment(query, refer, 1, -1, -1);
-        assert_eq!(res, vec![Op::Del(2), Op::Match(6), Op::Del(2)]);
-        let query = b"CGCTGCGCAAAAA";
-        let refer = b"AAAAAGCGCGCT";
-        let res = alignment(query, refer, 1, -1, -1);
-        let ans = vec![
-            Op::Match(1),
-            Op::Del(4),
-            Op::Match(2),
-            Op::Ins(1),
-            Op::Match(5),
-            Op::Ins(4),
-        ];
-        assert_eq!(res, ans)
-    }
+    // #[test]
+    // fn alignment_check() {
+    //     let query = b"AAAAA";
+    //     let reference = b"AAAAA";
+    //     let res = alignment(query, reference, 1, -1, -1);
+    //     assert_eq!(res, vec![Op::Match(query.len())]);
+    //     let query = b"AAAAA";
+    //     let reference = b"AACAA";
+    //     let res = alignment(query, reference, 1, -1, -1);
+    //     assert_eq!(res, vec![Op::Match(query.len())]);
+    //     let query = b"AACCAAAA";
+    //     let refer = b"AAGCAA";
+    //     let res = alignment(query, refer, 1, -1, -1);
+    //     assert_eq!(res, vec![Op::Match(refer.len()), Op::Ins(2)]);
+    //     let query = b"ACGCGCGCAA";
+    //     let refer = b"GCGCGC";
+    //     let res = alignment(query, refer, 1, -1, -1);
+    //     assert_eq!(res, vec![Op::Ins(2), Op::Match(6), Op::Ins(2)]);
+    //     let query = b"GCGCGC";
+    //     let refer = b"ACGCGCGCAA";
+    //     let res = alignment(query, refer, 1, -1, -1);
+    //     assert_eq!(res, vec![Op::Del(2), Op::Match(6), Op::Del(2)]);
+    //     let query = b"CGCTGCGCAAAAA";
+    //     let refer = b"AAAAAGCGCGCT";
+    //     let res = alignment(query, refer, 1, -1, -1);
+    //     let ans = vec![
+    //         Op::Match(1),
+    //         Op::Del(4),
+    //         Op::Match(2),
+    //         Op::Ins(1),
+    //         Op::Match(5),
+    //         Op::Ins(4),
+    //     ];
+    //     assert_eq!(res, ans)
+    // }
 }

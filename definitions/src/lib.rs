@@ -64,6 +64,32 @@ impl DataSet {
             read_type,
         }
     }
+    /// Sanity check function. Call it to ensure that some properties indeed holds.
+    /// Currently, the following properties are checked.
+    /// 1: The input file exists.
+    /// 2: Every encoded read has its original read.
+    /// 3: Every encoded read can be correctly recovered into the original sequence.
+    /// Of course, these should be hold at any steps in the pipeline,
+    /// So, this is just a checking function.
+    pub fn sanity_check(&self) -> bool {
+        std::path::Path::new(&self.input_file).exists() && self.encoded_reads_can_be_recovered()
+    }
+    fn encoded_reads_can_be_recovered(&self) -> bool {
+        use std::collections::HashMap;
+        let seq: HashMap<_, _> = self.raw_reads.iter().map(|x| (x.id, x.seq())).collect();
+        self.encoded_reads.iter().all(|read| {
+            let orig: Vec<_> = match seq.get(&read.id) {
+                Some(res) => res.iter().map(u8::to_ascii_uppercase).collect(),
+                None => return false,
+            };
+            let recover: Vec<_> = read
+                .recover_raw_read()
+                .iter()
+                .map(u8::to_ascii_uppercase)
+                .collect();
+            orig == recover
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +202,43 @@ impl EncodedRead {
             length as usize
         }
     }
+    pub fn recover_raw_read(&self) -> Vec<u8> {
+        let mut original_seq = self.leading_gap.to_vec();
+        for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
+            if n.is_forward {
+                original_seq.extend(n.seq());
+            } else {
+                let seq = n.seq().iter().rev().map(|x| match x.to_ascii_uppercase() {
+                    b'A' => b'T',
+                    b'C' => b'G',
+                    b'G' => b'C',
+                    b'T' => b'A',
+                    _ => unreachable!(),
+                });
+                original_seq.extend(seq);
+            }
+            for _ in 0..(-e.offset).max(0) {
+                original_seq.pop();
+            }
+            original_seq.extend(e.label());
+        }
+        if let Some(n) = self.nodes.last() {
+            if n.is_forward {
+                original_seq.extend(n.seq());
+            } else {
+                let seq = n.seq().iter().rev().map(|x| match x.to_ascii_uppercase() {
+                    b'A' => b'T',
+                    b'C' => b'G',
+                    b'G' => b'C',
+                    b'T' => b'A',
+                    _ => unreachable!(),
+                });
+                original_seq.extend(seq);
+            }
+        }
+        original_seq.extend(self.trailing_gap.iter());
+        original_seq
+    }
 }
 
 // TODO: We do not need `from` and `to`, actually.
@@ -198,7 +261,6 @@ impl Edge {
     pub fn label(&self) -> &[u8] {
         self.label.as_bytes()
     }
-    /// TODO: this function might be buggy. I do not know the reason...????
     pub fn from_nodes(ns: &[Node], seq: &[u8]) -> Self {
         let (from, to) = match *ns {
             [ref from, ref to] => (from, to),
@@ -207,7 +269,7 @@ impl Edge {
         let end = from.position_from_start + from.query_length();
         let start = to.position_from_start;
         let label = if start <= end {
-            "".to_string()
+            String::new()
         } else {
             String::from_utf8_lossy(&seq[end..start]).to_string()
         };
