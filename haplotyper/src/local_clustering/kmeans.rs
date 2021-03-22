@@ -1,120 +1,134 @@
 //! A small K-means clustering algorithm.
 //! It run several times, pick the best one.
+use kiley::alignment::bialignment::edit_dist;
+use kiley::alignment::bialignment::polish_until_converge_banded;
 use rand::Rng;
-use rand::SeedableRng;
-use rand_xoshiro::Xoshiro256StarStar;
-pub fn kmeans(data: &[Vec<f64>], k: usize, seed: Option<u64>) -> Vec<usize> {
-    let data: Vec<_> = data.iter().map(|x| x.as_slice()).collect();
-    kmeans_slice(&data, k, seed)
+
+#[derive(Debug, Clone, Copy)]
+pub struct ClusteringConfig {
+    band_width: usize,
+    probe_num: usize,
+    retry_num: usize,
+    cluster_num: u8,
+    subbatch_num: usize,
+    // Maybe dist?
+    // Or, is there some canonical meaning?
 }
 
-pub fn kmeans_slice(data: &[&[f64]], k: usize, seed: Option<u64>) -> Vec<usize> {
-    let mut rng: Xoshiro256StarStar = match seed {
-        Some(seed) => SeedableRng::seed_from_u64(seed),
-        None => {
-            let mut rng = rand::thread_rng();
-            SeedableRng::seed_from_u64(rng.gen::<u64>())
+impl ClusteringConfig {
+    pub fn new(
+        band_width: usize,
+        probe_num: usize,
+        retry_num: usize,
+        cluster_num: u8,
+        subbatch_num: usize,
+    ) -> Self {
+        Self {
+            band_width,
+            probe_num,
+            retry_num,
+            cluster_num,
+            subbatch_num,
         }
-    };
-    kmeans_with_rng(data, k, &mut rng)
-}
-
-fn kmeans_with_rng<R: Rng>(data: &[&[f64]], k: usize, rng: &mut R) -> Vec<usize> {
-    let mut assignments: Vec<_> = data.iter().map(|_| rng.gen::<usize>() % k).collect();
-    let len = data[0].len();
-    for d in data.iter() {
-        assert_eq!(d.len(), len);
     }
-    let mut residual = std::f64::INFINITY;
-    let mut diff = std::f64::INFINITY;
-    while diff > 0.001 {
-        let mut centers: Vec<_> = vec![vec![0.; len]; k];
-        let mut counts: Vec<_> = vec![0; k];
-        for (&asn, xs) in assignments.iter().zip(data.iter()) {
-            for (i, x) in xs.iter().enumerate() {
-                centers[asn][i] += x;
-            }
-            counts[asn] += 1;
-        }
-        centers.iter_mut().zip(counts.iter()).for_each(|(xs, &c)| {
-            xs.iter_mut().for_each(|x| *x /= c as f64);
-        });
-        let mut next_residual = 0.;
-        for (asn, xs) in assignments.iter_mut().zip(data.iter()) {
-            let (new_asn, min_distance) = centers
-                .iter()
-                .map(|cs| {
-                    cs.iter()
-                        .zip(xs.iter())
-                        .map(|(c, x)| (c - x).powi(2i32))
-                        .sum::<f64>()
-                })
-                .enumerate()
-                .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-                .unwrap();
-            *asn = new_asn;
-            next_residual += min_distance;
-        }
-        diff = residual - next_residual;
-        assert!(
-            diff.is_sign_positive(),
-            "{},{},{}",
-            residual,
-            next_residual,
-            diff
-        );
-        residual = next_residual;
-    }
-    assignments
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use rand_distr::{Distribution, Normal};
-    #[test]
-    fn works() {}
-    #[test]
-    fn k_means_test() {
-        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(239);
-        let data_num = 100;
-        let cluster = 4;
-        let models: Vec<Vec<_>> = vec![
-            vec![(0., 0.5), (0., 0.5), (0., 1.), (2., 1.)],
-            vec![(2., 0.5), (0., 0.5), (2., 1.), (0., 1.)],
-            vec![(0., 0.5), (2., 0.5), (0., 1.), (0., 1.)],
-            vec![(1., 0.5), (0., 0.5), (0., 1.), (-3., 1.)],
-        ]
-        .into_iter()
-        .map(|params| {
-            params
-                .into_iter()
-                .map(|(mean, sd)| Normal::new(mean, sd).unwrap())
-                .collect()
-        })
-        .collect();
-        let data: Vec<Vec<f64>> = (0..cluster)
-            .flat_map(|k| {
-                (0..data_num)
-                    .map(|_| models[k].iter().map(|m| m.sample(&mut rng)).collect())
-                    .collect::<Vec<_>>()
+pub fn clustering<R: Rng>(reads: &[Vec<u8>], rng: &mut R, config: &ClusteringConfig) -> Vec<u8> {
+    let cons_template = kiley::consensus(&reads, 232, 4, 30).unwrap();
+    let ClusteringConfig {
+        band_width,
+        probe_num,
+        retry_num,
+        cluster_num,
+        subbatch_num,
+    } = *config;
+    for _ in 0..retry_num {
+        let probes: Vec<_> = (0..probe_num)
+            .filter_map(|_| {
+                use rand::seq::SliceRandom;
+                let picked: Vec<_> = reads
+                    .choose_multiple(rng, subbatch_num)
+                    .map(|x| x.as_slice())
+                    .collect();
+                polish_until_converge_banded(&cons_template, &picked, band_width)
             })
             .collect();
-        let asn = kmeans(&data, cluster, None);
-        let total_missed = asn
-            .chunks(data_num)
-            .map(|ax| {
-                let repr = ax[0];
-                ax.iter().filter(|&&x| x != repr).count()
+        let profiles: Vec<Vec<_>> = reads
+            .iter()
+            .map(|r| {
+                let center = edit_dist(r, &cons_template) as i32;
+                probes
+                    .iter()
+                    .map(|p| edit_dist(p, r) as i32 - center)
+                    .collect()
             })
-            .sum::<usize>();
-        let error = total_missed as f64 / asn.len() as f64;
-        if error > 0.05 {
-            eprintln!("{}\t{}\t{}", total_missed, asn.len(), error);
-            // for (i, a) in asn.iter().enumerate() {
-            //     eprintln!("{}\t{}", i, a,);
-            // }
-            panic!();
+            .collect();
+        let selected_position: Vec<_> = (0..probes.len())
+            .map(|i| {
+                let first = profiles[0][i];
+                profiles.iter().any(|p| p[i] != first)
+            })
+            .collect();
+        if selected_position.iter().any(|&x| x) {
+            let profiles: Vec<Vec<_>> = profiles
+                .iter()
+                .map(|xs| {
+                    xs.iter()
+                        .zip(selected_position.iter())
+                        .filter_map(|(&x, &b)| b.then(|| x))
+                        .collect()
+                })
+                .collect();
+            return kmeans(&profiles, cluster_num, rng);
         }
     }
+    vec![0; reads.len()]
+}
+
+// TODO:Maybe we need more sophisticated clustering algorithm here.
+// DBSCAN?
+// Kmeans with random seeds?
+fn kmeans<R: Rng>(data: &[Vec<i32>], k: u8, rng: &mut R) -> Vec<u8> {
+    let mut assignments: Vec<_> = (0..data.len()).map(|_| rng.gen_range(0..k)).collect();
+    loop {
+        let centers: Vec<Vec<f64>> = (0..k)
+            .filter_map(|cl| {
+                let (mut count, mut slots) = (0, vec![0; data[0].len()]);
+                let filtered = data
+                    .iter()
+                    .zip(assignments.iter())
+                    .filter_map(|(d, &a)| (a == cl).then(|| d));
+                for datum in filtered {
+                    assert_eq!(slots.len(), datum.len());
+                    slots.iter_mut().zip(datum).for_each(|(acc, x)| *acc += x);
+                    count += 1;
+                }
+                let center: Vec<_> = slots.iter().map(|&x| x as f64 / count as f64).collect();
+                (count != 0).then(|| center)
+            })
+            .collect();
+        let new_assignments: Vec<_> = data
+            .iter()
+            .filter_map(|x| {
+                centers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, center)| (i as u8, euclid_norm(center, x)))
+                    .min_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+                    .map(|x| x.0)
+            })
+            .collect();
+        if new_assignments == assignments {
+            break assignments;
+        } else {
+            assignments = new_assignments;
+        }
+    }
+}
+fn euclid_norm(xs: &[f64], ys: &[i32]) -> f64 {
+    assert_eq!(ys.len(), xs.len());
+    xs.iter()
+        .zip(ys.iter())
+        .map(|(x, &y)| (x - y as f64).powi(2))
+        .sum()
 }

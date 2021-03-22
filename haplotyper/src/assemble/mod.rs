@@ -268,7 +268,7 @@ fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, c);
     graph.resolve_repeats();
-    graph.remove_redundant_edges(2);
+    graph.remove_lightweight_edges(2);
     graph.remove_tips();
     graph.collapse_buddle(c);
     graph.remove_small_component(5);

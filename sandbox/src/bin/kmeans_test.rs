@@ -1,43 +1,46 @@
-// use log::*;
-// use poa_hmm::*;
-use definitions::*;
+use kiley::alignment::bialignment::edit_dist;
 use log::*;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
-use std::collections::HashMap;
-use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let args: Vec<_> = std::env::args().collect();
-    let start = std::time::Instant::now();
-    let ds: DataSet =
-        serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new)?).unwrap();
-    let end = std::time::Instant::now();
-    debug!("{:?}", end - start);
-    let id2name: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|r| (r.id, r.name.to_string()))
-        .collect();
-    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(0394380);
-    for unit in ds.selected_chunks.iter() {
-        let (mut seq, mut ids) = (vec![], vec![]);
-        for read in ds.encoded_reads.iter() {
-            for node in read.nodes.iter().filter(|n| n.unit == unit.id) {
-                seq.push(node.seq());
-                ids.push(read.id);
+    let len = 2000;
+    let num_hap = 2;
+    let coverage = 20;
+    let config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(30, 20, 10, 2, 30);
+    for seed in 0..10u64 {
+        let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
+        let template = kiley::gen_seq::generate_seq(&mut rng, len);
+        let alt_hap = match rng.gen::<u8>() % 3 {
+            0 => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 1, 0),
+            1 => kiley::gen_seq::introduce_errors(&template, &mut rng, 1, 0, 0),
+            _ => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 0, 1),
+        };
+        let haps = vec![template.clone(), alt_hap];
+        for (i, h) in haps.iter().enumerate() {
+            for (j, l) in haps.iter().take(i).enumerate() {
+                let d = kiley::alignment::bialignment::edit_dist(h, l);
+                println!("{}\t{}\t{}", i, j, d);
             }
         }
-        use haplotyper::local_clustering::unit_clustering_ccs_kmervec;
-        let initial: Vec<u8> = seq
-            .iter()
-            .map(|_| rng.gen::<u8>() % unit.cluster_num as u8)
-            .collect();
-        let asn = unit_clustering_ccs_kmervec(&seq, unit.cluster_num as u8, 8, &initial);
-        for (i, (id, asn)) in ids.iter().zip(asn.iter()).enumerate() {
-            println!("{}\t{}\t{}\t{}", unit.id, i, id2name[id], asn);
+        let p = kiley::gen_seq::PROFILE;
+        let (reads, answers): (Vec<_>, Vec<_>) = (0..coverage * num_hap)
+            .map(|x| {
+                let answer = (x / coverage) as u8;
+                let read =
+                    kiley::gen_seq::introduce_randomness(&haps[answer as usize], &mut rng, &p);
+                (read, answer)
+            })
+            .unzip();
+        let assignments =
+            haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &config);
+        let score = haplotyper::rand_index(&answers, &assignments);
+        for ((r, a), p) in reads.iter().zip(answers.iter()).zip(assignments.iter()) {
+            let true_dist = edit_dist(r, &haps[0]) as i32 - edit_dist(r, &haps[1]) as i32;
+            println!("{}\t{}\t{}", a, true_dist, p);
         }
+        println!("{}\n", score);
     }
     Ok(())
 }

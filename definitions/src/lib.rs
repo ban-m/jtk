@@ -142,11 +142,14 @@ pub struct EncodedRead {
 impl std::fmt::Display for EncodedRead {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "{}({}bp)", self.id, self.original_length)?;
-        write!(f, "{}->", self.leading_gap.len())?;
-        for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
-            write!(f, "-{}:{}-", n, e)?;
+        write!(f, "{}bp gap|", self.leading_gap.len())?;
+        for e in self.edges.iter() {
+            write!(f, "{} ", e)?;
         }
-        write!(f, "->{}", self.trailing_gap.len())
+        // for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
+        //     write!(f, "{}:{}-", n, e)?;
+        // }
+        write!(f, "|{} bp gap", self.trailing_gap.len())
     }
 }
 
@@ -187,7 +190,7 @@ pub struct Edge {
 
 impl std::fmt::Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}-({})>{}", self.from, self.offset, self.to)
+        write!(f, "{}({}){}", self.from, self.offset, self.to)
     }
 }
 
@@ -195,6 +198,7 @@ impl Edge {
     pub fn label(&self) -> &[u8] {
         self.label.as_bytes()
     }
+    /// TODO: this function might be buggy. I do not know the reason...????
     pub fn from_nodes(ns: &[Node], seq: &[u8]) -> Self {
         let (from, to) = match *ns {
             [ref from, ref to] => (from, to),
@@ -202,7 +206,7 @@ impl Edge {
         };
         let end = from.position_from_start + from.query_length();
         let start = to.position_from_start;
-        let label = if start < end {
+        let label = if start <= end {
             "".to_string()
         } else {
             String::from_utf8_lossy(&seq[end..start]).to_string()

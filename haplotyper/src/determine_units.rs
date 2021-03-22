@@ -274,22 +274,6 @@ fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
         }
     }
     let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
-    // let coverage_filtered: Vec<_> = {
-    //     let mut coverage = vec![0usize; unit_len];
-    //     for node in sd.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-    //         coverage[node.unit as usize] += 1;
-    //     }
-    //     let mean = coverage.iter().sum::<usize>() as f64 / unit_len as f64;
-    //     let var = coverage
-    //         .iter()
-    //         .map(|x| (x as f64 - mean).powi(2))
-    //         .sum::<f64>()
-    //         / unit_len as f64;
-    //     let sd = var.sqrt().floor() as usize;
-    //     let thr = mean + 5 * sd;
-    //     debug!("COVTHR\t{}\t{}\t{}", mean,  sd, thr);
-    //     coverages.iter().
-    // };
     let survived_unit = to_be_removed.iter().filter(|&&b| !b).count();
     debug!("UNITNUM\t{}", survived_unit);
     let mut count: HashMap<_, _> = HashMap::new();

@@ -503,6 +503,8 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
         (g_segs, g_edges, group, summaries)
     }
+    /// Remove small tips.
+    /// TODO: More sophisticated algorithm is indeeed needed.
     pub fn remove_tips(&mut self) {
         let sum = self.nodes.iter().map(|e| e.nodes.len()).sum::<usize>();
         let mean = sum / self.nodes.len();
@@ -555,7 +557,9 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
     }
     /// Resolve repetitive units. (TODO.)
     pub fn resolve_repeats(&self) {}
-    pub fn remove_redundant_edges(&mut self, thr: usize) {
+    /// Remove lightweight edges with occurence less than `thr`.
+    /// Note that this function would never broke a connected component into two.
+    pub fn remove_lightweight_edges(&mut self, thr: usize) {
         let mut removed_edges = vec![vec![]; self.nodes.len()];
         for (from, node) in self.nodes.iter().enumerate() {
             for &pos in &[Position::Head, Position::Tail] {
@@ -587,6 +591,7 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
             })
         });
     }
+    /// Remove small connected components with the size less than `thr`.
     pub fn remove_small_component(&mut self, thr: usize) {
         let mut to_remove = vec![false; self.nodes.len()];
         use find_union::FindUnion;

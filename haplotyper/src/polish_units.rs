@@ -62,11 +62,6 @@ impl PolishUnit for DataSet {
             .filter_map(|&(id, ref pileup)| {
                 if c.filter_size < pileup.len() {
                     let seq = kiley::consensus_bounded(pileup, c.seed, 3, 10, 50)?;
-                    let dists = pileup
-                        .iter()
-                        .map(|x| edlib_sys::global_dist(&seq, x))
-                        .sum::<u32>();
-                    debug!("POLISHED\tKiley\t{}\t{}", id, dists);
                     let seq = String::from_utf8(seq).ok()?;
                     Some(Unit::new(id, seq, cluster_num[&id]))
                 } else {
@@ -102,13 +97,6 @@ impl PolishUnit for DataSet {
                 let len = subchunk_len[id];
                 if pileup.len() > c.filter_size {
                     let cons = consensus(pileup, len, c);
-                    if let Some(ref seq) = &cons {
-                        let dists = pileup
-                            .iter()
-                            .map(|x| edlib_sys::global_dist(seq.as_bytes(), x.seq()))
-                            .sum::<u32>();
-                        debug!("POLISHED\tUsual\t{}\t{}", id, dists);
-                    }
                     cons.map(|c| (id, c))
                 } else {
                     None

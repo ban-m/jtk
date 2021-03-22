@@ -21,8 +21,11 @@ pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
         .par_iter_mut()
         .filter(|r| r.nodes.len() > 1)
         .for_each(|r| {
-            let seq = raw_seq[&r.id];
-            correct_deletion_error(r, selected_chunks, &read_skeltons, seq);
+            let seq: Vec<_> = raw_seq[&r.id]
+                .iter()
+                .map(|x| x.to_ascii_uppercase())
+                .collect();
+            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
         });
     ds
 }
@@ -61,25 +64,10 @@ fn correct_deletion_error(
             let end_position = nodes[idx].position_from_start as isize - after_offset;
             let end_position = (end_position as usize + OFFSET).min(seq.len());
             // Never panic.
-            // debug!(
-            //     "Insert\tCand\t{}\t{}\t{}-{}",
-            //     uid, direction, start_position, end_position
-            // );
-            // debug!("{:?}", pileup);
             assert!(start_position < end_position,);
             let unit = units.iter().find(|u| u.id == uid).unwrap();
-            encode_node(seq, start_position, end_position, direction, unit).map(|new_node| {
-                // debug!("Insert\tConfirm");
-                // let (q, op, r) = new_node.recover(&unit);
-                // for ((q, op), r) in q.chunks(200).zip(op.chunks(200)).zip(r.chunks(200)) {
-                //     if log_enabled!(log::Level::Debug) {
-                //         eprintln!("{}", String::from_utf8_lossy(q));
-                //         eprintln!("{}", String::from_utf8_lossy(op));
-                //         eprintln!("{}\n", String::from_utf8_lossy(r));
-                //     }
-                // }
-                (idx, new_node)
-            })
+            encode_node(&seq, start_position, end_position, direction, unit)
+                .map(|new_node| (idx, new_node))
         })
         .collect();
     let mut accum_insertes = 0;
@@ -104,20 +92,15 @@ fn encode_node(
     is_forward: bool,
     unit: &Unit,
 ) -> Option<Node> {
-    let query = {
-        let mut query = if is_forward {
-            seq[start..end].to_vec()
-        } else {
-            bio_utils::revcmp(&seq[start..end])
-        };
-        query.iter_mut().for_each(u8::make_ascii_uppercase);
-        query
+    let query = if is_forward {
+        seq[start..end].to_vec()
+    } else {
+        bio_utils::revcmp(&seq[start..end])
     };
-    let unitseq: Vec<_> = unit.seq().iter().map(|x| x.to_ascii_uppercase()).collect();
     // TODO: Maybe more sophisticated, or dedicated alignmnet parameters should be used.
     // At least, we need to use affine gap panalty alignment to remove the
     // sloppy leading/trailing alignment.
-    let (dist, ops) = kiley::alignment::bialignment::edit_dist_slow_ops(&unitseq, &query);
+    let (dist, ops) = kiley::alignment::bialignment::edit_dist_slow_ops(unit.seq(), &query);
     let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
     // Leading/Trailing bases are offsets.
     if dist_thr + 2 * (OFFSET as u32) < dist {
@@ -148,17 +131,20 @@ fn encode_node(
         return None;
     }
     // Now we know this alignment is valid.
-    let seq = {
-        let mut seq = if is_forward {
-            seq[start + removed_base_from_start..end - removed_base_from_end].to_vec()
-        } else {
-            bio_utils::revcmp(&seq[start + removed_base_from_end..end - removed_base_from_start])
-        };
-        seq.iter_mut().for_each(u8::make_ascii_uppercase);
-        seq
+    let (start, end) = if is_forward {
+        (start + removed_base_from_start, end - removed_base_from_end)
+    } else {
+        (start + removed_base_from_end, end - removed_base_from_start)
     };
+    let seq = if is_forward {
+        seq[start..end].to_vec()
+    } else {
+        bio_utils::revcmp(&seq[start..end])
+    };
+    unit.seq().iter().all(|x| x.is_ascii_uppercase());
+    seq.iter().all(|x| x.is_ascii_uppercase());
     Some(Node {
-        position_from_start: start + removed_base_from_start,
+        position_from_start: start,
         unit: unit.id,
         cluster: 0,
         is_forward,

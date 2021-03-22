@@ -107,7 +107,7 @@ pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Ve
         })
         .collect();
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.focal * SEED);
-    let (asn, lk) = em_clustering(units, reads, weights, config);
+    let (asn, lk) = em_clustering_old(units, reads, weights, config);
     let (asn, lk) = (0..config.repeat_num)
         .map(|_| {
             let weights: Vec<_> = reads
@@ -118,7 +118,7 @@ pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Ve
                     weight
                 })
                 .collect();
-            em_clustering(units, reads, weights, config)
+            em_clustering_old(units, reads, weights, config)
         })
         .fold((asn, lk), |(argmax, max_lk), (arg, lk)| {
             if lk < max_lk {
@@ -130,7 +130,119 @@ pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Ve
     trace!("OPTLK\t{}", lk);
     asn
 }
-fn em_clustering(
+
+// struct AdjInformation {
+//     plus_direction: Vec<(usize, bool, usize)>,
+//     minus_direction: Vec<(usize, bool, usize)>,
+//     focal: (usize, bool, usize),
+// }
+
+// impl AdjInformation {
+//     fn get(&self, i: isize) -> (usize, bool, usize) {
+//         if i == 0 {
+//             self.focal
+//         } else if 0 < i {
+//             self.plus_direction[i as usize]
+//         } else {
+//             self.minus_direction[(-i) as usize]
+//         }
+//     }
+// }
+
+// By accessing [i][j][bool], obtain what th i-th read has at the j-th index in bool strand.
+// It consists of (unit, cluster)
+// fn map_unit_and_clusters<T: std::borrow::Borrow<[(u64, bool, u64)]>>(
+//     reads: &[T],
+// ) -> Vec<Vec<(usize, bool, usize)>> {
+//     let mut chunk_mapper: HashMap<u64, usize> = HashMap::new();
+//     let mut cluster_mapper: Vec<HashMap<u64, usize>> = vec![];
+//     for read in reads.iter() {
+//         for &(chunk, cluster) in read.borrow().iter() {
+//             let chunk_idx: usize = *chunk_mapper.entry(chunk).or_insert_with(|| {
+//                 // First chunk.
+//                 cluster_mapper.push(HashMap::new());
+//                 cluster_mapper.len() - 1
+//             });
+//             // Never panic.
+//             let cluster_num = cluster_mapper[chunk_idx].len();
+//             if !cluster_mapper[chunk_idx].contains_key(&cluster) {
+//                 cluster_mapper[chunk_idx].insert(cluster, cluster_num);
+//             }
+//         }
+//     }
+//     reads
+//         .iter()
+//         .map(|read| {
+//             read.borrow()
+//                 .iter()
+//                 .map(|&(chunk, cluster)| {
+//                     let chunk = chunk_mapper[&chunk];
+//                     let cluster = cluster_mapper[chunk][&cluster];
+//                     (chunk, cluster)
+//                 })
+//                 .collect()
+//         })
+//         .collect()
+// }
+
+/// Descrete EM algorithm
+/// The model is the bugs of categorical distributions for
+/// each cluster.
+/// In other words, we have a categorical distribution on each chunk on each cluster, and
+/// making the whole model as a mixture of them.
+pub fn em_clustering<T: std::borrow::Borrow<[(u64, bool, u64)]>>(
+    _reads: &[T],
+    _focal_unit: u64,
+    _init_cluster: &[usize],
+    _config: &Config,
+) -> (Vec<usize>, f64) {
+    unimplemented!()
+    // // First, making the mapping from chunks -> usize, and units -> usize.
+    // let reads = map_unit_and_clusters(reads);
+    // let k = config.cluster_num;
+    // let mut model = RawModel::new(&reads, &weights, k);
+    // // let mut unit_counts: HashMap<_, usize> = HashMap::new();
+    // // for read in reads.iter() {
+    // //     for node in read.nodes.iter() {
+    // //         *unit_counts.entry(node.unit).or_default() += 1;
+    // //     }
+    // // }
+    // // let use_units: HashSet<_> = unit_counts
+    // //     .iter()
+    // //     .filter(|&(_, &c)| c > config.coverage_thr)
+    // //     .map(|(&x, _)| x)
+    // //     .collect();
+    // let mut diff = 10.;
+    // let mut lk = reads.iter().map(|read| model.lk(read)).sum::<f64>();
+    // trace!("LK:{}", lk);
+    // while diff > 0.00000001 {
+    //     weights = reads.iter().map(|read| model.weight(read)).collect();
+    //     model = RawModel::new(&reads, &weights, k);
+    //     let new_lk = reads.iter().map(|read| model.lk(read)).sum::<f64>();
+    //     trace!("LK:{}", lk);
+    //     diff = new_lk - lk;
+    //     assert!(diff > -0.01, "{}", diff);
+    //     lk = new_lk;
+    // }
+    // for (idx, w) in weights.iter().enumerate() {
+    //     let w: Vec<_> = w.iter().map(|x| format!("{:.1}", x)).collect();
+    //     let lk = model.lk(&reads[idx]);
+    //     trace!("WEIGHT\t{}\t{}\t{}", idx, w.join("\t"), lk);
+    // }
+    // let predictions: Vec<_> = weights
+    //     .iter()
+    //     .map(|ws| {
+    //         ws.iter()
+    //             .enumerate()
+    //             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+    //             .map(|x| x.0)
+    //             .unwrap()
+    //     })
+    //     .collect();
+    // (predictions, lk)
+}
+
+fn em_clustering_old(
     units: &[Unit],
     reads: &[&EncodedRead],
     mut weights: Vec<Vec<f64>>,
@@ -181,6 +293,7 @@ fn em_clustering(
 }
 
 struct Model {
+    // Fraction for each cluster.
     fraction: Vec<f64>,
     // Cluster -> Unit -> Category
     // For all i in 0..cluster_num, j in units,
@@ -306,4 +419,172 @@ fn logsumexp(xs: &[f64]) -> f64 {
     let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
     assert!(sum >= 0., "{:?}->{}", xs, sum);
     max + sum
+}
+
+// struct RawModel {
+//     fraction: Vec<f64>,
+//     category_fraction: Vec<Vec<Vec<f64>>>,
+// }
+
+// impl RawModel {
+//     const PSEUDO_COUNT: f64 = 1f64;
+//     fn new(reads: &[Vec<(usize, usize)>], weights: &[Vec<f64>], k: usize) -> Self {
+//         let unit_num = reads
+//             .iter()
+//             .flat_map(|read| read.iter())
+//             .map(|x| x.0 + 1)
+//             .max()
+//             .unwrap();
+//         let category_num = {
+//             let mut catnum = vec![1; unit_num];
+//             for &(unit, cluster) in reads.iter().flat_map(|read| read.iter()) {
+//                 catnum[unit] = catnum[unit].max(cluster + 1);
+//             }
+//             catnum
+//         };
+//         assert!(weights.iter().all(|ws| ws.len() == k));
+//         let fraction: Vec<_> = {
+//             let mut frac = vec![Self::PSEUDO_COUNT; k];
+//             for ws in weights.iter() {
+//                 for (f, w) in frac.iter_mut().zip(ws) {
+//                     *f += w;
+//                 }
+//             }
+//             let sum = frac.iter().sum::<f64>();
+//             frac.iter_mut().for_each(|x| *x /= sum);
+//             frac
+//         };
+//         let sums_to_one = (1. - fraction.iter().sum::<f64>()).abs() < 0.0001;
+//         assert!(
+//             sums_to_one,
+//             "{:?}\t{}\t{}",
+//             fraction,
+//             weights.len(),
+//             reads.len(),
+//         );
+//         let category_fraction = {
+//             let mut catfrac: Vec<Vec<Vec<_>>> = (0..k)
+//                 .map(|_| {
+//                     category_num
+//                         .iter()
+//                         .map(|&x| vec![Self::PSEUDO_COUNT; x])
+//                         .collect()
+//                 })
+//                 .collect();
+//             for (read, ws) in reads.iter().zip(weights.iter()) {
+//                 for (slots, w) in catfrac.iter_mut().zip(ws.iter()) {
+//                     for &(unit, cluster) in read.iter() {
+//                         slots[unit][cluster] += w;
+//                     }
+//                 }
+//             }
+//             catfrac.iter_mut().for_each(|component| {
+//                 component.iter_mut().for_each(|position| {
+//                     let sum = position.iter().sum::<f64>();
+//                     position.iter_mut().for_each(|x| *x /= sum);
+//                 })
+//             });
+//             catfrac
+//         };
+//         Self {
+//             category_fraction,
+//             fraction,
+//         }
+//     }
+//     fn lk(&self, read: &[(usize, usize)]) -> f64 {
+//         let lks: Vec<_> = self
+//             .category_fraction
+//             .iter()
+//             .zip(self.fraction.iter())
+//             .map(|(component, f)| {
+//                 let prob = read.iter().map(|&(u, c)| component[u][c].ln()).sum::<f64>();
+//                 f.ln() + prob
+//             })
+//             .collect();
+//         logsumexp(&lks)
+//     }
+//     fn weight(&self, read: &[(usize, usize)]) -> Vec<f64> {
+//         let mut lks: Vec<_> = self
+//             .category_fraction
+//             .iter()
+//             .zip(self.fraction.iter())
+//             .map(|(component, f)| {
+//                 let prob = read.iter().map(|&(u, c)| component[u][c].ln()).sum::<f64>();
+//                 f.ln() + prob
+//             })
+//             .collect();
+//         let total = logsumexp(&lks);
+//         lks.iter_mut().for_each(|x| {
+//             *x = (*x - total).exp();
+//         });
+//         lks
+//     }
+// }
+
+#[cfg(test)]
+mod test {
+    // use super::*;
+    // use rand::Rng;
+    // use rand::SeedableRng;
+    // use rand_xoshiro::Xoshiro256StarStar;
+    // #[test]
+    // fn raw_clustering_test() {
+    //     let template1: Vec<_> = (0..10).map(|x| (x, 0)).collect();
+    //     let template2: Vec<_> = (0..10).map(|x| (x, 1)).collect();
+    //     let reads: Vec<_> = (0..100)
+    //         .map(|i| {
+    //             if i < 50 {
+    //                 template1.clone()
+    //             } else {
+    //                 template2.clone()
+    //             }
+    //         })
+    //         .collect();
+    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3948);
+    //     let config = Config::new(10, 242, 2, 2, 2);
+    //     let weights = (0..100)
+    //         .map(|_| {
+    //             let x = rng.gen_range(0f64..1f64);
+    //             vec![x, 1f64 - x]
+    //         })
+    //         .collect();
+    //     let (pred, _) = em_clustering_old(&reads, weights, &config);
+    //     let answer0: Vec<_> = vec![vec![0; 50], vec![1; 50]].concat();
+    //     let answer1: Vec<_> = vec![vec![1; 50], vec![0; 50]].concat();
+    //     assert!(pred == answer1 || pred == answer0);
+    // }
+    // #[test]
+    // fn context_clustering_test() {
+    //     let template1: Vec<_> = (0..5).chain(10..15).map(|x| (x, 0)).collect();
+    //     let template2: Vec<_> = (3..12).map(|x| (x, 0)).collect();
+    //     let reads: Vec<_> = (0..100)
+    //         .map(|i| {
+    //             if i < 50 {
+    //                 template1.clone()
+    //             } else {
+    //                 template2.clone()
+    //             }
+    //         })
+    //         .collect();
+    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(42);
+    //     let config = Config::new(10, 2424, 2, 2, 2);
+    //     let weights = (0..100)
+    //         .map(|_| {
+    //             let x = rng.gen_range(0f64..1f64);
+    //             vec![x, 1f64 - x]
+    //         })
+    //         .collect();
+    //     for (i, read) in reads.iter().enumerate() {
+    //         println!("{}\t{:?}", i, read);
+    //     }
+    //     let (pred, _) = em_clustering_old(&reads, weights, &config);
+    //     println!("{:?}", pred);
+    //     let answer0: Vec<_> = vec![vec![0; 50], vec![1; 50]].concat();
+    //     let answer1: Vec<_> = vec![vec![1; 50], vec![0; 50]].concat();
+    //     assert!(pred == answer1 || pred == answer0);
+    // }
+    // #[test]
+    // fn random_check() {}
+    // #[test]
+    // fn random_check_context() {}
 }

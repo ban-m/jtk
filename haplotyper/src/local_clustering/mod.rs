@@ -14,6 +14,24 @@ pub mod variant_calling;
 // const REPEAT_NUM: usize = 8;
 // const REPEAT_NUM: usize = 3;
 
+/// Return rand index.
+pub fn rand_index(label: &[u8], pred: &[u8]) -> f64 {
+    assert_eq!(label.len(), pred.len());
+    let mut both_same_pair = 0;
+    let mut both_diff_pair = 0;
+    for (i, (l1, p1)) in label.iter().zip(pred.iter()).enumerate() {
+        for (l2, p2) in label.iter().zip(pred.iter()).take(i) {
+            if l1 == l2 && p1 == p2 {
+                both_same_pair += 1;
+            } else if l1 != l2 && p1 != p2 {
+                both_diff_pair += 1;
+            }
+        }
+    }
+    let len = label.len();
+    (both_same_pair + both_diff_pair) as f64 / (len * (len - 1) / 2) as f64
+}
+
 use eread::*;
 use variant_calling::*;
 pub mod kmeans;
@@ -1140,4 +1158,15 @@ pub fn em_clustering(
     }
     let assignments: Vec<_> = assignments.iter().map(|x| cluster[x]).collect();
     (assignments, neg_aic)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn rand_index_test() {
+        let pred = [0, 0, 0, 1, 1, 1];
+        let answ = [0, 0, 1, 1, 2, 2];
+        assert!((0.6666 - rand_index(&pred, &answ)).abs() < 0.0001);
+    }
 }

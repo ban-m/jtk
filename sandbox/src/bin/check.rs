@@ -6,10 +6,9 @@ use rand_xoshiro::Xoroshiro128PlusPlus;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
-    c.cluster_num = 2;
-    c.variant_num = 2;
     c.poa_config = poa_hmm::DEFAULT_CONFIG;
     c.read_type = definitions::ReadType::CLR;
+    c.limit = 60;
     let profile = gen_sample::PROFILE.norm().mul(0.15);
     let args: Vec<_> = std::env::args().collect();
     let (seed, test_num, clusters, _errors, probs) = {
@@ -23,6 +22,8 @@ fn main() -> std::io::Result<()> {
         assert_eq!(clusters, probs.len());
         (seed, test_num, clusters, errors, probs)
     };
+    c.cluster_num = clusters;
+    c.variant_num = 2;
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(seed as u64);
     let chain_len = 20;
     let len = 100;
@@ -71,7 +72,7 @@ fn main() -> std::io::Result<()> {
         seq: String::new(),
         cluster_num: 2,
     };
-    haplotyper::clustering_by_kmeans_em(&mut dataset, chain_len, &c, &unit, 10);
+    haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
     use std::collections::HashMap;
     let mut result: HashMap<_, u32> = HashMap::new();
     for (idx, (data, answer)) in dataset.iter().zip(answer).enumerate() {
