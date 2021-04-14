@@ -50,11 +50,7 @@ pub fn generate_mul_data<T: Rng>(
     (dataset, answer)
 }
 
-use haplotyper::local_clustering::clustering_by_assemble;
-
 pub fn clustering(reads: &[(usize, Vec<Vec<u8>>)], chain: usize, k: usize, s: u64) -> Vec<usize> {
-    let mut config = clustering_by_assemble::ClusteringConfig::default(chain, k);
-    config.seed = s;
     let mut data: Vec<_> = reads
         .iter()
         .map(|r| {

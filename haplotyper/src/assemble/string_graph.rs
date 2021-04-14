@@ -1,7 +1,12 @@
 use definitions::*;
 use rayon::prelude::*;
-const IDEN: f64 = 0.9;
+const IDEN: f64 = 0.3;
 const OVLP: i32 = 3;
+const MISMATCH: f64 = 0.15;
+const MATCH: f64 = 1f64 - MISMATCH;
+const MISM_SCORE: f64 = -1.897;
+const GAP_SCORE: f64 = -4.605;
+const MISM_UNIT: f64 = -10000000f64;
 // TODO: Convert them into Vector type.
 use crate::find_union::FindUnion;
 use std::collections::{HashMap, HashSet};
@@ -55,22 +60,24 @@ impl<'a> StringGraph<'a> {
         })
     }
     pub fn from_dataset(ds: &'a DataSet, c: &AssembleConfig) -> Self {
-        use crate::global_clustering::{
-            error_correction::local_correction, GlobalClusteringConfig,
-        };
-        let config = GlobalClusteringConfig::new(3, 2, 1, -1, -1);
-        let reads = local_correction(ds, &config);
-        let assignments: HashMap<_, _> = ds.assignments.iter().map(|r| (r.id, r.cluster)).collect();
-        let edges: HashMap<_, Result<Vec<_>, _>> = reads
+        // use crate::global_clustering::{
+        //     error_correction::local_correction, GlobalClusteringConfig,
+        // };
+        // let config = GlobalClusteringConfig::new(3, 2, 1, -1, -1);
+        // let reads = local_correction(ds, &config);
+        // let assignments: HashMap<_, _> = ds.assignments.iter().map(|r| (r.id, r.cluster)).collect();
+        let scoring_scheme = get_match_score(ds);
+        let edges: HashMap<_, Result<Vec<_>, _>> = ds
+            .encoded_reads
             .par_iter()
             .map(|r| {
                 let mut edges = vec![];
-                for q in reads
-                    .iter()
-                    .filter(|q| q.id != r.id && assignments.get(&q.id) == assignments.get(&r.id))
+                for q in ds.encoded_reads.iter().filter(|q| q.id != r.id)
+                //  && assignments.get(&q.id) == assignments.get(&r.id))
                 {
-                    match StrEdge::from_corrected_reads(r, q, c) {
-                        Ok(res) => edges.extend(res),
+                    // match StrEdge::from_corrected_reads(r, q, c, &scoring_scheme) {
+                    match StrEdge::from_reads(r, q, c, &scoring_scheme) {
+                        Ok(res) => edges.push(res),
                         Err(is_contained) if is_contained => return (r.id, Err(q.id)),
                         _ => {}
                     }
@@ -82,13 +89,18 @@ impl<'a> StringGraph<'a> {
         Self::from_edges(edges, &reads)
     }
     pub fn new(reads: &'a [EncodedRead], c: &AssembleConfig) -> Self {
+        let scoring: HashMap<_, _> = reads
+            .iter()
+            .flat_map(|read| read.nodes.iter())
+            .map(|n| ((n.unit, n.cluster), 4f64.recip().ln()))
+            .collect();
         let edges: HashMap<_, Result<Vec<_>, _>> = reads
             .par_iter()
             .map(|r| {
                 let mut edges = vec![];
                 for q in reads.iter().filter(|q| q.id != r.id) {
-                    match StrEdge::from_reads(r, q, c) {
-                        Ok(res) => edges.extend(res),
+                    match StrEdge::from_reads(r, q, c, &scoring) {
+                        Ok(res) => edges.push(res),
                         Err(is_contained) if is_contained => return (r.id, Err(q.id)),
                         _ => {}
                     }
@@ -148,6 +160,7 @@ impl<'a> StringGraph<'a> {
             })
             .copied()
             .collect();
+        debug!("{} Alignments..", edges.len());
         let edges: HashMap<u64, Vec<_>> = edges
             .into_iter()
             .filter_map(|(k, v)| {
@@ -168,6 +181,10 @@ impl<'a> StringGraph<'a> {
                 })
             })
             .collect();
+        debug!(
+            "Into {} alignments.",
+            edges.values().map(|x| x.len()).sum::<usize>()
+        );
         let is_used: HashSet<_> = edges.keys().copied().collect();
         let nodes: HashMap<u64, Vec<_>> = reads
             .iter()
@@ -252,6 +269,39 @@ impl<'a> StringGraph<'a> {
             if self.edges.contains_key(&id) {
                 self.reduce_edges_from(id).unwrap();
             }
+        }
+    }
+    //Remove dead end.
+    pub fn tip_removal(&mut self) {
+        let mut to_be_removed: HashSet<_> = HashSet::new();
+        for (_, edges) in self.edges.iter() {
+            for position in vec![Position::Head, Position::Tail] {
+                let num_edges = edges
+                    .iter()
+                    .filter(|ed| ed.from_position == position)
+                    .count();
+                if num_edges < 2 {
+                    continue;
+                }
+                for ed in edges.iter().filter(|ed| ed.from_position == position) {
+                    if self.edges[&ed.to].len() == 1 {
+                        let tip_edge = self.edges[&ed.to][0];
+                        assert_eq!(ed.from, tip_edge.to);
+                        assert_eq!(ed.to, tip_edge.from);
+                        assert_eq!(ed.from_position, tip_edge.to_position);
+                        assert_eq!(ed.to_position, tip_edge.from_position);
+                        // This node is to be removed.
+                        to_be_removed.insert(ed.to);
+                    }
+                }
+            }
+        }
+        for remove_node in to_be_removed.iter() {
+            self.nodes.remove(remove_node);
+            self.edges.remove(remove_node);
+        }
+        for edges in self.edges.values_mut() {
+            edges.retain(|edge| !to_be_removed.contains(&edge.to));
         }
     }
     // TODO:We need DFS approach.
@@ -726,108 +776,226 @@ pub enum AlignmentResult {
     Containing,
 }
 
-// Ok(r_start_pos, q_end_pos, true, score) or ()
-pub fn unit_alignment(
-    r: &[(u64, u64)],
-    q: &[(u64, u64)],
-    c: &AssembleConfig,
-) -> Vec<AlignmentResult> {
-    let mut dp: Vec<Vec<i32>> = vec![vec![0; q.len() + 1]; r.len() + 1];
-    // Filling DP cell (Locally, Overlapping.)
-    let mut max = -1;
-    for (i, r_base) in r.iter().enumerate() {
-        for (j, q_base) in q.iter().enumerate() {
-            let mat = if r_base == q_base { 1 } else { -1 };
-            dp[i + 1][j + 1] = (dp[i][j] + mat)
-                .max(dp[i][j + 1] - 1)
-                .max(dp[i + 1][j] - 1)
-                .max(0);
-            max = max.max(dp[i + 1][j + 1]);
+pub fn unit_alignment_naive(
+    xs: &[(u64, u64)],
+    ys: &[(u64, u64)],
+    _c: &AssembleConfig,
+) -> Option<AlignmentResult> {
+    let mut dp = vec![vec![0; ys.len() + 1]; xs.len() + 1];
+    for (i, (u1, c1)) in xs.iter().enumerate().map(|(i, &p)| (i + 1, p)) {
+        for (j, (u2, c2)) in ys.iter().enumerate().map(|(j, &p)| (j + 1, p)) {
+            let mat_score = match (u1 == u2, c1 == c2) {
+                (true, true) => 1,
+                (true, false) => -1,
+                (false, _) => -1000,
+            };
+            dp[i][j] = (dp[i - 1][j - 1] + mat_score)
+                .max(dp[i - 1][j] - 1)
+                .max(dp[i][j - 1] - 1);
         }
     }
-    if max < c.ovlp {
-        return Vec::new();
+    let (opt_score, xs_end, ys_end) = (0..xs.len() + 1)
+        .map(|i| (i, ys.len()))
+        .chain((0..ys.len()).map(|j| (xs.len(), j)))
+        .map(|(i, j)| (dp[i][j], i, j))
+        .max_by_key(|x| x.0)
+        .unwrap();
+    let (mut i, mut j) = (xs_end, ys_end);
+    let mut match_num = 0;
+    while 0 < i && 0 < j {
+        let (u1, c1) = xs[i - 1];
+        let (u2, c2) = ys[j - 1];
+        let mat_score = match (u1 == u2, c1 == c2) {
+            (true, true) => 1,
+            (true, false) => -1,
+            (false, _) => -1000,
+        };
+        if dp[i][j] == dp[i - 1][j - 1] + mat_score {
+            i -= 1;
+            j -= 1;
+            match_num += ((u1 == u2) && (c1 == c2)) as i32;
+        } else if dp[i][j] == dp[i - 1][j] - 1 {
+            i -= 1;
+        } else if dp[i][j] == dp[i][j - 1] - 1 {
+            j -= 1;
+        } else {
+            unreachable!()
+        }
     }
-    dp.iter()
-        .enumerate()
-        .flat_map(|(r_argmax, line)| {
-            line.iter()
-                .enumerate()
-                .filter(|&(_, &score)| score == max)
-                .filter_map(|(q_argmax, _)| {
-                    validate_alignment(r_argmax, r, q_argmax, q, &dp, max, c.identity)
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    let (xs_start, ys_start) = (i, j);
+    if match_num < 3 || xs_end == xs_start || ys_end == ys_start {
+        return None;
+    }
+    let normed_score =
+        opt_score as f64 / (((xs_end - xs_start) * (ys_end - ys_start)) as f64).sqrt();
+    if normed_score < 0.8 {
+        return None;
+    }
+    match (
+        xs_start == 0,
+        ys_start == 0,
+        xs_end == xs.len(),
+        ys_end == ys.len(),
+    ) {
+        (true, true, true, true) => Some(AlignmentResult::DiagonalMatch),
+        (true, _, true, _) => Some(AlignmentResult::Contained),
+        (_, true, _, true) => Some(AlignmentResult::Containing),
+        (true, false, false, true) => Some(AlignmentResult::HeadToTail(xs_end)),
+        (false, true, true, false) => Some(AlignmentResult::TailToHead(xs.len() - xs_start)),
+        _ => None,
+    }
 }
 
-fn validate_alignment(
-    r_argmax: usize,
-    r: &[(u64, u64)],
-    q_argmax: usize,
-    q: &[(u64, u64)],
-    dp: &[Vec<i32>],
-    max: i32,
-    iden: f64,
+// Ok(r_start_pos, q_end_pos, true, score) or ()
+pub fn unit_alignment(
+    xs: &[(u64, u64)],
+    ys: &[(u64, u64)],
+    c: &AssembleConfig,
+    score: &HashMap<(u64, u64), f64>,
 ) -> Option<AlignmentResult> {
-    let (mut rpos, mut qpos) = (r_argmax, q_argmax);
-    while 0 < rpos && 0 < qpos {
-        let mat = if r[rpos - 1] == q[qpos - 1] { 1 } else { -1 };
-        if dp[rpos][qpos] == mat + dp[rpos - 1][qpos - 1] {
-            rpos -= 1;
-            qpos -= 1;
-        } else if dp[rpos][qpos] == dp[rpos - 1][qpos] - 1 {
-            rpos -= 1;
-        } else if dp[rpos][qpos] == dp[rpos][qpos - 1] - 1 {
-            qpos -= 1;
-        } else {
-            assert_eq!(dp[rpos][qpos], 0);
-            break;
+    // Filling DP cell (Locally, Overlapping.)
+    let mut dp = vec![vec![0f64; ys.len() + 1]; xs.len() + 1];
+    for (i, (u1, c1)) in xs.iter().enumerate().map(|(i, &p)| (i + 1, p)) {
+        for (j, (u2, c2)) in ys.iter().enumerate().map(|(j, &p)| (j + 1, p)) {
+            let mat_score = match (u1 == u2, c1 == c2) {
+                (true, true) => score[&(u1, c1)],
+                (true, false) => MISM_SCORE,
+                (false, _) => MISM_UNIT,
+            };
+            dp[i][j] = (dp[i - 1][j - 1] + mat_score)
+                .max(dp[i - 1][j] + GAP_SCORE)
+                .max(dp[i][j - 1] + GAP_SCORE);
         }
     }
-    // First condition:
-    // If this alignment truly overlaps,
-    // the optimal alignment should starts from the start position of either of reads.
-    // Second condition:
-    // If this alignment truly overlaps,
-    // the optimal alignment should ends at either of reads.
-    // eprintln!("{}\t{}", r.len(), q.len());
-    let is_valid_overlap = (qpos == 0 || rpos == 0) && (q_argmax == q.len() || r_argmax == r.len());
-    // eprintln!(
-    //     "{}-{}\t{}-{}\t{}",
-    //     rpos, r_argmax, qpos, q_argmax, is_valid_overlap
-    // );
-    if !is_valid_overlap {
-        None
-    } else if rpos == 0 && qpos == 0 && q_argmax == q.len() && r_argmax == r.len() {
-        Some(AlignmentResult::DiagonalMatch)
-    } else if rpos == 0 && r_argmax == r.len() {
-        Some(AlignmentResult::Contained)
-    } else if qpos == 0 && q_argmax == q.len() {
-        Some(AlignmentResult::Containing)
-    } else if rpos == 0 {
-        assert!(r_argmax != r.len());
-        let (rlen, qlen) = (r_argmax, q.len() - qpos);
-        let identity = max as f64 / ((rlen * qlen) as f64).sqrt();
-        // eprintln!("{}\t{}\t{}", rlen, qlen, identity);
-        if iden < identity {
-            Some(AlignmentResult::HeadToTail(r_argmax))
+    let (opt_score, xs_end, ys_end) = (0..xs.len() + 1)
+        .map(|i| (i, ys.len()))
+        .chain((0..ys.len()).map(|j| (xs.len(), j)))
+        .map(|(i, j)| (dp[i][j], i, j))
+        .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
+        .unwrap();
+    let (mut i, mut j) = (xs_end, ys_end);
+    let mut match_num = 0;
+    while 0 < i && 0 < j {
+        let (u1, c1) = xs[i - 1];
+        let (u2, c2) = ys[j - 1];
+        let mat_score = match (u1 == u2, c1 == c2) {
+            (true, true) => score[&(u1, c1)],
+            (true, false) => MISM_SCORE,
+            (false, _) => MISM_UNIT,
+        };
+        if (dp[i][j] - (dp[i - 1][j - 1] + mat_score)).abs() < 0.00001 {
+            i -= 1;
+            j -= 1;
+            match_num += ((u1 == u2) && (c1 == c2)) as i32;
+        } else if (dp[i][j] - (dp[i - 1][j] + GAP_SCORE)).abs() < 0.00001 {
+            i -= 1;
+        } else if (dp[i][j] - (dp[i][j - 1] + GAP_SCORE)).abs() < 0.00001 {
+            j -= 1;
         } else {
-            None
-        }
-    } else {
-        assert!(qpos == 0 && q_argmax != q.len());
-        let (rlen, qlen) = (r.len() - rpos, q_argmax);
-        let identity = max as f64 / ((rlen * qlen) as f64).sqrt();
-        // eprintln!("{}\t{}\t{}", rlen, qlen, identity);
-        if iden < identity {
-            Some(AlignmentResult::TailToHead(r.len() - rpos))
-        } else {
-            None
+            unreachable!()
         }
     }
+    let (xs_start, ys_start) = (i, j);
+    if match_num < c.ovlp || xs_end == xs_start || ys_end == ys_start {
+        return None;
+    }
+    let normed_score = opt_score / (((xs_end - xs_start) * (ys_end - ys_start)) as f64).sqrt();
+    if normed_score < c.identity {
+        return None;
+    }
+    match (
+        xs_start == 0,
+        ys_start == 0,
+        xs_end == xs.len(),
+        ys_end == ys.len(),
+    ) {
+        (true, true, true, true) => Some(AlignmentResult::DiagonalMatch),
+        (true, _, true, _) => Some(AlignmentResult::Contained),
+        (_, true, _, true) => Some(AlignmentResult::Containing),
+        (true, false, false, true) => Some(AlignmentResult::HeadToTail(xs_end)),
+        (false, true, true, false) => Some(AlignmentResult::TailToHead(xs.len() - xs_start)),
+        _ => None,
+    }
+    // dp.iter()
+    //     .enumerate()
+    //     .flat_map(|(r_argmax, line)| {
+    //         line.iter()
+    //             .enumerate()
+    //             .filter(|&(_, &score)| score == max)
+    //             .filter_map(|(q_argmax, _)| {
+    //                 validate_alignment(r_argmax, r, q_argmax, q, &dp, max, c.identity)
+    //             })
+    //             .collect::<Vec<_>>()
+    //     })
+    //     .collect()
 }
+
+// fn validate_alignment(
+//     r_argmax: usize,
+//     r: &[(u64, u64)],
+//     q_argmax: usize,
+//     q: &[(u64, u64)],
+//     dp: &[Vec<i32>],
+//     max: i32,
+//     iden: f64,
+// ) -> Option<AlignmentResult> {
+//     let (mut rpos, mut qpos) = (r_argmax, q_argmax);
+//     while 0 < rpos && 0 < qpos {
+//         let mat = if r[rpos - 1] == q[qpos - 1] { 1 } else { -1 };
+//         if dp[rpos][qpos] == mat + dp[rpos - 1][qpos - 1] {
+//             rpos -= 1;
+//             qpos -= 1;
+//         } else if dp[rpos][qpos] == dp[rpos - 1][qpos] - 1 {
+//             rpos -= 1;
+//         } else if dp[rpos][qpos] == dp[rpos][qpos - 1] - 1 {
+//             qpos -= 1;
+//         } else {
+//             assert_eq!(dp[rpos][qpos], 0);
+//             break;
+//         }
+//     }
+//     // First condition:
+//     // If this alignment truly overlaps,
+//     // the optimal alignment should starts from the start position of either of reads.
+//     // Second condition:
+//     // If this alignment truly overlaps,
+//     // the optimal alignment should ends at either of reads.
+//     // eprintln!("{}\t{}", r.len(), q.len());
+//     let is_valid_overlap = (qpos == 0 || rpos == 0) && (q_argmax == q.len() || r_argmax == r.len());
+//     // eprintln!(
+//     //     "{}-{}\t{}-{}\t{}",
+//     //     rpos, r_argmax, qpos, q_argmax, is_valid_overlap
+//     // );
+//     if !is_valid_overlap {
+//         None
+//     } else if rpos == 0 && qpos == 0 && q_argmax == q.len() && r_argmax == r.len() {
+//         Some(AlignmentResult::DiagonalMatch)
+//     } else if rpos == 0 && r_argmax == r.len() {
+//         Some(AlignmentResult::Contained)
+//     } else if qpos == 0 && q_argmax == q.len() {
+//         Some(AlignmentResult::Containing)
+//     } else if rpos == 0 {
+//         assert!(r_argmax != r.len());
+//         let (rlen, qlen) = (r_argmax, q.len() - qpos);
+//         let identity = max as f64 / ((rlen * qlen) as f64).sqrt();
+//         // eprintln!("{}\t{}\t{}", rlen, qlen, identity);
+//         if iden < identity {
+//             Some(AlignmentResult::HeadToTail(r_argmax))
+//         } else {
+//             None
+//         }
+//     } else {
+//         assert!(qpos == 0 && q_argmax != q.len());
+//         let (rlen, qlen) = (r.len() - rpos, q_argmax);
+//         let identity = max as f64 / ((rlen * qlen) as f64).sqrt();
+//         // eprintln!("{}\t{}\t{}", rlen, qlen, identity);
+//         if iden < identity {
+//             Some(AlignmentResult::TailToHead(r.len() - rpos))
+//         } else {
+//             None
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StrEdge {
@@ -845,13 +1013,14 @@ impl StrEdge {
         r: &CorrectedRead,
         q: &CorrectedRead,
         c: &AssembleConfig,
+        score: &HashMap<(u64, u64), f64>,
     ) -> Result<Vec<Self>, bool> {
         let mut rseq: Vec<_> = r.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
         let qseq: Vec<_> = q.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
         use AlignmentResult::*;
         use Position::*;
         let mut edges = vec![];
-        for aln in unit_alignment(&rseq, &qseq, c) {
+        for aln in unit_alignment(&rseq, &qseq, c, score) {
             match aln {
                 HeadToTail(ofs) => edges.push(StrEdge::new(r.id, q.id, Head, Tail, ofs)),
                 TailToHead(ofs) => edges.push(StrEdge::new(r.id, q.id, Tail, Head, ofs)),
@@ -862,7 +1031,7 @@ impl StrEdge {
             }
         }
         rseq.reverse();
-        for aln in unit_alignment(&rseq, &qseq, c) {
+        for aln in unit_alignment(&rseq, &qseq, c, score) {
             match aln {
                 HeadToTail(ofs) => edges.push(StrEdge::new(r.id, q.id, Tail, Tail, ofs)),
                 TailToHead(ofs) => edges.push(StrEdge::new(r.id, q.id, Head, Head, ofs)),
@@ -874,16 +1043,21 @@ impl StrEdge {
         }
         Ok(edges)
     }
-    fn from_reads(r: &EncodedRead, q: &EncodedRead, c: &AssembleConfig) -> Result<Vec<Self>, bool> {
+    fn from_reads(
+        r: &EncodedRead,
+        q: &EncodedRead,
+        c: &AssembleConfig,
+        score: &HashMap<(u64, u64), f64>,
+    ) -> Result<Self, bool> {
         let mut rseq: Vec<_> = r.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
         let qseq: Vec<_> = q.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
         use AlignmentResult::*;
         use Position::*;
-        let mut edges = vec![];
-        for aln in unit_alignment(&rseq, &qseq, c) {
+        if let Some(aln) = unit_alignment(&rseq, &qseq, c, score) {
+            // if let Some(aln) = unit_alignment_naive(&rseq, &qseq, c) {
             match aln {
-                HeadToTail(ofs) => edges.push(StrEdge::new(r.id, q.id, Head, Tail, ofs)),
-                TailToHead(ofs) => edges.push(StrEdge::new(r.id, q.id, Tail, Head, ofs)),
+                HeadToTail(ofs) => return Ok(StrEdge::new(r.id, q.id, Head, Tail, ofs)),
+                TailToHead(ofs) => return Ok(StrEdge::new(r.id, q.id, Tail, Head, ofs)),
                 Contained => return Err(true),
                 Containing => return Err(false),
                 DiagonalMatch if r.id < q.id => return Err(true),
@@ -891,17 +1065,20 @@ impl StrEdge {
             }
         }
         rseq.reverse();
-        for aln in unit_alignment(&rseq, &qseq, c) {
+        if let Some(aln) = unit_alignment(&rseq, &qseq, c, score) {
+            // if let Some(aln) = unit_alignment_naive(&rseq, &qseq, c) {
             match aln {
-                HeadToTail(ofs) => edges.push(StrEdge::new(r.id, q.id, Tail, Tail, ofs)),
-                TailToHead(ofs) => edges.push(StrEdge::new(r.id, q.id, Head, Head, ofs)),
-                Contained => return Err(true),
-                Containing => return Err(false),
-                DiagonalMatch if r.id < q.id => return Err(true),
-                DiagonalMatch => return Err(false),
+                HeadToTail(ofs) => Ok(StrEdge::new(r.id, q.id, Tail, Tail, ofs)),
+                TailToHead(ofs) => Ok(StrEdge::new(r.id, q.id, Head, Head, ofs)),
+                Contained => Err(true),
+                Containing => Err(false),
+                DiagonalMatch if r.id < q.id => Err(true),
+                DiagonalMatch => Err(false),
             }
+        } else {
+            Err(false)
         }
-        Ok(edges)
+        // Ok(edges)
     }
     fn new(
         from: u64,
@@ -952,4 +1129,30 @@ pub struct ContigSummary {
     pub id: String,
     /// ID of the reads consisting this contig.
     pub reads: Vec<u64>,
+}
+
+fn get_match_score(ds: &DataSet) -> HashMap<(u64, u64), f64> {
+    let mut counts: HashMap<u64, HashMap<u64, u32>> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        for node in read.nodes.iter() {
+            *counts
+                .entry(node.unit)
+                .or_default()
+                .entry(node.cluster)
+                .or_default() += 1;
+        }
+    }
+    counts
+        .iter()
+        .flat_map(|(&unit, val)| {
+            let total: u32 = val.values().sum();
+            val.iter()
+                .map(|(&cluster, &count)| {
+                    let frac = count as f64 / total as f64;
+                    let score = (MATCH + MISMATCH * frac).ln() - frac.ln();
+                    ((unit, cluster), score)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }

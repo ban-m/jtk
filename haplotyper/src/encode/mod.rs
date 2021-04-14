@@ -5,13 +5,15 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::io::*;
 pub mod deletion_fill;
+/// This is a parameter only valid for last program.
+/// TODO: As the Licencing issue, maybe we should remove these parameters as well as dependencies for last.
 pub const MARGIN: usize = 50;
 // Any alignment having deletion longer than ALLOWED_END_GAP would be discarded.
 // Increasing this value would be more "abundant" encoding,
 // but it would be problem in local clustering, which requiring almost all the
 // unit is correctly globally aligned.
 const ALLOWED_END_GAP: usize = 50;
-// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
+/// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
 pub const INDEL_THRESHOLD: usize = 50;
 pub trait Encode {
     fn encode(self, threads: usize) -> Self;
@@ -20,7 +22,6 @@ pub trait Encode {
 impl Encode for definitions::DataSet {
     fn encode(mut self, threads: usize) -> Self {
         self = encode_by_mm2(self, threads).unwrap();
-        // We should correct unit deletion here.
         if self.read_type != definitions::ReadType::CCS {
             self = deletion_fill::correct_unit_deletion(self);
         }
@@ -141,10 +142,11 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     let mut ops = vec![];
     if aln.tstart > 0 {
         let (_, mut lops) =
-            kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[..aln.tstart], &leading);
+        //kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[..aln.tstart], &leading);
+            kiley::bialignment::edit_dist_slow_ops_semiglobal(&unit.seq()[..aln.tstart], &leading);
         // Leading Operations
         // Remove leading insertions.
-        while lops[0] == kiley::alignment::bialignment::Op::Ins {
+        while lops[0] == kiley::bialignment::Op::Ins {
             leading.remove(0);
             lops.remove(0);
         }
@@ -170,9 +172,10 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     if aln.tlen != aln.tend {
         // Trailing operations
         let (_, mut tops) =
-            kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[aln.tend..], &trailing);
+            //kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[aln.tend..], &trailing);
+            kiley::bialignment::edit_dist_slow_ops_semiglobal(&unit.seq()[aln.tend..], &trailing);
         // Remove while trailing insertions.
-        while tops.last() == Some(&kiley::alignment::bialignment::Op::Ins) {
+        while tops.last() == Some(&kiley::bialignment::Op::Ins) {
             tops.pop();
             trailing.pop();
         }
@@ -202,7 +205,6 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         .sum::<usize>();
     assert_eq!(query_length, leading.len());
     let aligned = String::from_utf8(leading).unwrap();
-    // let aligned = String::from_utf8(aligned).unwrap();
     Some(Node {
         position_from_start,
         unit: unit.id,
@@ -213,7 +215,7 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     })
 }
 
-fn compress_kiley_ops(k_ops: &[kiley::alignment::bialignment::Op]) -> Vec<Op> {
+fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
     assert!(!k_ops.is_empty());
     let (mut current_op, mut len) = (k_ops[0], 1);
     let mut ops = vec![];
@@ -222,18 +224,18 @@ fn compress_kiley_ops(k_ops: &[kiley::alignment::bialignment::Op]) -> Vec<Op> {
             len += 1;
         } else {
             match current_op {
-                kiley::alignment::bialignment::Op::Del => ops.push(Op::Del(len)),
-                kiley::alignment::bialignment::Op::Ins => ops.push(Op::Ins(len)),
-                kiley::alignment::bialignment::Op::Mat => ops.push(Op::Match(len)),
+                kiley::bialignment::Op::Del => ops.push(Op::Del(len)),
+                kiley::bialignment::Op::Ins => ops.push(Op::Ins(len)),
+                kiley::bialignment::Op::Mat => ops.push(Op::Match(len)),
             }
             current_op = op;
             len = 1;
         }
     }
     match current_op {
-        kiley::alignment::bialignment::Op::Del => ops.push(Op::Del(len)),
-        kiley::alignment::bialignment::Op::Ins => ops.push(Op::Ins(len)),
-        kiley::alignment::bialignment::Op::Mat => ops.push(Op::Match(len)),
+        kiley::bialignment::Op::Del => ops.push(Op::Del(len)),
+        kiley::bialignment::Op::Ins => ops.push(Op::Ins(len)),
+        kiley::bialignment::Op::Mat => ops.push(Op::Match(len)),
     }
     ops
 }

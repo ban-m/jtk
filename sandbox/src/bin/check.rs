@@ -72,7 +72,27 @@ fn main() -> std::io::Result<()> {
         seq: String::new(),
         cluster_num: 2,
     };
+    let start = std::time::Instant::now();
     haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
+    let end = std::time::Instant::now();
+    let preds: Vec<_> = dataset.iter().map(|x| x.cluster as u8).collect();
+    let score = haplotyper::rand_index(&preds, &answer);
+    let time = (end - start).as_millis();
+    println!("RESULT\t{}\tOLD\t{}\t{}", seed, score, time);
+    let reads: Vec<Vec<_>> = dataset
+        .iter()
+        .map(|x| x.chunks.iter().flat_map(|x| x.seq.clone()).collect())
+        .collect();
+    let start = std::time::Instant::now();
+    let config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(50, 30, 3, 2, 20);
+    // let preds =
+    //     haplotyper::local_clustering::kmeans::clustering_rep(&reads, &mut rng, &config).unwrap();
+    let preds =
+        haplotyper::local_clustering::kmeans::clustering_rep(&reads, &mut rng, &config).unwrap();
+    let end = std::time::Instant::now();
+    let score = haplotyper::rand_index(&preds, &answer);
+    let time = (end - start).as_millis();
+    println!("RESULT\t{}\tNEW\t{}\t{}", seed, score, time);
     use std::collections::HashMap;
     let mut result: HashMap<_, u32> = HashMap::new();
     for (idx, (data, answer)) in dataset.iter().zip(answer).enumerate() {

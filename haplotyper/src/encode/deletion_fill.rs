@@ -41,7 +41,6 @@ fn correct_deletion_error(
     // Insertion counts.
     let pileups = get_pileup(read, reads);
     let threshold = get_threshold(&pileups);
-    // debug!("Read\t{}\t{}", read.id, threshold);
     let nodes = &read.nodes;
     let take_len = nodes.len();
     let inserts: Vec<_> = pileups
@@ -98,9 +97,8 @@ fn encode_node(
         bio_utils::revcmp(&seq[start..end])
     };
     // TODO: Maybe more sophisticated, or dedicated alignmnet parameters should be used.
-    // At least, we need to use affine gap panalty alignment to remove the
-    // sloppy leading/trailing alignment.
-    let (dist, ops) = kiley::alignment::bialignment::edit_dist_slow_ops(unit.seq(), &query);
+    // Or, maybe we should use affine gap panalty version of semi-global alignment.
+    let (dist, ops) = kiley::bialignment::edit_dist_slow_ops_semiglobal(unit.seq(), &query);
     let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
     // Leading/Trailing bases are offsets.
     if dist_thr + 2 * (OFFSET as u32) < dist {

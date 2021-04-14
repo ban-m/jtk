@@ -1,3 +1,6 @@
+//! Polish local clustering.
+//! By using alignment and clustering by adjucent units.
+//! That is, first,
 use definitions::*;
 use rayon::prelude::*;
 use std::collections::HashMap;

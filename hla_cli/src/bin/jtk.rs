@@ -436,7 +436,7 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("RETRY")
                 .help("If clustering fails, retry [RETRY] times.")
-                .default_value(&"5")
+                .default_value(&"2")
                 .takes_value(true),
         )
         .arg(
@@ -456,6 +456,11 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
                 .short("v")
                 .multiple(true)
                 .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("graph")
+                .long("graph")
+                .help("Invoke graph-WhatsHap instead of de Bruijn."),
         )
         .arg(
             Arg::with_name("threads")
@@ -924,8 +929,11 @@ fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::R
         mismat_score,
         gap_score,
     );
-    //Ok(dataset.global_clustering_graph(&config))
-    Ok(dataset.global_clustering(&config))
+    if matches.is_present("graph") {
+        Ok(dataset.global_clustering_graph(&config))
+    } else {
+        Ok(dataset.global_clustering(&config))
+    }
 }
 
 fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -1020,7 +1028,6 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_clustering_correction())
         .subcommand(subcommand_assembly())
         .subcommand(subcommand_pick_components())
-        // .subcommand(subcommand_pipeline())
         .subcommand(subcommand_repeatmasking())
         .get_matches();
     if let Some(sub_m) = matches.subcommand().1 {

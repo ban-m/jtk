@@ -268,7 +268,8 @@ fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, c);
     graph.resolve_repeats();
-    graph.remove_lightweight_edges(2);
+    // TODO: Tune this parameter, or not.
+    graph.remove_lightweight_edges(3);
     graph.remove_tips();
     graph.collapse_buddle(c);
     graph.remove_small_component(5);
@@ -372,11 +373,8 @@ fn align_reads(
         crate::repeat_masking::mask_repeat_in_seq(&mut seq, &repeat_masking_config);
         let seq = String::from_utf8_lossy(&seq);
         writeln!(&mut wtr, ">{}\n{}", &segment.sid, seq)?;
-        // let record = fasta::Record::with_data(&segment.sid, &None, seq);
-        // wtr.write_record(&record)?;
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
-        // let mut wtr = fasta::Writer::new(std::fs::File::create(&reads_dir)?);
         let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
         let mut read_seqs: Vec<Vec<u8>> = reads.iter().map(|r| r.seq.as_bytes().to_vec()).collect();
         // TODO: Should be tuned.
@@ -385,9 +383,6 @@ fn align_reads(
         for (read, seq) in reads.iter().zip(read_seqs) {
             let seq = String::from_utf8_lossy(&seq);
             writeln!(&mut wtr, ">{}\n{}", read.name, seq)?;
-            // let id = read.name.to_string();
-            // let record = fasta::Record::with_data(&id, &None, read.seq.as_bytes());
-            // wtr.write_record(&record)?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();

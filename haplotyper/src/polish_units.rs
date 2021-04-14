@@ -61,7 +61,7 @@ impl PolishUnit for DataSet {
             .par_iter()
             .filter_map(|&(id, ref pileup)| {
                 if c.filter_size < pileup.len() {
-                    let seq = kiley::consensus_bounded(pileup, c.seed, 3, 10, 50)?;
+                    let seq = kiley::consensus(pileup, c.seed, 3, 50)?;
                     let seq = String::from_utf8(seq).ok()?;
                     Some(Unit::new(id, seq, cluster_num[&id]))
                 } else {

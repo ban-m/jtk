@@ -35,6 +35,7 @@ impl Config {
 
 pub trait ClusteringCorrection {
     fn correct_clustering(self, repeat_num: usize, coverage_thr: usize) -> Self;
+    fn correct_clustering_em(self, repeat_num: usize, coverage_thr: usize) -> Self;
 }
 
 impl ClusteringCorrection for DataSet {
@@ -94,6 +95,51 @@ impl ClusteringCorrection for DataSet {
         }
         self
     }
+    fn correct_clustering_em(mut self, repeat_num: usize, coverage_thr: usize) -> Self {
+        // let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+        // let id_to_desc: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+        let result: Vec<_> = self
+            .selected_chunks
+            .par_iter()
+            .map(|ref_unit| {
+                let unit_id = ref_unit.id;
+                let reads: Vec<_> = self
+                    .encoded_reads
+                    .iter()
+                    .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
+                    .collect();
+                let k = ref_unit.cluster_num;
+                if reads.is_empty() {
+                    debug!("Unit {} does not appear in any read.", unit_id);
+                    return vec![];
+                }
+                let (new_clustering, lk) = (0..repeat_num as u64)
+                    .map(|s| {
+                        let config = Config::new(repeat_num, unit_id * s, k, unit_id, coverage_thr);
+                        em_clustering(&reads, &config)
+                    })
+                    .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+                    .unwrap();
+                trace!("MaxLK:{}", lk);
+                new_clustering
+            })
+            .collect();
+        let result: HashMap<u64, Vec<(usize, u64)>> =
+            result.iter().fold(HashMap::new(), |mut acc, results| {
+                for &(id, pos, cluster) in results {
+                    acc.entry(id).or_default().push((pos, cluster));
+                }
+                acc
+            });
+        for read in self.encoded_reads.iter_mut() {
+            if let Some(corrected) = result.get(&read.id) {
+                for &(pos, cluster) in corrected {
+                    read.nodes[pos].cluster = cluster;
+                }
+            }
+        }
+        self
+    }
 }
 
 pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Vec<usize> {
@@ -129,117 +175,6 @@ pub fn clustering(units: &[Unit], reads: &[&EncodedRead], config: &Config) -> Ve
         });
     trace!("OPTLK\t{}", lk);
     asn
-}
-
-// struct AdjInformation {
-//     plus_direction: Vec<(usize, bool, usize)>,
-//     minus_direction: Vec<(usize, bool, usize)>,
-//     focal: (usize, bool, usize),
-// }
-
-// impl AdjInformation {
-//     fn get(&self, i: isize) -> (usize, bool, usize) {
-//         if i == 0 {
-//             self.focal
-//         } else if 0 < i {
-//             self.plus_direction[i as usize]
-//         } else {
-//             self.minus_direction[(-i) as usize]
-//         }
-//     }
-// }
-
-// By accessing [i][j][bool], obtain what th i-th read has at the j-th index in bool strand.
-// It consists of (unit, cluster)
-// fn map_unit_and_clusters<T: std::borrow::Borrow<[(u64, bool, u64)]>>(
-//     reads: &[T],
-// ) -> Vec<Vec<(usize, bool, usize)>> {
-//     let mut chunk_mapper: HashMap<u64, usize> = HashMap::new();
-//     let mut cluster_mapper: Vec<HashMap<u64, usize>> = vec![];
-//     for read in reads.iter() {
-//         for &(chunk, cluster) in read.borrow().iter() {
-//             let chunk_idx: usize = *chunk_mapper.entry(chunk).or_insert_with(|| {
-//                 // First chunk.
-//                 cluster_mapper.push(HashMap::new());
-//                 cluster_mapper.len() - 1
-//             });
-//             // Never panic.
-//             let cluster_num = cluster_mapper[chunk_idx].len();
-//             if !cluster_mapper[chunk_idx].contains_key(&cluster) {
-//                 cluster_mapper[chunk_idx].insert(cluster, cluster_num);
-//             }
-//         }
-//     }
-//     reads
-//         .iter()
-//         .map(|read| {
-//             read.borrow()
-//                 .iter()
-//                 .map(|&(chunk, cluster)| {
-//                     let chunk = chunk_mapper[&chunk];
-//                     let cluster = cluster_mapper[chunk][&cluster];
-//                     (chunk, cluster)
-//                 })
-//                 .collect()
-//         })
-//         .collect()
-// }
-
-/// Descrete EM algorithm
-/// The model is the bugs of categorical distributions for
-/// each cluster.
-/// In other words, we have a categorical distribution on each chunk on each cluster, and
-/// making the whole model as a mixture of them.
-pub fn em_clustering<T: std::borrow::Borrow<[(u64, bool, u64)]>>(
-    _reads: &[T],
-    _focal_unit: u64,
-    _init_cluster: &[usize],
-    _config: &Config,
-) -> (Vec<usize>, f64) {
-    unimplemented!()
-    // // First, making the mapping from chunks -> usize, and units -> usize.
-    // let reads = map_unit_and_clusters(reads);
-    // let k = config.cluster_num;
-    // let mut model = RawModel::new(&reads, &weights, k);
-    // // let mut unit_counts: HashMap<_, usize> = HashMap::new();
-    // // for read in reads.iter() {
-    // //     for node in read.nodes.iter() {
-    // //         *unit_counts.entry(node.unit).or_default() += 1;
-    // //     }
-    // // }
-    // // let use_units: HashSet<_> = unit_counts
-    // //     .iter()
-    // //     .filter(|&(_, &c)| c > config.coverage_thr)
-    // //     .map(|(&x, _)| x)
-    // //     .collect();
-    // let mut diff = 10.;
-    // let mut lk = reads.iter().map(|read| model.lk(read)).sum::<f64>();
-    // trace!("LK:{}", lk);
-    // while diff > 0.00000001 {
-    //     weights = reads.iter().map(|read| model.weight(read)).collect();
-    //     model = RawModel::new(&reads, &weights, k);
-    //     let new_lk = reads.iter().map(|read| model.lk(read)).sum::<f64>();
-    //     trace!("LK:{}", lk);
-    //     diff = new_lk - lk;
-    //     assert!(diff > -0.01, "{}", diff);
-    //     lk = new_lk;
-    // }
-    // for (idx, w) in weights.iter().enumerate() {
-    //     let w: Vec<_> = w.iter().map(|x| format!("{:.1}", x)).collect();
-    //     let lk = model.lk(&reads[idx]);
-    //     trace!("WEIGHT\t{}\t{}\t{}", idx, w.join("\t"), lk);
-    // }
-    // let predictions: Vec<_> = weights
-    //     .iter()
-    //     .map(|ws| {
-    //         ws.iter()
-    //             .enumerate()
-    //             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-    //             .map(|x| x.0)
-    //             .unwrap()
-    //     })
-    //     .collect();
-    // (predictions, lk)
 }
 
 fn em_clustering_old(
@@ -414,177 +349,448 @@ impl Model {
 fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
+    } else if xs.len() == 1 {
+        xs[0]
+    } else {
+        let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+        let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
+        assert!(sum >= 0., "{:?}->{}", xs, sum);
+        max + sum
     }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }
 
-// struct RawModel {
-//     fraction: Vec<f64>,
-//     category_fraction: Vec<Vec<Vec<f64>>>,
-// }
+/// Return the id of the read, the position at that read, and the clusters predicted.
+pub fn em_clustering(reads: &[&EncodedRead], config: &Config) -> (Vec<(u64, usize, u64)>, f64) {
+    trace!("==================");
+    let mut unit_counts: HashMap<_, usize> = HashMap::new();
+    for read in reads.iter() {
+        for node in read.nodes.iter() {
+            *unit_counts.entry(node.unit).or_default() += 1;
+        }
+    }
+    let use_units: HashSet<_> = unit_counts
+        .iter()
+        .filter(|&(_, &c)| c > config.coverage_thr)
+        .map(|(&x, _)| x)
+        .collect();
+    let k = config.cluster_num;
+    let contexts: Vec<_> = {
+        let mut buffer = vec![];
+        for read in reads.iter() {
+            for index in 0..read.nodes.len() {
+                if read.nodes[index].unit == config.focal {
+                    buffer.push(Context::new(read, index, &use_units));
+                }
+            }
+        }
+        buffer
+    };
+    // for (i, (context, read)) in contexts.iter().zip(reads.iter()).enumerate() {
+    //     let focal = read.nodes.iter().find(|n| n.unit == config.focal).unwrap();
+    //     let backward = context
+    //         .backward
+    //         .iter()
+    //         .rev()
+    //         .map(|(c, u)| format!("{}-{}", c, u));
+    //     let forward = context.forward.iter().map(|(c, u)| format!("{}-{}", c, u));
+    //     let center = std::iter::once(format!("{}-{}", context.unit, context.cluster));
+    //     let dump: Vec<_> = backward.chain(center).chain(forward).collect();
+    //     debug!("Context\t{}\t{}", i, dump.join("\t"));
+    // }
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
+    let mut weights: Vec<_> = (0..contexts.len())
+        .map(|_| {
+            let mut weight = vec![0f64; k];
+            const NUM: usize = 100;
+            for _ in 0..NUM {
+                weight[rng.gen_range(0..k)] += 1f64;
+            }
+            weight.iter_mut().for_each(|x| *x /= NUM as f64);
+            weight
+        })
+        .collect();
+    let mut model = EMModel::new(&contexts, &weights, k);
+    let mut lk = -1000000f64 * contexts.len() as f64;
+    loop {
+        let (prev_model, prev_weights) = (model.clone(), weights.clone());
+        let prev_lk = model.update(&mut weights, &contexts);
+        trace!("LK:{}", prev_lk);
+        if (prev_lk - lk) < 0.001 {
+            // Revert the update.
+            model = prev_model;
+            weights = prev_weights;
+            break;
+        } else {
+            lk = prev_lk;
+        }
+    }
+    // for (idx, w) in weights.iter().enumerate() {
+    //     let w: Vec<_> = w.iter().map(|x| format!("{:.1}", x)).collect();
+    //     let lk = model.lk(&contexts[idx]);
+    //     trace!("WEIGHT\t{}\t{}\t{}", idx, w.join("\t"), lk);
+    // }
+    let read_ids: Vec<_> = reads
+        .iter()
+        .flat_map(|read| {
+            read.nodes
+                .iter()
+                .filter(|n| n.unit == config.focal)
+                .map(|_| read.id)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let predictions: Vec<_> = contexts
+        .iter()
+        .zip(weights.iter())
+        .zip(read_ids)
+        .map(|((ctx, ws), id)| {
+            let cluster: usize = ws
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .map(|x| x.0)
+                .unwrap();
+            (id, ctx.index, cluster as u64)
+        })
+        .collect();
+    trace!("MODEL:{}", model);
+    for (context, &(_, _, cl)) in contexts.iter().zip(predictions.iter()) {
+        trace!("{}", cl);
+        let (forward, _) = model.models[cl as usize].forward_mapping(&context);
+        trace!("F:{:?}\t{:?}", forward, context.forward);
+        let (backward, _) = model.models[cl as usize].backward_mapping(&context);
+        trace!("B:{:?}\t{:?}", backward, context.backward);
+    }
+    (predictions, lk)
+}
 
-// impl RawModel {
-//     const PSEUDO_COUNT: f64 = 1f64;
-//     fn new(reads: &[Vec<(usize, usize)>], weights: &[Vec<f64>], k: usize) -> Self {
-//         let unit_num = reads
-//             .iter()
-//             .flat_map(|read| read.iter())
-//             .map(|x| x.0 + 1)
-//             .max()
-//             .unwrap();
-//         let category_num = {
-//             let mut catnum = vec![1; unit_num];
-//             for &(unit, cluster) in reads.iter().flat_map(|read| read.iter()) {
-//                 catnum[unit] = catnum[unit].max(cluster + 1);
-//             }
-//             catnum
-//         };
-//         assert!(weights.iter().all(|ws| ws.len() == k));
-//         let fraction: Vec<_> = {
-//             let mut frac = vec![Self::PSEUDO_COUNT; k];
-//             for ws in weights.iter() {
-//                 for (f, w) in frac.iter_mut().zip(ws) {
-//                     *f += w;
-//                 }
-//             }
-//             let sum = frac.iter().sum::<f64>();
-//             frac.iter_mut().for_each(|x| *x /= sum);
-//             frac
-//         };
-//         let sums_to_one = (1. - fraction.iter().sum::<f64>()).abs() < 0.0001;
-//         assert!(
-//             sums_to_one,
-//             "{:?}\t{}\t{}",
-//             fraction,
-//             weights.len(),
-//             reads.len(),
-//         );
-//         let category_fraction = {
-//             let mut catfrac: Vec<Vec<Vec<_>>> = (0..k)
-//                 .map(|_| {
-//                     category_num
-//                         .iter()
-//                         .map(|&x| vec![Self::PSEUDO_COUNT; x])
-//                         .collect()
-//                 })
-//                 .collect();
-//             for (read, ws) in reads.iter().zip(weights.iter()) {
-//                 for (slots, w) in catfrac.iter_mut().zip(ws.iter()) {
-//                     for &(unit, cluster) in read.iter() {
-//                         slots[unit][cluster] += w;
-//                     }
-//                 }
-//             }
-//             catfrac.iter_mut().for_each(|component| {
-//                 component.iter_mut().for_each(|position| {
-//                     let sum = position.iter().sum::<f64>();
-//                     position.iter_mut().for_each(|x| *x /= sum);
-//                 })
-//             });
-//             catfrac
-//         };
-//         Self {
-//             category_fraction,
-//             fraction,
-//         }
-//     }
-//     fn lk(&self, read: &[(usize, usize)]) -> f64 {
-//         let lks: Vec<_> = self
-//             .category_fraction
-//             .iter()
-//             .zip(self.fraction.iter())
-//             .map(|(component, f)| {
-//                 let prob = read.iter().map(|&(u, c)| component[u][c].ln()).sum::<f64>();
-//                 f.ln() + prob
-//             })
-//             .collect();
-//         logsumexp(&lks)
-//     }
-//     fn weight(&self, read: &[(usize, usize)]) -> Vec<f64> {
-//         let mut lks: Vec<_> = self
-//             .category_fraction
-//             .iter()
-//             .zip(self.fraction.iter())
-//             .map(|(component, f)| {
-//                 let prob = read.iter().map(|&(u, c)| component[u][c].ln()).sum::<f64>();
-//                 f.ln() + prob
-//             })
-//             .collect();
-//         let total = logsumexp(&lks);
-//         lks.iter_mut().for_each(|x| {
-//             *x = (*x - total).exp();
-//         });
-//         lks
-//     }
-// }
+// TODO: Add direction.
+#[derive(Debug, Clone)]
+pub struct Context {
+    // The original index of this context.
+    index: usize,
+    unit: u64,
+    cluster: u64,
+    forward: Vec<(u64, u64)>,
+    backward: Vec<(u64, u64)>,
+}
+
+impl Context {
+    fn new(read: &EncodedRead, index: usize, use_unit: &HashSet<u64>) -> Self {
+        let (unit, cluster) = (read.nodes[index].unit, read.nodes[index].cluster);
+        let nodes = read.nodes.iter();
+        let forward: Vec<_> = nodes
+            .clone()
+            .skip(index + 1)
+            .map(|n| (n.unit, n.cluster))
+            .filter(|n| use_unit.contains(&n.0))
+            .collect();
+        let backward: Vec<_> = nodes
+            .clone()
+            .take(index)
+            .rev()
+            .map(|n| (n.unit, n.cluster))
+            .filter(|n| use_unit.contains(&n.0))
+            .collect();
+        if read.nodes[index].is_forward {
+            Self {
+                index,
+                unit,
+                cluster,
+                forward,
+                backward,
+            }
+        } else {
+            Self {
+                index,
+                unit,
+                cluster,
+                forward: backward,
+                backward: forward,
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EMModel {
+    cluster_num: usize,
+    fraction: Vec<f64>,
+    models: Vec<RawModel>,
+}
+
+impl std::fmt::Display for EMModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "{}", self.cluster_num)?;
+        for (frac, m) in self.fraction.iter().zip(self.models.iter()) {
+            writeln!(f, "{:.3}\n{}", frac, m)?;
+        }
+        Ok(())
+    }
+}
+
+impl EMModel {
+    // Create new model.
+    fn new(contexts: &[Context], weights: &[Vec<f64>], cluster_num: usize) -> Self {
+        let mut fraction = vec![0f64; cluster_num];
+        for weight in weights.iter() {
+            fraction.iter_mut().zip(weight).for_each(|(x, y)| *x += y);
+        }
+        let sum: f64 = fraction.iter().sum();
+        fraction.iter_mut().for_each(|x| *x /= sum);
+        let mut models = vec![RawModel::new(); cluster_num];
+        for (weight, context) in weights.iter().zip(contexts) {
+            models.iter_mut().zip(weight).for_each(|(model, &w)| {
+                if SMALL < w {
+                    model.add(w, context);
+                }
+            });
+        }
+        models.iter_mut().for_each(|model| model.normalize());
+        Self {
+            cluster_num,
+            fraction,
+            models,
+        }
+    }
+    fn clear(&mut self) {
+        self.fraction.iter_mut().for_each(|x| *x = 0f64);
+        self.models.iter_mut().for_each(|m| m.clear());
+    }
+    // Return the **previous** likelihood!!!!!!!!!!
+    fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context]) -> f64 {
+        let mut total_lk = 0f64;
+        // Calculate the next weights, mapping position, and likelihood.
+        let mapping_positions: Vec<_> = weights
+            .iter_mut()
+            .zip(contexts.iter())
+            .map(|(weight, context)| {
+                let (mapping_positions, lk) = self.get_weight(context, weight);
+                total_lk += lk;
+                mapping_positions
+            })
+            .collect();
+        // Clear the previous model.
+        self.clear();
+        // Update fraction.
+        for weight in weights.iter() {
+            for (i, w) in weight.iter().enumerate() {
+                self.fraction[i] += w;
+            }
+        }
+        let sum: f64 = self.fraction.iter().sum();
+        self.fraction.iter_mut().for_each(|x| *x /= sum);
+        // Update paramters.
+        let summaries = weights.iter().zip(contexts).zip(mapping_positions);
+        for ((weight, context), mapping_positions) in summaries {
+            let each_model = weight
+                .iter()
+                .zip(self.models.iter_mut())
+                .zip(mapping_positions);
+            for ((&w, model), (forward_map, backward_map)) in each_model {
+                if SMALL < w {
+                    *model.center.entry(context.cluster).or_default() += w;
+                    for (&elm, pos) in context.forward.iter().zip(forward_map) {
+                        *model.forward[pos].entry(elm).or_default() += w;
+                    }
+                    for (&elm, pos) in context.backward.iter().zip(backward_map) {
+                        *model.backward[pos].entry(elm).or_default() += w;
+                    }
+                }
+            }
+        }
+        self.models.iter_mut().for_each(|model| model.normalize());
+        total_lk
+    }
+    // Mapping position is the location of the j-th element to the i-th model.[i][j]
+    fn get_weight(
+        &self,
+        context: &Context,
+        weight: &mut [f64],
+    ) -> (Vec<(Vec<usize>, Vec<usize>)>, f64) {
+        let (lks, mapping_positions): (Vec<_>, Vec<_>) = self
+            .models
+            .iter()
+            .zip(self.fraction.iter())
+            .map(|(m, f)| {
+                let center_lk = m.center[&context.cluster].max(SMALL).ln();
+                let (forward_mapping, lkf) = m.forward_mapping(context);
+                let (backward_mapping, lkb) = m.backward_mapping(context);
+                let lk = f.max(SMALL).ln() + center_lk + lkf + lkb;
+                (lk, (forward_mapping, backward_mapping))
+            })
+            .unzip();
+        let total_lk = logsumexp(&lks);
+        weight
+            .iter_mut()
+            .zip(lks)
+            .for_each(|(w, lk)| *w = (lk - total_lk).exp());
+        (mapping_positions, total_lk)
+    }
+    // fn lk(&self, context: &Context) -> f64 {
+    //     let lks: Vec<_> = self
+    //         .fraction
+    //         .iter()
+    //         .zip(self.models.iter())
+    //         .map(|(f, m)| m.lk(context) + f.max(SMALL).ln())
+    //         .collect();
+    //     logsumexp(&lks)
+    // }
+}
+
+const DEL_PROB: f64 = 0.05;
+const MATCH_PROB: f64 = 1f64 - DEL_PROB;
+const SMALL: f64 = 0.00000000000001;
+
+#[derive(Debug, Clone)]
+struct RawModel {
+    center: HashMap<u64, f64>,
+    forward: Vec<HashMap<(u64, u64), f64>>,
+    backward: Vec<HashMap<(u64, u64), f64>>,
+}
+
+impl std::fmt::Display for RawModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "Center:{:?}", self.center)?;
+        for (i, fr) in self.forward.iter().enumerate() {
+            let dump: Vec<_> = fr
+                .iter()
+                .map(|((x, y), val)| format!("({}-{}):{:.3}", x, y, val))
+                .collect();
+            writeln!(f, "F{}:{}", i, dump.join("\t"))?;
+        }
+        for (i, b) in self.backward.iter().enumerate() {
+            let dump: Vec<_> = b
+                .iter()
+                .map(|((x, y), val)| format!("({}-{}):{:.3}", x, y, val))
+                .collect();
+            writeln!(f, "B{}:{}", i, dump.join("\t"))?;
+        }
+        Ok(())
+    }
+}
+
+impl RawModel {
+    fn new() -> Self {
+        Self {
+            center: HashMap::new(),
+            forward: vec![],
+            backward: vec![],
+        }
+    }
+    // Add `context` into self. The position is the same as context.
+    fn add(&mut self, w: f64, context: &Context) {
+        // Enlarge model if needed.
+        let forward_len = context.forward.len().saturating_sub(self.forward.len());
+        self.forward
+            .extend(std::iter::repeat(HashMap::new()).take(forward_len));
+        let backward_len = context.backward.len().saturating_sub(self.backward.len());
+        self.backward
+            .extend(std::iter::repeat(HashMap::new()).take(backward_len));
+        // Add center.
+        *self.center.entry(context.cluster).or_default() += w;
+        // Add context.
+        self.forward
+            .iter_mut()
+            .zip(context.forward.iter())
+            .for_each(|(slot, &elm)| *slot.entry(elm).or_default() += w);
+        self.backward
+            .iter_mut()
+            .zip(context.backward.iter())
+            .for_each(|(slot, &elm)| *slot.entry(elm).or_default() += w);
+    }
+    // fn lk(&self, context: &Context) -> f64 {
+    //     let center_lk = self.center[&context.cluster].max(SMALL).ln();
+    //     self.forward_mapping(context).1 + center_lk + self.backward_mapping(context).1
+    // }
+    // Normalize this model to stat model.
+    fn normalize(&mut self) {
+        let sum: f64 = self.center.values().sum();
+        self.center.values_mut().for_each(|x| *x /= sum);
+        fn normalize(slots: &mut HashMap<(u64, u64), f64>) {
+            let sum: f64 = slots.values().sum();
+            slots.values_mut().for_each(|x| *x /= sum);
+            slots.retain(|_, prob| SMALL < *prob);
+        }
+        self.forward.iter_mut().for_each(normalize);
+        self.backward.iter_mut().for_each(normalize);
+    }
+    // Clear all the weights.
+    fn clear(&mut self) {
+        self.center.values_mut().for_each(|x| *x = 0f64);
+        fn clear(slots: &mut HashMap<(u64, u64), f64>) {
+            slots.values_mut().for_each(|x| *x = 0f64);
+        }
+        self.forward.iter_mut().for_each(clear);
+        self.backward.iter_mut().for_each(clear);
+    }
+    fn align_profile(
+        elements: &[(u64, u64)],
+        profiles: &[HashMap<(u64, u64), f64>],
+    ) -> (Vec<usize>, f64) {
+        assert!(
+            elements.len() <= profiles.len(),
+            "{},{}",
+            elements.len(),
+            profiles.len()
+        );
+        let minimum = SMALL.ln() * (elements.len() * profiles.len()) as f64;
+        let mut dp = vec![vec![minimum; profiles.len() + 1]; elements.len() + 1];
+        // True for match, false for deletion.
+        let mut is_matched = vec![vec![false; profiles.len() + 1]; elements.len() + 1];
+        for j in 0..profiles.len() {
+            dp[0][j] = j as f64 * DEL_PROB.ln();
+        }
+        for (i, elm) in elements.iter().enumerate().map(|(i, p)| (i + 1, p)) {
+            for (j, slot) in profiles.iter().enumerate().map(|(j, p)| (j + 1, p)) {
+                let match_prob = MATCH_PROB.ln() + slot.get(elm).copied().unwrap_or(0f64);
+                let match_score = dp[i - 1][j - 1] + match_prob.max(SMALL).ln();
+                let del_score = dp[i][j - 1] + DEL_PROB.ln();
+                if del_score < match_score {
+                    dp[i][j] = match_score;
+                    is_matched[i][j] = true;
+                } else {
+                    dp[i][j] = del_score;
+                    is_matched[i][j] = false;
+                }
+            }
+        }
+        // Start from the corner.
+        let mut mapping_position = vec![0; elements.len()];
+        let mut i = elements.len();
+        let (mut j, lk) = dp[i]
+            .iter()
+            .enumerate()
+            .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+            .unwrap();
+        while 0 < i || 0 < j {
+            if is_matched[i][j] {
+                assert!(0 < j && 0 < i, "{},{}", i, j);
+                i -= 1;
+                j -= 1;
+                mapping_position[i] = j;
+            } else {
+                assert!(0 < j, "{},{}", i, j);
+                j -= 1;
+            }
+        }
+        assert_eq!(i, 0);
+        assert_eq!(j, 0);
+        (mapping_position, *lk)
+    }
+    // Return the mapping position of each unit in the forward direction of context.
+    // In other words, the i-th element would be the index of the self.forward such that
+    // the location would give the maximum likelihood.
+    fn forward_mapping(&self, context: &Context) -> (Vec<usize>, f64) {
+        Self::align_profile(&context.forward, &self.forward)
+    }
+    // Return the mapping position of each unit in the backward direction of context.
+    // In other words, the i-th element would be the index of the self.backward such that
+    // the location would give the maximum likelihood.
+    fn backward_mapping(&self, context: &Context) -> (Vec<usize>, f64) {
+        Self::align_profile(&context.backward, &self.backward)
+    }
+}
 
 #[cfg(test)]
-mod test {
-    // use super::*;
-    // use rand::Rng;
-    // use rand::SeedableRng;
-    // use rand_xoshiro::Xoshiro256StarStar;
-    // #[test]
-    // fn raw_clustering_test() {
-    //     let template1: Vec<_> = (0..10).map(|x| (x, 0)).collect();
-    //     let template2: Vec<_> = (0..10).map(|x| (x, 1)).collect();
-    //     let reads: Vec<_> = (0..100)
-    //         .map(|i| {
-    //             if i < 50 {
-    //                 template1.clone()
-    //             } else {
-    //                 template2.clone()
-    //             }
-    //         })
-    //         .collect();
-    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(3948);
-    //     let config = Config::new(10, 242, 2, 2, 2);
-    //     let weights = (0..100)
-    //         .map(|_| {
-    //             let x = rng.gen_range(0f64..1f64);
-    //             vec![x, 1f64 - x]
-    //         })
-    //         .collect();
-    //     let (pred, _) = em_clustering_old(&reads, weights, &config);
-    //     let answer0: Vec<_> = vec![vec![0; 50], vec![1; 50]].concat();
-    //     let answer1: Vec<_> = vec![vec![1; 50], vec![0; 50]].concat();
-    //     assert!(pred == answer1 || pred == answer0);
-    // }
-    // #[test]
-    // fn context_clustering_test() {
-    //     let template1: Vec<_> = (0..5).chain(10..15).map(|x| (x, 0)).collect();
-    //     let template2: Vec<_> = (3..12).map(|x| (x, 0)).collect();
-    //     let reads: Vec<_> = (0..100)
-    //         .map(|i| {
-    //             if i < 50 {
-    //                 template1.clone()
-    //             } else {
-    //                 template2.clone()
-    //             }
-    //         })
-    //         .collect();
-    //     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(42);
-    //     let config = Config::new(10, 2424, 2, 2, 2);
-    //     let weights = (0..100)
-    //         .map(|_| {
-    //             let x = rng.gen_range(0f64..1f64);
-    //             vec![x, 1f64 - x]
-    //         })
-    //         .collect();
-    //     for (i, read) in reads.iter().enumerate() {
-    //         println!("{}\t{:?}", i, read);
-    //     }
-    //     let (pred, _) = em_clustering_old(&reads, weights, &config);
-    //     println!("{:?}", pred);
-    //     let answer0: Vec<_> = vec![vec![0; 50], vec![1; 50]].concat();
-    //     let answer1: Vec<_> = vec![vec![1; 50], vec![0; 50]].concat();
-    //     assert!(pred == answer1 || pred == answer0);
-    // }
-    // #[test]
-    // fn random_check() {}
-    // #[test]
-    // fn random_check_context() {}
-}
+mod test {}
