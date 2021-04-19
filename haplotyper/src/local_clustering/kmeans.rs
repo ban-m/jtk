@@ -64,6 +64,30 @@ pub fn clustering_rep<R: Rng, T: std::borrow::Borrow<[u8]>>(
     Some(assignments)
 }
 
+pub fn clustering_varcall<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    reads: &[T],
+    rng: &mut R,
+    config: &ClusteringConfig,
+) -> Option<Vec<u8>> {
+    let reads: Vec<_> = reads.iter().map(|x| x.borrow()).collect();
+    let radius = config.band_width;
+    let template = kiley::consensus(&reads, rng.gen(), 3, radius)?;
+    let template = kiley::padseq::PadSeq::new(template.as_slice());
+    let reads: Vec<_> = reads
+        .iter()
+        .map(|&r| kiley::padseq::PadSeq::new(r))
+        .collect();
+    let profiles: Vec<Vec<_>> = reads
+        .iter()
+        .map(|read| {
+            let (dist, table) =
+                kiley::bialignment::get_modification_table(&template, &read, radius);
+            table.iter().map(|&x| x as i32 - dist as i32).collect()
+        })
+        .collect();
+    Some(kmeans(&profiles, config.cluster_num, rng))
+}
+
 pub fn clustering_hmm<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,

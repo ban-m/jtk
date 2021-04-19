@@ -282,9 +282,10 @@ fn assemble(
             .iter()
             .map(|segment| {
                 let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
-                let segment = polish_segment(ds, segment, summary, c);
-                let segment = polish_segment(ds, &segment, summary, c);
-                correct_short_indels(ds, &segment, summary, c)
+                polish_segment(ds, segment, summary, c)
+                // let segment = polish_segment(ds, segment, summary, c);
+                // let segment = polish_segment(ds, &segment, summary, c);
+                // correct_short_indels(ds, &segment, summary, c)
             })
             .collect()
     } else {
@@ -352,7 +353,8 @@ fn align_reads(
     segment: &gfa::Segment,
     reads: &[&RawRead],
     c: &AssembleConfig,
-) -> std::io::Result<Vec<LastTAB>> {
+    //) -> std::io::Result<Vec<LastTAB>> {
+) -> std::io::Result<Vec<kiley::sam::Sam>> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
     let id: u64 = rng.gen::<u64>() % 100_000_000;
@@ -362,33 +364,36 @@ fn align_reads(
     std::fs::create_dir(&c_dir)?;
     // Create reference and reads.
     let (reference, reads) = {
-        // use bio_utils::fasta;
         let mut reference = c_dir.clone();
         reference.push("segment.fa");
         use std::io::{BufWriter, Write};
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
         let mut seq = segment.sequence.as_ref().unwrap().as_bytes().to_vec();
         // TODO: Should be tuned.
-        let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 20);
-        crate::repeat_masking::mask_repeat_in_seq(&mut seq, &repeat_masking_config);
+        // let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 20);
+        // crate::repeat_masking::mask_repeat_in_seq(&mut seq, &repeat_masking_config);
         let seq = String::from_utf8_lossy(&seq);
         writeln!(&mut wtr, ">{}\n{}", &segment.sid, seq)?;
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
         let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
-        let mut read_seqs: Vec<Vec<u8>> = reads.iter().map(|r| r.seq.as_bytes().to_vec()).collect();
+        // let mut read_seqs: Vec<Vec<u8>> = reads.iter().map(|r| r.seq.as_bytes().to_vec()).collect();
         // TODO: Should be tuned.
-        let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 200);
-        crate::repeat_masking::mask_repeats_in_reads(&mut read_seqs, &repeat_masking_config);
-        for (read, seq) in reads.iter().zip(read_seqs) {
-            let seq = String::from_utf8_lossy(&seq);
-            writeln!(&mut wtr, ">{}\n{}", read.name, seq)?;
+        // let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 200);
+        // crate::repeat_masking::mask_repeats_in_reads(&mut read_seqs, &repeat_masking_config);
+        // for (read, seq) in reads.iter().zip(read_seqs) {
+        for read in reads.iter() {
+            // let seq = String::from_utf8_lossy(&seq);
+            writeln!(&mut wtr, ">{}\n{}", read.name, read.seq)?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();
         (reference, reads)
     };
-    let alignment = invoke_last(&reference, &reads, &c_dir, c.threads);
+    let alignment = crate::minimap2::minimap2(&reads, &reference, c.threads, "map-pb", false, true);
+    // let alignment = invoke_last(&reference, &reads, &c_dir, c.threads);
+    let alignment = std::io::BufReader::new(alignment);
+    kiley::sam::Sam::from_reader(alignment);
     debug!("Removing {:?}", c_dir);
     std::fs::remove_dir_all(c_dir)?;
     debug!("Alignment done");

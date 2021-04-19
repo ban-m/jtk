@@ -96,8 +96,6 @@ impl ClusteringCorrection for DataSet {
         self
     }
     fn correct_clustering_em(mut self, repeat_num: usize, coverage_thr: usize) -> Self {
-        // let id_to_name: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-        // let id_to_desc: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
         let result: Vec<_> = self
             .selected_chunks
             .par_iter()
@@ -373,7 +371,6 @@ pub fn em_clustering(reads: &[&EncodedRead], config: &Config) -> (Vec<(u64, usiz
         .filter(|&(_, &c)| c > config.coverage_thr)
         .map(|(&x, _)| x)
         .collect();
-    let k = config.cluster_num;
     let contexts: Vec<_> = {
         let mut buffer = vec![];
         for read in reads.iter() {
@@ -385,6 +382,14 @@ pub fn em_clustering(reads: &[&EncodedRead], config: &Config) -> (Vec<(u64, usiz
         }
         buffer
     };
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
+    em_clustering_inner(&contexts, config.cluster_num, &mut rng)
+}
+pub fn em_clustering_inner<R: Rng>(
+    contexts: &[Context],
+    k: usize,
+    rng: &mut R,
+) -> (Vec<(u64, usize, u64)>, f64) {
     // for (i, (context, read)) in contexts.iter().zip(reads.iter()).enumerate() {
     //     let focal = read.nodes.iter().find(|n| n.unit == config.focal).unwrap();
     //     let backward = context
@@ -397,7 +402,6 @@ pub fn em_clustering(reads: &[&EncodedRead], config: &Config) -> (Vec<(u64, usiz
     //     let dump: Vec<_> = backward.chain(center).chain(forward).collect();
     //     debug!("Context\t{}\t{}", i, dump.join("\t"));
     // }
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let mut weights: Vec<_> = (0..contexts.len())
         .map(|_| {
             let mut weight = vec![0f64; k];
@@ -429,28 +433,17 @@ pub fn em_clustering(reads: &[&EncodedRead], config: &Config) -> (Vec<(u64, usiz
     //     let lk = model.lk(&contexts[idx]);
     //     trace!("WEIGHT\t{}\t{}\t{}", idx, w.join("\t"), lk);
     // }
-    let read_ids: Vec<_> = reads
-        .iter()
-        .flat_map(|read| {
-            read.nodes
-                .iter()
-                .filter(|n| n.unit == config.focal)
-                .map(|_| read.id)
-                .collect::<Vec<_>>()
-        })
-        .collect();
     let predictions: Vec<_> = contexts
         .iter()
         .zip(weights.iter())
-        .zip(read_ids)
-        .map(|((ctx, ws), id)| {
+        .map(|(ctx, ws)| {
             let cluster: usize = ws
                 .iter()
                 .enumerate()
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
                 .map(|x| x.0)
                 .unwrap();
-            (id, ctx.index, cluster as u64)
+            (ctx.id, ctx.index, cluster as u64)
         })
         .collect();
     trace!("MODEL:{}", model);
@@ -467,6 +460,8 @@ pub fn em_clustering(reads: &[&EncodedRead], config: &Config) -> (Vec<(u64, usiz
 // TODO: Add direction.
 #[derive(Debug, Clone)]
 pub struct Context {
+    // The ID of the original encoded read.
+    id: u64,
     // The original index of this context.
     index: usize,
     unit: u64,
@@ -476,6 +471,23 @@ pub struct Context {
 }
 
 impl Context {
+    pub fn with_attrs(
+        id: u64,
+        index: usize,
+        unit: u64,
+        cluster: u64,
+        forward: Vec<(u64, u64)>,
+        backward: Vec<(u64, u64)>,
+    ) -> Self {
+        Self {
+            id,
+            index,
+            unit,
+            cluster,
+            forward,
+            backward,
+        }
+    }
     fn new(read: &EncodedRead, index: usize, use_unit: &HashSet<u64>) -> Self {
         let (unit, cluster) = (read.nodes[index].unit, read.nodes[index].cluster);
         let nodes = read.nodes.iter();
@@ -494,6 +506,7 @@ impl Context {
             .collect();
         if read.nodes[index].is_forward {
             Self {
+                id: read.id,
                 index,
                 unit,
                 cluster,
@@ -502,6 +515,7 @@ impl Context {
             }
         } else {
             Self {
+                id: read.id,
                 index,
                 unit,
                 cluster,

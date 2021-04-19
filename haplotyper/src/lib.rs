@@ -15,6 +15,7 @@ mod pick_component;
 mod polish_clustering;
 mod polish_units;
 pub mod repeat_masking;
+pub mod resolve_unit_repeats;
 pub mod unit_correlation;
 mod view;
 #[macro_use]
