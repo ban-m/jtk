@@ -30,9 +30,6 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 
 `rg TODO` would show where to check.
 
-### Unit encoding
-LAST -> Something else. Hopefully, it is written in Rust. The priority of this TODO is extremely low, as LAST would serve a good aligner as far.
-
 ###  Documentation
 Currently, I've written documents on only a few types. We should write more and more documentation before we forget the meaning of fragments of codes.
 

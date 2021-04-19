@@ -1,12 +1,8 @@
 pub mod ditch_graph;
-pub mod pileup;
 pub mod string_graph;
 use definitions::*;
-// mod naive_consensus;
-use bio_utils::lasttab::LastTAB;
 use ditch_graph::*;
 use gfa::GFA;
-use rayon::prelude::*;
 use serde::*;
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,10 +278,8 @@ fn assemble(
             .iter()
             .map(|segment| {
                 let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
-                polish_segment(ds, segment, summary, c)
-                // let segment = polish_segment(ds, segment, summary, c);
-                // let segment = polish_segment(ds, &segment, summary, c);
-                // correct_short_indels(ds, &segment, summary, c)
+                let segment = polish_segment(ds, segment, summary, c);
+                polish_segment(ds, &segment, summary, c)
             })
             .collect()
     } else {
@@ -332,29 +326,11 @@ fn get_reads_in_cluster<'a>(ds: &'a DataSet, summary: &ContigSummary) -> Vec<&'a
         .collect()
 }
 
-fn correct_short_indels(
-    ds: &DataSet,
-    segment: &gfa::Segment,
-    summary: &ContigSummary,
-    c: &AssembleConfig,
-) -> gfa::Segment {
-    let reads = get_reads_in_cluster(ds, summary);
-    let alignments = match align_reads(segment, &reads, c) {
-        Ok(res) => res,
-        Err(why) => panic!("{:?}", why),
-    };
-    use pileup::*;
-    let seq = Pileups::convert_into_pileup(&alignments, segment, &reads, c).generate();
-    let seq = String::from_utf8(seq).unwrap();
-    gfa::Segment::from(segment.sid.clone(), seq.len(), Some(seq))
-}
-
 fn align_reads(
     segment: &gfa::Segment,
     reads: &[&RawRead],
     c: &AssembleConfig,
-    //) -> std::io::Result<Vec<LastTAB>> {
-) -> std::io::Result<Vec<kiley::sam::Sam>> {
+) -> std::io::Result<kiley::sam::Sam> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
     let id: u64 = rng.gen::<u64>() % 100_000_000;
@@ -368,355 +344,47 @@ fn align_reads(
         reference.push("segment.fa");
         use std::io::{BufWriter, Write};
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
-        let mut seq = segment.sequence.as_ref().unwrap().as_bytes().to_vec();
-        // TODO: Should be tuned.
-        // let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 20);
-        // crate::repeat_masking::mask_repeat_in_seq(&mut seq, &repeat_masking_config);
+        let seq = segment.sequence.as_ref().unwrap().as_bytes().to_vec();
         let seq = String::from_utf8_lossy(&seq);
         writeln!(&mut wtr, ">{}\n{}", &segment.sid, seq)?;
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
         let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
-        // let mut read_seqs: Vec<Vec<u8>> = reads.iter().map(|r| r.seq.as_bytes().to_vec()).collect();
-        // TODO: Should be tuned.
-        // let repeat_masking_config = crate::repeat_masking::RepeatMaskConfig::new(15, 0.0002, 200);
-        // crate::repeat_masking::mask_repeats_in_reads(&mut read_seqs, &repeat_masking_config);
-        // for (read, seq) in reads.iter().zip(read_seqs) {
         for read in reads.iter() {
-            // let seq = String::from_utf8_lossy(&seq);
             writeln!(&mut wtr, ">{}\n{}", read.name, read.seq)?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();
         (reference, reads)
     };
-    let alignment = crate::minimap2::minimap2(&reads, &reference, c.threads, "map-pb", false, true);
-    // let alignment = invoke_last(&reference, &reads, &c_dir, c.threads);
-    let alignment = std::io::BufReader::new(alignment);
-    kiley::sam::Sam::from_reader(alignment);
+    let thr = format!("{}", c.threads);
+    let args = ["-x", "map-pb", "-a", "-t", &thr, "--secondary=no"];
+    let alignment = crate::minimap2::minimap2_args(&reference, &reads, &args);
+    let alignment = kiley::sam::Sam::from_reader(std::io::BufReader::new(alignment.as_slice()));
     debug!("Removing {:?}", c_dir);
     std::fs::remove_dir_all(c_dir)?;
     debug!("Alignment done");
-    alignment
-}
-
-pub fn invoke_last(
-    reference: &str,
-    reads: &str,
-    c_dir: &std::path::Path,
-    threads: usize,
-) -> std::io::Result<Vec<LastTAB>> {
-    use std::io::{BufWriter, Write};
-    let mut db_name = c_dir.to_path_buf();
-    db_name.push("reference");
-    let db_name = db_name.into_os_string().into_string().unwrap();
-    // Create database - train - align
-    let lastdb = std::process::Command::new("lastdb")
-        .args(&["-R", "11", "-Q", "0", &db_name, &reference])
-        .output()?;
-    if !lastdb.status.success() {
-        panic!("lastdb-{}", String::from_utf8_lossy(&lastdb.stderr));
-    }
-    let p = format!("{}", threads);
-    let last_train = std::process::Command::new("last-train")
-        .args(&["-P", &p, "-Q", "0", &db_name, &reads])
-        .output()
-        .unwrap();
-    if !last_train.status.success() {
-        panic!("last-train-{}", String::from_utf8_lossy(&last_train.stderr));
-    }
-    let param = {
-        let mut param = c_dir.to_path_buf();
-        param.push("param.par");
-        let mut wtr = BufWriter::new(std::fs::File::create(&param).unwrap());
-        wtr.write_all(&last_train.stdout).unwrap();
-        wtr.flush().unwrap();
-        param.into_os_string().into_string().unwrap()
-    };
-    let lastal = std::process::Command::new("lastal")
-        .args(&[
-            "-P", &p, "-R", "11", "-Q", "0", "-p", &param, &db_name, &reads,
-        ])
-        .stdout(std::process::Stdio::piped())
-        .spawn();
-    let lastal = match lastal {
-        Ok(res) => match res.stdout {
-            Some(res) => res,
-            None => panic!("lastal invoke, but stdout is None."),
-        },
-        Err(why) => panic!("lastal{:?}", why),
-    };
-    let last_split = std::process::Command::new("last-split")
-        .stdin(std::process::Stdio::from(lastal))
-        .stdout(std::process::Stdio::piped())
-        .spawn();
-    let last_split = match last_split {
-        Ok(res) => match res.stdout {
-            Some(res) => res,
-            None => panic!("last_split is invoked, but the stdout is None"),
-        },
-        Err(why) => panic!("last_split {:?}", why),
-    };
-    let maf_convert = match std::process::Command::new("maf-convert")
-        .args(&["tab", "-j", "1000"])
-        .stdin(std::process::Stdio::from(last_split))
-        .output()
-    {
-        Ok(res) if res.status.success() => res,
-        Ok(res) => panic!("maf-convert exit with status {}", res.status),
-        Err(why) => panic!("maf_convert {:?}", why),
-    };
-
-    let alignments: Vec<_> = String::from_utf8_lossy(&maf_convert.stdout)
-        .lines()
-        .filter(|e| !e.starts_with('#'))
-        .filter_map(|e| LastTAB::from_line(&e))
-        .collect();
-    Ok(alignments)
+    Ok(alignment)
 }
 
 pub fn polish_by_chunking(
-    alignments: &[LastTAB],
+    alignments: &kiley::sam::Sam,
     segment: &gfa::Segment,
     reads: &[&RawRead],
     c: &AssembleConfig,
 ) -> Vec<u8> {
-    let len = c.window_size;
-    debug!("Recording {} alignments...", alignments.len());
-    let segment = segment.sequence.as_ref().unwrap().as_bytes();
-    let alignments: HashMap<_, Vec<_>> = {
-        let mut result: HashMap<_, Vec<_>> = HashMap::new();
-        for aln in alignments
-            .iter()
-            .filter(|aln| aln.seq1_matchlen() > crate::encode::MARGIN)
-        {
-            result
-                .entry(aln.seq2_name().to_string())
-                .or_default()
-                .push(aln);
-        }
-        result
+    let template_seq = match segment.sequence.as_ref() {
+        Some(res) => res.as_bytes().to_vec(),
+        None => panic!(),
     };
-    let mut chunks: Vec<Vec<_>> = vec![vec![]; segment.len() / len + 1];
-    for read in reads.iter() {
-        if let Some(alns) = alignments.get(&read.name) {
-            let cs = into_chunks(alns, read, segment, len);
-            for (pos, chunk) in cs {
-                chunks[pos].push(chunk);
-            }
-        }
-    }
-    chunks
-        .into_par_iter()
-        .enumerate()
-        .flat_map(|(idx, mut cs)| {
-            if cs.is_empty() {
-                return vec![];
-            }
-            let mut lens: Vec<_> = cs.iter().map(|seq| seq.len()).collect();
-            lens.sort_unstable();
-            let median = lens[lens.len() / 2];
-            lens.sort_by_key(|x| x.max(&median) - x.min(&median));
-            let mad = median.max(lens[lens.len() / 2]) - median.min(lens[lens.len() / 2]);
-            let mad = mad.max(1);
-            let min = median.max(mad * 5) - mad * 5;
-            let max = median + mad * 5;
-            cs.retain(|seq| min < seq.len() && seq.len() < max);
-            let template = &segment[idx * len..((idx + 1) * len).min(segment.len())];
-            consensus(template, &cs, 10)
-        })
-        .collect()
-}
-
-fn consensus(_template: &[u8], xs: &[Vec<u8>], num: usize) -> Vec<u8> {
-    if xs.is_empty() {
-        return vec![];
-    } else if xs.iter().map(|xs| xs.len()).max().unwrap() < 10 {
-        return xs.iter().max_by_key(|x| x.len()).unwrap().to_vec();
-    }
-    let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
-    use rand_xoshiro::Xoroshiro128StarStar;
-    let cs: Vec<_> = (0..num as u64)
-        .into_par_iter()
-        .map(|s| {
-            use rand::seq::SliceRandom;
-            let mut rng: Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(s);
-            let mut cs: Vec<_> = xs.to_vec();
-            cs.shuffle(&mut rng);
-            let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
-            let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
-            cs.iter()
-                .filter(|c| !c.is_empty())
-                .fold(poa_hmm::POA::default(), |x, y| {
-                    let res = if x.nodes().len() > node_num_thr {
-                        x.add(y, 1., param).remove_node(0.4)
-                    } else {
-                        x.add(y, 1., param)
-                    };
-                    res
-                })
-                .remove_node(0.3)
-                .finalize()
-                .consensus()
-        })
-        .collect();
-    let cs: Vec<_> = cs.iter().map(|cs| cs.as_slice()).collect();
-    poa_hmm::POA::default()
-        .update_thr(&cs, &vec![1.; cs.len()], param, 0.8, 1.5)
-        .consensus()
-}
-
-// Maybe we can use encoding module to this functionality?
-// Or, maybe we just pick the most possible alignment...?
-fn into_chunks<'a>(
-    alignments: &[&LastTAB],
-    read: &'a RawRead,
-    segment: &[u8],
-    len: usize,
-) -> Vec<(usize, Vec<u8>)> {
-    // Determine the direction,
-    // alignments
-    //     .iter()
-    //     .flat_map(|aln| {
-    //         let read: Vec<_> = if aln.seq2_direction().is_forward() {
-    //             read.seq().iter().map(|x| x.to_ascii_uppercase()).collect()
-    //         } else {
-    //             let seq: Vec<_> = read.seq().iter().map(|x| x.to_ascii_uppercase()).collect();
-    //             bio_utils::revcmp(&seq)
-    //         };
-    //         let query_start = aln.seq2_start();
-    //         let ref_start = aln.seq1_start();
-    //         use bio_utils::lasttab;
-    //         let ops: Vec<_> = aln
-    //             .alignment()
-    //             .into_iter()
-    //             .map(|op| match op {
-    //                 lasttab::Op::Seq1In(l) => Op::Ins(*l),
-    //                 lasttab::Op::Seq2In(l) => Op::Del(*l),
-    //                 lasttab::Op::Match(l) => Op::Match(*l),
-    //             })
-    //             .collect();
-    //         split_reads(&read, query_start, ref_start, ops, len)
-    //     })
-    //     .collect()
-    let read: Vec<_> = read.seq().iter().map(|x| x.to_ascii_uppercase()).collect();
-    use crate::encode::join_alignments;
-    let merged = [true, false]
+    let segment = (segment.sid.clone(), template_seq);
+    debug!("Recording {} alignments...", alignments.records.len());
+    let reads: Vec<_> = reads
         .iter()
-        .filter_map(|&direction| {
-            let mut alns: Vec<&LastTAB> = alignments
-                .iter()
-                .copied()
-                .filter(|aln| aln.seq2_direction().is_forward() == direction)
-                .collect();
-            if alns.is_empty() {
-                return None;
-            }
-            let read: Vec<_> = if direction {
-                read.clone()
-            } else {
-                bio_utils::revcmp(&read)
-            };
-            let (qpos, rpos, ops) = join_alignments(&mut alns, segment, &read);
-            let score = ops
-                .iter()
-                .map(|&e| match e {
-                    Op::Del(l) => l as i32 * -2,
-                    Op::Ins(l) => l as i32 * -2,
-                    Op::Match(l) => l as i32,
-                })
-                .sum::<i32>();
-            Some((qpos, rpos, ops, read, score, direction))
-        })
-        .max_by_key(|x| x.4);
-    if let Some((query_start, refr_start, ops, read, _, _)) = merged {
-        split_reads(&read, query_start, refr_start, ops, len)
-    } else {
-        Vec::with_capacity(0)
-    }
-}
-
-pub fn split_reads(
-    read: &[u8],
-    query_start: usize,
-    ref_start: usize,
-    mut ops: Vec<Op>,
-    len: usize,
-) -> Vec<(usize, Vec<u8>)> {
-    let (mut q_pos, mut r_pos) = (query_start, ref_start);
-    let mut target = (ref_start / len + 1) * len;
-    ops.reverse();
-    let mut chunk_position = vec![query_start];
-    let (query_total, refr_total) = ops.iter().fold((q_pos, r_pos), |(q, r), &x| match x {
-        Op::Match(l) => (q + l, r + l),
-        Op::Del(l) => (q, r + l),
-        Op::Ins(l) => (q + l, r),
-    });
-    loop {
-        // Pop until target.
-        let last_op = {
-            let rest = refr_total - r_pos;
-            loop {
-                match ops.pop() {
-                    Some(Op::Del(l)) => {
-                        r_pos += l;
-                        if target <= r_pos {
-                            break Op::Del(l);
-                        }
-                    }
-                    Some(Op::Ins(l)) => {
-                        q_pos += l;
-                    }
-                    Some(Op::Match(l)) => {
-                        r_pos += l;
-                        q_pos += l;
-                        if target <= r_pos {
-                            break Op::Match(l);
-                        }
-                    }
-                    None => {
-                        debug!(
-                            "ERR\t{}\t{}\t{}\t{}\t{}\t{}",
-                            query_total, refr_total, q_pos, r_pos, target, rest
-                        );
-                        unreachable!()
-                    }
-                }
-            }
-        };
-        // Push back
-        if target < r_pos {
-            let overflow = r_pos - target;
-            match last_op {
-                Op::Del(_) => {
-                    ops.push(Op::Del(overflow));
-                    r_pos -= overflow;
-                }
-                Op::Match(_) => {
-                    ops.push(Op::Match(overflow));
-                    r_pos -= overflow;
-                    q_pos -= overflow;
-                }
-                _ => unreachable!(),
-            }
-        }
-        chunk_position.push(q_pos);
-        // Move to next iteration
-        let rest = refr_total - r_pos;
-        let query_rest = query_total - q_pos;
-        if rest < len && query_rest > 0 {
-            chunk_position.push(query_total);
-            break;
-        } else if rest < len && query_rest == 0 {
-            break;
-        } else {
-            target += len;
-        }
-    }
-    let offset = ref_start / len;
-    chunk_position
-        .windows(2)
-        .enumerate()
-        .map(|(idx, w)| (idx + offset, read[w[0]..w[1]].to_vec()))
-        .collect()
+        .map(|r| (r.name.clone(), r.seq().to_vec()))
+        .collect();
+    let config = kiley::PolishConfig::new(100, c.window_size, 30, 50, 43);
+    let mut polished = kiley::polish(&vec![segment], &reads, &alignments.records, &config);
+    assert_eq!(polished.len(), 1);
+    polished.pop().unwrap().1
 }

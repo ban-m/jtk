@@ -47,21 +47,26 @@ pub fn clustering_rep<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
     config: &ClusteringConfig,
-) -> Option<Vec<u8>> {
+) -> Vec<u8> {
     // Polish clustering in `retry_num` times.
     let reads: Vec<_> = reads.iter().map(|x| x.borrow()).collect();
     let band_width = config.band_width;
-    let cons_template = kiley::consensus_bounded(&reads, rng.gen(), 3, band_width, 2 * band_width)?;
     let mut assignments: Vec<_> = (0..reads.len())
         .map(|i| (i % config.cluster_num as usize) as u8)
         .collect();
+    let cons_template = match kiley::consensus(&reads, rng.gen(), 3, band_width) {
+        Some(res) => res,
+        None => return assignments,
+    };
     // TODO: parametrize here.
     for _ in 0..5 {
-        let profiles: Vec<Vec<_>> = (0..config.retry_num)
-            .find_map(|_| get_profiles(&cons_template, &assignments, &reads, rng, config))?;
-        assignments = kmeans(&profiles, config.cluster_num, rng);
+        if let Some(profiles) = (0..config.retry_num)
+            .find_map(|_| get_profiles(&cons_template, &assignments, &reads, rng, config))
+        {
+            assignments = kmeans(&profiles, config.cluster_num, rng);
+        }
     }
-    Some(assignments)
+    assignments
 }
 
 pub fn clustering_varcall<R: Rng, T: std::borrow::Borrow<[u8]>>(

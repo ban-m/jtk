@@ -40,8 +40,8 @@ then
     echo "Global clustering seems to be done. Just assemble these files."
 else    
     cat ${CLUSTERED} |\
-        jtk clustering_correction -vv --graph --threads ${THREADS} |\
-        jtk global_clustering -vv --threads ${THREADS} |\
+        jtk clustering_correction -vv  --threads ${THREADS} |\
+        jtk global_clustering -vv --threads ${THREADS} --graph |\
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
 cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} > /dev/null

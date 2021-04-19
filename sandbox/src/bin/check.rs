@@ -30,11 +30,6 @@ fn main() -> std::io::Result<()> {
     let template: Vec<_> = (0..chain_len)
         .map(|_| gen_sample::generate_seq(&mut rng, len))
         .collect::<Vec<_>>();
-    // let p = gen_sample::Profile {
-    //     sub: errors / 3.,
-    //     ins: errors / 3.,
-    //     del: errors / 3.,
-    // };
     let mut templates = vec![template.clone()];
     assert!(clusters > 1);
     for _ in 0..clusters - 1 {
@@ -55,10 +50,6 @@ fn main() -> std::io::Result<()> {
             }
             _ => panic!(),
         };
-        // let seq: Vec<_> = template
-        //     .iter()
-        //     .map(|e| gen_sample::introduce_randomness(e, &mut rng, &p))
-        //     .collect();
         templates.push(seq);
     }
     use sandbox::generate_mul_data;
@@ -87,8 +78,7 @@ fn main() -> std::io::Result<()> {
     let config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(50, 30, 3, 2, 20);
     // let preds =
     //     haplotyper::local_clustering::kmeans::clustering_rep(&reads, &mut rng, &config).unwrap();
-    let preds = haplotyper::local_clustering::kmeans::clustering_varcall(&reads, &mut rng, &config)
-        .unwrap();
+    let preds = haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &config);
     let end = std::time::Instant::now();
     let score = haplotyper::rand_index(&preds, &answer);
     let time = (end - start).as_millis();
@@ -120,21 +110,6 @@ fn main() -> std::io::Result<()> {
         let diff = diff.join("\t");
         eprintln!("D\t{}\t{}\t{}\t{}", idx, answer, pred, diff);
         *result.entry((pred, answer)).or_default() += 1;
-    }
-    eprintln!("{}", sum as f64 / reads.len() as f64);
-    let tempdiff = kiley::gen_seq::introduce_errors(&templates[0], &mut rng, 1, 0, 0);
-    let mut sum = 0;
-    for (idx, read) in reads.iter().enumerate() {
-        let ed0 = edlib_sys::global_dist(&templates[0], &read) as i32;
-        let ed1 = edlib_sys::global_dist(&tempdiff, &read) as i32;
-        sum += (ed1 - ed0);
-        eprintln!("{}\t{}", idx, ed1 - ed0);
-    }
-    eprintln!("{}", sum as f64 / reads.len() as f64);
-    let mut result: Vec<_> = result.into_iter().collect();
-    result.sort_by_key(|x| x.1);
-    for ((pred, ans), count) in result {
-        eprintln!("{}\t{}\t{}", pred, ans, count);
     }
     Ok(())
 }

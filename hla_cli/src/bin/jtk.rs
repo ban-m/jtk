@@ -1,4 +1,3 @@
-// use bio_utils::lasttab::LastTAB;
 use clap::{App, Arg, SubCommand};
 use definitions::*;
 use haplotyper::*;
@@ -247,7 +246,7 @@ fn subcommand_encode() -> App<'static, 'static> {
     SubCommand::with_name("encode")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Encode reads by alignments (Internally invoke `LAST` tools).")
+        .about("Encode reads by alignments (Internally invoke `minimap2` tools).")
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -595,7 +594,7 @@ fn subcommand_assembly() -> App<'static, 'static> {
                 .required(false)
                 .value_name("WINDOW_SIZE")
                 .help("Size of the window to take consensus sequences.")
-                .default_value(&"100")
+                .default_value(&"2000")
                 .takes_value(true),
         )
         .arg(
@@ -956,7 +955,7 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    Ok(dataset.correct_clustering(repeat_num, threshold))
+    Ok(dataset.correct_clustering_em(repeat_num, threshold))
 }
 
 fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
