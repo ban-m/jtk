@@ -54,62 +54,66 @@ fn main() -> std::io::Result<()> {
     }
     use sandbox::generate_mul_data;
     let (mut dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
-    dataset
-        .iter_mut()
-        .zip(answer.iter())
-        .for_each(|(x, &ans)| x.cluster = ans as usize);
-    // let unit = definitions::Unit {
-    //     id: 0,
-    //     seq: String::new(),
-    //     cluster_num: 2,
-    // };
-    // let start = std::time::Instant::now();
-    // haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
-    // let end = std::time::Instant::now();
-    // let preds: Vec<_> = dataset.iter().map(|x| x.cluster as u8).collect();
-    // let score = haplotyper::rand_index(&preds, &answer);
-    // let time = (end - start).as_millis();
-    // println!("RESULT\t{}\tOLD\t{}\t{}", seed, score, time);
-    let reads: Vec<Vec<_>> = dataset
-        .iter()
-        .map(|x| x.chunks.iter().flat_map(|x| x.seq.clone()).collect())
-        .collect();
-    let start = std::time::Instant::now();
-    let config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(50, 30, 3, 2, 20);
-    // let preds =
-    //     haplotyper::local_clustering::kmeans::clustering_rep(&reads, &mut rng, &config).unwrap();
-    let preds = haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &config);
-    let end = std::time::Instant::now();
-    let score = haplotyper::rand_index(&preds, &answer);
-    let time = (end - start).as_millis();
-    println!("RESULT\t{}\tNEW\t{}\t{}", seed, score, time);
-    use std::collections::HashMap;
-    let mut result: HashMap<_, u32> = HashMap::new();
-    let templates: Vec<_> = templates
-        .iter()
-        .map(|xs| {
-            xs.iter()
-                .flat_map(std::convert::identity)
-                .copied()
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let mut sum = 0;
-    for (idx, ((pred, answer), read)) in preds.iter().zip(answer).zip(&reads).enumerate() {
-        let ed0 = edlib_sys::global_dist(&templates[0], &read) as i32;
-        let diff: Vec<_> = templates
-            .iter()
-            .skip(1)
-            .map(|template| {
-                let diff = edlib_sys::global_dist(read, template) as i32 - ed0;
-                sum += diff;
-                diff
-            })
-            .map(|e| format!("{}", e))
-            .collect();
-        let diff = diff.join("\t");
-        eprintln!("D\t{}\t{}\t{}\t{}", idx, answer, pred, diff);
-        *result.entry((pred, answer)).or_default() += 1;
+    let unit = definitions::Unit {
+        id: 0,
+        seq: String::new(),
+        cluster_num: clusters,
+    };
+    {
+        let start = std::time::Instant::now();
+        haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
+        let end = std::time::Instant::now();
+        let preds: Vec<_> = dataset.iter().map(|x| x.cluster as u8).collect();
+        let score = haplotyper::rand_index(&preds, &answer);
+        eprintln!("Answer\t{:?}", answer);
+        eprintln!("OLD\t{:?}", preds);
+        let time = (end - start).as_millis();
+        println!("RESULT\t{}\tOLD\t{}\t{}", seed, score, time);
     }
+    {
+        let reads: Vec<Vec<_>> = dataset
+            .iter()
+            .map(|x| x.chunks.iter().flat_map(|x| x.seq.clone()).collect())
+            .collect();
+        let start = std::time::Instant::now();
+        let clusters = clusters as u8;
+        let config =
+            haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 30, 3, clusters, 20);
+        let preds =
+            haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &config).unwrap();
+        let end = std::time::Instant::now();
+        let score = haplotyper::rand_index(&preds, &answer);
+        let time = (end - start).as_millis();
+        eprintln!("NEW\t{:?}", preds);
+        println!("RESULT\t{}\tNEW\t{}\t{}", seed, score, time);
+    }
+    // use std::collections::HashMap;
+    // let mut result: HashMap<_, u32> = HashMap::new();
+    // let templates: Vec<_> = templates
+    //     .iter()
+    //     .map(|xs| {
+    //         xs.iter()
+    //             .flat_map(std::convert::identity)
+    //             .copied()
+    //             .collect::<Vec<_>>()
+    //     })
+    //     .collect();
+    // let mut sum = 0;
+    // for (idx, ((pred, answer), read)) in preds.iter().zip(answer).zip(&reads).enumerate() {
+    //     let ed0 = edlib_sys::global_dist(&templates[0], &read) as i32;
+    //     let diff: Vec<_> = templates
+    //         .iter()
+    //         .skip(1)
+    //         .map(|template| {
+    //             let diff = edlib_sys::global_dist(read, template) as i32 - ed0;
+    //             sum += diff;
+    //             diff
+    //         })
+    //         .map(|e| format!("{}", e))
+    //         .collect();
+    //     let diff = diff.join("\t");
+    //     eprintln!("D\t{}\t{}\t{}\t{}", idx, answer, pred, diff);
+    //     *result.entry((pred, answer)).or_default() += 1;
+    // }
     Ok(())
 }

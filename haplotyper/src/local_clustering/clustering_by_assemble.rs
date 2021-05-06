@@ -136,7 +136,7 @@ fn polish_consensus(
     consensus
         .iter()
         .zip(slots)
-        .map(|(c, xs)| kiley::polish_until_converge_banded(&c, &xs, config.band_size).unwrap())
+        .map(|(c, xs)| kiley::polish_until_converge_banded(&c, &xs, config.band_size))
         .collect()
 }
 

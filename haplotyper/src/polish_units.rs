@@ -33,46 +33,47 @@ impl PolishUnitConfig {
 /// newly poilished units again.
 pub trait PolishUnit {
     fn polish_unit(self, c: &PolishUnitConfig) -> Self;
-    fn polish_unit_kiley(self, c: &PolishUnitConfig) -> Self;
+    // fn polish_unit_kiley(self, c: &PolishUnitConfig) -> Self;
 }
 
 impl PolishUnit for DataSet {
-    fn polish_unit_kiley(mut self, c: &PolishUnitConfig) -> Self {
-        let mut pileups: HashMap<_, Vec<_>> = self
-            .selected_chunks
-            .iter()
-            .map(|unit| (unit.id, vec![]))
-            .collect();
-        let cluster_num: HashMap<_, _> = self
-            .selected_chunks
-            .iter()
-            .map(|unit| (unit.id, unit.cluster_num))
-            .collect();
-        for read in self.encoded_reads.iter() {
-            for node in read.nodes.iter() {
-                if let Some(res) = pileups.get_mut(&node.unit) {
-                    res.push(node.seq());
-                }
-            }
-        }
-        let mut pileups: Vec<_> = pileups.into_iter().collect();
-        pileups.sort_by_key(|x| x.0);
-        self.selected_chunks = pileups
-            .par_iter()
-            .filter_map(|&(id, ref pileup)| {
-                if c.filter_size < pileup.len() {
-                    let seq = kiley::consensus(pileup, c.seed, 3, 50)?;
-                    let seq = String::from_utf8(seq).ok()?;
-                    Some(Unit::new(id, seq, cluster_num[&id]))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        debug!("{}=>{}", pileups.len(), self.selected_chunks.len());
-        self.encoded_reads.clear();
-        self
-    }
+    // fn polish_unit_kiley(mut self, c: &PolishUnitConfig) -> Self {
+    //     let mut pileups: HashMap<_, Vec<_>> = self
+    //         .selected_chunks
+    //         .iter()
+    //         .map(|unit| (unit.id, vec![]))
+    //         .collect();
+    //     let cluster_num: HashMap<_, _> = self
+    //         .selected_chunks
+    //         .iter()
+    //         .map(|unit| (unit.id, unit.cluster_num))
+    //         .collect();
+    //     for read in self.encoded_reads.iter() {
+    //         for node in read.nodes.iter() {
+    //             if let Some(res) = pileups.get_mut(&node.unit) {
+    //                 res.push(node.seq());
+    //             }
+    //         }
+    //     }
+    //     let mut pileups: Vec<_> = pileups.into_iter().collect();
+    //     pileups.sort_by_key(|x| x.0);
+    //     self.selected_chunks = pileups
+    //         .par_iter()
+    //         .filter_map(|&(id, ref pileup)| {
+    //             if c.filter_size < pileup.len() {
+    //                 // let seq = kiley::consensus(pileup, c.seed, 5, 100);
+    //                 let seq = kiley::consensus_fast(pileup, 6);
+    //                 let seq = String::from_utf8(seq).ok()?;
+    //                 Some(Unit::new(id, seq, cluster_num[&id]))
+    //             } else {
+    //                 None
+    //             }
+    //         })
+    //         .collect();
+    //     debug!("{}=>{}", pileups.len(), self.selected_chunks.len());
+    //     self.encoded_reads.clear();
+    //     self
+    // }
     fn polish_unit(mut self, c: &PolishUnitConfig) -> Self {
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks

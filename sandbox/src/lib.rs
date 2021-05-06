@@ -40,6 +40,8 @@ pub fn generate_mul_data<T: Rng>(
                     let d = bio_utils::alignments::edit_dist(t1, t2);
                     if d != 0 {
                         debug!("{}\t{}", idx, d);
+                        // debug!("{}", String::from_utf8_lossy(t1));
+                        // debug!("{}", String::from_utf8_lossy(t2));
                     }
                     d
                 })
