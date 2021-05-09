@@ -1,3 +1,4 @@
+use super::encode::Encode;
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
 // use super::Encode;
@@ -141,18 +142,17 @@ impl DetermineUnit for definitions::DataSet {
                     cluster_num: config.min_cluster,
                 })
                 .collect();
-            let seed = 20;
             debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
-            self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, seed);
+            self.selected_chunks = remove_overlapping_units(&self, config.threads).unwrap();
+            debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
+            self = self.encode(config.threads);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, 20);
             self = self.polish_unit(&polish_config);
-            self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 5, 10, seed);
+            debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
+            self = self.encode(config.threads);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 20);
             self = self.polish_unit(&polish_config);
-            self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, seed);
-            self = self.polish_unit(&polish_config);
-            debug!("UNITNUM\t{}\tPOLISHED", self.selected_chunks.len());
+            debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
             self.selected_chunks
                 .into_iter()
                 .filter(|unit| unit.seq.len() > config.chunk_len)
@@ -171,13 +171,13 @@ impl DetermineUnit for definitions::DataSet {
         };
         self.selected_chunks = selected_chunks;
         debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
-        self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
+        self = self.encode(config.threads);
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
-        self = crate::encode::encode_by_mm2(self, config.threads).unwrap();
-        let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 24);
+        self = self.encode(config.threads);
+        let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 25, 24);
         self = self.polish_unit(&polish_config);
-        debug!("UNITNUM\t{}\tPOLISHED", self.selected_chunks.len());
+        debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         let mut idx = 0;
         self.selected_chunks.iter_mut().for_each(|mut unit| {
             while unit.seq.len() > config.chunk_len {
@@ -189,6 +189,55 @@ impl DetermineUnit for definitions::DataSet {
         self
     }
 }
+
+const MIN_OCC: usize = 5;
+fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Unit>> {
+    const ALLOWED_END_GAP: usize = 50;
+    let mm2 = crate::encode::mm2_alignment(ds, thr)?;
+    let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
+        .lines()
+        .filter_map(|l| bio_utils::paf::PAF::new(&l))
+        .filter(|aln| aln.tstart < ALLOWED_END_GAP && aln.tlen - aln.tend < ALLOWED_END_GAP)
+        .collect();
+    let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
+    for aln in alignments.iter() {
+        buckets.entry(aln.qname.clone()).or_default().push(aln);
+    }
+    buckets
+        .values_mut()
+        .for_each(|xs| xs.sort_by_key(|aln| aln.qstart));
+    let unit_len = ds.selected_chunks.len();
+    let mut edges: Vec<_> = (0..unit_len).map(|i| vec![0; i]).collect();
+    for alns in buckets.values() {
+        for (i, node) in alns.iter().enumerate() {
+            for mode in alns.iter().skip(i + 1) {
+                let node_unit: usize = node.tname.parse().unwrap();
+                let mode_unit: usize = mode.tname.parse().unwrap();
+                let ovlp_len = node.qend.saturating_sub(mode.qstart);
+                if 2 * OVERLAP_THR < ovlp_len {
+                    let (i, j) = (node_unit.max(mode_unit), node_unit.min(mode_unit));
+                    if i != j {
+                        edges[i as usize][j as usize] += 1;
+                    }
+                }
+            }
+        }
+    }
+    let edges: Vec<Vec<_>> = edges
+        .iter()
+        .map(|xs| xs.iter().map(|&x| MIN_OCC < x).collect())
+        .collect();
+    let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
+    let mut chunks = ds.selected_chunks.clone();
+    chunks.retain(|unit| !to_be_removed[unit.id as usize]);
+    let mut idx = 0;
+    for unit in chunks.iter_mut() {
+        unit.id = idx;
+        idx += 1;
+    }
+    Ok(chunks)
+}
+
 // fn raw_read_to_unit(ds: &DataSet, p: usize) -> std::io::Result<Vec<bio_utils::paf::PAF>> {
 //     use rand::{thread_rng, Rng};
 //     let mut rng = thread_rng();
@@ -253,10 +302,13 @@ fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
     }
 }
 
+// TODO: Maybe we should tune this parameter so that the
+// length of chunk can be configured.
+const OVERLAP_THR: usize = 500;
+
 fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
     let unit_len = ds.selected_chunks.len();
     // Maybe it became infeasible due to O(N^2) allcation would be occured.
-    debug!("UNITNUM\t{}", unit_len);
     let mut edges: Vec<_> = (0..unit_len).map(|i| vec![false; i]).collect();
     for read in ds.encoded_reads.iter() {
         for (i, node) in read.nodes.iter().enumerate() {
@@ -264,7 +316,7 @@ fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
                 let node_end = node.position_from_start + node.seq.as_bytes().len();
                 let mode_start = mode.position_from_start;
                 let ovlp_len = node_end.max(mode_start) - mode_start;
-                if 500 < ovlp_len {
+                if OVERLAP_THR < ovlp_len {
                     let (i, j) = (node.unit.max(mode.unit), node.unit.min(mode.unit));
                     if i != j {
                         edges[i as usize][j as usize] = true;
@@ -274,8 +326,7 @@ fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
         }
     }
     let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
-    let survived_unit = to_be_removed.iter().filter(|&&b| !b).count();
-    debug!("UNITNUM\t{}", survived_unit);
+    // let survived_unit = to_be_removed.iter().filter(|&&b| !b).count();
     let mut count: HashMap<_, _> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         for node in read.nodes.iter() {
@@ -291,7 +342,6 @@ fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
             && config.lower_count < coverage
             && coverage < config.upper_count
     });
-    debug!("UNITNUM\t{}", ds.selected_chunks.len());
     let mut idx = 0;
     ds.selected_chunks.iter_mut().for_each(|unit| {
         unit.id = idx;
@@ -335,61 +385,61 @@ fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
     to_be_removed
 }
 
-#[allow(dead_code)]
-fn filter_unit(mut ds: DataSet, config: &UnitConfig) -> DataSet {
-    let mut counts: HashMap<_, usize> = HashMap::new();
-    let (lower, upper) = (config.lower_count, config.upper_count);
-    for read in ds.encoded_reads.iter() {
-        for node in read.nodes.iter() {
-            *counts.entry(node.unit).or_default() += 1;
-        }
-    }
-    let original_len = ds.selected_chunks.len();
-    let filtered_unit: HashMap<u64, u64> = counts
-        .iter()
-        .filter_map(|(&key, &val)| match val {
-            x if lower < x && x < upper => Some(key),
-            _ => None,
-        })
-        .enumerate()
-        .map(|(idx, key)| (key, idx as u64))
-        .collect();
-    debug!("# of units:{}=>{}", original_len, filtered_unit.len());
-    ds.selected_chunks
-        .retain(|chunk| filtered_unit.contains_key(&chunk.id));
-    // Never panic.
-    ds.selected_chunks
-        .iter_mut()
-        .for_each(|chunk| chunk.id = *filtered_unit.get(&chunk.id).unwrap());
-    let prev = ds.encoded_reads.len();
-    let node_prev = ds
-        .encoded_reads
-        .iter()
-        .map(|r| r.nodes.len())
-        .sum::<usize>();
-    ds.encoded_reads.iter_mut().for_each(|read| {
-        read.nodes
-            .retain(|node| filtered_unit.contains_key(&node.unit));
-        read.nodes
-            .iter_mut()
-            .for_each(|n| n.unit = *filtered_unit.get(&n.unit).unwrap());
-    });
-    ds.encoded_reads.retain(|read| !read.nodes.is_empty());
-    let now = ds.encoded_reads.len();
-    let node_now = ds
-        .encoded_reads
-        .iter()
-        .map(|r| r.nodes.len())
-        .sum::<usize>();
-    debug!(
-        "Encoded Reads{}->{}(Raw reads{})",
-        prev,
-        now,
-        ds.raw_reads.len()
-    );
-    debug!("Number of Unit {}->{}", node_prev, node_now);
-    ds
-}
+// #[allow(dead_code)]
+// fn filter_unit(mut ds: DataSet, config: &UnitConfig) -> DataSet {
+//     let mut counts: HashMap<_, usize> = HashMap::new();
+//     let (lower, upper) = (config.lower_count, config.upper_count);
+//     for read in ds.encoded_reads.iter() {
+//         for node in read.nodes.iter() {
+//             *counts.entry(node.unit).or_default() += 1;
+//         }
+//     }
+//     let original_len = ds.selected_chunks.len();
+//     let filtered_unit: HashMap<u64, u64> = counts
+//         .iter()
+//         .filter_map(|(&key, &val)| match val {
+//             x if lower < x && x < upper => Some(key),
+//             _ => None,
+//         })
+//         .enumerate()
+//         .map(|(idx, key)| (key, idx as u64))
+//         .collect();
+//     debug!("# of units:{}=>{}", original_len, filtered_unit.len());
+//     ds.selected_chunks
+//         .retain(|chunk| filtered_unit.contains_key(&chunk.id));
+//     // Never panic.
+//     ds.selected_chunks
+//         .iter_mut()
+//         .for_each(|chunk| chunk.id = *filtered_unit.get(&chunk.id).unwrap());
+//     let prev = ds.encoded_reads.len();
+//     let node_prev = ds
+//         .encoded_reads
+//         .iter()
+//         .map(|r| r.nodes.len())
+//         .sum::<usize>();
+//     ds.encoded_reads.iter_mut().for_each(|read| {
+//         read.nodes
+//             .retain(|node| filtered_unit.contains_key(&node.unit));
+//         read.nodes
+//             .iter_mut()
+//             .for_each(|n| n.unit = *filtered_unit.get(&n.unit).unwrap());
+//     });
+//     ds.encoded_reads.retain(|read| !read.nodes.is_empty());
+//     let now = ds.encoded_reads.len();
+//     let node_now = ds
+//         .encoded_reads
+//         .iter()
+//         .map(|r| r.nodes.len())
+//         .sum::<usize>();
+//     debug!(
+//         "Encoded Reads{}->{}(Raw reads{})",
+//         prev,
+//         now,
+//         ds.raw_reads.len()
+//     );
+//     debug!("Number of Unit {}->{}", node_prev, node_now);
+//     ds
+// }
 
 // #[allow(dead_code)]
 // fn to_u64(kmer: &[u8]) -> u64 {

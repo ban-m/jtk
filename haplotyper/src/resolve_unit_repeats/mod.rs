@@ -25,50 +25,65 @@ pub trait ResolveUnitRepeats {
 impl ResolveUnitRepeats for DataSet {
     fn resolve_units(mut self, config: &ResolveUnitRepeatsConfig) -> Self {
         // Take unit id, return conversion information.
+        let mut current_max_unit = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
         let conversion_information: HashMap<_, _> = self
             .selected_chunks
             .iter()
-            .map(|unit| get_conversion_information(unit, &self.encoded_reads, config))
+            .map(|unit| {
+                let graph =
+                    get_conversion_information(unit, &self.encoded_reads, current_max_unit, config);
+                current_max_unit += graph.num_of_new_units();
+                (unit.id, graph)
+            })
             .collect();
         for read in self.encoded_reads.iter_mut() {
-            let new_read_nodes = re_assign_units(&read, &conversion_information, config);
-            read.nodes
-                .iter_mut()
-                .zip(new_read_nodes)
-                .for_each(|(n, unit_id)| n.unit = unit_id);
+            re_assign_units(read, &conversion_information, config);
         }
-        let new_units: Vec<_> = conversion_information
-            .values()
-            .flat_map(|graph| graph.new_units())
-            .collect();
-        debug!("There would be {} new units.", new_units.len());
-        self.selected_chunks.extend(new_units);
+        debug!(
+            "ChunkNum\t{}\t{}",
+            self.selected_chunks.len(),
+            current_max_unit
+        );
+        for graph in conversion_information.values() {
+            self.selected_chunks.extend(graph.new_units());
+        }
         self
     }
 }
 
+// Indicate how to convert each node based on adjacency information.
 #[derive(Debug, Clone)]
-struct AdjGraph {}
+struct AdjGraph {
+    original_id: u64,
+    // Map function.
+    // It contains the original ID, also.
+    // The second argument should be the direction of the adjacent node If you fix
+    map: HashMap<(u64, bool), u64>,
+}
 
 fn get_conversion_information(
     _unit: &Unit,
     _reads: &[EncodedRead],
+    _unit_id: u64,
     _c: &ResolveUnitRepeatsConfig,
-) -> (u64, AdjGraph) {
+) -> AdjGraph {
     unimplemented!()
 }
 
 // Return the runs of the id of the units.
 fn re_assign_units(
-    _read: &EncodedRead,
+    _read: &mut EncodedRead,
     _infos: &HashMap<u64, AdjGraph>,
     _c: &ResolveUnitRepeatsConfig,
-) -> Vec<u64> {
+) {
     unimplemented!()
 }
 
 impl AdjGraph {
     fn new_units(&self) -> Vec<Unit> {
+        unimplemented!()
+    }
+    fn num_of_new_units(&self) -> u64 {
         unimplemented!()
     }
 }

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct PolishUnitConfig {
     consensus_size: usize,
     filter_size: usize,
+    cons_size: usize,
     rep_num: usize,
     seed: u64,
     read_type: ReadType,
@@ -22,6 +23,7 @@ impl PolishUnitConfig {
             rep_num,
             seed,
             filter_size,
+            cons_size: rep_num,
             consensus_size: filter_size,
         }
     }
@@ -33,58 +35,20 @@ impl PolishUnitConfig {
 /// newly poilished units again.
 pub trait PolishUnit {
     fn polish_unit(self, c: &PolishUnitConfig) -> Self;
-    // fn polish_unit_kiley(self, c: &PolishUnitConfig) -> Self;
 }
 
 impl PolishUnit for DataSet {
-    // fn polish_unit_kiley(mut self, c: &PolishUnitConfig) -> Self {
-    //     let mut pileups: HashMap<_, Vec<_>> = self
-    //         .selected_chunks
-    //         .iter()
-    //         .map(|unit| (unit.id, vec![]))
-    //         .collect();
-    //     let cluster_num: HashMap<_, _> = self
-    //         .selected_chunks
-    //         .iter()
-    //         .map(|unit| (unit.id, unit.cluster_num))
-    //         .collect();
-    //     for read in self.encoded_reads.iter() {
-    //         for node in read.nodes.iter() {
-    //             if let Some(res) = pileups.get_mut(&node.unit) {
-    //                 res.push(node.seq());
-    //             }
-    //         }
-    //     }
-    //     let mut pileups: Vec<_> = pileups.into_iter().collect();
-    //     pileups.sort_by_key(|x| x.0);
-    //     self.selected_chunks = pileups
-    //         .par_iter()
-    //         .filter_map(|&(id, ref pileup)| {
-    //             if c.filter_size < pileup.len() {
-    //                 // let seq = kiley::consensus(pileup, c.seed, 5, 100);
-    //                 let seq = kiley::consensus_fast(pileup, 6);
-    //                 let seq = String::from_utf8(seq).ok()?;
-    //                 Some(Unit::new(id, seq, cluster_num[&id]))
-    //             } else {
-    //                 None
-    //             }
-    //         })
-    //         .collect();
-    //     debug!("{}=>{}", pileups.len(), self.selected_chunks.len());
-    //     self.encoded_reads.clear();
-    //     self
-    // }
     fn polish_unit(mut self, c: &PolishUnitConfig) -> Self {
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks
             .iter()
             .map(|unit| (unit.id, vec![]))
             .collect();
-        let subchunk_len: HashMap<_, _> = self
-            .selected_chunks
-            .iter()
-            .map(|unit| (unit.id, unit.seq().len() / 100))
-            .collect();
+        // let subchunk_len: HashMap<_, _> = self
+        //     .selected_chunks
+        //     .iter()
+        //     .map(|unit| (unit.id, unit.seq().len() / 100))
+        //     .collect();
         for read in self.encoded_reads.iter() {
             for node in read.nodes.iter() {
                 if let Some(res) = pileups.get_mut(&node.unit) {
@@ -95,16 +59,22 @@ impl PolishUnit for DataSet {
         let result: HashMap<_, _> = pileups
             .par_iter()
             .filter_map(|(id, pileup)| {
-                let len = subchunk_len[id];
                 if pileup.len() > c.filter_size {
-                    let cons = consensus(pileup, len, c);
-                    cons.map(|c| (id, c))
+                    // let len = subchunk_len[id];
+                    // let cons = consensus(pileup, len, c);
+                    // cons.map(|c| (id, c))
+                    // let start = std::time::Instant::now();
+                    let seqs: Vec<_> = pileup.iter().map(|x| x.seq()).take(c.cons_size).collect();
+                    let cons = kiley::ternary_consensus_by_chunk(&seqs, 100);
+                    let cons = kiley::bialignment::polish_until_converge_banded(&cons, &seqs, 100);
+                    // let end = std::time::Instant::now();
+                    // debug!("CONS\t{}\t{}", seqs.len(), (end - start).as_millis());
+                    Some((id, String::from_utf8(cons).unwrap()))
                 } else {
                     None
                 }
             })
             .collect();
-        debug!("{}=>{}", pileups.len(), result.len());
         self.selected_chunks
             .retain(|unit| result.contains_key(&unit.id));
         self.selected_chunks.iter_mut().for_each(|unit| {
@@ -116,6 +86,7 @@ impl PolishUnit for DataSet {
 }
 
 use definitions::Node;
+#[allow(dead_code)]
 fn consensus(pileup: &[&Node], len: usize, c: &PolishUnitConfig) -> Option<String> {
     let subchunks: Vec<_> = pileup
         .iter()

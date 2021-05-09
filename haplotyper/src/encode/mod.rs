@@ -269,7 +269,7 @@ fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
     deduped_nodes
 }
 
-fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<u8>> {
+pub fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<u8>> {
     use rand::{thread_rng, Rng};
     let mut rng = thread_rng();
     let id: u64 = rng.gen::<u64>() % 100_000_000;
@@ -301,8 +301,8 @@ fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec<u8>
     let mut args = vec!["-t", &threads, "-c", "-P"];
     match ds.read_type {
         ReadType::CCS => args.extend(vec!["-H"]),
-        ReadType::CLR => args.extend(vec!["-H", "-k", "12"]),
-        ReadType::ONT => args.extend(vec!["-k", "12"]),
+        ReadType::CLR => args.extend(vec!["-H", "-k", "11"]),
+        ReadType::ONT => args.extend(vec!["-k", "11"]),
         _ => {}
     };
     let mm2 = minimap2::minimap2_args(&reference, &reads, &args);

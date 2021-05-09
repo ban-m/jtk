@@ -340,7 +340,7 @@ fn get_match_units(ops: &[Op]) -> usize {
 fn get_threshold(pileups: &[Pileup]) -> usize {
     let totcov = pileups.iter().map(|p| p.coverage).sum::<usize>();
     // We need at least 3 insertions to confirm.
-    (totcov / 2 / pileups.len()).max(3)
+    (totcov / 3 / pileups.len()).max(3)
 }
 
 #[derive(Debug, Clone)]

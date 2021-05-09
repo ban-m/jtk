@@ -618,7 +618,8 @@ impl<'a, 'b, 'c> DitchGraph<'a, 'b, 'c> {
         }
         self.remove_nodes(&to_remove);
     }
-    pub fn collapse_buddle(&mut self, c: &AssembleConfig) {
+    /// Zip up bubble into a straight line.
+    pub fn collapse_bubble(&mut self, c: &AssembleConfig) {
         let mut to_remove = vec![false; self.nodes.len()];
         let mut queue = std::collections::VecDeque::new();
         for idx in 0..self.nodes.len() {
@@ -1631,7 +1632,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let mut graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        graph.collapse_buddle(&c);
+        graph.collapse_bubble(&c);
         eprintln!("{:?}", graph);
         let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
@@ -1675,7 +1676,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let mut graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        graph.collapse_buddle(&c);
+        graph.collapse_bubble(&c);
         eprintln!("{:?}", graph);
         let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
@@ -1719,7 +1720,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let mut graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        graph.collapse_buddle(&c);
+        graph.collapse_bubble(&c);
         eprintln!("{:?}", graph);
         let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
@@ -1763,7 +1764,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let mut graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        graph.collapse_buddle(&c);
+        graph.collapse_bubble(&c);
         eprintln!("{:?}", graph);
         let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];
@@ -1807,7 +1808,7 @@ mod tests {
         let reads: Vec<_> = reads.iter().collect();
         let mut graph = DitchGraph::new(&reads, &c);
         eprintln!("{:?}", graph);
-        graph.collapse_buddle(&c);
+        graph.collapse_bubble(&c);
         eprintln!("{:?}", graph);
         let (segments, edges, group, _) = graph.spell(&c, 0);
         let mut records = vec![];

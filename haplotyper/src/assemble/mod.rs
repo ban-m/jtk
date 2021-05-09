@@ -264,10 +264,11 @@ fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, c);
     graph.resolve_repeats();
-    // TODO: Tune this parameter, or not.
-    graph.remove_lightweight_edges(3);
+    for i in 0..6 {
+        graph.remove_lightweight_edges(i);
+    }
     graph.remove_tips();
-    graph.collapse_buddle(c);
+    graph.collapse_bubble(c);
     graph.remove_small_component(5);
     debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
@@ -383,7 +384,9 @@ pub fn polish_by_chunking(
         .iter()
         .map(|r| (r.name.clone(), r.seq().to_vec()))
         .collect();
-    let config = kiley::PolishConfig::new(100, c.window_size, 30, 50, 43);
+    use kiley::gphmm::*;
+    let model = GPHMM::<Cond>::clr();
+    let config = kiley::PolishConfig::with_model(100, c.window_size, 30, 50, 15, model);
     let mut polished = kiley::polish(&vec![segment], &reads, &alignments.records, &config);
     assert_eq!(polished.len(), 1);
     polished.pop().unwrap().1

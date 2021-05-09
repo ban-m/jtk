@@ -43,7 +43,7 @@ pub trait LocalClustering {
 impl LocalClustering for DataSet {
     fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         mut self,
-        c: &ClusteringConfig<F>,
+        _c: &ClusteringConfig<F>,
     ) -> Self {
         local_clustering_all(&mut self);
         self

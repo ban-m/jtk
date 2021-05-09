@@ -54,22 +54,27 @@ fn main() -> std::io::Result<()> {
     }
     use sandbox::generate_mul_data;
     let (mut dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
-    let unit = definitions::Unit {
-        id: 0,
-        seq: String::new(),
-        cluster_num: clusters,
-    };
-    {
-        let start = std::time::Instant::now();
-        haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
-        let end = std::time::Instant::now();
-        let preds: Vec<_> = dataset.iter().map(|x| x.cluster as u8).collect();
-        let score = haplotyper::rand_index(&preds, &answer);
-        eprintln!("Answer\t{:?}", answer);
-        eprintln!("OLD\t{:?}", preds);
-        let time = (end - start).as_millis();
-        println!("RESULT\t{}\tOLD\t{}\t{}", seed, score, time);
-    }
+    // {
+    // let unit = definitions::Unit {
+    //     id: 0,
+    //     seq: String::new(),
+    //     cluster_num: clusters,
+    // };
+    //     let start = std::time::Instant::now();
+    //     haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
+    //     let end = std::time::Instant::now();
+    //     let preds: Vec<_> = dataset.iter().map(|x| x.cluster as u8).collect();
+    //     let score = haplotyper::rand_index(&preds, &answer);
+    //     let time = (end - start).as_millis();
+    // let acc = preds
+    //     .iter()
+    //     .zip(answer.iter())
+    //     .filter(|x, y| x == y)
+    //     .count() as f64
+    //     / preds.len() as f64;
+    // let acc = (1f64 - acc).max(acc);
+    //     println!("RESULT\t{}\tOLD\t{}\t{}\t{}", seed, score, time, acc);
+    // }
     {
         let reads: Vec<Vec<_>> = dataset
             .iter()
@@ -84,36 +89,15 @@ fn main() -> std::io::Result<()> {
         let end = std::time::Instant::now();
         let score = haplotyper::rand_index(&preds, &answer);
         let time = (end - start).as_millis();
-        eprintln!("NEW\t{:?}", preds);
-        println!("RESULT\t{}\tNEW\t{}\t{}", seed, score, time);
+        let acc = preds
+            .iter()
+            .zip(answer.iter())
+            .filter(|(x, y)| x == y)
+            .count() as f64
+            / preds.len() as f64;
+        let acc = (1f64 - acc).max(acc);
+        println!("RESULT\t{}\tNEW\t{}\t{}\t{}", seed, score, time, acc);
+        // eprintln!("{:?}\n{:?}", preds, answer);
     }
-    // use std::collections::HashMap;
-    // let mut result: HashMap<_, u32> = HashMap::new();
-    // let templates: Vec<_> = templates
-    //     .iter()
-    //     .map(|xs| {
-    //         xs.iter()
-    //             .flat_map(std::convert::identity)
-    //             .copied()
-    //             .collect::<Vec<_>>()
-    //     })
-    //     .collect();
-    // let mut sum = 0;
-    // for (idx, ((pred, answer), read)) in preds.iter().zip(answer).zip(&reads).enumerate() {
-    //     let ed0 = edlib_sys::global_dist(&templates[0], &read) as i32;
-    //     let diff: Vec<_> = templates
-    //         .iter()
-    //         .skip(1)
-    //         .map(|template| {
-    //             let diff = edlib_sys::global_dist(read, template) as i32 - ed0;
-    //             sum += diff;
-    //             diff
-    //         })
-    //         .map(|e| format!("{}", e))
-    //         .collect();
-    //     let diff = diff.join("\t");
-    //     eprintln!("D\t{}\t{}\t{}\t{}", idx, answer, pred, diff);
-    //     *result.entry((pred, answer)).or_default() += 1;
-    // }
     Ok(())
 }

@@ -16,7 +16,6 @@ DRAFT_GFA=${2}.draft.gfa
 LOG=${2}.log
 STAT=${2}.stat
 THREADS=23
-mkdir -p ${2}
 if [ -f ${2}.entry.json ]
 then
     echo "Entry file found. Skip entry proc."
