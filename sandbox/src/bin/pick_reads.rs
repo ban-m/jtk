@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
     //         x.parse().ok()
     //     })
     //     .collect();
-    let units: HashSet<u64> = vec![1634, 1635].into_iter().collect();
+    let units: HashSet<u64> = vec![69, 148].into_iter().collect();
     let color = 40;
     use std::collections::HashMap;
     let id2name: HashMap<_, _> = ds

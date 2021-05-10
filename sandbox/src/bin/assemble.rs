@@ -21,14 +21,16 @@ fn main() -> std::io::Result<()> {
     // for &Assignment { id, cluster } in ds.assignments.iter() {
     //     println!("{}\t{}\t{}", id, id2name[&id], cluster);
     // }
-    use haplotyper::ComponentPicking;
-    let config = haplotyper::ComponentPickingConfig::new(1);
+    // use haplotyper::ComponentPicking;
+    // let config = haplotyper::ComponentPickingConfig::new(1);
     ds.assignments = ds
         .encoded_reads
         .iter()
         .map(|r| Assignment::new(r.id, 0))
         .collect();
-    ds = ds.pick_top_n_component(&config);
+    ds.encoded_reads
+        .iter_mut()
+        .for_each(|r| r.nodes.iter_mut().for_each(|n| n.cluster = 0));
     let config = haplotyper::assemble::AssembleConfig::new(24, 100, false);
     use haplotyper::Assemble;
     let gfa = ds.assemble_as_gfa(&config);

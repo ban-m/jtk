@@ -24,7 +24,17 @@ impl Encode for definitions::DataSet {
     fn encode(mut self, threads: usize) -> Self {
         self = encode_by_mm2(self, threads).unwrap();
         if self.read_type != definitions::ReadType::CCS {
-            self = deletion_fill::correct_unit_deletion(self);
+            let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+            loop {
+                self = deletion_fill::correct_unit_deletion(self);
+                let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+                debug!("Filled:{}->{}", current, after);
+                if after <= current {
+                    break;
+                } else {
+                    current = after;
+                }
+            }
         }
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
@@ -117,13 +127,6 @@ fn encode_read_to_nodes_by_paf(
 fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
     use bio_utils::sam;
     let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
-    // If there's too large In/Dels, return None.
-    if cigar.iter().any(|op| match *op {
-        sam::Op::Insertion(l) | sam::Op::Deletion(l) => l > INDEL_THRESHOLD,
-        _ => false,
-    }) {
-        return None;
-    }
     // It is padded sequence. Should be adjusted.
     let (mut leading, aligned, mut trailing) = if aln.relstrand {
         let aligned = seq[aln.qstart..aln.qend].to_vec();
@@ -143,7 +146,6 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     let mut ops = vec![];
     if aln.tstart > 0 {
         let (_, mut lops) =
-        //kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[..aln.tstart], &leading);
             kiley::bialignment::edit_dist_slow_ops_semiglobal(&unit.seq()[..aln.tstart], &leading);
         // Leading Operations
         // Remove leading insertions.
@@ -155,12 +157,12 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         assert!(!lops.is_empty());
         // Compress the resulting elements.
         ops.extend(compress_kiley_ops(&lops));
-    // ops.push(Op::Del(aln.tstart));
     } else {
         // If the alignment is propery starts from unit begining,
         // we do not need leading sequence.
         assert!(leading.is_empty());
     }
+    // Main alignment.
     for op in cigar {
         let op = match op {
             sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
@@ -173,7 +175,6 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     if aln.tlen != aln.tend {
         // Trailing operations
         let (_, mut tops) =
-            //kiley::alignment::bialignment::edit_dist_slow_ops(&unit.seq()[aln.tend..], &trailing);
             kiley::bialignment::edit_dist_slow_ops_semiglobal(&unit.seq()[aln.tend..], &trailing);
         // Remove while trailing insertions.
         while tops.last() == Some(&kiley::bialignment::Op::Ins) {
@@ -183,7 +184,6 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         // We shoulud have remaining alignment.
         assert!(!tops.is_empty());
         ops.extend(compress_kiley_ops(&tops));
-    // ops.push(Op::Del(aln.tlen - aln.tend));
     } else {
         // Likewise, if the alignment propery stopped at the end of the units,
         // we do not need trailing sequence.
@@ -206,14 +206,20 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         .sum::<usize>();
     assert_eq!(query_length, leading.len());
     let aligned = String::from_utf8(leading).unwrap();
-    Some(Node {
-        position_from_start,
-        unit: unit.id,
-        cluster: 0,
-        is_forward: aln.relstrand,
-        seq: aligned,
-        cigar: ops,
-    })
+    // If there's too large In/Dels, return None.
+    ops.iter()
+        .all(|op| match *op {
+            Op::Ins(l) | Op::Del(l) => l < INDEL_THRESHOLD,
+            _ => true,
+        })
+        .then(|| Node {
+            position_from_start,
+            unit: unit.id,
+            cluster: 0,
+            is_forward: aln.relstrand,
+            seq: aligned,
+            cigar: ops,
+        })
 }
 
 fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {

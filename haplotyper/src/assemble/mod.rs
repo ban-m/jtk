@@ -262,14 +262,14 @@ fn assemble(
         .filter(|r| clusters.contains(&r.id))
         .collect();
     debug!("Constructing the {}-th ditch graph", cl);
-    let mut graph = DitchGraph::new(&reads, c);
-    graph.resolve_repeats();
-    for i in 0..6 {
-        graph.remove_lightweight_edges(i);
-    }
-    graph.remove_tips();
-    graph.collapse_bubble(c);
-    graph.remove_small_component(5);
+    let graph = DitchGraph::new(&reads, c);
+    // graph.resolve_repeats();
+    // for i in 0..6 {
+    //     graph.remove_lightweight_edges(i);
+    // }
+    // graph.remove_tips();
+    // graph.collapse_bubble(c);
+    // graph.remove_small_component(5);
     debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();

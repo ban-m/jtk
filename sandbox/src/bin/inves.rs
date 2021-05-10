@@ -9,8 +9,30 @@ fn main() -> std::io::Result<()> {
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
     eprintln!("{:?}", std::time::Instant::now() - start);
-    for u in ds.selected_chunks.iter() {
-        println!("{}\t{}", u.id, u.cluster_num);
+    use haplotyper::encode::deletion_fill::correct_unit_deletion;
+    let ds = correct_unit_deletion(ds);
+    use std::collections::HashMap;
+    let mut edges: HashMap<_, u32> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        for w in read.nodes.windows(2) {
+            let tuple = (w[0].unit.min(w[1].unit), w[0].unit.max(w[1].unit));
+            *edges.entry(tuple).or_default() += 1;
+        }
+    }
+    for (key, val) in edges.iter() {
+        if val < &5 {
+            println!("{:?}\t{}", key, val);
+        }
+    }
+    for read in ds.encoded_reads.iter() {
+        let has_light_weight = read.nodes.windows(2).any(|w| {
+            let tuple = (w[0].unit.min(w[1].unit), w[0].unit.max(w[1].unit));
+            // tuple == (35, 393)
+            edges[&tuple] < 5
+        });
+        if has_light_weight {
+            println!("{}", read);
+        }
     }
     Ok(())
 }

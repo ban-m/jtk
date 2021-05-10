@@ -1,9 +1,9 @@
 #!/bin/bash
 set -ue
 ROOT=${PWD}
-for diploid in dip-A-D # dip-A-CS dip-A-D dip-A-C dip-A-DS # dip-G-H
+for diploid in dip-A-CS dip-A-D dip-A-C dip-A-DS # dip-G-H
 do
-    output=${ROOT}/result/${diploid}/jtk_kmeans
+    output=${ROOT}/result/${diploid}/jtk
     mkdir -p ${output}
     # cat /data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS*.fa \
         #     > ${PWD}/data/${diploid}.CCS.fa
