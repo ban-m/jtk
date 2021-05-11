@@ -262,14 +262,16 @@ fn assemble(
         .filter(|r| clusters.contains(&r.id))
         .collect();
     debug!("Constructing the {}-th ditch graph", cl);
-    let graph = DitchGraph::new(&reads, c);
-    // graph.resolve_repeats();
-    // for i in 0..6 {
-    //     graph.remove_lightweight_edges(i);
-    // }
-    // graph.remove_tips();
-    // graph.collapse_bubble(c);
-    // graph.remove_small_component(5);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    graph.resolve_repeats();
+    for i in 0..6 {
+        graph.remove_lightweight_edges(i);
+        assert!(graph.sanity_check(), "L:{}", i);
+        graph.collapse_bubble(c);
+        assert!(graph.sanity_check(), "B:{}", i);
+    }
+    graph.remove_tips();
+    graph.remove_small_component(5);
     debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();

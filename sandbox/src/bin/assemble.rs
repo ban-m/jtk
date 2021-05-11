@@ -5,7 +5,7 @@ fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
     let start = std::time::Instant::now();
-    let mut ds: DataSet =
+    let ds: DataSet =
         serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new)?).unwrap();
     let end = std::time::Instant::now();
     debug!("{:?}", end - start);
@@ -23,14 +23,14 @@ fn main() -> std::io::Result<()> {
     // }
     // use haplotyper::ComponentPicking;
     // let config = haplotyper::ComponentPickingConfig::new(1);
-    ds.assignments = ds
-        .encoded_reads
-        .iter()
-        .map(|r| Assignment::new(r.id, 0))
-        .collect();
-    ds.encoded_reads
-        .iter_mut()
-        .for_each(|r| r.nodes.iter_mut().for_each(|n| n.cluster = 0));
+    // ds.assignments = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .map(|r| Assignment::new(r.id, 0))
+    //     .collect();
+    // ds.encoded_reads
+    //     .iter_mut()
+    //     .for_each(|r| r.nodes.iter_mut().for_each(|n| n.cluster = 0));
     let config = haplotyper::assemble::AssembleConfig::new(24, 100, false);
     use haplotyper::Assemble;
     let gfa = ds.assemble_as_gfa(&config);

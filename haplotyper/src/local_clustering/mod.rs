@@ -47,25 +47,6 @@ impl LocalClustering for DataSet {
     ) -> Self {
         local_clustering_all(&mut self);
         self
-        // If true, the unit is clustered.
-        // let mut clustered_units: HashMap<_, _> =
-        //     self.selected_chunks.iter().map(|u| (u.id, false)).collect();
-        // let mut unit_num = clustered_units.values().filter(|&&x| !x).count();
-        // for i in 0..c.retry_limit {
-        //     debug!("NUM\t{}\t{}\tUnits to be clsutered.", i, unit_num);
-        //     debug!("==================================");
-        //     local_clustering_on_selected(&mut self, c, &clustered_units, i);
-        //     clustered_units = super::unit_correlation::select_uninformative_units(&self, c.p_value);
-        //     let next_num = clustered_units.values().filter(|&&x| !x).count();
-        //     let diff = unit_num.max(next_num) - unit_num.min(next_num);
-        //     unit_num = next_num;
-        //     if next_num == 0 || diff == 0 {
-        //         debug!("DONE\t{}\t{}", next_num, diff);
-        //         break;
-        //     }
-        // }
-        // debug!("Remaining {} unresolved cluster.", unit_num);
-        // self
     }
 }
 
@@ -79,18 +60,25 @@ pub fn local_clustering_all(ds: &mut DataSet) {
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         pileups.entry(node.unit).or_default().push(node);
     }
-    pileups.par_iter_mut().for_each(|(&unit_id, units)| {
-        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
-        let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-        let config = kmeans::ClusteringConfig::new(100, 0, 0, cluster_num[&unit_id], 0);
-        let start = std::time::Instant::now();
-        let asn = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
-        for (node, asn) in units.iter_mut().zip(asn) {
-            node.cluster = asn as u64;
-        }
-        let end = std::time::Instant::now();
-        debug!("RECORD\t{}\t{}", unit_id, (end - start).as_secs());
-    });
+    let consensus: HashMap<_, _> = pileups
+        .par_iter_mut()
+        .map(|(&unit_id, units)| {
+            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
+            let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
+            let config = kmeans::ClusteringConfig::new(100, 0, 0, cluster_num[&unit_id], 0);
+            let start = std::time::Instant::now();
+            let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
+            for (node, asn) in units.iter_mut().zip(asn) {
+                node.cluster = asn as u64;
+            }
+            let end = std::time::Instant::now();
+            debug!("RECORD\t{}\t{}", unit_id, (end - start).as_secs());
+            (unit_id, consensus)
+        })
+        .collect();
+    for unit in ds.selected_chunks.iter_mut() {
+        unit.seq = String::from_utf8(consensus[&unit.id].to_vec()).unwrap();
+    }
 }
 
 pub fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(

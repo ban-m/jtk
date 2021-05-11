@@ -288,7 +288,7 @@ pub struct Node {
     pub position_from_start: usize,
     pub unit: u64,
     pub cluster: u64,
-    /// Sequence. A string on an alphabet of A,C,G,T. No lowercase included.
+    /// Sequence. A string on an alphabet of A,C,G,T. No lowercase included. Already rev-comped.
     pub seq: String,
     pub is_forward: bool,
     pub cigar: Vec<Op>,

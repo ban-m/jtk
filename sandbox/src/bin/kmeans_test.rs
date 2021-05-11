@@ -37,7 +37,7 @@ fn main() -> std::io::Result<()> {
             let config =
                 haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 20, 5, 2, 25);
             let start = std::time::Instant::now();
-            let asn =
+            let (asn, _) =
                 haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &config).unwrap();
             log::debug!("{:?}", asn);
             log::debug!("{:?}", answer);

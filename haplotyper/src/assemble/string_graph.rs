@@ -542,7 +542,6 @@ impl<'a> StringGraph<'a> {
             .collect()
     }
     fn consensus_from_nodes(nodes: &[&Node]) -> Vec<u8> {
-        use crate::assemble::ditch_graph::consensus;
         use crate::local_clustering::node_to_subchunks;
         let chunks: Vec<_> = nodes.iter().map(|n| node_to_subchunks(n, 100)).collect();
         let max_pos = chunks
@@ -1155,4 +1154,42 @@ fn get_match_score(ds: &DataSet) -> HashMap<(u64, u64), f64> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+pub fn consensus<T: std::borrow::Borrow<[u8]>>(xs: &[T], num: usize) -> Vec<u8> {
+    let xs: Vec<_> = xs.iter().map(|x| x.borrow()).collect();
+    if xs.is_empty() {
+        return vec![];
+    } else if xs.iter().map(|xs| xs.len()).max().unwrap() < 10 {
+        return xs.iter().max_by_key(|x| x.len()).unwrap().to_vec();
+    }
+    let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
+    use rand_xoshiro::Xoroshiro128StarStar;
+    let cs: Vec<_> = (0..num as u64)
+        .into_par_iter()
+        .map(|s| {
+            use rand::seq::SliceRandom;
+            let mut rng: Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(s);
+            let mut cs: Vec<_> = xs.to_vec();
+            cs.shuffle(&mut rng);
+            let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
+            let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
+            cs.iter()
+                .fold(poa_hmm::POA::default(), |x, y| {
+                    let res = if x.nodes().len() > node_num_thr {
+                        x.add(y, 1., param).remove_node(0.4)
+                    } else {
+                        x.add(y, 1., param)
+                    };
+                    res
+                })
+                .remove_node(0.4)
+                .finalize()
+                .consensus()
+        })
+        .collect();
+    let cs: Vec<_> = cs.iter().map(|cs| cs.as_slice()).collect();
+    poa_hmm::POA::default()
+        .update_thr(&cs, &vec![1.; cs.len()], param, 0.8, 1.5)
+        .consensus()
 }

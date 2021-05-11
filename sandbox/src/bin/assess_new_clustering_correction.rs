@@ -47,8 +47,6 @@ fn main() -> std::io::Result<()> {
         .iter()
         .map(|r| (r.id, r.name.clone()))
         .collect();
-    let ds_em = ds.clone().correct_clustering_em(10, 3);
-    let ds_old = ds.clone().correct_clustering(10, 3);
     println!("SCORE\tID\tScore\tType");
     for unit in ds.selected_chunks.iter() {
         // (ID,answer)
@@ -66,21 +64,14 @@ fn main() -> std::io::Result<()> {
         };
         let (answer, before): (Vec<_>, Vec<_>) = pick_predictions(&ds);
         let before_score = haplotyper::local_clustering::rand_index(&answer, &before);
-        println!("SCORE\t{}\t{}\tBEFORE", unit.id, before_score);
-        let (answer, old): (Vec<_>, Vec<_>) = pick_predictions(&ds_old);
-        let old_score = haplotyper::local_clustering::rand_index(&answer, &old);
-        println!("SCORE\t{}\t{}\tOLD", unit.id, old_score);
-        let (answer, new): (Vec<_>, Vec<_>) = pick_predictions(&ds_em);
-        let new_score = haplotyper::local_clustering::rand_index(&answer, &new);
-        println!("SCORE\t{}\t{}\tNEW", unit.id, new_score);
+        let acc = answer
+            .iter()
+            .zip(before.iter())
+            .filter(|(x, y)| x != y)
+            .count();
+        let acc = acc as f64 / answer.len() as f64;
+        let acc = acc.max(1f64 - acc);
+        println!("SCORE\t{}\t{}\t{}", unit.id, before_score, acc);
     }
-    // use haplotyper::assemble::*;
-    // ds.assignments = ds
-    //     .raw_reads
-    //     .iter()
-    //     .map(|r| Assignment::new(r.id, 0))
-    //     .collect();
-    // let config = AssembleConfig::new(24, 100, false);
-    // println!("{}", ds.assemble_as_gfa(&config));
     Ok(())
 }

@@ -84,7 +84,7 @@ fn main() -> std::io::Result<()> {
         let clusters = clusters as u8;
         let config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 30, 3, clusters, 20);
-        let preds =
+        let (preds, _) =
             haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::rand_index(&preds, &answer);
