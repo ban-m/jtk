@@ -19,8 +19,8 @@ fn main() -> std::io::Result<()> {
     //         x.parse().ok()
     //     })
     //     .collect();
-    let units: HashSet<u64> = vec![69, 148].into_iter().collect();
-    let color = 40;
+    // let units: HashSet<u64> = vec![69, 148].into_iter().collect();
+    // let color = 40;
     use std::collections::HashMap;
     let id2name: HashMap<_, _> = ds
         .raw_reads
@@ -28,31 +28,29 @@ fn main() -> std::io::Result<()> {
         .map(|read| (read.id, read.desc.to_string()))
         .collect();
     for read in ds.encoded_reads.iter() {
-        if read
+        // if read.nodes.iter()
+        //.any(|n| units.contains(&(n.unit, n.cluster)))
+        // .any(|n| units.contains(&n.unit))
+        // {
+        let line: Vec<_> = read
             .nodes
             .iter()
-            //.any(|n| units.contains(&(n.unit, n.cluster)))
-            .any(|n| units.contains(&n.unit))
-        {
-            let line: Vec<_> = read
-                .nodes
-                .iter()
-                .map(|n| {
-                    // if units.contains(&(n.unit, n.cluster)) {
-                    if units.contains(&n.unit) {
-                        format!("\x1b[38;5;{}m{}\x1b[m", color, n.unit)
-                    } else {
-                        format!("{}", n.unit)
-                    }
-                })
-                .collect();
-            println!(
-                "{}\t{}\t{}",
-                id2name[&read.id],
-                read.original_length,
-                line.join(":")
-            );
-        }
+            .map(|n| {
+                // if units.contains(&(n.unit, n.cluster)) {
+                // if units.contains(&n.unit) {
+                //     format!("\x1b[38;5;{}m{}\x1b[m", color, n.unit)
+                // } else {
+                format!("{}", n.unit)
+                // }
+            })
+            .collect();
+        println!(
+            "{}\t{}\t{}",
+            id2name[&read.id],
+            read.original_length,
+            line.join(":")
+        );
+        // }
     }
     Ok(())
 }

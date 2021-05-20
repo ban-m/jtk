@@ -19,9 +19,9 @@ fn main() -> std::io::Result<()> {
     let result: Vec<_> = ds
         .selected_chunks
         .par_iter()
-        .filter(|u| vec![246].contains(&u.id))
+        .filter(|u| vec![24].contains(&u.id))
         .map(|unit| {
-            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit.id * 23);
+            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit.id * 24);
             let (seqs, answer): (Vec<_>, Vec<_>) = ds
                 .encoded_reads
                 .iter()
@@ -34,13 +34,12 @@ fn main() -> std::io::Result<()> {
                         .collect::<Vec<_>>()
                 })
                 .unzip();
-            let config =
-                haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 20, 5, 2, 25);
+            let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 2);
             let start = std::time::Instant::now();
             let (asn, _) =
-                haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &config).unwrap();
-            log::debug!("{:?}", asn);
-            log::debug!("{:?}", answer);
+                haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config)
+                    .unwrap();
+            log::debug!("\n{:?}\n{:?}", asn, answer);
             let km = haplotyper::local_clustering::rand_index(&answer, &asn);
             let end = std::time::Instant::now();
             log::debug!("FIN\t{}\t{}", unit.id, (end - start).as_millis());
@@ -54,8 +53,9 @@ fn main() -> std::io::Result<()> {
         })
         .collect();
     log::debug!("End");
-    for (id, acc, score) in result.iter() {
-        println!("{}\t{}\t{}", id, acc, score);
+    println!("ID\tScore\tAcc\tType");
+    for (id, score, acc) in result.iter() {
+        println!("{}\t{}\t{}\tNEW", id, score, acc);
     }
     Ok(())
 }

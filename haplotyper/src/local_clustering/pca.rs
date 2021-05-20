@@ -27,9 +27,9 @@ pub fn pca(data: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
         .collect();
     eigen_and_eigenvec.sort_by(|x, y| x.1.abs().partial_cmp(&y.1.abs()).unwrap());
     eigen_and_eigenvec.reverse();
-    for (_, val) in eigen_and_eigenvec.iter() {
-        eprintln!("{}", val);
-    }
+    // for (_, val) in eigen_and_eigenvec.iter() {
+    //     eprintln!("{}", val);
+    // }
     let pca_vectors = &eigen_and_eigenvec[..k];
     data.iter()
         .map(|x| pca_vectors.iter().map(|(v, _)| x.dot(&v)).collect())

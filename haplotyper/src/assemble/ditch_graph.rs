@@ -351,11 +351,6 @@ fn take_consensus(
             };
             let cons = if c.to_polish {
                 let seqs: Vec<_> = value.iter().map(|x| x.seq()).collect();
-                // if key == (0, 0) {
-                //     for s in seqs.iter() {
-                //         debug!("{}", String::from_utf8_lossy(s));
-                //     }
-                // }
                 kiley::polish_chunk_by_parts(&draft, &seqs, &config)
             } else {
                 draft
@@ -371,13 +366,6 @@ fn take_consensus(
             let offset = offsets / value.len() as i64;
             let cons = match (c.to_polish, 0 < offset) {
                 (_, false) => EdgeLabel::Ovlp(offset),
-                (false, _) => {
-                    let (edge, is_forward) = value.iter().max_by_key(|x| x.0.label.len()).unwrap();
-                    match *is_forward {
-                        true => EdgeLabel::Seq(edge.label().to_vec()),
-                        false => EdgeLabel::Seq(bio_utils::revcmp(edge.label())),
-                    }
-                }
                 (true, _) => {
                     let seqs: Vec<_> = value
                         .iter()
@@ -385,9 +373,24 @@ fn take_consensus(
                             true => ed.label().to_vec(),
                             false => bio_utils::revcmp(ed.label()),
                         })
+                        .filter(|e| !e.is_empty())
                         .collect();
+                    // let lens: Vec<_> = value.iter().map(|(ed, _)| ed.label().len()).collect();
+                    // debug!("{:?}", lens);
                     // TODO:Maybe this is not so good...
-                    EdgeLabel::Seq(kiley::consensus(&seqs, 0, 0, 100))
+                    let consensus = if seqs.len() > 3 {
+                        kiley::consensus(&seqs, 0, 0, 100)
+                    } else {
+                        seqs.iter().max_by_key(|x| x.len()).unwrap().to_vec()
+                    };
+                    EdgeLabel::Seq(consensus)
+                }
+                (false, _) => {
+                    let (edge, is_forward) = value.iter().max_by_key(|x| x.0.label.len()).unwrap();
+                    match *is_forward {
+                        true => EdgeLabel::Seq(edge.label().to_vec()),
+                        false => EdgeLabel::Seq(bio_utils::revcmp(edge.label())),
+                    }
                 }
             };
             (key, cons)
@@ -412,9 +415,7 @@ impl<'a> DitchGraph<'a> {
     }
     pub fn new(reads: &[&'a EncodedRead], units: Option<&[Unit]>, c: &AssembleConfig) -> Self {
         // Take a consensus of nodes and edges.
-        debug!("Taking consensus...");
         let (nodes_seq, edge_seq) = take_consensus(reads, units, c);
-        debug!("Done.");
         // Allocate all nodes.
         let mut nodes: HashMap<_, _> = nodes_seq
             .into_iter()
@@ -562,9 +563,7 @@ impl<'a> DitchGraph<'a> {
         Vec<ContigSummary>,
     ) {
         let mut arrived = HashSet::new();
-        // let mut arrived = vec![false; self.nodes.len()];
         let mut sids: HashMap<_, _> = HashMap::new();
-        //vec![ContigTag::None; self.nodes.len()];
         let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);
         let candidates = self.enumerate_candidates();
         for (node, p) in candidates {
@@ -636,10 +635,11 @@ impl<'a> DitchGraph<'a> {
                     .map(|e| (e.to_position, e.to))
                     .count();
                 if to_cands > 1 {
+                    let max_occ = node.edges.iter().map(|x| x.occ).max().unwrap();
                     for e in node
                         .edges
                         .iter()
-                        .filter(|e| e.from_position == pos && e.occ <= thr)
+                        .filter(|e| e.from_position == pos && e.occ <= thr && e.occ < max_occ)
                     {
                         let to = e.to;
                         let t_pos = e.to_position;
@@ -776,7 +776,8 @@ impl<'a> DitchGraph<'a> {
         assert!(edges.len() > 1);
         // TODO: Maybe we need to consensus these bubbles.
         let (first_node, first_pos, seq, edgelabel) = {
-            let first = edges.first().unwrap();
+            let first = edges.iter().max_by_key(|x| x.occ).unwrap();
+            // let first = edges.first().unwrap();
             let first_node = first.to;
             let seq = self.nodes[&first.to].seq().to_vec();
             let edgelabel = first.seq.clone();

@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use definitions::ReadType;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+// use std::collections::HashMap;
 const STABLE_LIMIT: u32 = 6;
 const VARIANT_NUMBER: usize = 2;
 const P_VALUE: f64 = 0.01;
@@ -32,17 +33,17 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         retain: bool,
     ) -> Self {
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
-        let bf = base_freq(&dataset.raw_reads);
-        let units: HashMap<u64, &definitions::Unit> =
-            dataset.selected_chunks.iter().map(|u| (u.id, u)).collect();
-        let opss: Vec<_> = dataset
-            .encoded_reads
-            .iter()
-            .flat_map(|rs| rs.nodes.iter())
-            .filter_map(|node| Some(to_ops(node, units.get(&node.unit)?)))
-            .collect();
-        let config = summarize_operations(opss, bf);
-        debug!("Config:{}", config);
+        // let _bf = base_freq(&dataset.raw_reads);
+        // let units: HashMap<u64, &definitions::Unit> =
+        //     dataset.selected_chunks.iter().map(|u| (u.id, u)).collect();
+        // let _opss: Vec<_> = dataset
+        //     .encoded_reads
+        //     .iter()
+        //     .flat_map(|rs| rs.nodes.iter())
+        //     .filter_map(|node| Some(to_ops(node, units.get(&node.unit)?)))
+        //     .collect();
+        let config = poa_hmm::Config::default();
+        // let config = summarize_operations(opss, bf);
         Self {
             cluster_num,
             subchunk_length,
@@ -190,6 +191,7 @@ fn base_freq(rs: &[definitions::RawRead]) -> [f64; 4] {
     base_count
 }
 
+#[allow(dead_code)]
 fn summarize_operations(opss: Vec<Vec<Op>>, base_freq: [f64; 4]) -> poa_hmm::Config {
     // match + mismatch.
     let mut matchmis = 0;

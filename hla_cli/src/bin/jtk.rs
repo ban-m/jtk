@@ -151,7 +151,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .long("upper")
                 .help("Discard units with occurence more than or equal to [upper].")
                 .takes_value(true)
-                .default_value("600"),
+                .default_value("200"),
         )
         .arg(
             Arg::with_name("lower")
@@ -159,7 +159,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .long("lower")
                 .help("Discard units with occurence less than or equal to [upper].")
                 .takes_value(true)
-                .default_value("3"),
+                .default_value("4"),
         )
 }
 
@@ -958,7 +958,7 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
     Ok(dataset.correct_clustering_em(repeat_num, threshold))
 }
 
-fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Assembly step");
     let threads: usize = matches
         .value_of("threads")
@@ -978,6 +978,13 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     let config = AssembleConfig::new(threads, window_size, !skip_polish);
+    if dataset.assignments.is_empty() {
+        dataset.assignments = dataset
+            .encoded_reads
+            .iter()
+            .map(|r| Assignment::new(r.id, 0))
+            .collect();
+    }
     let gfa = dataset.assemble_as_gfa(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

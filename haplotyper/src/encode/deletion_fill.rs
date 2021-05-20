@@ -41,6 +41,7 @@ fn correct_deletion_error(
     // Inserption counts.
     let pileups = get_pileup(read, reads);
     let threshold = get_threshold(&pileups);
+    // let threshold = 3;
     let nodes = &read.nodes;
     let take_len = nodes.len();
     let inserts: Vec<_> = pileups

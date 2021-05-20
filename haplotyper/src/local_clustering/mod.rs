@@ -60,24 +60,29 @@ pub fn local_clustering_all(ds: &mut DataSet) {
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         pileups.entry(node.unit).or_default().push(node);
     }
-    let consensus: HashMap<_, _> = pileups
+    let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
             let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-            let config = kmeans::ClusteringConfig::new(100, 0, 0, cluster_num[&unit_id], 0);
+            let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id]);
             let start = std::time::Instant::now();
-            let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
+            let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
             let end = std::time::Instant::now();
             debug!("RECORD\t{}\t{}", unit_id, (end - start).as_secs());
-            (unit_id, consensus)
+            (unit_id, (consensus, config.cluster_num))
         })
         .collect();
     for unit in ds.selected_chunks.iter_mut() {
-        unit.seq = String::from_utf8(consensus[&unit.id].to_vec()).unwrap();
+        if let Some((consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+            // TODO: By modifying the unit sequence, we should also modify the
+            // alignment in the unit sequence!
+            unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+            unit.cluster_num = *cluster_num as usize;
+        }
     }
 }
 

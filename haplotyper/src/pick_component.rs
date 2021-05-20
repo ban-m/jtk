@@ -56,14 +56,9 @@ impl ComponentPicking for DataSet {
             .retain(|unit| picked_units.contains(&unit.id));
         let len = self.encoded_reads.len();
         self.encoded_reads.retain(|read| {
-            // Maybe it is preferable to just remove discared units from an encoded read.
-            // But removing a unit from an encoded read would cause some messy task, as
-            // we record the offset between adjacent node in each edge.
-            // So, I choose to drop any encoded reads containing discarded units.
-            !read
-                .nodes
+            read.nodes
                 .iter()
-                .any(|node| !picked_units.contains(&node.unit))
+                .all(|node| picked_units.contains(&node.unit))
         });
         let retained_reads: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
         self.raw_reads

@@ -172,9 +172,6 @@ impl std::fmt::Display for EncodedRead {
         for e in self.edges.iter() {
             write!(f, "{} ", e)?;
         }
-        // for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
-        //     write!(f, "{}:{}-", n, e)?;
-        // }
         write!(f, "|{} bp gap", self.trailing_gap.len())
     }
 }
@@ -201,6 +198,79 @@ impl EncodedRead {
         } else {
             length as usize
         }
+    }
+    /// Remove the i-th node.
+    pub fn remove(&mut self, i: usize) {
+        assert!(i < self.nodes.len());
+        assert_eq!(self.nodes.len(), self.edges.len() + 1);
+        let len = self.nodes.len();
+        let removed_node = self.nodes.remove(i);
+        if self.nodes.is_empty() {
+            assert!(self.edges.is_empty());
+            self.leading_gap
+                .extend(removed_node.original_seq().as_bytes());
+            return;
+        }
+        if i + 1 == len {
+            let removed_edge = self.edges.remove(i - 1);
+            let node_seq = removed_node.original_seq();
+            let skip = (-1 * removed_edge.offset.min(0)) as usize;
+            let trailing_seq: Vec<_> = removed_edge
+                .label()
+                .iter()
+                .chain(node_seq.as_bytes())
+                .chain(self.trailing_gap.iter())
+                .skip(skip)
+                .copied()
+                .collect();
+            self.trailing_gap = trailing_seq;
+        } else if i == 0 {
+            let removed_edge = self.edges.remove(i);
+            self.leading_gap
+                .extend(removed_node.original_seq().as_bytes());
+            self.leading_gap.extend(removed_edge.label());
+            for _ in 0..(-removed_edge.offset) {
+                self.leading_gap.pop();
+            }
+        } else {
+            let removed_edge = self.edges.remove(i);
+            // println!(
+            //     "{}+{}+{}",
+            //     self.edges[i - 1].offset,
+            //     removed_node.seq().len(),
+            //     removed_edge.label.len()
+            // );
+            // println!(
+            //     "{}+{}+{}",
+            //     self.edges[i - 1].label.len(),
+            //     removed_node.original_seq().len(),
+            //     removed_edge.label.len()
+            // );
+            let skip = (-1 * self.edges[i - 1].offset.min(0)) as usize;
+            self.edges[i - 1].to = removed_edge.to;
+            self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
+            self.edges[i - 1]
+                .label
+                .extend(removed_node.original_seq().chars().skip(skip));
+            for _ in 0..(-removed_edge.offset) {
+                self.edges[i - 1].label.pop();
+            }
+            self.edges[i - 1].label += &removed_edge.label;
+            // println!("{}", self.edges[i - 1].offset);
+            // if self.edges[i - 1].label.is_empty() {
+            //     assert!(self.edges[i - 1].offset <= 0);
+            // } else {
+            //     assert_eq!(
+            //         self.edges[i - 1].label.len() as i64,
+            //         self.edges[i - 1].offset
+            //     )
+            // }
+        }
+        assert_eq!(self.nodes.len(), self.edges.len() + 1);
+        // if self.recover_raw_read() != raw {
+        //     eprintln!("{},{}", i, self.nodes.len());
+        //     panic!("{}-{}", self.recover_raw_read().len(), raw.len());
+        // }
     }
     pub fn recover_raw_read(&self) -> Vec<u8> {
         let mut original_seq = self.leading_gap.to_vec();
@@ -311,6 +381,23 @@ impl std::fmt::Display for Node {
 impl Node {
     pub fn seq(&self) -> &[u8] {
         self.seq.as_bytes()
+    }
+    pub fn original_seq(&self) -> String {
+        if self.is_forward {
+            self.seq.clone()
+        } else {
+            self.seq
+                .chars()
+                .rev()
+                .map(|x| match x.to_ascii_uppercase() {
+                    'A' => 'T',
+                    'C' => 'G',
+                    'G' => 'C',
+                    'T' => 'A',
+                    _ => panic!(),
+                })
+                .collect()
+        }
     }
     pub fn query_length(&self) -> usize {
         self.cigar

@@ -40,8 +40,8 @@ then
 else    
     cat ${CLUSTERED} |\
         jtk clustering_correction -vv  --threads ${THREADS} |\
-        jtk global_clustering -vv --threads ${THREADS} --graph |\
+        # jtk global_clustering -vv --threads ${THREADS} --graph |\
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
-cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} > /dev/null
+cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} --no_polish > /dev/null
 cat ${GFA} | awk '($1 ~ /S/)' | awk 'BEGIN{OFS="\n"}{print ">" $2, $4}' > ${GFA%.gfa}.fa

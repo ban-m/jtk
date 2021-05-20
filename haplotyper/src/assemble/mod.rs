@@ -102,19 +102,6 @@ impl Assemble for DataSet {
         }
         debug!("There is {} clusters.", cluster_and_num.len());
         debug!("Start assembly");
-        // <============ String graph =================>
-        // let config = &string_graph::DEFAULT_CONFIG;
-        // let mut graph = string_graph::StringGraph::from_dataset(&self, config);
-        // assert!(graph.sanity_check());
-        // debug!("{:?}", graph);
-        // graph.transitive_edge_reduction();
-        // assert!(graph.sanity_check());
-        // debug!("{:?}", graph);
-        // graph.simple_path_reduction();
-        // assert!(graph.sanity_check());
-        // debug!("{:?}", graph);
-        // graph.assemble_as_gfa()
-        // <============ Ditch graph ======================>
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![]);
         let mut cluster_and_num: Vec<_> = cluster_and_num.into_iter().collect();
@@ -264,14 +251,14 @@ fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     graph.resolve_repeats();
-    for i in 0..6 {
+    for i in 0..2 {
         graph.remove_lightweight_edges(i);
-        assert!(graph.sanity_check(), "L:{}", i);
-        graph.collapse_bubble(c);
-        assert!(graph.sanity_check(), "B:{}", i);
+        // graph.collapse_bubble(c);
     }
     graph.remove_tips();
     graph.remove_small_component(5);
+    graph.remove_lightweight_edges(5);
+    graph.collapse_bubble(c);
     debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
@@ -361,7 +348,16 @@ fn align_reads(
         (reference, reads)
     };
     let thr = format!("{}", c.threads);
-    let args = ["-x", "map-pb", "-a", "-t", &thr, "--secondary=no"];
+    let args = [
+        "-x",
+        "map-pb",
+        "-a",
+        "-t",
+        &thr,
+        "--secondary=no",
+        "-z",
+        "600,400",
+    ];
     let alignment = crate::minimap2::minimap2_args(&reference, &reads, &args);
     let alignment = kiley::sam::Sam::from_reader(std::io::BufReader::new(alignment.as_slice()));
     debug!("Removing {:?}", c_dir);
