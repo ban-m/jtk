@@ -28,19 +28,97 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         cluster_num,
     } = config.clone();
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
+    let profiles = get_profiles(&cons_template, reads, band_width as isize);
+    let probes = filter_profiles(&profiles, cons_template.len(), cluster_num);
+    // let total_lk = {
+    //     let lk: Vec<_> = probes.iter().map(|x| x.1).collect();
+    //     logsumexp(&lk)
+    // };
+    // probes.iter_mut().for_each(|x| x.1 = (x.1 - total_lk).exp());
+    // let norm: f64 = probes.iter().map(|(_, s)| s * s).sum();
+    // let norm = norm.sqrt();
+    // probes.iter_mut().for_each(|x| x.1 /= norm);
+    let profiles: Vec<Vec<_>> = profiles
+        .iter()
+        .map(|xs| {
+            probes
+                .iter()
+                //.map(|&(pos, scale)| (xs[pos] * scale))
+                .map(|&(pos, _)| xs[pos])
+                .collect()
+        })
+        .collect();
+    // let no_cluster = (vec![0; reads.len()], std::f64::NEG_INFINITY);
+    // let (assignments, _score) = std::iter::repeat(cluster_num)
+    //     .take(10)
+    //     .map(|cluster_num| {
+    //         let asn = kmeans_f64_plusplus(&profiles, cluster_num, rng);
+    //         let score = score(&profiles, &asn, cluster_num) + poisson_likelihood(&asn, cluster_num);
+    //         (asn, score)
+    //     })
+    //     .fold(no_cluster, |(argmax, max), (asn, score)| {
+    //         if max < score {
+    //             (asn, score)
+    //         } else {
+    //             (argmax, max)
+    //         }
+    //     });
+    let (assignments, _score) = (0..5)
+        .map(|_| mcmc_clustering(&profiles, cluster_num, rng))
+        .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+        .unwrap();
+    // Filter out unused variants. 2nd clustering.
+    let to_used = {
+        let mut lks = vec![vec![0f64; probes.len()]; cluster_num as usize];
+        for (&asn, xs) in assignments.iter().zip(profiles.iter()) {
+            for (l, &x) in lks[asn as usize].iter_mut().zip(xs) {
+                *l += x;
+            }
+        }
+        lks.iter().fold(vec![false; probes.len()], |mut acc, xs| {
+            for (is_used, total_lk) in acc.iter_mut().zip(xs) {
+                *is_used |= total_lk.is_sign_positive();
+            }
+            acc
+        })
+    };
+    let profiles: Vec<Vec<_>> = profiles
+        .iter()
+        .map(|xs| {
+            xs.iter()
+                .zip(to_used.iter())
+                .filter_map(|(&x, &y)| y.then(|| x))
+                .collect()
+        })
+        .collect();
+    let (assignments, _score) = (0..5)
+        .map(|_| mcmc_clustering(&profiles, cluster_num, rng))
+        .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+        .unwrap();
+    // for (asn, prf) in assignments.iter().zip(profiles) {
+    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.1}", x)).collect();
+    //     debug!("DUMP\t{}\t{}", asn, prf.join("\t"));
+    // }
+    Some((assignments, cons_template))
+}
+
+fn get_profiles<T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    band_width: isize,
+) -> Vec<Vec<f64>> {
     use kiley::gphmm::*;
     let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    let template = kiley::padseq::PadSeq::new(cons_template.as_slice());
+    let template = kiley::padseq::PadSeq::new(template);
     let reads: Vec<_> = reads
         .iter()
         .map(|r| kiley::padseq::PadSeq::new(r.borrow()))
         .collect();
-    let (hmm, _) = hmm.fit_banded_inner(&template, &reads, band_width);
-    let profiles: Vec<Vec<_>> = reads
+    let (hmm, _) = hmm.fit_banded_inner(&template, &reads, band_width as usize);
+    reads
         .iter()
         .map(|read| {
-            let prof =
-                banded::ProfileBanded::new(&hmm, &template, &read, band_width as isize).unwrap();
+            let prof = banded::ProfileBanded::new(&hmm, &template, &read, band_width).unwrap();
             let lk = prof.lk();
             prof.to_modification_table()
                 .iter()
@@ -48,100 +126,49 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .map(|x| x - lk)
                 .collect()
         })
-        .collect();
-    let var_num = 2 * cluster_num as usize;
-    let probes: Vec<_> = (0..9 * template.len())
-        .map(|pos| {
-            let (sum, count): (f64, usize) = profiles.iter().fold((0f64, 0), |(sum, c), xs| {
-                if 0.01 < xs[pos] {
-                    (sum + xs[pos], c + 1)
-                } else {
-                    (sum, c)
+        .collect()
+}
+
+fn filter_profiles(
+    profiles: &[Vec<f64>],
+    template_len: usize,
+    cluster_num: u8,
+) -> Vec<(usize, f64)> {
+    let var_num = 2 * (cluster_num - 1) as usize;
+    let total_improvement =
+        profiles
+            .iter()
+            .fold(vec![(0f64, 0); template_len * 9], |mut acc, prof| {
+                for ((sum, count), p) in acc.iter_mut().zip(prof) {
+                    *sum += p.max(0f64);
+                    *count += (0.01 < *p) as usize;
                 }
+                acc
             });
-            let max_lk = (1..cluster_num)
-                .map(|k| poisson_lk(count, reads.len() as f64 / k as f64))
+    let mut probes: Vec<(usize, f64)> = total_improvement
+        .into_iter()
+        .enumerate()
+        .map(|(pos, (sum, count))| {
+            let max_lk = (1..cluster_num + 1)
+                .map(|k| poisson_lk(count, profiles.len() as f64 / k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
                 .unwrap();
             (pos, sum + max_lk)
         })
         .collect();
-    let mut probes: Vec<_> = probes
-        .chunks_exact(9)
-        .filter_map(|xs| xs.iter().max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap()))
-        .copied()
-        .collect();
     probes.sort_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap());
     probes.reverse();
-    probes = {
-        let abs = |x: usize, y: usize| x.saturating_sub(y) + y.saturating_sub(x);
-        let (mut buffer, mut pointer) = (vec![], 0);
-        while buffer.len() < var_num {
-            let (pos, _) = probes[pointer];
-            if buffer.iter().all(|(p, _)| abs(p / 9, pos / 9) > 5) {
-                buffer.push(probes[pointer]);
-            }
-            pointer += 1;
-            if probes.len() <= pointer {
-                break;
-            }
+    let abs = |x: usize, y: usize| x.saturating_sub(y) + y.saturating_sub(x);
+    let mut buffer = vec![];
+    for &(pos, lk) in probes.iter() {
+        if buffer.iter().all(|(p, _)| abs(p / 9, pos / 9) > 5) {
+            buffer.push((pos, lk));
         }
-        buffer
-    };
-    debug!("{:?}", probes);
-    let total_lk = {
-        let lk: Vec<_> = probes.iter().map(|x| x.1).collect();
-        logsumexp(&lk)
-    };
-    // let norm: f64 = probes.iter().map(|(_, s)| s * s).sum();
-    // let norm = norm.sqrt();
-    // probes.iter_mut().for_each(|x| x.1 /= norm);
-    probes.iter_mut().for_each(|x| x.1 = (x.1 - total_lk).exp());
-    let profiles: Vec<Vec<_>> = profiles
-        .iter()
-        .map(|xs| {
-            probes
-                .iter()
-                .map(|&(pos, scale)| (xs[pos] * scale))
-                .collect()
-        })
-        .collect();
-    // let max_gain: f64 = profiles
-    //     .iter()
-    //     .map(|xs| -> f64 { xs.iter().map(|x| x.max(0f64)).sum() })
-    //     .sum();
-    // debug!("Per cluster:{:.1}", max_gain / var_num as f64);
-    // let no_cluster = (vec![0; reads.len()], -max_gain / var_num as f64, 1);
-    let no_cluster = (vec![0; reads.len()], std::f64::NEG_INFINITY, 1);
-    let (assignments, score, cluster_num) = std::iter::once(cluster_num)
-        //(cluster_num.max(4) - 2..(cluster_num + 2))
-        .flat_map(|k| std::iter::repeat(k).take(1))
-        .map(|cluster_num| {
-            let (asn, score) = mcmc_clustering(&profiles, cluster_num, rng);
-            (asn, score, cluster_num)
-        })
-        .fold(no_cluster, |(argmax, max, cl), (asn, score, k)| {
-            if max < score {
-                (asn, score, k)
-            } else {
-                (argmax, max, cl)
-            }
-        });
-    debug!("SCORE:{}", score);
-    let max: Vec<_> = profiles
-        .iter()
-        .fold(vec![0f64; profiles[0].len()], |mut acc, xs| {
-            acc.iter_mut().zip(xs).for_each(|(a, x)| *a += x.max(0f64));
-            acc
-        });
-    let max: Vec<_> = max.iter().map(|x| format!("{:.2}", x)).collect();
-    debug!("MAX:{}", max.join("\t"));
-    for (asn, prf) in assignments.iter().zip(profiles) {
-        let prf: Vec<_> = prf.iter().map(|x| format!("{:.1}", x)).collect();
-        debug!("DUMP\t{}\t{}", asn, prf.join("\t"));
+        if buffer.len() == var_num {
+            break;
+        }
     }
-    config.cluster_num = cluster_num;
-    Some((assignments, cons_template))
+    buffer
 }
 
 fn poisson_lk(count: usize, mean: f64) -> f64 {
@@ -165,9 +192,9 @@ fn poisson_likelihood(asn: &[u8], cluster_num: u8) -> f64 {
 // 2. For each sum, the element of the positve values would be selected,
 // or we acceept the edit operation at that point.
 // 3. Sum up the positive values of summing-upped vector for each cluster.
-fn score(data: &[Vec<f64>], asn: &[u8], k: usize) -> f64 {
+fn score(data: &[Vec<f64>], asn: &[u8], k: u8) -> f64 {
     let dim = data[0].len();
-    let mut sums = vec![vec![0f64; dim]; k];
+    let mut sums = vec![vec![0f64; dim]; k as usize];
     for (xs, &asn) in data.iter().zip(asn.iter()) {
         xs.iter()
             .zip(sums[asn as usize].iter_mut())
@@ -410,7 +437,7 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: u8, rng: &mut R) -> f64
             }
         }
     }
-    let total = 100_000;
+    let total = 50_000 * k as usize;
     // MAP estimation.
     let (mut max, mut argmax) = (std::f64::NEG_INFINITY, vec![]);
     let mean = data.len() as f64 / k as f64;

@@ -257,7 +257,7 @@ fn assemble(
     }
     graph.remove_tips();
     graph.remove_small_component(5);
-    graph.remove_lightweight_edges(5);
+    graph.remove_lightweight_edges(3);
     graph.collapse_bubble(c);
     debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
