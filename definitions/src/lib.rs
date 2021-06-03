@@ -5,13 +5,28 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DataSet {
+    /// The path to the input file.
     pub input_file: String,
+    /// If Some(x), it is the estimated coverage per haplotype.
+    /// Note that this value is a estimation, so please do not relay heavily on this value.
+    pub coverage: Option<f64>,
+    /// The FASTA-like record for input. If this value is empy, please reload the original
+    /// sequence from either `input_file` or `encoded_reads`.
     pub raw_reads: Vec<RawRead>,
+    /// The HiC reads.
     pub hic_pairs: Vec<HiCPair>,
+    /// The chunks selected.
     pub selected_chunks: Vec<Unit>,
+    /// The reads encoded by selected chunks.
     pub encoded_reads: Vec<EncodedRead>,
+    /// The edge of HiC.
     pub hic_edges: Vec<HiCEdge>,
+    /// Depricated: This value is previously assigned by `global_clustering` method.
+    /// As the research has proceed, we realize that `phasing` reads is unnessesary, or even harmful to
+    /// the assembly. So, in the future refactoring, this value and `global_clustering` method would be
+    /// removed.
     pub assignments: Vec<Assignment>,
+    /// The type of the reads.
     pub read_type: ReadType,
 }
 
@@ -33,6 +48,7 @@ impl DataSet {
         };
         Self {
             input_file: input_file.to_string(),
+            coverage: None,
             raw_reads,
             hic_pairs: vec![],
             selected_chunks: vec![],
@@ -45,6 +61,7 @@ impl DataSet {
     #[allow(clippy::too_many_arguments)]
     pub fn with_param(
         input_file: String,
+        coverage: Option<f64>,
         raw_reads: Vec<RawRead>,
         hic_pairs: Vec<HiCPair>,
         selected_chunks: Vec<Unit>,
@@ -55,6 +72,7 @@ impl DataSet {
     ) -> Self {
         Self {
             input_file,
+            coverage,
             raw_reads,
             hic_pairs,
             selected_chunks,

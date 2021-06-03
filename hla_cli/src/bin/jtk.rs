@@ -564,6 +564,16 @@ fn subcommand_clustering_correction() -> App<'static, 'static> {
                 .default_value(&"5")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("length_threshold")
+                .short("l")
+                .long("length_limit")
+                .required(false)
+                .value_name("THRESHOLD")
+                .help("Reads with less that this value would not be corrected.")
+                .default_value(&"3")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_assembly() -> App<'static, 'static> {
@@ -949,13 +959,17 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
         .value_of("coverage_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let len_thr: usize = matches
+        .value_of("length_threshold")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    Ok(dataset.correct_clustering_em(repeat_num, threshold))
+    Ok(dataset.correct_clustering_em(repeat_num, threshold, len_thr))
 }
 
 fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {

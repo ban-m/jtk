@@ -60,12 +60,20 @@ pub fn local_clustering_all(ds: &mut DataSet) {
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         pileups.entry(node.unit).or_default().push(node);
     }
+    let coverage = ds.coverage.clone();
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
             let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-            let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id]);
+            let coverage = match coverage {
+                Some(res) => res,
+                None => {
+                    debug!("No coverage estimation. Use adhoc coverage");
+                    (units.len() / 2) as f64
+                }
+            };
+            let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
             let start = std::time::Instant::now();
             let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {

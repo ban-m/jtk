@@ -10,10 +10,10 @@ set -ue
 data=/data/hacone/MHC-KIR/split/Ashkenazi_Son.MHC.fa
 OUTPUT=${PWD}/result/Ashkenazi_Son.MHC
 mkdir -p ${OUTPUT}/jtk
-qsub -o ${OUTPUT}/Ashkenazi_Son.MHC.out -j y\
+qsub -o ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out -j y\
      ./script/kir_pipeline.job \
      ${data} \
-     ${OUTPUT}/Ashkenazi_Son
+     ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out 
 
 # FLYE=${PWD}/script/flye.sh
 # mkdir -p ${OUTPUT}/flye

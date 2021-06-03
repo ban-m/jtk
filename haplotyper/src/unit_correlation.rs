@@ -1,10 +1,12 @@
 use definitions::*;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand_distr::ChiSquared;
 use rand_distr::Distribution;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::HashMap;
-pub fn select_uninformative_units(dataset: &DataSet, p_value: f64) -> HashMap<u64, bool> {
+// Return true if the unit is informative, or containing variants and
+// propery clustered, assumed.
+pub fn select_informative_units(dataset: &DataSet, p_value: f64) -> HashMap<u64, bool> {
     dataset
         .selected_chunks
         .iter()
@@ -28,21 +30,25 @@ fn is_ok_unit(unit: &definitions::Unit, dataset: &DataSet, p_value: f64) -> bool
         }
     }
     if connections.is_empty() {
+        // It is OK to have isolated node.
+        true
+    } else if connections.iter().all(|(_, pairs)| pairs.len() < 5) {
         true
     } else {
-        connections.iter().any(|(&p, pairs)| {
-            let pair_unit = dataset.selected_chunks.iter().find(|u| u.id == p).unwrap();
-            let s = unit.id * pair_unit.id;
-            let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(s);
-            trace!("PAIR\t{}", p);
-            let unit_cluster = unit.cluster_num as u64;
-            let pair_cluster = pair_unit.cluster_num as u64;
-            calc_p_value(&pairs, rng.gen(), unit_cluster, pair_cluster) < p_value
-        })
+        connections
+            .iter()
+            .filter(|(_, pairs)| 5 <= pairs.len())
+            .any(|(&p, pairs)| {
+                let pair_unit = dataset.selected_chunks.iter().find(|u| u.id == p).unwrap();
+                let seed = unit.id * pair_unit.id;
+                let unit_cluster = unit.cluster_num as u64;
+                let pair_cluster = pair_unit.cluster_num as u64;
+                calc_p_value(&pairs, seed, unit_cluster, pair_cluster) < p_value
+            })
     }
 }
 
-fn calc_p_value(clusters: &[(u64, u64)], seed: u64, k1: u64, k2: u64) -> f64 {
+pub fn calc_p_value(clusters: &[(u64, u64)], seed: u64, k1: u64, k2: u64) -> f64 {
     let mut dump: HashMap<_, u32> = HashMap::new();
     for &cl in clusters.iter() {
         *dump.entry(cl).or_default() += 1;
@@ -78,7 +84,7 @@ fn calc_p_value(clusters: &[(u64, u64)], seed: u64, k1: u64, k2: u64) -> f64 {
                 .sum::<f64>()
         })
         .sum::<f64>();
-    let sample_num = 10_000;
+    let sample_num = 100_000;
     let distr = ChiSquared::new(degree_of_freedom as f64).unwrap();
     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
     let hit = distr

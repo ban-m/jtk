@@ -1,3 +1,4 @@
+use super::copy_number;
 use super::AssembleConfig;
 // use crate::find_union;
 use definitions::{EncodedRead, Unit};
@@ -280,6 +281,8 @@ pub struct ContigElement {
     pub unit: u64,
     pub cluster: u64,
     pub strand: bool,
+    /// The "coverage."
+    pub occ: usize,
 }
 
 // Take consensus on each node and each edge.
@@ -551,14 +554,14 @@ impl<'a> DitchGraph<'a> {
         }
         primary_candidates
     }
-    // Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
+    /// Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
     pub fn spell(
         &self,
         c: &AssembleConfig,
         cl: usize,
     ) -> (
         Vec<gfa::Segment>,
-        Vec<gfa::Edge>,
+        Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
         gfa::Group,
         Vec<ContigSummary>,
     ) {
@@ -592,12 +595,81 @@ impl<'a> DitchGraph<'a> {
         let ids: Vec<_> = g_segs
             .iter()
             .map(|seg| seg.sid.clone())
-            .chain(g_edges.iter().filter_map(|e| e.eid.clone()))
+            .chain(g_edges.iter().filter_map(|e| e.0.eid.clone()))
             .collect();
         let uid = Some(format!("group-{}", cl));
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
         (g_segs, g_edges, group, summaries)
     }
+    pub fn copy_number_estimation(
+        &self,
+        cv: f64,
+        len: f64,
+    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
+        // Create simple-path reduced graph.
+        let (reduced_nodes, nodes_in_sp) = self.simple_path_reduction();
+        let is_tip: Vec<_> = nodes_in_sp
+            .iter()
+            .map(|nodes| self.outdeg_of_nodes(&nodes) < 2)
+            .collect();
+        let node_coverage: Vec<_> = nodes_in_sp
+            .iter()
+            .map(|nodes| self.coverage_of_nodes(nodes) / cv)
+            .collect();
+        let reduced_edges = self.edges_between_simple_path(&reduced_nodes, cv, len);
+        let (nodes_cp, edge_cp) =
+            copy_number::estimate_copy_number(&node_coverage, &is_tip, &reduced_edges);
+        let nodes_cp: HashMap<_, _> = nodes_cp
+            .iter()
+            .zip(nodes_in_sp)
+            .flat_map(|(&cp, nodes)| nodes.iter().map(|&node| (node, cp)).collect::<Vec<_>>())
+            .collect();
+        let mut edge_cp: HashMap<DitEdge, _> = edge_cp
+            .iter()
+            .zip(reduced_edges)
+            .map(|(&cp, (from, from_first, to, to_first, _))| {
+                let from = match reduced_nodes[from] {
+                    (node, pos, _, _) if from_first => (node, pos),
+                    (_, _, node, pos) => (node, pos),
+                };
+                let to = match reduced_nodes[to] {
+                    (node, pos, _, _) if to_first => (node, pos),
+                    (_, _, node, pos) => (node, pos),
+                };
+                ((from, to), cp)
+            })
+            .collect();
+        for node in self.nodes.values() {
+            for edge in node.edges.iter() {
+                let from = (edge.from, edge.from_position);
+                let to = (edge.to, edge.to_position);
+                if edge_cp.contains_key(&(from, to)) {
+                    // It is OK to insert either copy number.
+                    let copy_number = nodes_cp[&edge.from];
+                    edge_cp.insert((from, to), copy_number);
+                }
+            }
+        }
+        (nodes_cp, edge_cp)
+    }
+    fn simple_path_reduction(&self) -> (Vec<(Node, Position, Node, Position)>, Vec<Vec<Node>>) {
+        unimplemented!()
+    }
+    fn outdeg_of_nodes(&self, nodes: &[Node]) -> usize {
+        unimplemented!()
+    }
+    fn coverage_of_nodes(&self, nodes: &[Node]) -> f64 {
+        unimplemented!()
+    }
+    fn edges_between_simple_path(
+        &self,
+        nodes: &[(Node, Position, Node, Position)],
+        cv: f64,
+        len: f64,
+    ) -> Vec<(usize, bool, usize, bool, f64)> {
+        unimplemented!()
+    }
+
     /// Remove small tips.
     /// TODO: More sophisticated algorithm is indeeed needed.
     pub fn remove_tips(&mut self) {
@@ -621,6 +693,34 @@ impl<'a> DitchGraph<'a> {
     }
     /// Resolve repetitive units. (TODO.)
     pub fn resolve_repeats(&self) {}
+    /// Remove edge from given reads.
+    pub fn remove_edges_from_short_reads(&mut self, reads: &[&EncodedRead]) {
+        for read in reads.iter() {
+            for w in read.nodes.windows(2) {
+                let from = (w[0].unit, w[0].cluster);
+                use Position::*;
+                let from_pos = if w[0].is_forward { Tail } else { Head };
+                let to = (w[1].unit, w[1].cluster);
+                let to_pos = if w[1].is_forward { Tail } else { Head };
+                let mock_edge = DitchEdge::new(from, from_pos, to, to_pos, EdgeLabel::Ovlp(0));
+                let forward_edge = self
+                    .nodes
+                    .get_mut(&from)
+                    .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
+                if let Some(forward_edge) = forward_edge {
+                    forward_edge.occ -= 1;
+                }
+                let mock_edge = mock_edge.reverse();
+                let reverse_edge = self
+                    .nodes
+                    .get_mut(&to)
+                    .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
+                if let Some(reverse_edge) = reverse_edge {
+                    reverse_edge.occ -= 1;
+                }
+            }
+        }
+    }
     /// Remove lightweight edges with occurence less than `thr`.
     /// Note that this function would never broke a connected component into two.
     pub fn remove_lightweight_edges(&mut self, thr: usize) {
@@ -859,7 +959,6 @@ impl<'a> DitchGraph<'a> {
         ((first_node, !first_pos), merged_nodes)
     }
     // Traverse from the given `start` node of `start_position` Position.
-    // TODO:There should be a bug.
     fn traverse_from(
         &self,
         arrived: &mut HashSet<Node>,
@@ -868,7 +967,11 @@ impl<'a> DitchGraph<'a> {
         start_position: Position,
         seqname: String,
         _c: &AssembleConfig,
-    ) -> (gfa::Segment, Vec<gfa::Edge>, ContigSummary) {
+    ) -> (
+        gfa::Segment,
+        Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
+        ContigSummary,
+    ) {
         // Find edges.
         let mut edges: Vec<_> = self.nodes[&start]
             .edges
@@ -895,7 +998,16 @@ impl<'a> DitchGraph<'a> {
                 let sid1 = gfa::RefID::from(&seqname, true);
                 let beg1 = gfa::Position::from(0, false);
                 let a = None;
-                Some(gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a))
+                let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
+                let len = match &e.seq {
+                    EdgeLabel::Ovlp(_) => 0,
+                    EdgeLabel::Seq(l) => l.len(),
+                };
+                let samtag = vec![
+                    gfa::SamTag::new(format!("cv:i:{}", e.occ)),
+                    gfa::SamTag::new(format!("ln:i:{}", len)),
+                ];
+                Some((edge, samtag))
             })
             .collect();
         let (mut node, mut position) = (start, start_position);
@@ -914,6 +1026,7 @@ impl<'a> DitchGraph<'a> {
                     unit: self.nodes[&node].node.0,
                     cluster: self.nodes[&node].node.1,
                     strand: position == Position::Head,
+                    occ: self.nodes[&node].occ,
                 };
                 unit_names.push(elm);
             }
@@ -996,7 +1109,16 @@ impl<'a> DitchGraph<'a> {
                 let sid1 = gfa::RefID::from(&seqname, true);
                 let beg1 = gfa::Position::from(seq.len(), true);
                 let a = None;
-                Some(gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a))
+                let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
+                let len = match &e.seq {
+                    EdgeLabel::Ovlp(_) => 0,
+                    EdgeLabel::Seq(l) => l.len(),
+                };
+                let samtag = vec![
+                    gfa::SamTag::new(format!("cv:i:{}", e.occ)),
+                    gfa::SamTag::new(format!("ln:i:{}", len)),
+                ];
+                Some((edge, samtag))
             });
         edges.extend(tail_edges);
         (seg, edges, summary)
@@ -1555,7 +1677,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1596,7 +1718,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1637,7 +1759,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1670,7 +1792,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1714,7 +1836,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1758,7 +1880,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1802,7 +1924,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }
@@ -1846,7 +1968,7 @@ mod tests {
             let edges = edges
                 .clone()
                 .into_iter()
-                .map(gfa::Content::Edge)
+                .map(|(e, _)| gfa::Content::Edge(e))
                 .map(|n| gfa::Record::from_contents(n, vec![]));
             records.extend(edges);
         }

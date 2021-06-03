@@ -4,13 +4,15 @@ use rand::Rng;
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig {
     band_width: usize,
+    coverage: f64,
     pub cluster_num: u8,
 }
 
 impl ClusteringConfig {
-    pub fn new(band_width: usize, cluster_num: u8) -> Self {
+    pub fn new(band_width: usize, cluster_num: u8, coverage: f64) -> Self {
         Self {
             band_width,
+            coverage,
             cluster_num,
         }
     }
@@ -26,18 +28,11 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let ClusteringConfig {
         band_width,
         cluster_num,
+        coverage,
     } = config.clone();
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
     let probes = filter_profiles(&profiles, cons_template.len(), cluster_num);
-    // let total_lk = {
-    //     let lk: Vec<_> = probes.iter().map(|x| x.1).collect();
-    //     logsumexp(&lk)
-    // };
-    // probes.iter_mut().for_each(|x| x.1 = (x.1 - total_lk).exp());
-    // let norm: f64 = probes.iter().map(|(_, s)| s * s).sum();
-    // let norm = norm.sqrt();
-    // probes.iter_mut().for_each(|x| x.1 /= norm);
     let profiles: Vec<Vec<_>> = profiles
         .iter()
         .map(|xs| {
@@ -48,23 +43,21 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .collect()
         })
         .collect();
-    // let no_cluster = (vec![0; reads.len()], std::f64::NEG_INFINITY);
-    // let (assignments, _score) = std::iter::repeat(cluster_num)
-    //     .take(10)
-    //     .map(|cluster_num| {
-    //         let asn = kmeans_f64_plusplus(&profiles, cluster_num, rng);
-    //         let score = score(&profiles, &asn, cluster_num) + poisson_likelihood(&asn, cluster_num);
-    //         (asn, score)
+    // Maybe we can tune the number of the cluster.
+    // let prob_of_no_variant = poisson_lk(0, 0.001 * cons_template.len() as f64).exp();
+    // let lk_no_variant: f64 = (1..cluster_num + 1)
+    //     .map(|multip| {
+    //         (1f64 - prob_of_no_variant)
+    //             * prob_of_no_variant.powi(multip as i32 - 1)
+    //             * poisson_lk(reads.len(), coverage * multip as f64).exp()
     //     })
-    //     .fold(no_cluster, |(argmax, max), (asn, score)| {
-    //         if max < score {
-    //             (asn, score)
-    //         } else {
-    //             (argmax, max)
-    //         }
-    //     });
-    let (assignments, _score) = (0..5)
-        .map(|_| mcmc_clustering(&profiles, cluster_num, rng))
+    //     .sum::<f64>()
+    //     .ln();
+    // let (start, end) = ((cluster_num / 2).max(2), cluster_num + 2);
+    // let (start, end) = (cluster_num, cluster_num + 1);
+    let (assignments, _score) = std::iter::repeat(cluster_num)
+        .take(10)
+        .map(|k| mcmc_clustering(&profiles, k, coverage, rng))
         .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
         .unwrap();
     // Filter out unused variants. 2nd clustering.
@@ -91,8 +84,15 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .collect()
         })
         .collect();
-    let (assignments, _score) = (0..5)
-        .map(|_| mcmc_clustering(&profiles, cluster_num, rng))
+    // let (assignments, _score, _) = (start..end)
+    //     .flat_map(|k| std::iter::repeat(k).take(3))
+    //     .map(|k| mcmc_clustering_with_lk(&profiles, k, coverage, prob_of_no_variant, rng))
+    //     .chain(std::iter::once((vec![0; reads.len()], lk_no_variant, 1)))
+    //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+    //     .unwrap();
+    let (assignments, _score) = std::iter::repeat(cluster_num)
+        .take(10)
+        .map(|k| mcmc_clustering(&profiles, k, coverage, rng))
         .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
         .unwrap();
     // for (asn, prf) in assignments.iter().zip(profiles) {
@@ -171,8 +171,9 @@ fn filter_profiles(
     buffer
 }
 
-fn poisson_lk(count: usize, mean: f64) -> f64 {
-    count as f64 * mean.ln() - mean - (1..count + 1).map(|x| (x as f64).ln()).sum::<f64>()
+// Return log Poiss{x|lambda}
+fn poisson_lk(x: usize, lambda: f64) -> f64 {
+    x as f64 * lambda.ln() - lambda - (1..x + 1).map(|c| (c as f64).ln()).sum::<f64>()
 }
 
 // Likelihood of each size of the clsuters.
@@ -192,6 +193,7 @@ fn poisson_likelihood(asn: &[u8], cluster_num: u8) -> f64 {
 // 2. For each sum, the element of the positve values would be selected,
 // or we acceept the edit operation at that point.
 // 3. Sum up the positive values of summing-upped vector for each cluster.
+#[allow(dead_code)]
 fn score(data: &[Vec<f64>], asn: &[u8], k: u8) -> f64 {
     let dim = data[0].len();
     let mut sums = vec![vec![0f64; dim]; k as usize];
@@ -312,6 +314,7 @@ fn kmeans_f64_with_init(data: &[Vec<f64>], assignments: &mut [u8], k: u8) {
     }
 }
 
+#[allow(dead_code)]
 fn kmeans_f64_plusplus<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> Vec<u8> {
     let mut centers: Vec<&[f64]> = vec![];
     let indices: Vec<_> = (0..data.len()).collect();
@@ -352,7 +355,9 @@ fn kmeans_f64_plusplus<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> Vec<u8>
     assignments
 }
 
-fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> (Vec<u8>, f64) {
+// Take dataset, the number of the cluster, the haploid coverage and seed generator,
+// return the total likelihood.
+fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: u8, cov: f64, rng: &mut R) -> (Vec<u8>, f64) {
     // 1. Construct the first assignments.
     let mut centers: Vec<&[f64]> = vec![];
     let indices: Vec<_> = (0..data.len()).collect();
@@ -388,11 +393,11 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> (Vec<u8>, f
                 .0
         })
         .collect();
-    let total_lk = mcmc(data, &mut assignments, k, rng);
+    let total_lk = mcmc(data, &mut assignments, k, cov, rng);
     (assignments, total_lk)
 }
 
-fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: u8, rng: &mut R) -> f64 {
+fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: u8, _c: f64, rng: &mut R) -> f64 {
     // how many instance in a cluster.
     let mut clusters = vec![0; k as usize];
     for &asn in assign.iter() {
@@ -414,7 +419,6 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: u8, rng: &mut R) -> f64
             .map(|x| x.max(0f64))
             .sum()
     };
-    // TODO: Multiplicity estimation.
     // Burn in.
     let burn_in = 10_000;
     for _ in 0..burn_in {

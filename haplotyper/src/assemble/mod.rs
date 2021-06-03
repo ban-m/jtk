@@ -1,3 +1,4 @@
+pub mod copy_number;
 pub mod ditch_graph;
 pub mod string_graph;
 use definitions::*;
@@ -70,6 +71,7 @@ pub struct AssembleConfig {
     to_polish: bool,
     window_size: usize,
 }
+
 impl std::default::Default for AssembleConfig {
     fn default() -> Self {
         Self {
@@ -107,13 +109,6 @@ impl Assemble for DataSet {
         let mut cluster_and_num: Vec<_> = cluster_and_num.into_iter().collect();
         cluster_and_num.sort_by_key(|x| x.1);
         cluster_and_num.reverse();
-        let coverage: HashMap<(u64, u64), u32> = {
-            let mut coverage = HashMap::new();
-            for node in self.encoded_reads.iter().flat_map(|read| read.nodes.iter()) {
-                *coverage.entry((node.unit, node.cluster)).or_default() += 1;
-            }
-            coverage
-        };
         let records: Vec<_> = cluster_and_num
             .into_iter()
             .filter(|&(cl, num)| {
@@ -125,43 +120,7 @@ impl Assemble for DataSet {
                 }
             })
             .flat_map(|(cl, _)| {
-                let (nodes, edges, group, summaries) = assemble(self, cl, c);
-                let mut records = vec![];
-                let nodes = nodes.into_iter().map(|node| {
-                    let tags = match summaries.iter().find(|x| x.id == node.sid) {
-                        Some(contigsummary) => {
-                            let nodes: Vec<_> = contigsummary
-                                .summary
-                                .iter()
-                                .map(|ContigElement { unit, cluster, .. }| {
-                                    format!("{}-{}", unit, cluster)
-                                })
-                                .collect();
-                            debug!("ASSEMBLE\t{}\t{}", node.sid, nodes.join("\t"));
-                            let (total, length) = contigsummary
-                                .summary
-                                .iter()
-                                .map(|&ContigElement { unit, cluster, .. }| {
-                                    coverage.get(&(unit, cluster)).copied().unwrap_or(0)
-                                })
-                                .fold((0, 0), |(total, length), cov| (total + cov, length + 1));
-                            let cov_tag = gfa::SamTag {
-                                inner: format!("cv:i:{}", total / length),
-                            };
-                            vec![cov_tag]
-                        }
-                        None => vec![],
-                    };
-                    gfa::Record::from_contents(gfa::Content::Seg(node), tags)
-                });
-                records.extend(nodes);
-                let edges = edges
-                    .into_iter()
-                    .map(gfa::Content::Edge)
-                    .map(|n| gfa::Record::from_contents(n, vec![]));
-                records.extend(edges);
-                let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
-                records.push(group);
+                let (records, _summaries) = assemble(self, cl, c);
                 records
             })
             .collect();
@@ -186,7 +145,7 @@ impl Assemble for DataSet {
                 }
             })
             .map(|(cl, _)| {
-                let (_, edges, _, summaries) = assemble(&self, cl, c);
+                let (records, summaries) = assemble(&self, cl, c);
                 let nodes: Vec<_> = summaries
                     .iter()
                     .map(|s| {
@@ -203,8 +162,12 @@ impl Assemble for DataSet {
                         Node { id, segments }
                     })
                     .collect();
-                let edges = edges
+                let edges = records
                     .iter()
+                    .filter_map(|record| match &record.content {
+                        gfa::Content::Edge(e) => Some(e),
+                        _ => None,
+                    })
                     .map(|e| {
                         let from = e.sid1.id.to_string();
                         let from_tail = e.sid1.is_forward();
@@ -232,9 +195,10 @@ fn assemble(
     cl: usize,
     c: &AssembleConfig,
 ) -> (
-    Vec<gfa::Segment>,
-    Vec<gfa::Edge>,
-    gfa::Group,
+    Vec<gfa::Record>,
+    // Vec<gfa::Segment>,
+    // Vec<gfa::Edge>,
+    // gfa::Group,
     Vec<ContigSummary>,
 ) {
     let clusters: HashSet<_> = ds
@@ -250,16 +214,22 @@ fn assemble(
         .collect();
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    graph.resolve_repeats();
-    for i in 0..2 {
-        graph.remove_lightweight_edges(i);
-        // graph.collapse_bubble(c);
-    }
-    graph.remove_tips();
-    graph.remove_small_component(5);
-    graph.remove_lightweight_edges(3);
-    graph.collapse_bubble(c);
-    debug!("{}", graph);
+    let short_reads: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .filter(|r| r.nodes.len() < 4)
+        .collect();
+    graph.remove_edges_from_short_reads(&short_reads);
+    // graph.resolve_repeats();
+    // for i in 0..2 {
+    //     graph.remove_lightweight_edges(i);
+    // graph.collapse_bubble(c);
+    // }
+    // graph.remove_tips();
+    // graph.remove_small_component(5);
+    // graph.remove_lightweight_edges(3);
+    // graph.collapse_bubble(c);
+    // debug!("{}", graph);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
@@ -275,7 +245,26 @@ fn assemble(
     } else {
         segments
     };
-    (segments, edge, group, summaries)
+    let nodes = segments.into_iter().map(|node| {
+        let tags = summaries
+            .iter()
+            .find(|x| x.id == node.sid)
+            .map(|contigsummary| {
+                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                vec![gfa::SamTag {
+                    inner: format!("cv:i:{}", total / contigsummary.summary.len()),
+                }]
+            })
+            .unwrap_or(vec![]);
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+    });
+    let edges = edge
+        .into_iter()
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+    let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
+    (records, summaries)
+    // (segments, edge, group, summaries)
 }
 
 fn polish_segment(

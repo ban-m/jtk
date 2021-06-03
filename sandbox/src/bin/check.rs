@@ -81,8 +81,10 @@ fn main() -> std::io::Result<()> {
             .map(|x| x.chunks.iter().flat_map(|x| x.seq.clone()).collect())
             .collect();
         let start = std::time::Instant::now();
+        let coverage = (reads.len() / clusters) as f64;
         let clusters = clusters as u8;
-        let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters);
+        let mut config =
+            haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
         let (preds, _) =
             haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &mut config)
                 .unwrap();

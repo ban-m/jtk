@@ -16,6 +16,7 @@ fn main() -> std::io::Result<()> {
         .collect();
     log::debug!("Start");
     use rayon::prelude::*;
+    let coverage = ds.coverage.unwrap();
     let result: Vec<_> = ds
         .selected_chunks
         .par_iter()
@@ -34,7 +35,8 @@ fn main() -> std::io::Result<()> {
                         .collect::<Vec<_>>()
                 })
                 .unzip();
-            let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 2);
+            let mut config =
+                haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 2, coverage);
             let start = std::time::Instant::now();
             let (asn, _) =
                 haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config)

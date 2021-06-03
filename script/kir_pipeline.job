@@ -16,20 +16,18 @@ DRAFT_GFA=${2}.draft.gfa
 LOG=${2}.log
 STAT=${2}.stat
 THREADS=23
-# jtk entry --input ${TARGET} --read_type CLR |\
-#     jtk repeat_masking -k15 -t ${THREADS} -vv |\
-#     jtk select_unit -vv -t ${THREADS} --take_num 10000 |\
-#     jtk encode -vv --threads ${THREADS}|\
-#     tee ${2}.entry.json |\
-#     jtk pick_components -vv -c1 -t${THREADS} |\
-#     tee ${2}.pick.json|\
-# cat ${2}.pick.json |\
-#     jtk select_unit -vv -t ${THREADS} --take_num 10000 |\
-#     jtk encode -vv --threads ${THREADS} |\
-#     tee ${2}.entry.2.json |\
-cat ${2}.entry.2.json |\
+jtk entry --input ${TARGET} --read_type CLR |\
+    jtk repeat_masking -k15 -t ${THREADS} -vv |\
+    jtk select_unit -vv -t ${THREADS} --take_num 10000 |\
+    jtk encode -vv --threads ${THREADS}|\
+    tee ${2}.entry.json |\
+    jtk pick_components -vv -c1 -t${THREADS} |\
+    tee ${2}.pick.json|\
+    jtk select_unit -vv -t ${THREADS} --take_num 10000 |\
+    jtk encode -vv --threads ${THREADS} |\
+    tee ${2}.entry.2.json |\
     jtk multiplicity_estimation -vv --threads ${THREADS} \
-         --draft_assembly ${DRAFT_GFA} --max_cluster_size 6 |\
+        --draft_assembly ${DRAFT_GFA} --max_cluster_size 6 |\
     jtk local_clustering -vv --threads ${THREADS}|\
     tee ${CLUSTERED} |\
     jtk clustering_correction -vv --threads ${THREADS} |\

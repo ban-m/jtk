@@ -38,7 +38,7 @@ pub fn minimap2_args(target: &str, query: &str, args: &[&str]) -> Vec<u8> {
         .output()
         .unwrap();
     if !aln.status.success() {
-        panic!("Minimap2,{:?}", String::from_utf8_lossy(&aln.stderr));
+        panic!("Minimap2,{}", String::from_utf8_lossy(&aln.stderr));
     } else {
         aln.stdout
     }

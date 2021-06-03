@@ -46,7 +46,7 @@ fn main() -> std::io::Result<()> {
     //         read.remove(idx);
     //     }
     // }
-    let config = haplotyper::assemble::AssembleConfig::new(24, 100, true);
+    let config = haplotyper::assemble::AssembleConfig::new(24, 100, false);
     use haplotyper::Assemble;
     let gfa = ds.assemble_as_gfa(&config);
     println!("{}", gfa);

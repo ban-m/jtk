@@ -54,20 +54,24 @@ impl MultiplicityEstimation for DataSet {
             writeln!(&mut file, "{}", gfa).unwrap();
         }
         debug!("GRAPH\tID\tCoverage\tMean\tLen");
+        let mut single_copy_coverage = 0f64;
         let estimated_cluster_num: HashMap<u64, usize> = graphs
             .iter()
             .map(|graph| estimate_graph_multiplicity(&self, graph, config))
-            .fold(HashMap::new(), |mut x, result| {
+            .fold(HashMap::new(), |mut x, (result, cov)| {
+                single_copy_coverage += cov;
                 for (unit, cluster) in result {
                     x.insert(unit, cluster);
                 }
                 x
             });
+        single_copy_coverage /= graphs.len() as f64;
         for unit in self.selected_chunks.iter_mut() {
             if let Some(&cl_num) = estimated_cluster_num.get(&unit.id) {
                 unit.cluster_num = cl_num;
             }
         }
+        self.coverage = Some(single_copy_coverage);
         self
     }
 }
@@ -76,7 +80,7 @@ fn estimate_graph_multiplicity(
     ds: &DataSet,
     graph: &super::assemble::Graph,
     c: &MultiplicityEstimationConfig,
-) -> Vec<(u64, usize)> {
+) -> (Vec<(u64, usize)>, f64) {
     let covs: Vec<_> = graph
         .nodes
         .iter()
@@ -89,7 +93,7 @@ fn estimate_graph_multiplicity(
                 .map(|r| r.nodes.iter().filter(|n| unit.contains(&n.unit)).count())
                 .sum::<usize>();
             let mean = (coverage / len) as u64;
-            debug!("GRAPH\t{}\t{}\t{}\t{}", node.id, coverage, mean, len);
+            // debug!("GRAPH\t{}\t{}\t{}\t{}", node.id, coverage, mean, len);
             mean
         })
         .collect();
@@ -147,7 +151,7 @@ fn estimate_graph_multiplicity(
             result.push((node.unit, repeat_num));
         }
     }
-    result
+    (result, single_copy_coverage)
 }
 
 struct Model {
