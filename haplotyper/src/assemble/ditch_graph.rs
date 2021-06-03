@@ -44,6 +44,8 @@ type NodeConsensus = HashMap<Node, Vec<u8>>;
 /// tail-node and head-node, and it is represented as a 'node'in a
 /// Ditch graph.
 /// Each node has several edges, induced by the connection inside reads.
+/// It is bi-directed graph, in other words, if you see (from,from_pos, to, to_pos),
+/// then, there is a edge (to, to_pos, from, from_pos).
 #[derive(Clone)]
 pub struct DitchGraph<'a> {
     nodes: HashMap<Node, DitchNode<'a>>,
@@ -607,69 +609,68 @@ impl<'a> DitchGraph<'a> {
         len: f64,
     ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
         // Create simple-path reduced graph.
-        let (reduced_nodes, nodes_in_sp) = self.simple_path_reduction();
-        let is_tip: Vec<_> = nodes_in_sp
-            .iter()
-            .map(|nodes| self.outdeg_of_nodes(&nodes) < 2)
-            .collect();
+        let (reduced_nodes, reduced_edges, nodes_in_sp) = self.simple_path_reduction(cv, len);
         let node_coverage: Vec<_> = nodes_in_sp
             .iter()
             .map(|nodes| self.coverage_of_nodes(nodes) / cv)
             .collect();
-        let reduced_edges = self.edges_between_simple_path(&reduced_nodes, cv, len);
-        let (nodes_cp, edge_cp) =
-            copy_number::estimate_copy_number(&node_coverage, &is_tip, &reduced_edges);
+        let (nodes_cp, edge_cp) = copy_number::estimate_copy_number(&node_coverage, &reduced_edges);
         let nodes_cp: HashMap<_, _> = nodes_cp
             .iter()
             .zip(nodes_in_sp)
             .flat_map(|(&cp, nodes)| nodes.iter().map(|&node| (node, cp)).collect::<Vec<_>>())
             .collect();
-        let mut edge_cp: HashMap<DitEdge, _> = edge_cp
-            .iter()
-            .zip(reduced_edges)
-            .map(|(&cp, (from, from_first, to, to_first, _))| {
-                let from = match reduced_nodes[from] {
-                    (node, pos, _, _) if from_first => (node, pos),
-                    (_, _, node, pos) => (node, pos),
-                };
-                let to = match reduced_nodes[to] {
-                    (node, pos, _, _) if to_first => (node, pos),
-                    (_, _, node, pos) => (node, pos),
-                };
-                ((from, to), cp)
-            })
-            .collect();
+        let mut edge_cp_all: HashMap<DitEdge, _> = HashMap::new();
+        for (&cp, (from, from_first, to, to_first, _)) in edge_cp.iter().zip(reduced_edges) {
+            let from = match reduced_nodes[from] {
+                (node, pos, _, _) if from_first => (node, pos),
+                (_, _, node, pos) => (node, pos),
+            };
+            let to = match reduced_nodes[to] {
+                (node, pos, _, _) if to_first => (node, pos),
+                (_, _, node, pos) => (node, pos),
+            };
+            edge_cp_all.insert((from, to), cp);
+            edge_cp_all.insert((to, from), cp);
+        }
         for node in self.nodes.values() {
             for edge in node.edges.iter() {
                 let from = (edge.from, edge.from_position);
                 let to = (edge.to, edge.to_position);
-                if edge_cp.contains_key(&(from, to)) {
+                if edge_cp_all.contains_key(&(from, to)) {
                     // It is OK to insert either copy number.
                     let copy_number = nodes_cp[&edge.from];
-                    edge_cp.insert((from, to), copy_number);
+                    edge_cp_all.insert((from, to), copy_number);
                 }
             }
         }
-        (nodes_cp, edge_cp)
+        (nodes_cp, edge_cp_all)
     }
-    fn simple_path_reduction(&self) -> (Vec<(Node, Position, Node, Position)>, Vec<Vec<Node>>) {
-        unimplemented!()
-    }
-    fn outdeg_of_nodes(&self, nodes: &[Node]) -> usize {
+    fn simple_path_reduction(
+        &self,
+        cv: f64,
+        len: f64,
+    ) -> (
+        Vec<(Node, Position, Node, Position)>,
+        Vec<(usize, bool, usize, bool, f64)>,
+        Vec<Vec<Node>>,
+    ) {
+        // Note: To obtain simple-path reduced graph, we need to remove any edge connected two
+        // or more node, then compress each connected components one by one.
+        // By definition, each node in each connected component has at most one out/in degree,
+        // making each path in that graph simple.
+        // First, select one edge for each bi-directed edge.
+        let (remaining_edges, removed_edges): (Vec<_>, Vec<_>) = self
+            .nodes
+            .values()
+            .flat_map(|node| node.edges.iter())
+            .partition(|edge| self.nodes[edge])
+            .collect();
         unimplemented!()
     }
     fn coverage_of_nodes(&self, nodes: &[Node]) -> f64 {
-        unimplemented!()
+        nodes.iter().map(|node| self.nodes[node].occ as f64).sum()
     }
-    fn edges_between_simple_path(
-        &self,
-        nodes: &[(Node, Position, Node, Position)],
-        cv: f64,
-        len: f64,
-    ) -> Vec<(usize, bool, usize, bool, f64)> {
-        unimplemented!()
-    }
-
     /// Remove small tips.
     /// TODO: More sophisticated algorithm is indeeed needed.
     pub fn remove_tips(&mut self) {
