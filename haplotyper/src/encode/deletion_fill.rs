@@ -117,7 +117,8 @@ fn encode_node(
         })
         .collect();
     let ops = super::compress_kiley_ops(&ops);
-    if dist_thr + 2 * (OFFSET as u32) < alignment.dist {
+    // if dist_thr + 2 * (OFFSET as u32) < alignment.dist {
+    if dist_thr < alignment.dist {
         return None;
     };
     let (aln_start, aln_end) = alignment.locations.unwrap()[0];
@@ -216,6 +217,10 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
                 match op {
                     Op::Ins(l) => {
                         // We only allocate the first inserted element.
+                        // TODO: It is possible that the first element is very errorneous,
+                        // and the successive elements are not,
+                        // so, maybe we need to record all the elements
+                        // so that we can handle successive deletions.
                         if r_ptr < read.nodes.len() && 0 < r_ptr {
                             pileups[r_ptr].add(query.nodes[q_ptr].clone());
                         }

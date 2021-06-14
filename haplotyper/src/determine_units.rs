@@ -127,7 +127,6 @@ impl DetermineUnit for definitions::DataSet {
             let clr_config = {
                 let mut temp = config.clone();
                 temp.chunk_len = 12 * temp.chunk_len / 10;
-                debug!("Calib length {}->{}", config.chunk_len, temp.chunk_len);
                 temp
             };
             self.selected_chunks = reads
@@ -144,11 +143,16 @@ impl DetermineUnit for definitions::DataSet {
                 .collect();
             debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
             self.selected_chunks = remove_overlapping_units(&self, config.threads).unwrap();
+            // 1st polishing.
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self = self.encode(config.threads);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, 20);
             self = self.polish_unit(&polish_config);
+            // Filling gappy region.
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
+            self = self.encode(config.threads);
+            self = fill_sparse_region(self, config);
+            // 2nd polishing.
             self = self.encode(config.threads);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 20);
             self = self.polish_unit(&polish_config);
@@ -175,6 +179,7 @@ impl DetermineUnit for definitions::DataSet {
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
         self = self.encode(config.threads);
+        // Final polishing.
         let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 25, 24);
         self = self.polish_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
@@ -279,6 +284,62 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
 //         .collect();
 //     Ok(alignments)
 // }
+
+fn fill_sparse_region(mut ds: DataSet, config: &UnitConfig) -> DataSet {
+    let mut edge_count: HashMap<_, (usize, i64)> = HashMap::new();
+    for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
+        let len = if edge.label.is_empty() {
+            edge.offset
+        } else {
+            edge.label().len() as i64
+        };
+        let edge = (edge.from.min(edge.to), edge.from.max(edge.to));
+        let entry = edge_count.entry(edge).or_default();
+        entry.0 += 1;
+        entry.1 += len;
+    }
+    use std::collections::HashSet;
+    // We fill units for each sparsed region.
+    let sparse_thr = (2 * config.skip_len + config.chunk_len) as i64;
+    let mut sparse_edge: HashSet<_> = edge_count
+        .into_iter()
+        .filter_map(|(edge, (count, len))| (len / count as i64 > sparse_thr).then(|| edge))
+        .collect();
+    let stride = config.chunk_len + config.skip_len;
+    let picked_units: Vec<_> = {
+        let mut new_units = vec![];
+        for read in ds.encoded_reads.iter() {
+            for edge in read.edges.iter() {
+                let seq = edge.label();
+                let edge = (edge.from.min(edge.to), edge.from.max(edge.to));
+                if sparse_edge.contains(&edge) {
+                    // Pick new units.
+                    new_units.extend(
+                        (0..)
+                            .map(|i| (stride * i, stride * i + config.chunk_len))
+                            .take_while(|&(_, y)| y + config.skip_len < seq.len())
+                            .map(|(s, t)| &seq[s..t])
+                            .filter(|u| !is_repetitive(u, config)),
+                    );
+                    sparse_edge.remove(&edge);
+                }
+            }
+            if sparse_edge.is_empty() {
+                break;
+            }
+        }
+        new_units
+    };
+    debug!("FillSparse\t{}", picked_units.len());
+    let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
+    ds.selected_chunks
+        .extend(picked_units.iter().enumerate().map(|(i, seq)| Unit {
+            id: i as u64 + last_unit,
+            seq: String::from_utf8_lossy(seq).to_string(),
+            cluster_num: config.min_cluster,
+        }));
+    ds
+}
 
 fn is_repetitive(unit: &[u8], config: &UnitConfig) -> bool {
     let tot = unit.len();

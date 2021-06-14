@@ -120,7 +120,15 @@ impl Assemble for DataSet {
                 }
             })
             .flat_map(|(cl, _)| {
-                let (records, _summaries) = assemble(self, cl, c);
+                let (records, summaries) = assemble(self, cl, c);
+                for summary in summaries {
+                    let ids: Vec<_> = summary
+                        .summary
+                        .iter()
+                        .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                        .collect();
+                    debug!("{}\t{}", summary.id, ids.join("\t"));
+                }
                 records
             })
             .collect();
@@ -190,17 +198,7 @@ impl Assemble for DataSet {
     }
 }
 
-fn assemble(
-    ds: &DataSet,
-    cl: usize,
-    c: &AssembleConfig,
-) -> (
-    Vec<gfa::Record>,
-    // Vec<gfa::Segment>,
-    // Vec<gfa::Edge>,
-    // gfa::Group,
-    Vec<ContigSummary>,
-) {
+fn assemble(ds: &DataSet, cl: usize, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     let clusters: HashSet<_> = ds
         .assignments
         .iter()
@@ -214,22 +212,13 @@ fn assemble(
         .collect();
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    let short_reads: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .filter(|r| r.nodes.len() < 4)
-        .collect();
-    graph.remove_edges_from_short_reads(&short_reads);
-    // graph.resolve_repeats();
-    // for i in 0..2 {
-    //     graph.remove_lightweight_edges(i);
-    // graph.collapse_bubble(c);
-    // }
-    // graph.remove_tips();
-    // graph.remove_small_component(5);
-    // graph.remove_lightweight_edges(3);
-    // graph.collapse_bubble(c);
-    // debug!("{}", graph);
+    graph.remove_lightweight_edges(1);
+    if let Some(cov) = ds.coverage {
+        debug!("Removing ZCEs");
+        let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+        graph.remove_zero_copy_elements(cov, &lens, 0.51);
+        // graph.resolve_tangles(&reads, c);
+    }
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
@@ -245,15 +234,25 @@ fn assemble(
     } else {
         segments
     };
+    // TODO: maybe just zip up segments and summaries would be OK?
     let nodes = segments.into_iter().map(|node| {
         let tags = summaries
             .iter()
             .find(|x| x.id == node.sid)
             .map(|contigsummary| {
                 let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
-                vec![gfa::SamTag {
-                    inner: format!("cv:i:{}", total / contigsummary.summary.len()),
-                }]
+                let coverage =
+                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                let (cp, cpnum) = contigsummary
+                    .summary
+                    .iter()
+                    .filter_map(|elm| elm.copy_number)
+                    .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                let mut tags = vec![coverage];
+                if cpnum != 0 {
+                    tags.push(gfa::SamTag::new(format!("cp:i:{}", cp / cpnum)));
+                }
+                tags
             })
             .unwrap_or(vec![]);
         gfa::Record::from_contents(gfa::Content::Seg(node), tags)
@@ -264,7 +263,6 @@ fn assemble(
     let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
     let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
     (records, summaries)
-    // (segments, edge, group, summaries)
 }
 
 fn polish_segment(
@@ -378,3 +376,78 @@ pub fn polish_by_chunking(
     assert_eq!(polished.len(), 1);
     polished.pop().unwrap().1
 }
+
+type CpEdge = ((u64, u64), (u64, u64));
+/// Estimate the copy number on each edge and each node.
+pub fn copy_number_estimation(
+    ds: &DataSet,
+    c: &AssembleConfig,
+) -> (HashMap<(u64, u64), usize>, HashMap<CpEdge, usize>) {
+    let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
+    for asn in ds.assignments.iter() {
+        *cluster_and_num.entry(asn.cluster).or_default() += 1;
+    }
+    let (mut node_cp, mut edge_cp) = (HashMap::new(), HashMap::new());
+    for (cl, _) in cluster_and_num.into_iter() {
+        let clusters: HashSet<_> = ds
+            .assignments
+            .iter()
+            .filter(|asn| asn.cluster == cl)
+            .map(|asn| asn.id)
+            .collect();
+        let reads: Vec<_> = ds
+            .encoded_reads
+            .iter()
+            .filter(|r| clusters.contains(&r.id))
+            .collect();
+        let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+        graph.remove_lightweight_edges(1);
+        let cov = ds.coverage.unwrap();
+        let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+        let (node, edge) = graph.copy_number_estimation(cov, &lens);
+        node_cp.extend(node);
+        edge_cp.extend(edge.into_iter().map(|(((f, _), (t, _)), cp)| ((f, t), cp)));
+    }
+    (node_cp, edge_cp)
+}
+
+// let (_, edge_copy) = haplotyper::assemble::copy_number_estimation(&ds, &config);
+// log::debug!("{} ZCE", edge_copy.values().filter(|&&x| x == 0).count());
+// for read in ds.encoded_reads.iter_mut() {
+//     let edge_to_cp = |w: &[Node]| {
+//         let edge = if w[0].unit <= w[1].unit {
+//             ((w[0].unit, w[0].cluster), (w[1].unit, w[1].cluster))
+//         } else {
+//             ((w[1].unit, w[1].cluster), (w[0].unit, w[0].cluster))
+//         };
+//         edge_copy[&edge]
+//     };
+//     let mut current = 0;
+//     while let Some((start, _)) = read
+//         .nodes
+//         .windows(2)
+//         .enumerate()
+//         .skip(current)
+//         .find(|(_, w)| edge_to_cp(w) == 0)
+//     {
+//         let (end, _) = read
+//             .nodes
+//             .windows(2)
+//             .enumerate()
+//             .skip(start)
+//             .take_while(|(_, w)| edge_to_cp(w) == 0)
+//             .last()
+//             .unwrap();
+//         if start < end {
+//             let removed: Vec<_> = read.nodes[start..=end]
+//                 .iter()
+//                 .map(|x| format!("{}", x.unit))
+//                 .collect();
+//             log::debug!("Removing {:?}", removed);
+//             for _ in start..=end {
+//                 read.remove(start);
+//             }
+//         }
+//         current = start + 1;
+//     }
+// }

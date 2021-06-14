@@ -252,18 +252,6 @@ impl EncodedRead {
             }
         } else {
             let removed_edge = self.edges.remove(i);
-            // println!(
-            //     "{}+{}+{}",
-            //     self.edges[i - 1].offset,
-            //     removed_node.seq().len(),
-            //     removed_edge.label.len()
-            // );
-            // println!(
-            //     "{}+{}+{}",
-            //     self.edges[i - 1].label.len(),
-            //     removed_node.original_seq().len(),
-            //     removed_edge.label.len()
-            // );
             let skip = (-1 * self.edges[i - 1].offset.min(0)) as usize;
             self.edges[i - 1].to = removed_edge.to;
             self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
@@ -274,21 +262,8 @@ impl EncodedRead {
                 self.edges[i - 1].label.pop();
             }
             self.edges[i - 1].label += &removed_edge.label;
-            // println!("{}", self.edges[i - 1].offset);
-            // if self.edges[i - 1].label.is_empty() {
-            //     assert!(self.edges[i - 1].offset <= 0);
-            // } else {
-            //     assert_eq!(
-            //         self.edges[i - 1].label.len() as i64,
-            //         self.edges[i - 1].offset
-            //     )
-            // }
         }
         assert_eq!(self.nodes.len(), self.edges.len() + 1);
-        // if self.recover_raw_read() != raw {
-        //     eprintln!("{},{}", i, self.nodes.len());
-        //     panic!("{}-{}", self.recover_raw_read().len(), raw.len());
-        // }
     }
     pub fn recover_raw_read(&self) -> Vec<u8> {
         let mut original_seq = self.leading_gap.to_vec();
@@ -326,6 +301,12 @@ impl EncodedRead {
         }
         original_seq.extend(self.trailing_gap.iter());
         original_seq
+    }
+    /// Return true if this read contains (unit,cluster)-node. Linear time.
+    pub fn contains(&self, (unit, cluster): (u64, u64)) -> bool {
+        self.nodes
+            .iter()
+            .any(|n| n.unit == unit && n.cluster == cluster)
     }
 }
 

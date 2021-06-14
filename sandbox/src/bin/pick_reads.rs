@@ -1,55 +1,45 @@
 use definitions::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
-
 fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    // let units: HashSet<u64> = std::fs::File::open(&args[2])
-    //     .map(BufReader::new)?
-    //     .lines()
-    //     .filter_map(|x| x.ok())
-    //     .filter_map(|x| {
-    //         // let mut x = x.split('-');
-    //         // let unit: u64 = x.next()?.parse().ok()?;
-    //         // let cluster: u64 = x.next()?.parse().ok()?;
-    //         // Some((unit, cluster))
-    //         x.parse().ok()
-    //     })
+    // let id2desc: HashMap<_, _> = ds
+    //     .raw_reads
+    //     .iter()
+    //     .map(|r| (r.id, r.desc.clone()))
     //     .collect();
-    // let units: HashSet<u64> = vec![69, 148].into_iter().collect();
-    // let color = 40;
-    use std::collections::HashMap;
-    let id2name: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|read| (read.id, read.desc.to_string()))
-        .collect();
+    let units: HashSet<(u64, u64)> = vec![(1201, 0)].into_iter().collect();
     for read in ds.encoded_reads.iter() {
-        // if read.nodes.iter()
-        //.any(|n| units.contains(&(n.unit, n.cluster)))
-        // .any(|n| units.contains(&n.unit))
-        // {
-        let line: Vec<_> = read
+        let mut dumps = vec![format!("{:<5}", 0); 7];
+        for (idx, _) in read
             .nodes
             .iter()
-            .map(|n| {
-                // if units.contains(&(n.unit, n.cluster)) {
-                // if units.contains(&n.unit) {
-                //     format!("\x1b[38;5;{}m{}\x1b[m", color, n.unit)
-                // } else {
-                format!("{}", n.unit)
-                // }
-            })
-            .collect();
-        println!(
-            "{}\t{}\t{}",
-            id2name[&read.id],
-            read.original_length,
-            line.join(":")
-        );
+            .enumerate()
+            .filter(|(_, n)| units.contains(&(n.unit, n.cluster)))
+        {
+            for i in (0..7).filter(|&i| 3 <= idx + i) {
+                if let Some(node) = read.nodes.get(idx + i - 3) {
+                    dumps[i] = format!("{:<5}", node.unit);
+                }
+            }
+            println!("{}", dumps.join("\t"));
+        }
+        // let pos: Vec<_> = id2desc[&read.id]
+        //     .split(' ')
+        //     .nth(0)
+        //     .unwrap()
+        //     .split(',')
+        //     .collect();
+        // let range: Vec<usize> = pos[2].split('-').map(|x| x.parse().unwrap()).collect();
+        // let (start, end) = if pos[1] == "-strand" {
+        //     (4_200_000 - range[1], 4_200_000 - range[0])
+        // } else {
+        //     (range[0], range[1])
+        // };
+        // if read.nodes.iter().any(|n| units.contains(&n.unit)) {
         // }
     }
     Ok(())

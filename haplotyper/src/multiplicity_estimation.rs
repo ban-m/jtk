@@ -74,6 +74,35 @@ impl MultiplicityEstimation for DataSet {
         self.coverage = Some(single_copy_coverage);
         self
     }
+    // fn estimate_multiplicity_new(mut self, config: &MultiplicityEstimationConfig) -> Self {
+    //     let mut counts: HashMap<_, u64> = HashMap::new();
+    //     for node in self.encoded_reads.iter().flat_map(|e| e.nodes.iter()) {
+    //         *counts.entry(node.unit).or_default() += 1;
+    //     }
+    //     let (_, single_copy_coverage) = cluster_coverage(&counts, config);
+    //     use crate::assemble::ditch_graph::DitchGraph;
+    //     use crate::assemble::AssembleConfig;
+    //     let reads: Vec<_> = self.encoded_reads.iter().collect();
+    //     assert!(reads
+    //         .iter()
+    //         .flat_map(|r| r.nodes.iter())
+    //         .all(|n| n.cluster == 0));
+    //     let c = AssembleConfig::new(config.thread, 1000, false);
+    //     let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), &c);
+    //     graph.remove_lightweight_edges(1);
+    //     let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+    //     let (node_copy_number, _) = graph.copy_number_estimation(single_copy_coverage, &lens);
+    //     debug!("COPYTNUM\tID\tCov\tCopy");
+    //     for unit in self.selected_chunks.iter_mut() {
+    //         let copy_number = node_copy_number[&(unit.id, 0)];
+    //         unit.cluster_num = copy_number;
+    //         debug!(
+    //             "COPYNUM\t{}\t{}\t{}",
+    //             unit.id, counts[&unit.id], copy_number
+    //         );
+    //     }
+    //     self
+    // }
 }
 
 fn estimate_graph_multiplicity(
@@ -93,7 +122,6 @@ fn estimate_graph_multiplicity(
                 .map(|r| r.nodes.iter().filter(|n| unit.contains(&n.unit)).count())
                 .sum::<usize>();
             let mean = (coverage / len) as u64;
-            // debug!("GRAPH\t{}\t{}\t{}\t{}", node.id, coverage, mean, len);
             mean
         })
         .collect();
@@ -124,15 +152,7 @@ fn estimate_graph_multiplicity(
             .filter(|&x| (x - min).abs() > 0.01)
             .min_by(|a, b| a.partial_cmp(&b).unwrap())
             .unwrap_or(min);
-        // let mut number_of_units: HashMap<usize, usize> = HashMap::new();
-        // for (&asn, contig) in assignments.iter().zip(graph.nodes.iter()) {
-        //     let num = contig.segments.len();
-        //     *number_of_units.entry(asn).or_default() += num;
-        // }
-        // let (&max_cluster, num) = number_of_units.iter().max_by_key(|x| x.1).unwrap();
-        // let coverage = model.lambdas[max_cluster];
         debug!("DIPLOID\t{}", coverage);
-        // // As it is diploid coverage, we divide it by 2.
         coverage / 2.
     };
     let repeat_num: Vec<_> = model
@@ -198,18 +218,28 @@ impl Model {
             .collect();
         logsumexp(&lks)
     }
-    fn new_weight(&self, data: u64) -> Vec<f64> {
-        let lks: Vec<_> = (0..self.cluster)
-            .map(|cl| {
-                self.fractions[cl].ln() + data as f64 * self.lambdas[cl].ln()
-                    - self.lambdas[cl]
-                    - (0..data).map(|x| ((x + 1) as f64).ln()).sum::<f64>()
-            })
-            .collect();
-        let lk = logsumexp(&lks);
-        assert!((1. - lks.iter().map(|x| (x - lk).exp()).sum::<f64>()).abs() < 0.0001);
-        lks.iter().map(|x| (x - lk).exp()).collect()
+    fn update_weight(&self, ws: &mut [f64], data: u64) {
+        assert_eq!(ws.len(), self.cluster);
+        for (cl, w) in ws.iter_mut().enumerate() {
+            *w = self.fractions[cl].ln() + data as f64 * self.lambdas[cl].ln()
+                - self.lambdas[cl]
+                - (0..data).map(|x| ((x + 1) as f64).ln()).sum::<f64>();
+        }
+        let lk = logsumexp(&ws);
+        ws.iter_mut().for_each(|x| *x = (*x - lk).exp());
     }
+    // fn new_weight(&self, data: u64) -> Vec<f64> {
+    //     let lks: Vec<_> = (0..self.cluster)
+    //         .map(|cl| {
+    //             self.fractions[cl].ln() + data as f64 * self.lambdas[cl].ln()
+    //                 - self.lambdas[cl]
+    //                 - (0..data).map(|x| ((x + 1) as f64).ln()).sum::<f64>()
+    //         })
+    //         .collect();
+    //     let lk = logsumexp(&lks);
+    //     assert!((1. - lks.iter().map(|x| (x - lk).exp()).sum::<f64>()).abs() < 0.0001);
+    //     lks.iter().map(|x| (x - lk).exp()).collect()
+    // }
     fn assign(&self, data: u64) -> usize {
         let (cl, _) = (0..self.cluster)
             .map(|cl| {
@@ -246,7 +276,7 @@ fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
                 })
                 .collect();
             let mut lk = std::f64::NEG_INFINITY;
-            for _ in 0.. {
+            loop {
                 let model = Model::new(data, &weight, k);
                 let new_lk = model.lk(data);
                 let diff = new_lk - lk;
@@ -254,7 +284,9 @@ fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
                     break;
                 }
                 lk = new_lk;
-                weight = data.iter().map(|&d| model.new_weight(d)).collect();
+                for (ws, d) in weight.iter_mut().zip(data.iter()) {
+                    model.update_weight(ws, *d);
+                }
             }
             (weight, lk)
         })
@@ -263,3 +295,51 @@ fn clustering(data: &[u64], k: usize, seed: u64) -> (Model, f64) {
     let model = Model::new(data, &weight, k);
     (model, lk)
 }
+
+// pub fn cluster_coverage(
+//     unit_covs: &HashMap<u64, u64>,
+//     c: &MultiplicityEstimationConfig,
+// ) -> (Vec<(u64, usize)>, f64) {
+//     use rayon::prelude::*;
+//     let covs: Vec<_> = unit_covs.values().copied().collect();
+//     let (model, aic): (Model, f64) = (1..c.max_cluster)
+//         .into_par_iter()
+//         .map(|k| {
+//             let seed = k as u64 + c.seed;
+//             let (model, lk) = clustering(&covs, k, seed);
+//             let aic = -2. * lk + (2. * k as f64 - 1.);
+//             (model, aic)
+//         })
+//         .min_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+//         .unwrap();
+//     debug!("AIC\t{}", aic);
+//     let assignments: Vec<_> = covs.iter().map(|&d| model.assign(d)).collect();
+//     let single_copy_coverage = {
+//         let min = model
+//             .lambdas
+//             .iter()
+//             .min_by(|a, b| a.partial_cmp(&b).unwrap())
+//             .unwrap();
+//         let coverage = model
+//             .lambdas
+//             .iter()
+//             .filter(|&x| (x - min).abs() > 0.01)
+//             .min_by(|a, b| a.partial_cmp(&b).unwrap())
+//             .unwrap_or(min);
+//         debug!("DIPLOID\t{}", coverage);
+//         coverage / 2.
+//     };
+//     let repeat_num: Vec<_> = model
+//         .lambdas
+//         .iter()
+//         .map(|x| ((x / single_copy_coverage) + 0.5).floor() as usize)
+//         .collect();
+//     debug!("LAMBDAS:{:?}", model.lambdas);
+//     debug!("PREDCT:{:?}", repeat_num);
+//     let mut result = vec![];
+//     for (&cl, (&unit, &_)) in assignments.iter().zip(unit_covs.iter()) {
+//         let repeat_num = repeat_num[cl];
+//         result.push((unit, repeat_num));
+//     }
+//     (result, single_copy_coverage)
+// }
