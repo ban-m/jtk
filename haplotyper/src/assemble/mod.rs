@@ -217,6 +217,9 @@ fn assemble(ds: &DataSet, cl: usize, c: &AssembleConfig) -> (Vec<gfa::Record>, V
         debug!("Removing ZCEs");
         let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
         graph.remove_zero_copy_elements(cov, &lens, 0.51);
+        graph.z_edge_selection();
+        graph.remove_tips(0.5, 5);
+        graph.zip_up_overclustering();
         // graph.resolve_tangles(&reads, c);
     }
     let (segments, edge, group, summaries) = graph.spell(c, cl);

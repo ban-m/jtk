@@ -1,9 +1,10 @@
 //! A small K-means clustering algorithm.
 use rand::Rng;
-
+const DEFAULT_GAIN: f64 = 1f64;
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig {
     band_width: usize,
+    // Coverage for haploid.
     coverage: f64,
     pub cluster_num: u8,
 }
@@ -31,17 +32,14 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         coverage,
     } = config.clone();
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
+    if cluster_num == 0 {
+        return Some((vec![0; reads.len()], cons_template));
+    }
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
     let probes = filter_profiles(&profiles, cons_template.len(), cluster_num);
     let profiles: Vec<Vec<_>> = profiles
         .iter()
-        .map(|xs| {
-            probes
-                .iter()
-                //.map(|&(pos, scale)| (xs[pos] * scale))
-                .map(|&(pos, _)| xs[pos])
-                .collect()
-        })
+        .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
         .collect();
     // Maybe we can tune the number of the cluster.
     // let prob_of_no_variant = poisson_lk(0, 0.001 * cons_template.len() as f64).exp();
@@ -53,7 +51,6 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //     })
     //     .sum::<f64>()
     //     .ln();
-    // let (start, end) = ((cluster_num / 2).max(2), cluster_num + 2);
     // let (start, end) = (cluster_num, cluster_num + 1);
     let (assignments, _score) = std::iter::repeat(cluster_num)
         .take(10)
@@ -75,6 +72,9 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
             acc
         })
     };
+    if to_used.iter().all(|&x| !x) {
+        return Some((vec![0; reads.len()], cons_template));
+    }
     let profiles: Vec<Vec<_>> = profiles
         .iter()
         .map(|xs| {
@@ -84,17 +84,23 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .collect()
         })
         .collect();
-    // let (assignments, _score, _) = (start..end)
-    //     .flat_map(|k| std::iter::repeat(k).take(3))
-    //     .map(|k| mcmc_clustering_with_lk(&profiles, k, coverage, prob_of_no_variant, rng))
-    //     .chain(std::iter::once((vec![0; reads.len()], lk_no_variant, 1)))
-    //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
-    //     .unwrap();
-    let (assignments, _score) = std::iter::repeat(cluster_num)
-        .take(10)
-        .map(|k| mcmc_clustering(&profiles, k, coverage, rng))
+    let (start, end) = (cluster_num.max(3) - 2, cluster_num + 2);
+    let (assignments, _score, cluster_num) = (start..=end)
+        .flat_map(|cl| std::iter::repeat(cl).take(10))
+        .map(|k| {
+            let (asn, score) = mcmc_clustering(&profiles, k, coverage, rng);
+            let mod_score = score - DEFAULT_GAIN * coverage * (k - 1) as f64;
+            // debug!("Score\t{}\t{:.2}\t{:.2}", k, score, mod_score);
+            (asn, mod_score, k)
+        })
         .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
         .unwrap();
+    config.cluster_num = cluster_num;
+    // let (assignments, _score) = std::iter::repeat(cluster_num)
+    //     .take(10)
+    //     .map(|k| mcmc_clustering(&profiles, k, coverage, rng))
+    //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+    //     .unwrap();
     // for (asn, prf) in assignments.iter().zip(profiles) {
     //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.1}", x)).collect();
     //     debug!("DUMP\t{}\t{}", asn, prf.join("\t"));
@@ -134,7 +140,7 @@ fn filter_profiles(
     template_len: usize,
     cluster_num: u8,
 ) -> Vec<(usize, f64)> {
-    let var_num = 2 * (cluster_num - 1) as usize;
+    let var_num = 2 * (cluster_num - 1).max(1) as usize;
     let total_improvement =
         profiles
             .iter()
@@ -358,6 +364,9 @@ fn kmeans_f64_plusplus<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> Vec<u8>
 // Take dataset, the number of the cluster, the haploid coverage and seed generator,
 // return the total likelihood.
 fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: u8, cov: f64, rng: &mut R) -> (Vec<u8>, f64) {
+    if k == 1 || data.iter().all(|xs| xs.is_empty()) {
+        return (vec![0; data.len()], 0f64);
+    }
     // 1. Construct the first assignments.
     let mut centers: Vec<&[f64]> = vec![];
     let indices: Vec<_> = (0..data.len()).collect();
@@ -468,7 +477,6 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: u8, _c: f64, rng: &mut 
             }
         }
         let lk = total_lk(&lks) + clusters.iter().map(|&x| poisson_lk(x, mean)).sum::<f64>();
-        // debug!("MCMC\t{}\t{}\t{}\tMCMC", t, lk, total_diff);
         if max < lk {
             max = lk;
             argmax = assign.to_vec();

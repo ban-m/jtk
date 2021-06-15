@@ -61,7 +61,7 @@ pub fn local_clustering_all(ds: &mut DataSet) {
         pileups.entry(node.unit).or_default().push(node);
     }
     let coverage = ds.coverage.clone();
-    let _consensus_and_clusternum: HashMap<_, _> = pileups
+    let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
@@ -80,18 +80,20 @@ pub fn local_clustering_all(ds: &mut DataSet) {
                 node.cluster = asn as u64;
             }
             let end = std::time::Instant::now();
-            debug!("RECORD\t{}\t{}", unit_id, (end - start).as_secs());
+            let elapsed = (end - start).as_secs();
+            let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
+            debug!("RECORD\t{}\t{}\t{}\t{}", unit_id, elapsed, prevcl, cl);
             (unit_id, (consensus, config.cluster_num))
         })
         .collect();
-    // for unit in ds.selected_chunks.iter_mut() {
-    //     if let Some((consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-    // TODO: By modifying the unit sequence, we should also modify the
-    // alignment in the unit sequence!
-    // unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
-    // unit.cluster_num = *cluster_num as usize;
-    // }
-    // }
+    for unit in ds.selected_chunks.iter_mut() {
+        if let Some((_consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+            // TODO: By modifying the unit sequence, we should also modify the
+            // alignment in the unit sequence!
+            // unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+            unit.cluster_num = *cluster_num as usize;
+        }
+    }
 }
 
 pub fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(

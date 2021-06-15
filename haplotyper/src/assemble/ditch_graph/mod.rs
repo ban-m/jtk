@@ -53,6 +53,26 @@ pub struct Focus {
     pub log_likelihood_ratio: f64,
 }
 
+impl std::fmt::Display for Focus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let &Self {
+            from,
+            from_position,
+            to,
+            to_position,
+            dist,
+            log_likelihood_ratio,
+        } = self;
+        let (fu, fc) = from;
+        let (tu, tc) = to;
+        write!(
+            f,
+            "{},{},{},{},{},{},{},{:.2}",
+            fu, fc, from_position, tu, tc, to_position, dist, log_likelihood_ratio
+        )
+    }
+}
+
 impl Focus {
     /// LogLilihood ratio
     pub fn llr(&self) -> f64 {
@@ -87,6 +107,7 @@ impl Focus {
 #[derive(Clone)]
 pub struct DitchGraph<'a> {
     nodes: HashMap<Node, DitchNode<'a>>,
+    // Maybe we need to have config here, to memorize on what configuration this instance is instanciated.
 }
 
 impl<'a> std::fmt::Display for DitchGraph<'a> {
@@ -480,6 +501,7 @@ impl<'a> DitchGraph<'a> {
             })
         })
     }
+    // TODO: to T:std::Borrow<EncodedRead>
     pub fn new(reads: &[&'a EncodedRead], units: Option<&[Unit]>, c: &AssembleConfig) -> Self {
         // Take a consensus of nodes and edges.
         let (nodes_seq, edge_seq) = take_consensus(reads, units, c);
@@ -719,16 +741,16 @@ impl<'a> DitchGraph<'a> {
             .map(|&(sum, len)| sum / len as f64)
             .collect();
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number(&nodes, &edges);
-        for (&(sum, len), cp) in node_weights.iter().zip(node_cp.iter()) {
-            let weight = sum / len as f64;
-            debug!("NODE\t{}\t{:.1}\t{}\t{:.2}", cp, sum, len, weight);
-        }
-        for ((from, fplus, to, tplus, w), cp) in edges.iter().zip(edge_cp.iter()) {
-            debug!(
-                "EDGE\t{}\t{}\t{}\t{}\t{:.1}\t{}",
-                from, fplus, to, tplus, w, cp
-            );
-        }
+        // for (&(sum, len), cp) in node_weights.iter().zip(node_cp.iter()) {
+        //     let weight = sum / len as f64;
+        //     debug!("NODE\t{}\t{:.1}\t{}\t{:.2}", cp, sum, len, weight);
+        // }
+        // for ((from, fplus, to, tplus, w), cp) in edges.iter().zip(edge_cp.iter()) {
+        //     debug!(
+        //         "EDGE\t{}\t{}\t{}\t{}\t{:.1}\t{}",
+        //         from, fplus, to, tplus, w, cp
+        //     );
+        // }
         let node_copy_number: HashMap<_, _> = self
             .nodes
             .values()
@@ -777,11 +799,6 @@ impl<'a> DitchGraph<'a> {
     ///    In other words, it connected to the non-ZCP edge.
     /// 4. If it is an edge, and the occ is more than `thr * max_out_dgree`
     pub fn remove_zero_copy_elements(&mut self, naive_cov: f64, lens: &[usize], thr: f64) {
-        // let (node_copy_number, edge_copy_number) = self.copy_number_estimation(naive_cov, lens);
-        // let get_edge_cn = |e: &DitchEdge| {
-        //     let edge = ((e.from, e.from_position), (e.to, e.to_position));
-        //     edge_copy_number[&edge]
-        // };
         // Check the node violating for right-left condition.
         self.assign_copy_number(naive_cov, lens);
         let unsound_nodes: HashSet<_> = self
@@ -938,19 +955,156 @@ impl<'a> DitchGraph<'a> {
             })
             .collect()
     }
+    /// Zip up overclustered regions.
+    /// The graph should have estimeted repeat numbers on each node.
+    pub fn zip_up_overclustering(&mut self) {
+        let mut to_remove = HashSet::new();
+        for node in self.nodes.values() {
+            if node.copy_number.map(|cp| cp != 1).unwrap_or(true) {
+                continue;
+            }
+            for &pos in &[Position::Head, Position::Tail] {
+                let edges = node
+                    .edges
+                    .iter()
+                    .filter(|e| e.from_position == pos && !to_remove.contains(&e.to));
+                if edges.clone().count() != 2 {
+                    continue;
+                }
+                // This is a "fork" branch.
+                let mut dests = edges.clone().map(|edge| self.destination(edge));
+                let first_dest = dests.next().unwrap();
+                let second_dest = dests.next().unwrap();
+                if first_dest == second_dest {
+                    // this fork can be zipped up. Selecting an arbitrary path.
+                    let simple_path = self.simple_path_from(edges.clone().next().unwrap());
+                    to_remove.extend(simple_path);
+                }
+            }
+        }
+        self.remove_nodes(&to_remove);
+    }
+    /// Return the position where a simple path from given edge ends.
+    pub fn destination(&self, edge: &DitchEdge) -> (Node, Position) {
+        let mut current_node = edge.to;
+        let mut current_pos = edge.to_position;
+        loop {
+            // Check if there's more than two indegree/outdegree.
+            let (indeg, outdeg) =
+                self.nodes[&current_node]
+                    .edges
+                    .iter()
+                    .fold((0, 0), |(indeg, outdeg), e| {
+                        match e.from_position == current_pos {
+                            true => (indeg + 1, outdeg),
+                            false => (indeg, outdeg + 1),
+                        }
+                    });
+            assert!(0 < indeg);
+            if 1 < indeg {
+                break;
+            }
+            // Move position.
+            current_pos = !current_pos;
+            if outdeg != 1 {
+                break;
+            }
+            // Move node. Unwrap never panics here.
+            let traced_edge = self.nodes[&current_node]
+                .edges
+                .iter()
+                .find(|e| e.from_position == current_pos)
+                .unwrap();
+            current_node = traced_edge.to;
+            current_pos = traced_edge.to_position;
+        }
+        (current_node, current_pos)
+    }
+    /// Return simple path from the given edge to ends.
+    /// Note that a node is added when the node is consumed in the simple path, i.e., we moved
+    /// from a position to the opposite position.
+    pub fn simple_path_from(&self, edge: &DitchEdge) -> Vec<Node> {
+        let mut current_node = edge.to;
+        let mut current_pos = edge.to_position;
+        let mut nodes = vec![];
+        loop {
+            // Check if there's more than two indegree/outdegree.
+            let (indeg, outdeg) =
+                self.nodes[&current_node]
+                    .edges
+                    .iter()
+                    .fold((0, 0), |(indeg, outdeg), e| {
+                        match e.from_position == current_pos {
+                            true => (indeg + 1, outdeg),
+                            false => (indeg, outdeg + 1),
+                        }
+                    });
+            assert!(0 < indeg);
+            if 1 < indeg {
+                break;
+            }
+            // Move position.
+            current_pos = !current_pos;
+            // Consumed!
+            nodes.push(current_node);
+            if outdeg != 1 {
+                break;
+            }
+            // Move node. Unwrap never panics here.
+            let traced_edge = self.nodes[&current_node]
+                .edges
+                .iter()
+                .find(|e| e.from_position == current_pos)
+                .unwrap();
+            current_node = traced_edge.to;
+            current_pos = traced_edge.to_position;
+        }
+        nodes
+    }
     /// Remove small tips.
+    /// In this function, for all node with the degree of zero,
+    /// we speculate the *local* coverage by traversing DIAG distance.
+    /// If the coverage is less than `cov * thr`, the node would be removed.
     /// TODO: More sophisticated algorithm is indeeed needed.
-    pub fn remove_tips(&mut self) {
-        let sum: usize = self.nodes.values().map(|e| e.occ).sum();
-        let mean = sum / self.nodes.len();
-        let thr = mean / 8;
-        debug!("Removing nodes less than {} occ.", thr);
+    pub fn remove_tips(&mut self, thr: f64, diag: usize) {
         let to_remove: HashSet<_> = self
             .nodes
             .iter()
-            .filter_map(|(&key, node)| (node.occ < thr).then(|| key))
+            .filter_map(|(key, node)| {
+                for &pos in &[Position::Head, Position::Tail] {
+                    if node.edges.iter().filter(|e| e.from_position == pos).count() == 0 {
+                        let coverage = self.local_coverage(key, pos, diag);
+                        if (node.occ as f64) < coverage * thr {
+                            return Some(*key);
+                        }
+                    }
+                }
+                None
+            })
             .collect();
         self.remove_nodes(&to_remove);
+    }
+    // compute the local coverage.
+    // In other words, it is the average coverage with distance up to diag diameter.
+    fn local_coverage(&self, node: &Node, pos: Position, diag: usize) -> f64 {
+        let (mut total_cov, mut total_node) = (0, 0);
+        let mut current = vec![(node, pos)];
+        for _ in 0..diag {
+            let mut next_nodes = vec![];
+            for &(node, pos) in current.iter() {
+                if let Some(node) = self.nodes.get(node) {
+                    total_cov += node.occ;
+                    total_node += 1;
+                    for edge in node.edges.iter().filter(|e| e.from_position == !pos) {
+                        next_nodes.push((&edge.to, edge.to_position));
+                    }
+                }
+            }
+            next_nodes.sort();
+            next_nodes.dedup();
+            current = next_nodes;
+        }
+        total_cov as f64 / total_node as f64
     }
     // Removing nodes and re-map all of the indices.
     fn remove_nodes(&mut self, to_remove: &HashSet<Node>) {
@@ -961,10 +1115,41 @@ impl<'a> DitchGraph<'a> {
     }
     /// Resolve repetitive units, selecting edges, simplify graph.
     /// This workflow is implemented by "foci resolving" algorithm.
-    pub fn resolve_tangles(&self, reads: &[&EncodedRead], config: &AssembleConfig) {
+    pub fn resolve_tangles(&mut self, reads: &[&EncodedRead], config: &AssembleConfig) {
         let _foci = self.get_foci(reads, config);
+        // for (key, node) in self.nodes.iter_mut() {
+        //     // We do not treat copy number more than or equel to 2.
+        //     if node.copy_number.map(|cp| cp != 1).unwrap_or(true) {
+        //         continue;
+        //     }
+        //     for &pos in &[Position::Head, Position::Tail] {
+        //         // The case for repeats.
+        //         // In other words, we regard a node as "repeat-in" when the three condition below hold:
+        //         // 1. It has only one out-degree.
+        //         // 2. The destination node has two or more in-degree.
+        //         // 3. The copy number of the node is one, and that of destination node is two.
+        //         let num_edge = node.edges.iter().filter(|e| e.from_position == pos).count();
+        //         if num_edge == 1 {
+        //             let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
+        //             let is_repeat = self
+        //                 .nodes
+        //                 .get(&edge.to)
+        //                 .map(|node| {
+        //                     let outdeg = node
+        //                         .edges
+        //                         .iter()
+        //                         .filter(|e| e.from_position == edge.to_position)
+        //                         .count();
+        //                     node.copy_number.map(|cp| cp == 2).unwrap_or(false) && 2 <= outdeg
+        //                 })
+        //                 .unwrap_or(false);
+        //             if is_repeat {}
+        //         }
+        //     }
+        // }
         unimplemented!()
     }
+    pub fn servey_foci(&self, _foci: &HashMap<(Node, Position), Focus>) {}
     /// Return a hash map containing all foci, thresholded by `config` parameter.
     pub fn get_foci(
         &self,
@@ -1336,6 +1521,82 @@ impl<'a> DitchGraph<'a> {
         let mut merged_nodes = merged_nodes;
         merged_nodes.retain(|&x| x != first_node);
         ((first_node, !first_pos), merged_nodes)
+    }
+    /// Z-selection of edges.
+    /// In this function, we select edges based on the topology of the graph.
+    /// Suppose a node with the degree more than 2 has a edge with no conflicting edge.
+    /// Then, we remove edges from that node satisfying the conditions below:
+    /// 1. It connect to a node with degree more than 1.
+    /// 2. The connected node has at least one connected node with outdegree is equal to 1.
+    /// In other words, we remove edges we could not select, otherwise the resulting graph would be split.
+    pub fn z_edge_selection(&mut self) {
+        let mut removed_edges = HashSet::new();
+        let mut retain_edges = HashSet::new();
+        let format_edge = |e: &DitchEdge| {
+            if e.from <= e.to {
+                (e.from, e.from_position, e.to, e.to_position)
+            } else {
+                (e.to, e.to_position, e.from, e.from_position)
+            }
+        };
+        for node in self.nodes.values() {
+            for &pos in &[Position::Head, Position::Tail] {
+                let edges = node.edges.iter().filter(|e| e.from_position == pos);
+                let edges_selectable: Vec<_> =
+                    edges.clone().map(|edge| self.can_select(edge)).collect();
+                // If there's selectable edges, remove other edges.
+                let num_of_selectable = edges_selectable.iter().filter(|&&x| x).count();
+                let num_of_removable = edges_selectable.len() - num_of_selectable;
+                if 0 < num_of_selectable && 0 < num_of_removable {
+                    for (edge, selectable) in edges.zip(edges_selectable) {
+                        match selectable {
+                            true => retain_edges.insert(format_edge(edge)),
+                            false => removed_edges.insert(format_edge(edge)),
+                        };
+                    }
+                };
+            }
+        }
+        for retain in retain_edges.iter() {
+            removed_edges.remove(retain);
+        }
+        for node in self.nodes.values_mut() {
+            node.edges
+                .retain(|edge| !removed_edges.contains(&format_edge(edge)));
+        }
+    }
+    /// Check if we can select this edge when we need to select an edge for each
+    /// node while preserving the connectiviy of the graph.
+    ///  true if we could select this edge.
+    pub fn can_select(&self, edge: &DitchEdge) -> bool {
+        let to = match self.nodes.get(&edge.to) {
+            Some(to) => to,
+            None => return false,
+        };
+        // Filtering out the back edge.
+        for to_edge in to
+            .edges
+            .iter()
+            .filter(|to_e| to_e.from_position == edge.to_position && to_e.to != edge.from)
+        {
+            let child = match self.nodes.get(&to_edge.to) {
+                Some(child) => child,
+                None => return false,
+            };
+            // Check if `child.to` has only one parent, `to`.
+            assert_eq!(to_edge.from, edge.to);
+            assert_eq!(to_edge.from_position, edge.to_position);
+            let parent = (to_edge.from, to_edge.from_position);
+            let to_is_only_prent = child
+                .edges
+                .iter()
+                .filter(|c_edge| c_edge.from_position == to_edge.to_position)
+                .all(|c_edge| (c_edge.to, c_edge.to_position) == parent);
+            if to_is_only_prent {
+                return false;
+            }
+        }
+        true
     }
 }
 

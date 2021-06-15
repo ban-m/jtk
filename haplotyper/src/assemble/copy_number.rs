@@ -66,7 +66,7 @@ impl Optimizer {
         }
     }
     fn optimize(&mut self, copy_num: &mut [f64]) {
-        debug!("LOSS\tEdgeRes\tNodeRes\tNodePenalty\tIntPenalty\tTotal");
+        //debug!("LOSS\tEdgeRes\tNodeRes\tNodePenalty\tIntPenalty\tTotal");
         use std::collections::VecDeque;
         let heat = (1..=100).map(|x| (1f64, 0.01 * x as f64, 0.01 * x as f64));
         let chill = (1..=100).map(|x| (1f64 - 0.01 * x as f64, 1f64, 1f64));
@@ -78,9 +78,9 @@ impl Optimizer {
             .chain(re_heat)
             .chain(re_chill)
             .chain(finalize);
-        debug!("PARAMS\tEPOCH\tRESIDUAL\tCONSISTENCY\tINTEGER");
+        // debug!("PARAMS\tEPOCH\tRESIDUAL\tCONSISTENCY\tINTEGER");
         for (epoch, (alpha, beta, gamma)) in schedule.enumerate() {
-            debug!("PARAMS\t{}\t{}\t{}\t{}", epoch, alpha, beta, gamma);
+            // debug!("PARAMS\t{}\t{}\t{}\t{}", epoch, alpha, beta, gamma);
             self.gradient.iter_mut().for_each(|x| *x = 0f64);
             self.momentum.iter_mut().for_each(|x| *x = 0f64);
             // TODO: this is the worst hack I've ever implemented. Shame on me.
@@ -165,10 +165,10 @@ impl Optimizer {
             *grad = alpha * residual + beta * node_consist + gamma * int_pen;
         }
         let total_loss = alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen;
-        debug!(
-            "LOSS\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
-            edge_res, node_res, node_pen, int_pen, total_loss
-        );
+        // debug!(
+        //     "LOSS\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+        //     edge_res, node_res, node_pen, int_pen, total_loss
+        // );
         total_loss
     }
 }
@@ -300,12 +300,12 @@ pub fn estimate_copy_number(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<u
     for (i, _) in is_isolated.iter().enumerate().filter(|(_, &x)| x) {
         node_cp[i] = nodes[i];
     }
-    for (i, cp) in copy_num.iter().enumerate() {
-        debug!("ROUND\t{}\t{:.2}\t{}\tEDGE", edges[i].4, cp, cp.round());
-    }
-    for (i, cp) in node_cp.iter().enumerate() {
-        debug!("ROUND\t{}\t{:.2}\t{}\tNODE", nodes[i], cp, cp.round());
-    }
+    // for (i, cp) in copy_num.iter().enumerate() {
+    //     debug!("ROUND\t{}\t{:.2}\t{}\tEDGE", edges[i].4, cp, cp.round());
+    // }
+    // for (i, cp) in node_cp.iter().enumerate() {
+    //     debug!("ROUND\t{}\t{:.2}\t{}\tNODE", nodes[i], cp, cp.round());
+    // }
     let copy_num: Vec<_> = copy_num.iter().map(|&x| x.round() as usize).collect();
     let node_cp: Vec<_> = node_cp.iter().map(|&x| x.round() as usize).collect();
     (node_cp, copy_num)
