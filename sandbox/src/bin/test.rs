@@ -3,10 +3,11 @@ use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
+    let start = std::time::Instant::now();
     let mut ds: DataSet =
         serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new)?).unwrap();
-    use haplotyper::em_correction::ClusteringCorrection;
-    ds = ds.correct_clustering_mult(5, 5, 3);
+    let end = std::time::Instant::now();
+    eprintln!("Open\t{}", (end - start).as_secs());
     ds.assignments = ds
         .encoded_reads
         .iter()
@@ -15,20 +16,31 @@ fn main() -> std::io::Result<()> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::*;
     let config = haplotyper::AssembleConfig::new(24, 2000, false);
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
-    graph.remove_lightweight_edges(1);
     let coverage = ds.coverage.unwrap();
     let lens: Vec<_> = ds.raw_reads.iter().map(|read| read.seq().len()).collect();
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
+    graph.remove_lightweight_edges(1);
+    // First clean up.
     graph.remove_zero_copy_elements(coverage, &lens, 0.51);
     graph.z_edge_selection();
     graph.remove_tips(0.5, 5);
-    log::debug!("Zipping...");
     graph.zip_up_overclustering();
+    graph.resolve_repeats(&reads, &config, 8f64);
+    // Second clean up.
+    graph.assign_copy_number(coverage, &lens);
+    graph.resolve_repeats(&reads, &config, 4f64);
+    // Third clustering.
+    graph.assign_copy_number(coverage, &lens);
+    graph.z_edge_selection();
+    graph.zip_up_overclustering();
+    graph.resolve_repeats(&reads, &config, 4f64);
+    // Assemble
     let gfa = assemble_as_gfa(&graph, &config);
     println!("{}", gfa);
     Ok(())
 }
 
+#[allow(dead_code)]
 fn assemble_as_gfa(
     graph: &haplotyper::assemble::ditch_graph::DitchGraph,
     c: &haplotyper::AssembleConfig,

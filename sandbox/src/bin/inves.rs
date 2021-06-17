@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
     let unit: u64 = args[2].parse().unwrap();
-    // let cluster: u64 = args[3].parse().unwrap();
+    let cluster: u64 = args[3].parse().unwrap();
     let (ids, units): (Vec<_>, Vec<_>) = ds
         .encoded_reads
         .iter()
@@ -23,17 +23,12 @@ fn main() -> std::io::Result<()> {
         .unzip();
     use rand_xoshiro::Xoroshiro128PlusPlus;
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(42);
-    // let cov = units.len() / 2;
-    for u in units.iter() {
-        println!("{}", u.len());
-    }
-    let cov = ds.coverage.unwrap();
-    // println!("{}", cov);
-    let mut config =
-        haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 1, cov as f64);
+    // let cov = ds.coverage.unwrap();
+    let cov = 27f64;
+    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 4, cov);
     let (asn, _) =
         haplotyper::local_clustering::kmeans::clustering(&units, &mut rng, &mut config).unwrap();
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
     for (id, x) in ids.iter().zip(asn.iter()) {
         println!("{}\t{}", id2desc[id], x);
     }

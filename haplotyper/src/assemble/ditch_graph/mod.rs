@@ -1065,7 +1065,6 @@ impl<'a> DitchGraph<'a> {
     /// In this function, for all node with the degree of zero,
     /// we speculate the *local* coverage by traversing DIAG distance.
     /// If the coverage is less than `cov * thr`, the node would be removed.
-    /// TODO: More sophisticated algorithm is indeeed needed.
     pub fn remove_tips(&mut self, thr: f64, diag: usize) {
         let to_remove: HashSet<_> = self
             .nodes
@@ -1113,43 +1112,283 @@ impl<'a> DitchGraph<'a> {
             node.edges.retain(|edge| !to_remove.contains(&edge.to));
         }
     }
-    /// Resolve repetitive units, selecting edges, simplify graph.
-    /// This workflow is implemented by "foci resolving" algorithm.
-    pub fn resolve_tangles(&mut self, reads: &[&EncodedRead], config: &AssembleConfig) {
-        let _foci = self.get_foci(reads, config);
-        // for (key, node) in self.nodes.iter_mut() {
-        //     // We do not treat copy number more than or equel to 2.
-        //     if node.copy_number.map(|cp| cp != 1).unwrap_or(true) {
-        //         continue;
-        //     }
-        //     for &pos in &[Position::Head, Position::Tail] {
-        //         // The case for repeats.
-        //         // In other words, we regard a node as "repeat-in" when the three condition below hold:
-        //         // 1. It has only one out-degree.
-        //         // 2. The destination node has two or more in-degree.
-        //         // 3. The copy number of the node is one, and that of destination node is two.
-        //         let num_edge = node.edges.iter().filter(|e| e.from_position == pos).count();
-        //         if num_edge == 1 {
-        //             let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
-        //             let is_repeat = self
-        //                 .nodes
-        //                 .get(&edge.to)
-        //                 .map(|node| {
-        //                     let outdeg = node
-        //                         .edges
-        //                         .iter()
-        //                         .filter(|e| e.from_position == edge.to_position)
-        //                         .count();
-        //                     node.copy_number.map(|cp| cp == 2).unwrap_or(false) && 2 <= outdeg
-        //                 })
-        //                 .unwrap_or(false);
-        //             if is_repeat {}
-        //         }
-        //     }
-        // }
-        unimplemented!()
+    /// Check the dynamic of foci.
+    pub fn survey_foci(&mut self, foci: &HashMap<(Node, Position), Focus>) {
+        let keys: Vec<Node> = self.nodes.keys().copied().collect();
+        let mut foci_information: HashMap<_, _> = HashMap::new();
+        for focus in foci.values() {
+            let llr = foci_information.entry(focus.from).or_insert(0f64);
+            *llr = (*llr).max(focus.llr());
+            let llr = foci_information.entry(focus.to).or_insert(0f64);
+            *llr = (*llr).max(focus.llr());
+        }
+        for key in keys {
+            for &pos in &[Position::Head, Position::Tail] {
+                // Check if this is branching.
+                let edges = match self.nodes.get(&key) {
+                    Some(node) => node.edges.iter().filter(|e| e.from_position == pos),
+                    None => continue,
+                };
+                let num_edges = edges.clone().count();
+                let is_repeat_in = if num_edges == 1 {
+                    let edge = edges.clone().next().unwrap();
+                    1 < self.nodes[&edge.to]
+                        .edges
+                        .iter()
+                        .filter(|to_e| to_e.from_position == edge.to_position)
+                        .count()
+                } else {
+                    false
+                };
+                if (1 < num_edges || is_repeat_in) && foci.contains_key(&(key, pos)) {
+                    if is_repeat_in {
+                        debug!("{}\tREPEAT", &foci[&(key, pos)]);
+                    } else {
+                        debug!("{}\tBRANCH", &foci[&(key, pos)]);
+                    }
+                    self.survey_focus(key, pos, foci, &foci_information);
+                }
+            }
+        }
     }
-    pub fn servey_foci(&self, _foci: &HashMap<(Node, Position), Focus>) {}
+    fn survey_focus(
+        &mut self,
+        key: Node,
+        pos: Position,
+        foci: &HashMap<(Node, Position), Focus>,
+        info: &HashMap<Node, f64>,
+    ) -> Option<()> {
+        // You can assume that `self` indeed has key and pos.
+        let focus = &foci[&(key, pos)];
+        // Check if both elemnets is single copy.
+        let from_copy_num = self
+            .nodes
+            .get(&focus.from)
+            .and_then(|node| node.copy_number.filter(|&x| x <= 1))?;
+        let to_copy_num = self
+            .nodes
+            .get(&focus.to)
+            .and_then(|node| node.copy_number.filter(|&x| x <= 1))?;
+        assert!(from_copy_num <= 1 && to_copy_num <= 1);
+        // Breadth first search until get to the target.
+        // Just !pos to make code tidy.
+        let mut nodes_at = vec![vec![(key, !pos)]];
+        let mut parents = vec![vec![]];
+        'outer: for dist in 0..focus.dist + 1 {
+            let mut next_nodes = vec![];
+            let mut parent = vec![];
+            assert_eq!(dist + 1, nodes_at.len());
+            for (idx, &(node, pos)) in nodes_at[dist].iter().enumerate() {
+                if node == focus.to && pos == focus.to_position {
+                    // This does not always hold, as some resolution would make some path shorter.
+                    // assert_eq!(dist, focus.dist);
+                    break 'outer;
+                }
+                // Move to the end of the node.
+                let pos = !pos;
+                if info
+                    .get(&node)
+                    .map(|&llr| focus.llr() < llr)
+                    .unwrap_or(false)
+                {
+                    debug!("This new focus is stronger. Drop current resolution");
+                    return None;
+                }
+                for edge in self.nodes[&node]
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from_position == pos)
+                {
+                    next_nodes.push((edge.to, edge.to_position));
+                    parent.push(idx);
+                }
+            }
+            assert_eq!(next_nodes.len(), parent.len());
+            nodes_at.push(next_nodes);
+            parents.push(parent);
+        }
+        // Back-track.
+        assert_eq!(nodes_at.len(), parents.len());
+        let mut dist = nodes_at.len() - 1;
+        let mut idx = match nodes_at[dist]
+            .iter()
+            .position(|&(n, p)| n == focus.to && p == focus.to_position)
+        {
+            Some(idx) => idx,
+            None => {
+                debug!("Something happened");
+                debug!("While searching a focus:{}", focus);
+                debug!("Please be careful about this node.");
+                return None;
+            }
+        };
+        let mut back_track = vec![];
+        while 0 < dist {
+            back_track.push(nodes_at[dist][idx]);
+            idx = parents[dist][idx];
+            dist -= 1;
+        }
+        back_track.reverse();
+        for (i, (node, pos)) in back_track.iter().enumerate() {
+            debug!("{}\t{:?}\t{}", i, node, pos);
+        }
+        // Get the label along the edge.
+        let first_elm = back_track[0];
+        let first_label = self.nodes[&key]
+            .edges
+            .iter()
+            .find(|edge| edge.from_position == pos && (edge.to, edge.to_position) == first_elm)
+            .map(|edge| edge.seq.clone())
+            .unwrap();
+        let mut path_label = vec![];
+        for window in back_track.windows(2) {
+            // !!!Here, each position is the start position of each node!!!!
+            let (from, from_pos) = window[0];
+            let (to, to_pos) = window[1];
+            let label = self.nodes[&from]
+                .edges
+                .iter()
+                .find(|edge| {
+                    // !from_pos is correct.
+                    edge.from_position == !from_pos && edge.to == to && edge.to_position == to_pos
+                })
+                .map(|edge| &edge.seq)
+                .unwrap();
+            let mut node_seq = match to_pos {
+                Position::Head => self.nodes[&to].seq().to_vec(),
+                Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
+            };
+            match label {
+                EdgeLabel::Ovlp(l) => {
+                    assert!(*l <= 0);
+                    node_seq.reverse();
+                    for _ in 0..(-l) as usize {
+                        node_seq.pop().unwrap();
+                    }
+                }
+                EdgeLabel::Seq(seq) => node_seq.extend(seq),
+            }
+            path_label.extend(node_seq);
+        }
+        let label = match first_label {
+            EdgeLabel::Ovlp(l) if l + (path_label.len() as i64) < 0 => {
+                EdgeLabel::Ovlp(l + path_label.len() as i64)
+            }
+            EdgeLabel::Ovlp(l) => {
+                for _ in 0..(-l) as usize {
+                    path_label.pop();
+                }
+                EdgeLabel::Seq(path_label)
+            }
+            EdgeLabel::Seq(seq) => EdgeLabel::Seq(seq.iter().copied().chain(path_label).collect()),
+        };
+        debug!("Spanning {} in {}bp", focus, label.len());
+        // Link (from,from_pos)<->(to,to_pos);
+        let (from, from_pos) = (focus.from, focus.from_position);
+        let (to, to_pos) = (focus.to, focus.to_position);
+        let mut edge = DitchEdge::new(from, from_pos, to, to_pos, label);
+        // Even though it is not good indeed, as it indicates that the very long edge has
+        // moderate occurence, but I think it would not cause any harm, as the newly added edge would be in a simple path(certainly).
+        edge.occ = self.nodes[&from].edges.iter().map(|e| e.occ).sum();
+        // First, allocate edge to be removed.
+        // Note that sometimes the newly added edge is already in this node(i.e. resolving some short branch),
+        // So we should be care that these read is not in the removing edges.
+        let remove_from: Vec<_> = self.nodes[&from]
+            .edges
+            .iter()
+            .filter(|e| e.from_position == from_pos)
+            .filter(|e| !(e.to == to && e.to_position == to_pos))
+            .map(|e| (e.to, e.to_position))
+            .collect();
+        let remove_to: Vec<_> = self.nodes[&to]
+            .edges
+            .iter()
+            .filter(|e| e.from_position == to_pos)
+            .filter(|e| !(e.to == from && e.to_position == from_pos))
+            .map(|e| (e.to, e.to_position))
+            .collect();
+        // Next, add the new edge. If there's already the same egdge, just update it.
+        if let Some(node) = self.nodes.get_mut(&to) {
+            let edge = edge.reverse();
+            match node.edges.iter_mut().find(|e| e == &&edge) {
+                Some(e) => *e = edge,
+                None => node.edges.push(edge),
+            }
+        }
+        if let Some(node) = self.nodes.get_mut(&from) {
+            match node.edges.iter_mut().find(|e| e == &&edge) {
+                Some(e) => *e = edge,
+                None => node.edges.push(edge),
+            }
+        }
+        // Next, removing the rest of the edges.
+        for (node, pos) in remove_from {
+            self.remove_edge_and_pruning(from, from_pos, node, pos);
+        }
+        for (node, pos) in remove_to {
+            self.remove_edge_and_pruning(to, to_pos, node, pos);
+        }
+        // self.sanity_check();
+        Some(())
+    }
+    // Removing (from,from_pos)-(to,to_pos) edge.
+    // Then, recursively removing the edges in the opposite position and `to` node itself
+    // if the degree of `(to,to_pos)` is zero after removing.
+    fn remove_edge_and_pruning(
+        &mut self,
+        from: Node,
+        from_pos: Position,
+        to: Node,
+        to_pos: Position,
+    ) {
+        debug!(
+            "Removing ({},{},{})-({},{},{})",
+            from.0, from.1, from_pos, to.0, to.1, to_pos
+        );
+        if let Some(node) = self.nodes.get_mut(&from) {
+            node.edges.retain(|e| {
+                !(e.from_position == from_pos && e.to == to && e.to_position == to_pos)
+            });
+        }
+        // Remove in anti-direction.
+        if let Some(node) = self.nodes.get_mut(&to) {
+            node.edges.retain(|e| {
+                !(e.from_position == to_pos && e.to == from && e.to_position == from_pos)
+            });
+        }
+        // If the degree became zero..
+        let removed_all_edges = self
+            .nodes
+            .get(&to)
+            .map(|node| node.edges.iter().all(|e| e.from_position == !to_pos))
+            .unwrap_or(false);
+        if removed_all_edges {
+            // Removing this node.
+            // First, recursively call the removing function.
+            let remove_edges: Vec<_> = self.nodes[&to]
+                .edges
+                .iter()
+                .map(|e| (e.to, e.to_position))
+                .collect();
+            for &(node, pos) in remove_edges.iter() {
+                // The edge is from the *opposite* position of the `to` node!
+                self.remove_edge_and_pruning(to, !to_pos, node, pos);
+            }
+            debug!("Removing {:?}", to);
+            // Then, removing this node itself.
+            if self.nodes.contains_key(&to) {
+                assert!(self.nodes[&to].edges.is_empty());
+                self.nodes.remove(&to);
+            }
+        }
+    }
+    /// Resolve repeats by "foci" algorithm.
+    pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
+        let mut foci = self.get_foci(reads, config);
+        foci.retain(|_, val| thr < val.llr());
+        self.survey_foci(&foci);
+    }
+
     /// Return a hash map containing all foci, thresholded by `config` parameter.
     pub fn get_foci(
         &self,
@@ -1159,8 +1398,29 @@ impl<'a> DitchGraph<'a> {
         let mut foci = HashMap::new();
         for node in self.nodes.values() {
             for &pos in &[Position::Head, Position::Tail] {
-                if let Some(focus) = self.examine_focus(node, pos, &reads, config) {
-                    foci.insert((node.node, pos), focus);
+                // Check if it is branching or confluing.
+                let edge_num = node
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from_position == pos)
+                    .count();
+                let branching = 1 < edge_num;
+                let confluent = if edge_num == 1 {
+                    let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
+                    let siblings = self.nodes[&edge.to]
+                        .edges
+                        .iter()
+                        .filter(|e| e.from_position == edge.to_position)
+                        .count();
+                    assert!(1 <= siblings);
+                    1 < siblings
+                } else {
+                    false
+                };
+                if branching || confluent {
+                    if let Some(focus) = self.examine_focus(node, pos, &reads, config) {
+                        foci.insert((node.node, pos), focus);
+                    }
                 }
             }
         }
@@ -1178,13 +1438,9 @@ impl<'a> DitchGraph<'a> {
         let dist_nodes = self.enumerate_node_upto(node, pos, 5);
         let reads: Vec<_> = reads.iter().filter(|r| r.contains(node.node)).collect();
         let mut focus: Option<Focus> = None;
-        for (dist, nodes) in dist_nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, ns)| !ns.is_empty())
-        {
+        for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
             let dist = dist + 1;
-            debug!("{}\t{:?}", dist, nodes);
+            // debug!("{}\t{:?}", dist, nodes);
             let mut occs: Vec<_> = vec![0; nodes.len()];
             for read in reads.iter() {
                 // Safe.
@@ -1264,15 +1520,14 @@ impl<'a> DitchGraph<'a> {
         for i in 0..radius {
             let mut next_nodes = vec![];
             for (node, p) in nodes_at[i].iter() {
-                let next_edges = match self.nodes.get(node) {
-                    Some(n) => &n.edges,
-                    None => continue,
-                };
-                let next_edges = next_edges
-                    .iter()
-                    .filter(|e| e.from_position == !*p)
-                    .map(|e| (e.from, e.from_position));
-                next_nodes.extend(next_edges);
+                if let Some(next_node) = self.nodes.get(node) {
+                    let to_nodes = next_node
+                        .edges
+                        .iter()
+                        .filter(|e| e.from_position == !*p)
+                        .map(|e| (e.to, e.to_position));
+                    next_nodes.extend(to_nodes);
+                }
             }
             next_nodes.sort();
             next_nodes.dedup();
@@ -1542,11 +1797,10 @@ impl<'a> DitchGraph<'a> {
         for node in self.nodes.values() {
             for &pos in &[Position::Head, Position::Tail] {
                 let edges = node.edges.iter().filter(|e| e.from_position == pos);
-                let edges_selectable: Vec<_> =
-                    edges.clone().map(|edge| self.can_select(edge)).collect();
+                let edges_selectable = edges.clone().map(|edge| self.can_select(edge));
                 // If there's selectable edges, remove other edges.
-                let num_of_selectable = edges_selectable.iter().filter(|&&x| x).count();
-                let num_of_removable = edges_selectable.len() - num_of_selectable;
+                let num_of_selectable = edges_selectable.clone().filter(|&x| x).count();
+                let num_of_removable = edges_selectable.clone().count() - num_of_selectable;
                 if 0 < num_of_selectable && 0 < num_of_removable {
                     for (edge, selectable) in edges.zip(edges_selectable) {
                         match selectable {
@@ -1567,27 +1821,21 @@ impl<'a> DitchGraph<'a> {
     }
     /// Check if we can select this edge when we need to select an edge for each
     /// node while preserving the connectiviy of the graph.
-    ///  true if we could select this edge.
+    /// true if we could select this edge.
     pub fn can_select(&self, edge: &DitchEdge) -> bool {
-        let to = match self.nodes.get(&edge.to) {
-            Some(to) => to,
-            None => return false,
-        };
+        let to = &self.nodes[&edge.to];
         // Filtering out the back edge.
         for to_edge in to
             .edges
             .iter()
             .filter(|to_e| to_e.from_position == edge.to_position && to_e.to != edge.from)
         {
-            let child = match self.nodes.get(&to_edge.to) {
-                Some(child) => child,
-                None => return false,
-            };
+            let sibling = &self.nodes[&to_edge.to];
             // Check if `child.to` has only one parent, `to`.
             assert_eq!(to_edge.from, edge.to);
             assert_eq!(to_edge.from_position, edge.to_position);
             let parent = (to_edge.from, to_edge.from_position);
-            let to_is_only_prent = child
+            let to_is_only_prent = sibling
                 .edges
                 .iter()
                 .filter(|c_edge| c_edge.from_position == to_edge.to_position)

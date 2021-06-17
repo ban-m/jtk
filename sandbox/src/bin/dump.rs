@@ -13,15 +13,20 @@ fn main() -> std::io::Result<()> {
         .map(|read| (read.id, read.desc.to_string()))
         .collect();
     let unit_id: u64 = args[2].parse().expect("input unit id as 2nd argument.");
+    let cluster: u64 = args[3].parse().expect("input cluster as 3rd argument.");
     let mut units = vec![String::new(); 9];
     units[4] = format!("{}", unit_id);
-    for read in ds
-        .encoded_reads
-        .iter()
-        .filter(|read| read.nodes.iter().any(|n| n.unit == unit_id))
-    {
+    for read in ds.encoded_reads.iter().filter(|read| {
+        read.nodes
+            .iter()
+            .any(|n| n.unit == unit_id && n.cluster == cluster)
+    }) {
         let mut context = vec!["-".to_string(); 9];
-        let index = read.nodes.iter().position(|n| n.unit == unit_id).unwrap();
+        let index = read
+            .nodes
+            .iter()
+            .position(|n| n.unit == unit_id && n.cluster == cluster)
+            .unwrap();
         context[4] = format!("{}", read.nodes[index].cluster);
         let is_forward = read.nodes[index].is_forward;
         for (idx, node) in read.nodes.iter().skip(index + 1).enumerate().take(4) {
