@@ -1,5 +1,5 @@
 use definitions::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -11,7 +11,7 @@ fn main() -> std::io::Result<()> {
     //     .iter()
     //     .map(|r| (r.id, r.desc.clone()))
     //     .collect();
-    let units: HashSet<(u64, u64)> = vec![(1201, 0)].into_iter().collect();
+    let units: HashSet<(u64, u64)> = vec![(316, 0)].into_iter().collect();
     for read in ds.encoded_reads.iter() {
         let mut dumps = vec![format!("{:<5}", 0); 7];
         for (idx, _) in read
@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
                     dumps[i] = format!("{:<5}", node.unit);
                 }
             }
-            println!("{}", dumps.join("\t"));
+            println!("{}\t{}", dumps.join("\t"), read.id);
         }
         // let pos: Vec<_> = id2desc[&read.id]
         //     .split(' ')

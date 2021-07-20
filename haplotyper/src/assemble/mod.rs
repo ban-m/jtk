@@ -34,6 +34,12 @@ pub struct Edge {
 }
 
 impl Graph {
+    // pub fn gfa(&self) -> GFA {
+    //     let header = gfa::Content::Header(gfa::Header::default());
+    //     let header = gfa::Record::from_contents(header, vec![]);
+    //     let mut records = vec![header];
+    //     GFA::from_records(header)
+    // }
     pub fn enumerate_connected_components(&self) -> Vec<Vec<&Node>> {
         use crate::find_union::FindUnion;
         let mut fu = FindUnion::new(self.nodes.len());
@@ -70,6 +76,8 @@ pub struct AssembleConfig {
     threads: usize,
     to_polish: bool,
     window_size: usize,
+    // If true, resolve repeats.
+    to_resolve: bool,
 }
 
 impl std::default::Default for AssembleConfig {
@@ -78,26 +86,33 @@ impl std::default::Default for AssembleConfig {
             threads: 1,
             to_polish: false,
             window_size: 100,
+            to_resolve: false,
         }
     }
 }
 impl AssembleConfig {
-    pub fn new(threads: usize, window_size: usize, to_polish: bool) -> Self {
+    pub fn new(threads: usize, window_size: usize, to_polish: bool, to_resolve: bool) -> Self {
         Self {
             window_size,
             threads,
             to_polish,
+            to_resolve,
         }
     }
 }
 
 pub trait Assemble {
-    fn assemble_as_gfa(&self, c: &AssembleConfig) -> GFA;
-    fn assemble_as_graph(&self, c: &AssembleConfig) -> Vec<Graph>;
+    /// Assemble the dataset. If there's duplicated regions or
+    /// unresolved regions, it tries to un-entangle that region.
+    fn assemble(&self, c: &AssembleConfig) -> GFA;
+    /// Assmeble the dataset into a draft assembly. It does not
+    /// dive into difficult regions such as non-single-copy chunks or
+    /// tangles. It just assemble the dataset into a graph.
+    fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
 }
 
 impl Assemble for DataSet {
-    fn assemble_as_gfa(&self, c: &AssembleConfig) -> GFA {
+    fn assemble(&self, c: &AssembleConfig) -> GFA {
         let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
         for asn in self.assignments.iter() {
             *cluster_and_num.entry(asn.cluster).or_default() += 1;
@@ -136,13 +151,13 @@ impl Assemble for DataSet {
         header.extend(records);
         GFA::from_records(header)
     }
-    fn assemble_as_graph(&self, c: &AssembleConfig) -> Vec<Graph> {
+    fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph {
         let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
         for asn in self.assignments.iter() {
             *cluster_and_num.entry(asn.cluster).or_default() += 1;
         }
         debug!("There is {} clusters.", cluster_and_num.len());
-        cluster_and_num
+        let (nodes, edges) = cluster_and_num
             .into_iter()
             .filter(|&(cl, num)| {
                 if num < 10 {
@@ -152,50 +167,136 @@ impl Assemble for DataSet {
                     true
                 }
             })
-            .map(|(cl, _)| {
+            .fold((vec![], vec![]), |(mut nodes, mut edges), (cl, _)| {
                 let (records, summaries) = assemble(&self, cl, c);
-                let nodes: Vec<_> = summaries
-                    .iter()
-                    .map(|s| {
-                        let id = s.id.clone();
-                        let segments: Vec<_> = s
-                            .summary
-                            .iter()
-                            .map(|n| Tile {
-                                unit: n.unit,
-                                cluster: n.cluster,
-                                strand: n.strand,
-                            })
-                            .collect();
-                        Node { id, segments }
-                    })
-                    .collect();
-                let edges = records
-                    .iter()
-                    .filter_map(|record| match &record.content {
-                        gfa::Content::Edge(e) => Some(e),
-                        _ => None,
-                    })
-                    .map(|e| {
-                        let from = e.sid1.id.to_string();
-                        let from_tail = e.sid1.is_forward();
-                        let to = e.sid2.id.to_string();
-                        let to_tail = e.sid2.is_forward();
-                        Edge {
-                            from,
-                            from_tail,
-                            to,
-                            to_tail,
-                        }
-                    })
-                    .collect();
+                nodes.extend(summaries.iter().map(|s| {
+                    let id = s.id.clone();
+                    let segments: Vec<_> = s
+                        .summary
+                        .iter()
+                        .map(|n| Tile {
+                            unit: n.unit,
+                            cluster: n.cluster,
+                            strand: n.strand,
+                        })
+                        .collect();
+                    Node { id, segments }
+                }));
+                edges.extend(
+                    records
+                        .iter()
+                        .filter_map(|record| match &record.content {
+                            gfa::Content::Edge(e) => Some(e),
+                            _ => None,
+                        })
+                        .map(|e| {
+                            let from = e.sid1.id.to_string();
+                            let from_tail = e.sid1.is_forward();
+                            let to = e.sid2.id.to_string();
+                            let to_tail = e.sid2.is_forward();
+                            Edge {
+                                from,
+                                from_tail,
+                                to,
+                                to_tail,
+                            }
+                        }),
+                );
                 for summary in summaries.iter() {
                     debug!("SUMMARY\t{}", summary);
                 }
-                Graph { nodes, edges }
-            })
-            .collect()
+                (nodes, edges)
+            });
+        Graph { nodes, edges }
     }
+}
+
+/// Assemble the dataset, re-clustering units with copy number more than 2.
+pub fn re_clustering(mut ds: DataSet, c: &AssembleConfig) -> DataSet {
+    let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
+    for asn in ds.assignments.iter() {
+        *cluster_and_num.entry(asn.cluster).or_default() += 1;
+    }
+    debug!("There is {} clusters.", cluster_and_num.len());
+    // ID of the cluster -> total excess of the clustering.
+    let mut re_cluster: HashMap<_, _> = HashMap::new();
+    for (&cl, _) in cluster_and_num.iter().filter(|&(_, &num)| 10 <= num) {
+        let clusters: HashSet<_> = ds
+            .assignments
+            .iter()
+            .filter(|asn| asn.cluster == cl)
+            .map(|asn| asn.id)
+            .collect();
+        let reads: Vec<_> = ds
+            .encoded_reads
+            .iter()
+            .filter(|r| clusters.contains(&r.id))
+            .collect();
+        let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+        graph.remove_lightweight_edges(1);
+        if let Some(cov) = ds.coverage {
+            let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+            graph.remove_zero_copy_elements(cov, &lens, 0.51);
+            graph.z_edge_selection();
+            graph.remove_tips(0.5, 5);
+            graph.zip_up_overclustering();
+            let (node_copy_num, _) = graph.copy_number_estimation(cov, &lens);
+            for (&(node, _), &copy_num) in node_copy_num.iter().filter(|x| &1 < x.1) {
+                *re_cluster.entry(node).or_default() += (copy_num - 1) as u8;
+            }
+        }
+    }
+    for chunk in ds.selected_chunks.iter() {
+        if let Some(res) = re_cluster.get_mut(&chunk.id) {
+            *res += chunk.cluster_num as u8;
+        }
+    }
+    // Allocated.
+    let mut pileups: HashMap<u64, Vec<&mut _>> = HashMap::new();
+    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+        if re_cluster.contains_key(&node.unit) {
+            pileups.entry(node.unit).or_default().push(node);
+        }
+    }
+    debug!("There are {} chunks to be re-clustered.", re_cluster.len());
+    // Clustering.
+    use rand::SeedableRng;
+    use rand_xoshiro::Xoroshiro128PlusPlus;
+    use rayon::prelude::*;
+    let coverage = ds.coverage.clone();
+    let consensus_and_clusternum: HashMap<_, _> = pileups
+        .par_iter_mut()
+        .map(|(&unit_id, units)| {
+            use crate::local_clustering::kmeans;
+            let cluster_num = re_cluster[&unit_id];
+            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit_id * 23);
+            let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
+            let coverage = coverage.unwrap_or(units.len() as f64 / cluster_num as f64);
+            let mut config = kmeans::ClusteringConfig::new(100, cluster_num, coverage);
+            let start = std::time::Instant::now();
+            let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+            let end = std::time::Instant::now();
+            let elapsed = (end - start).as_secs();
+            debug!(
+                "RECLUSTER\t{}\t{}\t{}\t{}\t{}",
+                unit_id,
+                elapsed,
+                seqs.len(),
+                cluster_num,
+                config.cluster_num
+            );
+            for (node, asn) in units.iter_mut().zip(asn) {
+                node.cluster = asn as u64;
+            }
+            (unit_id, (consensus, config.cluster_num))
+        })
+        .collect();
+    for unit in ds.selected_chunks.iter_mut() {
+        if let Some((_consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+            unit.cluster_num = *cluster_num as usize;
+        }
+    }
+    ds
 }
 
 fn assemble(ds: &DataSet, cl: usize, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
@@ -214,13 +315,16 @@ fn assemble(ds: &DataSet, cl: usize, c: &AssembleConfig) -> (Vec<gfa::Record>, V
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     graph.remove_lightweight_edges(1);
     if let Some(cov) = ds.coverage {
-        debug!("Removing ZCEs");
-        let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-        graph.remove_zero_copy_elements(cov, &lens, 0.51);
-        graph.z_edge_selection();
-        graph.remove_tips(0.5, 5);
-        graph.zip_up_overclustering();
-        // graph.resolve_tangles(&reads, c);
+        if c.to_resolve {
+            debug!("Removing ZCEs");
+            let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+            graph.remove_zero_copy_elements(cov, &lens, 0.51);
+            // graph.z_edge_selection();
+            graph.remove_tips(0.5, 5);
+            // graph.zip_up_overclustering();
+            // graph.resolve_repeats(&reads, c, 5f64);
+            // graph.assign_copy_number(cov, &lens);
+        }
     }
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
@@ -405,7 +509,10 @@ pub fn copy_number_estimation(
             .collect();
         let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
         graph.remove_lightweight_edges(1);
-        let cov = ds.coverage.unwrap();
+        let cov = match ds.coverage {
+            Some(res) => res,
+            None => panic!(".coverage was checked before estimate coverage."),
+        };
         let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
         let (node, edge) = graph.copy_number_estimation(cov, &lens);
         node_cp.extend(node);

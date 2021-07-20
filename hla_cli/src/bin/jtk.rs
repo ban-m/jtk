@@ -198,8 +198,8 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_repeatmasking() -> App<'static, 'static> {
-    SubCommand::with_name("repeat_masking")
+fn subcommand_mask_repeats() -> App<'static, 'static> {
+    SubCommand::with_name("mask_repeats")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Mask Repeat(i.e., frequent k-mer)")
@@ -263,6 +263,27 @@ fn subcommand_encode() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_polish_encoding() -> App<'static, 'static> {
+    SubCommand::with_name("polish_encoding")
+        .version("0.1")
+        .author("Bansho Masutani")
+        .about("Remove nodes from reads.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .long("threads")
+                .short("t")
+                .help("Number of threads")
+                .takes_value(true)
+                .default_value(&"1"),
+        )
+}
+
 fn subcommand_pick_components() -> App<'static, 'static> {
     SubCommand::with_name("pick_components")
         .version("0.1")
@@ -293,45 +314,8 @@ fn subcommand_pick_components() -> App<'static, 'static> {
         )
 }
 
-// fn subcommand_filter_unit() -> App<'static, 'static> {
-//     SubCommand::with_name("filter_unit")
-//         .version("0.1")
-//         .author("Bansho Masutani")
-//         .about("Discard (in)-frequent units.")
-//         .arg(
-//             Arg::with_name("verbose")
-//                 .short("v")
-//                 .multiple(true)
-//                 .help("Debug mode"),
-//         )
-//         .arg(
-//             Arg::with_name("threads")
-//                 .long("threads")
-//                 .short("t")
-//                 .help("Number of threads")
-//                 .takes_value(true)
-//                 .default_value(&"1"),
-//         )
-//         .arg(
-//             Arg::with_name("upper")
-//                 .short("u")
-//                 .long("upper")
-//                 .help("Discard units with occurence more than or equal to [upper].")
-//                 .takes_value(true)
-//                 .default_value("250"),
-//         )
-//         .arg(
-//             Arg::with_name("lower")
-//                 .short("l")
-//                 .long("lower")
-//                 .help("Discard units with occurence less than or equal to [upper].")
-//                 .takes_value(true)
-//                 .default_value("3"),
-//         )
-// }
-
-fn subcommand_multiplicity_estimation() -> App<'static, 'static> {
-    SubCommand::with_name("multiplicity_estimation")
+fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
+    SubCommand::with_name("estimate_multiplicity")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Determine multiplicities of units.")
@@ -377,8 +361,8 @@ fn subcommand_multiplicity_estimation() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_local_clustering() -> App<'static, 'static> {
-    SubCommand::with_name("local_clustering")
+fn subcommand_partition_local() -> App<'static, 'static> {
+    SubCommand::with_name("partition_local")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Clustering reads. (Local)")
@@ -445,8 +429,8 @@ fn subcommand_local_clustering() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_global_clustering() -> App<'static, 'static> {
-    SubCommand::with_name("global_clustering")
+fn subcommand_partition_global() -> App<'static, 'static> {
+    SubCommand::with_name("partition_global")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Clustering reads (Global).")
@@ -523,8 +507,8 @@ fn subcommand_global_clustering() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_clustering_correction() -> App<'static, 'static> {
-    SubCommand::with_name("clustering_correction")
+fn subcommand_correct_clustering() -> App<'static, 'static> {
+    SubCommand::with_name("correct_clustering")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Correct local clustering by EM algorithm.")
@@ -576,7 +560,7 @@ fn subcommand_clustering_correction() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_assembly() -> App<'static, 'static> {
+fn subcommand_assemble() -> App<'static, 'static> {
     SubCommand::with_name("assemble")
         .version("0.1")
         .author("BanshoMasutani")
@@ -769,6 +753,22 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
     Ok(dataset.encode(threads))
 }
 
+fn polish_encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("Polish encoding.");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    use haplotyper::remove_erroneous_nodes::RemoveErroneousNodes;
+    Ok(dataset.remove_erroneous_nodes())
+}
+
 fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start picking components.");
     let threads: usize = matches
@@ -788,29 +788,6 @@ fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Res
     let config = ComponentPickingConfig::new(component_num);
     Ok(dataset.pick_top_n_component(&config))
 }
-
-// fn filter_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-//     debug!("Start Encoding step");
-//     let threads: usize = matches
-//         .value_of("threads")
-//         .and_then(|e| e.parse::<usize>().ok())
-//         .unwrap();
-//     let upper: usize = matches
-//         .value_of("upper")
-//         .and_then(|e| e.parse::<usize>().ok())
-//         .unwrap();
-//     let lower: usize = matches
-//         .value_of("lower")
-//         .and_then(|e| e.parse::<usize>().ok())
-//         .unwrap();
-//     if let Err(why) = rayon::ThreadPoolBuilder::new()
-//         .num_threads(threads)
-//         .build_global()
-//     {
-//         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
-//     }
-//     Ok(dataset.filter_unit(upper, lower))
-// }
 
 fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start polishing units");
@@ -991,7 +968,7 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
-    let config = AssembleConfig::new(threads, window_size, !skip_polish);
+    let config = AssembleConfig::new(threads, window_size, !skip_polish, true);
     if dataset.assignments.is_empty() {
         dataset.assignments = dataset
             .encoded_reads
@@ -999,7 +976,7 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
             .map(|r| Assignment::new(r.id, 0))
             .collect();
     }
-    let gfa = dataset.assemble_as_gfa(&config);
+    let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)
 }
@@ -1042,13 +1019,14 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_select_unit())
         .subcommand(subcommand_polish_unit())
         .subcommand(subcommand_encode())
-        .subcommand(subcommand_multiplicity_estimation())
-        .subcommand(subcommand_local_clustering())
-        .subcommand(subcommand_global_clustering())
-        .subcommand(subcommand_clustering_correction())
-        .subcommand(subcommand_assembly())
+        .subcommand(subcommand_polish_encoding())
+        .subcommand(subcommand_estimate_multiplicity())
+        .subcommand(subcommand_partition_local())
+        .subcommand(subcommand_partition_global())
+        .subcommand(subcommand_correct_clustering())
+        .subcommand(subcommand_assemble())
         .subcommand(subcommand_pick_components())
-        .subcommand(subcommand_repeatmasking())
+        .subcommand(subcommand_mask_repeats())
         .get_matches();
     if let Some(sub_m) = matches.subcommand().1 {
         let level = match sub_m.occurrences_of("verbose") {
@@ -1061,10 +1039,7 @@ fn main() -> std::io::Result<()> {
     }
     if let ("entry", Some(sub_m)) = matches.subcommand() {
         return entry(sub_m).and_then(|x| flush_file(&x));
-    }//  else if let ("pipeline", Some(sub_m)) = matches.subcommand() {
-    //     return pipeline(sub_m).and_then(|x| flush_file(&x));
-    // }
-    ;
+    }
     let ds = get_input_file()?;
     let result = match matches.subcommand() {
         ("extract", Some(sub_m)) => extract(sub_m, ds),
@@ -1072,12 +1047,13 @@ fn main() -> std::io::Result<()> {
         ("select_unit", Some(sub_m)) => select_unit(sub_m, ds),
         ("polish_unit", Some(sub_m)) => polish_unit(sub_m, ds),
         ("encode", Some(sub_m)) => encode(sub_m, ds),
-        ("local_clustering", Some(sub_m)) => local_clustering(sub_m, ds),
-        ("multiplicity_estimation", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
-        ("global_clustering", Some(sub_m)) => global_clustering(sub_m, ds),
-        ("clustering_correction", Some(sub_m)) => clustering_correction(sub_m, ds),
+        ("polish_encoding", Some(sub_m)) => polish_encode(sub_m, ds),
+        ("partition_local", Some(sub_m)) => local_clustering(sub_m, ds),
+        ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
+        ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
+        ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
-        ("repeat_masking", Some(sub_m)) => repeat_masking(sub_m, ds),
+        ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
         ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),
         _ => unreachable!(),
     };

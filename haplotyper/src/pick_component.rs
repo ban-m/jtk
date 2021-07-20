@@ -25,12 +25,9 @@ impl ComponentPicking for DataSet {
             .collect();
         use crate::assemble::Assemble;
         use crate::assemble::AssembleConfig;
-        let asm_config = AssembleConfig::new(1, 100, false);
-        let graph = self.assemble_as_graph(&asm_config);
-        let mut components: Vec<_> = graph
-            .iter()
-            .flat_map(|g| g.enumerate_connected_components())
-            .collect();
+        let asm_config = AssembleConfig::new(1, 100, false, false);
+        let graph = self.assemble_draft_graph(&asm_config);
+        let mut components: Vec<_> = graph.enumerate_connected_components();
         for (i, cc) in components.iter().enumerate() {
             let size = cc.iter().map(|node| node.segments.len()).sum::<usize>();
             debug!("PICKING\t{}\t{}", i, size);

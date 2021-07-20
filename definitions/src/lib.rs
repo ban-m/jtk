@@ -157,7 +157,10 @@ pub struct Unit {
     pub id: u64,
     /// Unit sequence. This is a string on a alphabet A,C,G,T,a,c,g,t
     pub seq: String,
+    /// Current estimation of the cluster number.
     pub cluster_num: usize,
+    // /// The initial guess of the cluster number.
+    // pub initial_cluster_num: usize,
 }
 
 impl Unit {
@@ -166,6 +169,7 @@ impl Unit {
             id,
             seq,
             cluster_num,
+            // initial_cluster_num: cluster_num,
         }
     }
     pub fn seq(&self) -> &[u8] {

@@ -3,6 +3,7 @@ use definitions::*;
 use rayon::prelude::*;
 // use log::*;
 use std::collections::HashMap;
+
 /// Fill deletions
 pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
     let read_skeltons: Vec<_> = ds
@@ -32,7 +33,7 @@ pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
 const OFFSET: usize = 300;
-fn correct_deletion_error(
+pub fn correct_deletion_error(
     read: &mut EncodedRead,
     units: &[Unit],
     reads: &[ReadSkelton],
@@ -40,38 +41,40 @@ fn correct_deletion_error(
 ) {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
-    let threshold = get_threshold(&pileups);
-    // let threshold = 3;
+    // let threshold = get_threshold(&pileups);
+    let threshold = 3;
     let nodes = &read.nodes;
     let take_len = nodes.len();
-    let inserts: Vec<_> = pileups
-        .iter()
-        .enumerate()
-        .take(take_len)
-        .skip(1)
-        .filter_map(|(idx, pileup)| {
-            let max_num = pileup.max_insertion();
-            if max_num < threshold {
-                return None;
-            }
-            // Check if we can record new units.
-            // It never panics.
-            let (prev_offset, uid, direction, _) = pileup.max_ins_information().unwrap();
-            let start_position =
-                (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
-            let start_position = start_position + prev_offset;
-            let start_position = (start_position as usize).saturating_sub(OFFSET);
+    let mut inserts = vec![];
+    for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
+        debug!("{}\t{:?}", idx, pileup);
+        let head_node = pileup.check_insertion_head(&nodes, threshold, idx);
+        let head_node = head_node.and_then(|(start_position, direction, uid)| {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
-            // Never panic.
-            if end_position <= start_position {
-                None
-            } else {
-                encode_node(&seq, start_position, end_position, direction, unit)
-                    .map(|new_node| (idx, new_node))
+            debug!("Fill {}-{} with {}", start_position, end_position, unit.id);
+            match start_position < end_position {
+                true => encode_node(&seq, start_position, end_position, direction, unit),
+                false => None,
             }
-        })
-        .collect();
+        });
+        if let Some(head_node) = head_node {
+            inserts.push((idx, head_node))
+        }
+        let tail_node = pileup.check_insertion_tail(&nodes, threshold, idx);
+        let tail_node = tail_node.and_then(|(end_position, direction, uid)| {
+            let unit = units.iter().find(|u| u.id == uid).unwrap();
+            let end_position = end_position.min(seq.len());
+            let start_position = end_position.saturating_sub(unit.seq().len() + 2 * OFFSET);
+            match start_position < end_position {
+                true => encode_node(&seq, start_position, end_position, direction, unit),
+                false => None,
+            }
+        });
+        if let Some(tail_node) = tail_node {
+            inserts.push((idx, tail_node));
+        }
+    }
     let mut accum_insertes = 0;
     for (idx, node) in inserts {
         read.nodes.insert(idx + accum_insertes, node);
@@ -105,6 +108,19 @@ fn encode_node(
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
     let alignment = edlib_sys::edlib_align(unit.seq(), &query, mode, task);
     let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
+    debug!(
+        "{}(Unit) vs {}(Read)\t{}",
+        unit.seq().len(),
+        query.len(),
+        alignment.dist
+    );
+    let locations = alignment.locations.unwrap();
+    let dist = alignment
+        .operations
+        .as_ref()
+        .map(|aln| aln.iter().filter(|&&op| op != 0).count())
+        .unwrap();
+    debug!("Location:{:?}\t{}", locations[0], dist);
     let ops: Vec<_> = alignment
         .operations
         .unwrap()
@@ -117,11 +133,10 @@ fn encode_node(
         })
         .collect();
     let ops = super::compress_kiley_ops(&ops);
-    // if dist_thr + 2 * (OFFSET as u32) < alignment.dist {
     if dist_thr < alignment.dist {
         return None;
     };
-    let (aln_start, aln_end) = alignment.locations.unwrap()[0];
+    let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
     let position_from_start = if is_forward {
         start + aln_start
@@ -216,13 +231,12 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
             for op in aln {
                 match op {
                     Op::Ins(l) => {
-                        // We only allocate the first inserted element.
-                        // TODO: It is possible that the first element is very errorneous,
-                        // and the successive elements are not,
-                        // so, maybe we need to record all the elements
-                        // so that we can handle successive deletions.
                         if r_ptr < read.nodes.len() && 0 < r_ptr {
-                            pileups[r_ptr].add(query.nodes[q_ptr].clone());
+                            pileups[r_ptr].add_head(query.nodes[q_ptr].clone());
+                            if 1 < l {
+                                let last_insertion = q_ptr + l - 1;
+                                pileups[r_ptr].add_tail(query.nodes[last_insertion].clone());
+                            }
                         }
                         q_ptr += l;
                     }
@@ -466,43 +480,67 @@ fn get_match_units(ops: &[Op]) -> usize {
 
 // Get threshold. In other words, a position would be regarded as an insertion if the
 // count for a inserted unit is more than the return value of this function.
-fn get_threshold(pileups: &[Pileup]) -> usize {
-    let totcov = pileups.iter().map(|p| p.coverage).sum::<usize>();
-    // We need at least 3 insertions to confirm.
-    (totcov / 3 / pileups.len()).max(3)
-}
+// fn get_threshold(pileups: &[Pileup]) -> usize {
+//     let totcov = pileups.iter().map(|p| p.coverage).sum::<usize>();
+//     // We need at least 3 insertions to confirm.
+//     (totcov / 3 / pileups.len()).max(3)
+// }
 
 #[derive(Debug, Clone)]
 pub struct Pileup {
-    inserted: Vec<LightNode>,
+    // insertion at the beggining of this node
+    head_inserted: Vec<LightNode>,
+    // insertion at the last of this node
+    tail_inserted: Vec<LightNode>,
     coverage: usize,
 }
 
 impl Pileup {
     // Return the maximum insertion from the same unit, the same direction.
-    fn max_insertion(&self) -> usize {
+    fn max_insertion_head(&self) -> Option<(usize, u64, bool)> {
         let mut count: HashMap<_, usize> = HashMap::new();
-        for node in self.inserted.iter() {
+        for node in self.head_inserted.iter() {
             *count.entry((node.unit, node.is_forward)).or_default() += 1;
         }
-        count.values().max().copied().unwrap_or(0)
+        count
+            .iter()
+            .max_by_key(|x| x.1)
+            .map(|(&(a, b), &y)| (y, a, b))
+    }
+    fn max_insertion_tail(&self) -> Option<(usize, u64, bool)> {
+        let mut count: HashMap<_, usize> = HashMap::new();
+        for node in self.tail_inserted.iter() {
+            *count.entry((node.unit, node.is_forward)).or_default() += 1;
+        }
+        count
+            .iter()
+            .max_by_key(|x| x.1)
+            .map(|(&(a, b), &y)| (y, a, b))
     }
     fn new() -> Self {
         Self {
-            inserted: vec![],
+            head_inserted: vec![],
+            tail_inserted: vec![],
             coverage: 0,
         }
     }
-    fn max_ins_information(&self) -> Option<(isize, u64, bool, isize)> {
-        let mut count: HashMap<_, usize> = HashMap::new();
-        for node in self.inserted.iter() {
-            *count.entry((node.unit, node.is_forward)).or_default() += 1;
-        }
-        let ((max_unit, max_dir), _) = count.into_iter().max_by_key(|x| x.1)?;
+    fn information_head(&self, unit: u64, is_forward: bool) -> (isize, isize) {
         let inserts = self
-            .inserted
+            .head_inserted
             .iter()
-            .filter(|node| node.unit == max_unit && node.is_forward == max_dir);
+            .filter(|node| node.unit == unit && node.is_forward == is_forward);
+        Self::summarize(inserts)
+    }
+    fn information_tail(&self, unit: u64, is_forward: bool) -> (isize, isize) {
+        let inserts = self
+            .tail_inserted
+            .iter()
+            .filter(|node| node.unit == unit && node.is_forward == is_forward);
+        Self::summarize(inserts)
+    }
+    fn summarize<'a>(
+        inserts: impl std::iter::Iterator<Item = &'a LightNode> + Clone,
+    ) -> (isize, isize) {
         let prev_offset = {
             let (count, total) =
                 inserts
@@ -523,10 +561,46 @@ impl Pileup {
                     });
             total / count
         };
-        Some((prev_offset, max_unit, max_dir, after_offset))
+        (prev_offset, after_offset)
     }
-    fn add(&mut self, node: LightNode) {
-        self.inserted.push(node);
+    fn add_head(&mut self, node: LightNode) {
+        self.head_inserted.push(node);
+    }
+    fn add_tail(&mut self, node: LightNode) {
+        self.tail_inserted.push(node);
+    }
+    fn check_insertion_head(
+        &self,
+        nodes: &[Node],
+        threshold: usize,
+        idx: usize,
+    ) -> Option<(usize, bool, u64)> {
+        let (max_num, max_unit, max_dir) = self.max_insertion_head()?;
+        (threshold <= max_num).then(|| {
+            let (uid, direction) = (max_unit, max_dir);
+            let (prev_offset, _) = self.information_head(max_unit, max_dir);
+            let start_position =
+                (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
+            let start_position = start_position + prev_offset;
+            let start_position = (start_position as usize).saturating_sub(OFFSET);
+            (start_position, direction, uid)
+        })
+    }
+    fn check_insertion_tail(
+        &self,
+        nodes: &[Node],
+        threshold: usize,
+        idx: usize,
+    ) -> Option<(usize, bool, u64)> {
+        let end_position = nodes.get(idx)?.position_from_start as isize;
+        let (max_num, max_unit, max_dir) = self.max_insertion_tail()?;
+        (threshold <= max_num).then(|| {
+            let (uid, direction) = (max_unit, max_dir);
+            let (_, after_offset) = self.information_tail(max_unit, max_dir);
+            let end_position = (end_position + after_offset) as usize + OFFSET;
+            // TODO: Validate end position.
+            (end_position, direction, uid)
+        })
     }
 }
 
@@ -545,7 +619,7 @@ impl std::fmt::Debug for ReadSkelton {
 }
 
 impl ReadSkelton {
-    fn from_rich_nodes(nodes: &[Node]) -> Self {
+    pub fn from_rich_nodes(nodes: &[Node]) -> Self {
         // Convert the nodes into (start_position, end_position)s
         let summaries: Vec<_> = nodes
             .iter()

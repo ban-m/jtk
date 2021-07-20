@@ -33,7 +33,7 @@ fn main() -> std::io::Result<()> {
     });
     edges.retain(|_, vs| !vs.is_empty());
     use haplotyper::assemble::ditch_graph::DitchGraph;
-    let config = haplotyper::AssembleConfig::new(24, 2000, false);
+    let config = haplotyper::AssembleConfig::new(24, 2000, false, true);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
     graph.remove_lightweight_edges(1);

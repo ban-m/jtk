@@ -3,6 +3,7 @@ use log::*;
 use poa_hmm::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
+use std::collections::HashMap;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
@@ -33,8 +34,8 @@ fn main() -> std::io::Result<()> {
     let mut templates = vec![template.clone()];
     // assert!(clusters > 1);
     for _ in 0..clusters - 1 {
-        let var_pos = rng.gen_range(0..chain_len);
         let mut seq = template.clone();
+        let var_pos = rng.gen_range(0..chain_len);
         seq[var_pos] = match rng.gen::<u8>() % 3 {
             0 => {
                 debug!("Ins,{}", var_pos);
@@ -54,6 +55,13 @@ fn main() -> std::io::Result<()> {
     }
     use sandbox::generate_mul_data;
     let (dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
+    let mut counts: HashMap<_, u32> = HashMap::new();
+    for &ans in answer.iter() {
+        *counts.entry(ans).or_default() += 1;
+    }
+    for k in 0..clusters {
+        debug!("CL\t{}\t{}", k, counts[&(k as u8)]);
+    }
     // {
     //     let unit = definitions::Unit {
     //         id: 0,
@@ -85,9 +93,8 @@ fn main() -> std::io::Result<()> {
         let clusters = clusters as u8;
         let mut config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
-        let (preds, _) =
-            haplotyper::local_clustering::kmeans::clustering(&reads, &mut rng, &mut config)
-                .unwrap();
+        use haplotyper::local_clustering::kmeans;
+        let (preds, _) = kmeans::clustering(&reads, &mut rng, &mut config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

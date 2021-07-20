@@ -25,10 +25,11 @@ impl Encode for definitions::DataSet {
         self = encode_by_mm2(self, threads).unwrap();
         if self.read_type != definitions::ReadType::CCS {
             let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-            loop {
+            for _ in 0..10 {
+                // loop {
                 self = deletion_fill::correct_unit_deletion(self);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-                debug!("Filled:{}->{}", current, after);
+                debug!("Filled:{}\t{}", current, after);
                 if after <= current {
                     break;
                 } else {

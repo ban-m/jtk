@@ -7,13 +7,25 @@ set -ue
 #      ./script/pipeline.sh \
 #      ${data} \
 #      ${OUTPUT}/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
+
 data=/data/hacone/MHC-KIR/split/Ashkenazi_Son.MHC.fa
 OUTPUT=${PWD}/result/Ashkenazi_Son.MHC
 mkdir -p ${OUTPUT}/jtk
 qsub -o ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out -j y\
-     ./script/kir_pipeline.job \
+     ./script/pipeline_clr.sh \
      ${data} \
-     ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out 
+     ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out
+
+
+## Make a little more units.
+data=${HOME}/work/arabidopsis_filtering/result/ler_kyo.fasta
+OUTPUT=${PWD}/result/ler_kyo/
+mkdir -p ${OUTPUT}/jtk
+qsub -o ${OUTPUT}/jtk/ler_kyo.out -j y \
+     ./script/pipeline_clr.sh\
+     ${data} \
+     ${OUTPUT}/jtk/ler_kyo \
+     30000
 
 # FLYE=${PWD}/script/flye.sh
 # mkdir -p ${OUTPUT}/flye

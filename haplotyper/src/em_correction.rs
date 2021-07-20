@@ -35,115 +35,95 @@ impl Config {
 
 pub trait ClusteringCorrection {
     fn correct_clustering_em(self, repeat_num: usize, coverage_thr: usize, len_thr: usize) -> Self;
-    fn correct_clustering_mult(
-        self,
-        repeat_num: usize,
-        coverage_thr: usize,
-        len_thr: usize,
-    ) -> Self;
 }
 
 impl ClusteringCorrection for DataSet {
-    fn correct_clustering_mult(
-        mut self,
-        repeat_num: usize,
-        coverage_thr: usize,
-        len_thr: usize,
-    ) -> Self {
-        // Remember the initial clustering.
-        // let inital_clustering = self
-        //     .encoded_reads
-        //     .iter()
-        //     .map(|r| {
-        //         let id = r.id;
-        //         let nodes: Vec<_> = r
-        //             .nodes
-        //             .iter()
-        //             .map(|n| (n.unit, n.cluster))
-        //             .collect::<Vec<_>>();
-        //         (id, nodes)
-        //     })
-        //     .collect();
-        // First correction.
-        self = self.correct_clustering_em(repeat_num, coverage_thr, len_thr);
-        use crate::assemble::ditch_graph::DitchGraph;
-        use crate::assemble::AssembleConfig;
-        let reads: Vec<_> = self.encoded_reads.iter().collect();
-        let config = AssembleConfig::new(1, 1000, false);
-        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), &config);
-        graph.remove_lightweight_edges(1);
-        let coverage = match self.coverage {
-            Some(cov) => cov,
-            None => panic!("There is no estimated coverage."),
-        };
-        let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let (node_cp, _) = graph.copy_number_estimation(coverage, &lens);
-        // For node more than 2 copy number, try clustering.
-        // (unit, its cluster, how many clustered shuttered, Vec<(read id, read index, index, cluster)>
-        let clustered: Vec<_> = node_cp
-            .iter()
-            .filter(|&(_, &cp)| 2 <= cp)
-            .filter_map(|(&(unit, cluster), &cp)| {
-                let (mut ids, mut readidx, mut units, mut positions) =
-                    (vec![], vec![], vec![], vec![]);
-                for (read_pos, read) in self.encoded_reads.iter().enumerate() {
-                    for (idx, node) in read
-                        .nodes
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, n)| n.unit == unit && n.cluster == cluster)
-                    {
-                        ids.push(read.id);
-                        readidx.push(read_pos);
-                        units.push(node.seq());
-                        positions.push(idx);
-                    }
-                }
-                // TODO: some way to initialize...
-                debug!("RECLUSTER\t{}\t{}\t{}\t{}", unit, cluster, cp, units.len());
-                let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(cp as u64 * unit);
-                use crate::local_clustering::kmeans::clustering;
-                use crate::local_clustering::kmeans::ClusteringConfig;
-                let mut config = ClusteringConfig::new(100, cp as u8, coverage);
-                let (asn, _) = clustering(&units, &mut rng, &mut config)?;
-                let asn = ids.into_iter().zip(positions).zip(asn).zip(readidx);
-                let assignments: Vec<_> = asn
-                    .map(|(((id, pos), asn), read)| (read, id, pos, asn))
-                    .collect();
-                Some((unit, cluster, cp, assignments))
-            })
-            .collect();
-        // Modify.
-        // TODO: can be vector-accessed.
-        let mut cluster_num: HashMap<_, _> = self
-            .selected_chunks
-            .iter()
-            .map(|u| (u.id, u.cluster_num as u8))
-            .collect();
-        for (unit, target_cluster, increased, assignments) in clustered {
-            let cl_offset = *cluster_num.get(&unit).unwrap();
-            // 0 -> Retain, 1,2,... -> New cluster.
-            for (readpos, readid, position, assignment) in assignments {
-                assert_eq!(self.encoded_reads[readpos].id, readid);
-                let node = self.encoded_reads[readpos].nodes.get_mut(position).unwrap();
-                assert_eq!(node.unit, unit);
-                assert_eq!(node.cluster, target_cluster);
-                if assignment != 0 {
-                    node.cluster = (assignment + cl_offset) as u64;
-                }
-            }
-            *cluster_num.get_mut(&unit).unwrap() += (increased - 1) as u8;
-        }
-        for unit in self.selected_chunks.iter_mut() {
-            let new_num = cluster_num[&unit.id] as usize;
-            if unit.cluster_num != new_num {
-                debug!("CHANGED\t{}\t{}\t{}", unit.id, unit.cluster_num, new_num);
-                unit.cluster_num = new_num;
-            }
-        }
-        // Re-clustering.
-        self.correct_clustering_em(repeat_num, coverage_thr, len_thr)
-    }
+    // fn correct_clustering_mult(
+    //     mut self,
+    //     repeat_num: usize,
+    //     coverage_thr: usize,
+    //     len_thr: usize,
+    // ) -> Self {
+    //     // First correction.
+    //     self = self.correct_clustering_em(repeat_num, coverage_thr, len_thr);
+    //     use crate::assemble::ditch_graph::DitchGraph;
+    //     use crate::assemble::AssembleConfig;
+    //     let reads: Vec<_> = self.encoded_reads.iter().collect();
+    //     let config = AssembleConfig::new(1, 1000, false);
+    //     let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), &config);
+    //     graph.remove_lightweight_edges(1);
+    //     let coverage = match self.coverage {
+    //         Some(cov) => cov,
+    //         None => panic!("There is no estimated coverage."),
+    //     };
+    //     let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+    //     let (node_cp, _) = graph.copy_number_estimation(coverage, &lens);
+    //     // For node more than 2 copy number, try clustering.
+    //     // (unit, its cluster, how many clustered shuttered, Vec<(read id, read index, index, cluster)>
+    //     let clustered: Vec<_> = node_cp
+    //         .iter()
+    //         .filter(|&(_, &cp)| 2 <= cp)
+    //         .filter_map(|(&(unit, cluster), &cp)| {
+    //             let (mut ids, mut readidx, mut units, mut positions) =
+    //                 (vec![], vec![], vec![], vec![]);
+    //             for (read_pos, read) in self.encoded_reads.iter().enumerate() {
+    //                 for (idx, node) in read
+    //                     .nodes
+    //                     .iter()
+    //                     .enumerate()
+    //                     .filter(|(_, n)| n.unit == unit && n.cluster == cluster)
+    //                 {
+    //                     ids.push(read.id);
+    //                     readidx.push(read_pos);
+    //                     units.push(node.seq());
+    //                     positions.push(idx);
+    //                 }
+    //             }
+    //             // TODO: some way to initialize...
+    //             debug!("RECLUSTER\t{}\t{}\t{}\t{}", unit, cluster, cp, units.len());
+    //             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(cp as u64 * unit);
+    //             use crate::local_clustering::kmeans::clustering;
+    //             use crate::local_clustering::kmeans::ClusteringConfig;
+    //             let mut config = ClusteringConfig::new(100, cp as u8, coverage);
+    //             let (asn, _) = clustering(&units, &mut rng, &mut config)?;
+    //             let asn = ids.into_iter().zip(positions).zip(asn).zip(readidx);
+    //             let assignments: Vec<_> = asn
+    //                 .map(|(((id, pos), asn), read)| (read, id, pos, asn))
+    //                 .collect();
+    //             Some((unit, cluster, cp, assignments))
+    //         })
+    //         .collect();
+    //     // Modify.
+    //     // TODO: can be vector-accessed.
+    //     let mut cluster_num: HashMap<_, _> = self
+    //         .selected_chunks
+    //         .iter()
+    //         .map(|u| (u.id, u.cluster_num as u8))
+    //         .collect();
+    //     for (unit, target_cluster, increased, assignments) in clustered {
+    //         let cl_offset = *cluster_num.get(&unit).unwrap();
+    //         // 0 -> Retain, 1,2,... -> New cluster.
+    //         for (readpos, readid, position, assignment) in assignments {
+    //             assert_eq!(self.encoded_reads[readpos].id, readid);
+    //             let node = self.encoded_reads[readpos].nodes.get_mut(position).unwrap();
+    //             assert_eq!(node.unit, unit);
+    //             assert_eq!(node.cluster, target_cluster);
+    //             if assignment != 0 {
+    //                 node.cluster = (assignment + cl_offset) as u64;
+    //             }
+    //         }
+    //         *cluster_num.get_mut(&unit).unwrap() += (increased - 1) as u8;
+    //     }
+    //     for unit in self.selected_chunks.iter_mut() {
+    //         let new_num = cluster_num[&unit.id] as usize;
+    //         if unit.cluster_num != new_num {
+    //             debug!("CHANGED\t{}\t{}\t{}", unit.id, unit.cluster_num, new_num);
+    //             unit.cluster_num = new_num;
+    //         }
+    //     }
+    //     // Re-clustering.
+    //     self.correct_clustering_em(repeat_num, coverage_thr, len_thr)
+    // }
     fn correct_clustering_em(
         mut self,
         repeat_num: usize,
@@ -160,18 +140,22 @@ impl ClusteringCorrection for DataSet {
                     .iter()
                     .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
                     .collect();
+                // TODO: We need to tune the number of the cluster here.
                 let k = ref_unit.cluster_num;
                 if reads.is_empty() {
                     debug!("Unit {} does not appear in any read.", unit_id);
                     return (vec![], (0f64, 0));
                 }
-                let (new_clustering, lk, cluster_num) = (0..repeat_num as u64)
-                    .map(|s| {
-                        let config = Config::new(repeat_num, unit_id * s, k, unit_id, coverage_thr);
+                let (new_clustering, lk, cluster_num) = (1..=k)
+                    .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+                    .map(|k| {
+                        let seed = unit_id * k as u64;
+                        let config = Config::new(repeat_num, seed, k, unit_id, coverage_thr);
                         em_clustering(&reads, &config)
                     })
                     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
                     .unwrap();
+                debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
                 (new_clustering, (lk, cluster_num))
             })
             .unzip();
@@ -243,18 +227,27 @@ pub fn em_clustering(
         buffer
     };
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
-    std::iter::repeat(config.cluster_num)
-        .take(10)
-        .map(|cluster_num| {
-            let (asn, lk) = em_clustering_inner(&contexts, cluster_num, &mut rng);
-            // Num of parameters.
-            let offset = (cluster_num * (use_units.len() - 1)) as f64;
-            let lk = lk - offset;
-            (asn, lk, cluster_num)
-        })
-        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
-        .map(|(asn, lk, cluster_num)| (asn, lk, cluster_num))
-        .unwrap()
+    let cluster_num = config.cluster_num;
+    let (asn, lk) = em_clustering_inner(&contexts, cluster_num, &mut rng);
+    // Num of parameters.
+    let offset = {
+        let fraction = cluster_num - 1;
+        let model_param: u64 = use_units
+            .iter()
+            .filter_map(|&unit| {
+                reads
+                    .iter()
+                    .flat_map(|r| r.nodes.iter())
+                    .filter(|n| n.unit == unit)
+                    .map(|n| n.cluster)
+                    .max()
+            })
+            .sum();
+        // trace!("{}\t{}\t{}", cluster_num, model_param, fraction);
+        (model_param as usize * cluster_num + fraction) as f64
+    };
+    // let offset = (cluster_num * (use_units.len() - 1)) as f64;
+    (asn, lk - offset, cluster_num)
 }
 
 pub fn initialize_weights<R: Rng>(contexts: &[Context], k: usize, rng: &mut R) -> Vec<Vec<f64>> {
@@ -294,8 +287,21 @@ pub fn initialize_weights<R: Rng>(contexts: &[Context], k: usize, rng: &mut R) -
             })
             .collect();
         let total: f64 = dists.iter().sum();
-        dists.iter_mut().for_each(|x| *x /= total);
-        let idx = *indices.choose_weighted(rng, |&idx| dists[idx]).unwrap();
+        if total > 0.00001 {
+            dists.iter_mut().for_each(|x| *x /= total);
+        } else {
+            dists.iter_mut().for_each(|x| *x = 1f64);
+        }
+        let idx = match indices.choose_weighted(rng, |&idx| dists[idx]) {
+            Ok(res) => *res,
+            Err(why) => {
+                debug!("{},{}", total, centers.len());
+                for ctx in contexts {
+                    debug!("{}", ctx);
+                }
+                panic!("{:?},{:?}", dists, why)
+            }
+        };
         centers.push(&contexts[idx]);
     }
     contexts
@@ -322,17 +328,6 @@ pub fn em_clustering_inner<R: Rng>(
     rng: &mut R,
 ) -> (Vec<(u64, usize, u64)>, f64) {
     let mut weights = initialize_weights(contexts, k, rng);
-    // let mut weights: Vec<_> = (0..contexts.len())
-    //     .map(|_| {
-    //         let mut weight = vec![0f64; k];
-    //         const NUM: usize = 100;
-    //         for _ in 0..NUM {
-    //             weight[rng.gen_range(0..k)] += 1f64;
-    //         }
-    //         weight.iter_mut().for_each(|x| *x /= NUM as f64);
-    //         weight
-    //     })
-    //     .collect();
     let mut model = EMModel::new(&contexts, &weights, k);
     let mut lk: f64 = contexts
         .iter()
@@ -369,9 +364,24 @@ pub fn em_clustering_inner<R: Rng>(
         })
         .collect();
     trace!("MODEL:{}", model);
+    let (flen, blen) = contexts
+        .iter()
+        .map(|c| (c.forward.len(), c.backward.len()))
+        .fold((0, 0), |(f, b), (x, y)| (f.max(x), b.max(y)));
     for (weight, context) in weights.iter().zip(contexts.iter()) {
-        let weight: Vec<_> = weight.iter().map(|x| format!("{:.3}", x)).collect();
-        trace!("{}\t{}", context.id, weight.join("\t"));
+        let (cluster, _) = weight
+            .iter()
+            .enumerate()
+            .max_by(|x, y| x.1.partial_cmp(&(y.1)).unwrap())
+            .unwrap();
+        let unit = context.unit;
+        trace!(
+            "DUMP\t{}\t{}\t{}\t{}",
+            unit,
+            context.id,
+            cluster,
+            context.dump_with(flen, blen)
+        );
     }
     (predictions, lk)
 }
@@ -389,7 +399,47 @@ pub struct Context {
     backward: Vec<(u64, u64)>,
 }
 
+impl std::fmt::Display for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let forward: Vec<_> = self
+            .forward
+            .iter()
+            .map(|(u, c)| format!("({},{})", u, c))
+            .collect();
+        let backward: Vec<_> = self
+            .backward
+            .iter()
+            .map(|(u, c)| format!("({},{})", u, c))
+            .collect();
+        write!(
+            f,
+            "{}\t({},{})\t{}",
+            forward.join("-"),
+            self.unit,
+            self.cluster,
+            backward.join("-")
+        )
+    }
+}
+
 impl Context {
+    pub fn dump_with(&self, fdigit: usize, bdigit: usize) -> String {
+        let mut f_slots = vec!["---".to_string(); fdigit];
+        let mut b_slots = vec!["---".to_string(); bdigit];
+        for (i, (u, c)) in self.forward.iter().enumerate().take(fdigit) {
+            f_slots[i] = format!("{}-{}", u, c);
+        }
+        for (i, (u, c)) in self.backward.iter().enumerate().take(bdigit) {
+            b_slots[bdigit - i - 1] = format!("{}-{}", u, c);
+        }
+        format!(
+            "{}\t{}-{}\t{}",
+            b_slots.join("\t"),
+            self.unit,
+            self.cluster,
+            f_slots.join("\t")
+        )
+    }
     pub fn with_attrs(
         id: u64,
         index: usize,
@@ -560,15 +610,23 @@ impl EMModel {
             .models
             .iter()
             .zip(self.fraction.iter())
-            .map(|(m, f)| {
+            .map(|(m, &f)| {
                 // TODO: change here.
-                // let center_lk = m.center[&context.cluster].max(SMALL).ln();
                 let center_lk = (MISM_PROB * (self.cluster_num[&context.unit] as f64).recip()
                     + (1f64 - MISM_PROB) * m.center.get(&context.cluster).unwrap_or(&SMALL))
                 .ln();
                 let (forward_mapping, lkf) = m.forward_mapping(context);
                 let (backward_mapping, lkb) = m.backward_mapping(context);
                 let lk = f.max(SMALL).ln() + center_lk + lkf + lkb;
+                assert!(
+                    !lk.is_nan(),
+                    "{}\n{}\n{}\t{}\t{}",
+                    self,
+                    context,
+                    f,
+                    lkf,
+                    lkb
+                );
                 (lk, (forward_mapping, backward_mapping))
             })
             .unzip();
@@ -651,7 +709,9 @@ impl RawModel {
     // Normalize this model to stat model.
     fn normalize(&mut self) {
         let sum: f64 = self.center.values().sum();
-        self.center.values_mut().for_each(|x| *x /= sum);
+        if SMALL < sum {
+            self.center.values_mut().for_each(|x| *x /= sum);
+        }
         fn normalize(slots: &mut HashMap<(u64, u64), f64>) {
             let sum: f64 = slots.values().sum();
             slots.values_mut().for_each(|x| *x /= sum);

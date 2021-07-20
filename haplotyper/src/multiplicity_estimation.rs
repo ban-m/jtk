@@ -40,9 +40,9 @@ impl MultiplicityEstimation for DataSet {
             .map(|r| definitions::Assignment::new(r.id, 0))
             .collect();
         use super::Assemble;
-        let assemble_config = super::AssembleConfig::new(config.thread, 100, false);
+        let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false);
         debug!("Start assembling {} reads", self.encoded_reads.len());
-        let graphs = self.assemble_as_graph(&assemble_config);
+        let graph = self.assemble_draft_graph(&assemble_config);
         debug!("Assembled reads.");
         if let Some(mut file) = config
             .path
@@ -51,59 +51,33 @@ impl MultiplicityEstimation for DataSet {
             .map(std::io::BufWriter::new)
         {
             use std::io::Write;
-            let gfa = self.assemble_as_gfa(&assemble_config);
+            let gfa = self.assemble(&assemble_config);
             writeln!(&mut file, "{}", gfa).unwrap();
         }
         debug!("GRAPH\tID\tCoverage\tMean\tLen");
-        let mut single_copy_coverage = 0f64;
-        let estimated_cluster_num: HashMap<u64, usize> = graphs
-            .iter()
-            .map(|graph| estimate_graph_multiplicity(&self, graph, config))
-            .fold(HashMap::new(), |mut x, (result, cov)| {
-                single_copy_coverage += cov;
-                for (unit, cluster) in result {
-                    x.insert(unit, cluster);
-                }
-                x
-            });
-        single_copy_coverage /= graphs.len() as f64;
+        let estimated_cluster_num: HashMap<u64, usize> = {
+            let (result, single_copy_coverage) = estimate_graph_multiplicity(&self, &graph, config);
+            self.coverage = Some(single_copy_coverage);
+            let mut cluster_num = HashMap::new();
+            for (unit, cluster) in result {
+                cluster_num.insert(unit, cluster);
+            }
+            cluster_num
+        };
         for unit in self.selected_chunks.iter_mut() {
             if let Some(&cl_num) = estimated_cluster_num.get(&unit.id) {
                 unit.cluster_num = cl_num;
             }
         }
-        self.coverage = Some(single_copy_coverage);
+        // Update by more sophistited algorithm... or we do not need this?
+        // let (node_copy_num, _) = crate::assemble::copy_number_estimation(&self, &assemble_config);
+        // for unit in self.selected_chunks.iter_mut() {
+        //     if let Some(&cp) = node_copy_num.get(&(unit.id, 0)) {
+        //         unit.cluster_num = cp;
+        //     }
+        // }
         self
     }
-    // fn estimate_multiplicity_new(mut self, config: &MultiplicityEstimationConfig) -> Self {
-    //     let mut counts: HashMap<_, u64> = HashMap::new();
-    //     for node in self.encoded_reads.iter().flat_map(|e| e.nodes.iter()) {
-    //         *counts.entry(node.unit).or_default() += 1;
-    //     }
-    //     let (_, single_copy_coverage) = cluster_coverage(&counts, config);
-    //     use crate::assemble::ditch_graph::DitchGraph;
-    //     use crate::assemble::AssembleConfig;
-    //     let reads: Vec<_> = self.encoded_reads.iter().collect();
-    //     assert!(reads
-    //         .iter()
-    //         .flat_map(|r| r.nodes.iter())
-    //         .all(|n| n.cluster == 0));
-    //     let c = AssembleConfig::new(config.thread, 1000, false);
-    //     let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), &c);
-    //     graph.remove_lightweight_edges(1);
-    //     let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-    //     let (node_copy_number, _) = graph.copy_number_estimation(single_copy_coverage, &lens);
-    //     debug!("COPYTNUM\tID\tCov\tCopy");
-    //     for unit in self.selected_chunks.iter_mut() {
-    //         let copy_number = node_copy_number[&(unit.id, 0)];
-    //         unit.cluster_num = copy_number;
-    //         debug!(
-    //             "COPYNUM\t{}\t{}\t{}",
-    //             unit.id, counts[&unit.id], copy_number
-    //         );
-    //     }
-    //     self
-    // }
 }
 
 fn estimate_graph_multiplicity(
