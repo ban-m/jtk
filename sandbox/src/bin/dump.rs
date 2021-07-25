@@ -9,8 +9,8 @@ fn main() -> std::io::Result<()> {
     let id2desc: HashMap<_, _> = ds
         .raw_reads
         .iter()
-        // .map(|read| (read.id, read.name.to_string()))
-        .map(|read| (read.id, read.desc.to_string()))
+        .map(|read| (read.id, read.name.to_string()))
+        //.map(|read| (read.id, read.desc.to_string()))
         .collect();
     let unit_id: u64 = args[2].parse().expect("input unit id as 2nd argument.");
     let cluster: u64 = args[3].parse().expect("input cluster as 3rd argument.");
@@ -39,8 +39,8 @@ fn main() -> std::io::Result<()> {
             context[position] = format!("{}", node.cluster);
             units[position] = format!("{}", node.unit);
         }
-        // let is_hapa = id2desc[&read.id].starts_with("hapA") as u8;
-        let is_hapa = id2desc[&read.id].contains("252v2") as u8;
+        let is_hapa = id2desc[&read.id].starts_with("hapA") as u8;
+        //let is_hapa = id2desc[&read.id].contains("252v2") as u8;
         println!("{}\t{}\t{}", is_hapa, read.id, context.join("\t"));
     }
     println!("U\t{}\t{}", 0, units.join("\t"));

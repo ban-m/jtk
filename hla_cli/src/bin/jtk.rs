@@ -507,6 +507,49 @@ fn subcommand_partition_global() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_resolve_tangle() -> App<'static, 'static> {
+    SubCommand::with_name("resolve_tangle")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Resolve tangle by re-estimate copy numbers.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("repeat_num")
+                .short("r")
+                .long("repeat_num")
+                .required(false)
+                .value_name("REPEAT_NUM")
+                .help("Do EM algorithm for REPEAT_NUM times.")
+                .default_value(&"7")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("coverage_threshold")
+                .short("x")
+                .long("threshold")
+                .required(false)
+                .value_name("THRESHOLD")
+                .help("Unit with less that this coverage would be ignored.")
+                .default_value(&"5")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_correct_clustering() -> App<'static, 'static> {
     SubCommand::with_name("correct_clustering")
         .version("0.1")
@@ -535,7 +578,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value(&"5")
+                .default_value(&"7")
                 .takes_value(true),
         )
         .arg(
@@ -837,7 +880,7 @@ fn multiplicity_estimation(
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     let config = MultiplicityEstimationConfig::new(threads, max_cluster_size, seed, path);
-    Ok(dataset.estimate_multiplicity(&config))
+    Ok(dataset.estimate_multiplicity_graph(&config))
 }
 
 fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -949,6 +992,31 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
     Ok(dataset.correct_clustering_em(repeat_num, threshold, len_thr))
 }
 
+fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("Start Clustering Correction step");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let repeat_num: usize = matches
+        .value_of("repeat_num")
+        .and_then(|num| num.parse::<usize>().ok())
+        .unwrap();
+    let threshold: usize = matches
+        .value_of("coverage_threshold")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    use haplotyper::re_clustering::*;
+    let config = ReClusteringConfig::new(threads, repeat_num, threshold);
+    Ok(dataset.re_clustering(&config))
+}
+
 fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Assembly step");
     let threads: usize = matches
@@ -1021,6 +1089,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_encode())
         .subcommand(subcommand_polish_encoding())
         .subcommand(subcommand_estimate_multiplicity())
+        .subcommand(subcommand_resolve_tangle())
         .subcommand(subcommand_partition_local())
         .subcommand(subcommand_partition_global())
         .subcommand(subcommand_correct_clustering())
@@ -1049,6 +1118,7 @@ fn main() -> std::io::Result<()> {
         ("encode", Some(sub_m)) => encode(sub_m, ds),
         ("polish_encoding", Some(sub_m)) => polish_encode(sub_m, ds),
         ("partition_local", Some(sub_m)) => local_clustering(sub_m, ds),
+        ("resolve_tangle", Some(sub_m)) => resolve_tangle(sub_m, ds),
         ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
         ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
         ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),

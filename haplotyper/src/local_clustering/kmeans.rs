@@ -2,6 +2,7 @@
 use rand::Rng;
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig {
+    // TODO: Remove this?
     band_width: usize,
     // Coverage for haploid.
     coverage: f64,
@@ -18,29 +19,6 @@ impl ClusteringConfig {
     }
 }
 
-// /// Return the assignments and the consensus sequence.
-// /// The number of the cluster would be modified as the number of optimal clustering.
-// pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
-//     reads: &[T],
-//     rng: &mut R,
-//     config: &mut ClusteringConfig,
-// ) -> Option<(Vec<u8>, Vec<u8>)> {
-//     let ClusteringConfig {
-//         band_width,
-//         cluster_num,
-//         coverage,
-//     } = config.clone();
-//     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
-//     if cluster_num == 0 {
-//         return Some((vec![0; reads.len()], cons_template));
-//     }
-//     let profiles = get_profiles(&cons_template, reads, band_width as isize);
-//     let (cluster_num, assignments) =
-//         recursive_clustering(&profiles, cluster_num as usize, coverage, rng);
-//     config.cluster_num = cluster_num as u8;
-//     Some((assignments, cons_template))
-// }
-
 /// Usual "flat(non-recursive)" clustering.
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
@@ -54,23 +32,6 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     } = config.clone();
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
-    // debug!("PMAT\tReadID\tPosition\tEditType\tBase\tSerial\tLK");
-    // for (i, prof) in profiles.iter().enumerate() {
-    //     for (serial, lk) in prof.iter().enumerate() {
-    //         let (pos, sigma) = (serial / 9, serial % 9);
-    //         let (edit_type, base) = match (sigma / 4, sigma % 4) {
-    //             (0, x) => ("Sub", b"ACGT"[x]),
-    //             (1, x) => ("Ins", b"ACGT"[x]),
-    //             (2, _) => ("Del", b'-'),
-    //             _ => panic!(),
-    //         };
-    //         let base = base as char;
-    //         debug!(
-    //             "PMAT\t{}\t{}\t{}\t{}\t{}\t{}",
-    //             i, pos, edit_type, base, serial, lk
-    //         );
-    //     }
-    // }
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage);
@@ -183,15 +144,15 @@ fn recursive_clustering<T: std::borrow::Borrow<[f64]>, R: Rng>(
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())?;
             let expt_gain = 1.5 * coverage;
-            debug!("{}\t{}\t{:.2}\t{:.2}", profiles.len(), k, score, expt_gain);
+            // debug!("{}\t{}\t{:.2}\t{:.2}", profiles.len(), k, score, expt_gain);
             Some((asn, score - expt_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
         .unwrap();
-    for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
-        let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-        debug!("{}\t{}", i, prf.join("\t"));
-    }
+    // for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
+    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+    //     debug!("{}\t{}", i, prf.join("\t"));
+    // }
     if cluster_num == 1 || score < 0f64 {
         (1, vec![0; profiles.len()])
     } else {
@@ -298,6 +259,11 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         .collect();
     probes.sort_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap());
     probes.reverse();
+    // for (i, &(p, _)) in probes.iter().take(10).enumerate() {
+    //     for (j, prof) in profiles.iter().enumerate() {
+    //         debug!("PROFILE\t{}\t{}\t{}\t{}", i, j, p, prof.borrow()[p]);
+    //     }
+    // }
     let mut selected_variants = vec![];
     'outer: for _ in 0..round {
         let mut buffer = vec![];
@@ -699,7 +665,7 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
     // Likelihood difference at a column.
     let diff_new = |(x, y): (&f64, &f64)| (y + x).max(0f64) - y.max(0f64);
     let diff_old = |(x, y): (&f64, &f64)| (y - x).max(0f64) - y.max(0f64);
-    let total = 50_000 * k as usize;
+    let total = 100_000 * k as usize;
     // MAP estimation.
     let (mut max, mut argmax) = (f64::NEG_INFINITY, vec![]);
     for _t in 0..total {

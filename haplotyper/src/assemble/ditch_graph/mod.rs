@@ -5,6 +5,7 @@ mod sequence_generation;
 use std::collections::HashMap;
 use std::collections::HashSet;
 pub mod dg_test;
+// TODO: To split the head node(the 0 degree node) into two if it is homo.
 // const DRAFT_COVERAGE: usize = 20;
 // const DRAFT_REP_NUM: usize = 7;
 
@@ -1385,7 +1386,12 @@ impl<'a> DitchGraph<'a> {
     /// Resolve repeats by "foci" algorithm.
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         let mut foci = self.get_foci(reads, config);
+        // for (((u, cl), p), val) in foci.iter() {
+        //     debug!("FOCUS\t{}\t{}\t{}\t{:?}", u, cl, p, val);
+        // }
+        let prev = foci.len();
         foci.retain(|_, val| thr < val.llr());
+        debug!("FOCI\t{}\t{}", prev, foci.len());
         self.survey_foci(&foci);
     }
 
@@ -1440,7 +1446,6 @@ impl<'a> DitchGraph<'a> {
         let mut focus: Option<Focus> = None;
         for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
             let dist = dist + 1;
-            // debug!("{}\t{:?}", dist, nodes);
             let mut occs: Vec<_> = vec![0; nodes.len()];
             for read in reads.iter() {
                 // Safe.

@@ -1,5 +1,3 @@
-// use bio_utils::lasttab;
-// use bio_utils::lasttab::LastTAB;
 use definitions::DataSet;
 use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
 use rayon::prelude::*;
@@ -25,8 +23,7 @@ impl Encode for definitions::DataSet {
         self = encode_by_mm2(self, threads).unwrap();
         if self.read_type != definitions::ReadType::CCS {
             let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-            for _ in 0..10 {
-                // loop {
+            for _ in 0..15 {
                 self = deletion_fill::correct_unit_deletion(self);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
                 debug!("Filled:{}\t{}", current, after);
@@ -58,9 +55,10 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
     for aln in alignments.iter() {
         bucket.entry(aln.qname.clone()).or_default().push(aln);
     }
-    bucket.values_mut().for_each(|alns| {
-        alns.sort_by_key(|aln| aln.qstart);
-    });
+    // Do not need this.
+    // bucket.values_mut().for_each(|alns| {
+    //     alns.sort_by_key(|aln| aln.qstart);
+    // });
     let chunks = &ds.selected_chunks;
     ds.encoded_reads = ds
         .raw_reads
@@ -114,7 +112,7 @@ fn encode_read_to_nodes_by_paf(
     alns: &[&bio_utils::paf::PAF],
     units: &[Unit],
 ) -> Option<Vec<Node>> {
-    let nodes: Vec<_> = alns
+    let mut nodes: Vec<_> = alns
         .iter()
         .filter_map(|aln| {
             let tname = aln.tname.parse::<u64>().unwrap();
@@ -122,7 +120,12 @@ fn encode_read_to_nodes_by_paf(
             encode_paf(seq, aln, unit)
         })
         .collect();
-    (!nodes.is_empty()).then(|| remove_slippy_alignment(nodes))
+    (!nodes.is_empty()).then(|| {
+        nodes.sort_by_key(|n| n.unit);
+        let mut nodes = remove_slippy_alignment(nodes);
+        nodes.sort_by_key(|n| n.position_from_start);
+        remove_slippy_alignment(nodes)
+    })
 }
 
 fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
@@ -259,7 +262,6 @@ fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
             .sum::<i32>()
     }
     // Remove overlapping same units.
-    nodes.sort_by_key(|x| x.position_from_start);
     let mut deduped_nodes = vec![];
     let mut prev = nodes.remove(0);
     for node in nodes {

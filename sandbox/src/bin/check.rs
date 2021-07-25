@@ -26,35 +26,39 @@ fn main() -> std::io::Result<()> {
     c.cluster_num = clusters;
     c.variant_num = 2;
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(seed as u64);
-    let chain_len = 20;
-    let len = 100;
-    let template: Vec<_> = (0..chain_len)
-        .map(|_| gen_sample::generate_seq(&mut rng, len))
-        .collect::<Vec<_>>();
+    let len = 2000;
+    let template: Vec<_> = gen_sample::generate_seq(&mut rng, len);
     let mut templates = vec![template.clone()];
-    // assert!(clusters > 1);
     for _ in 0..clusters - 1 {
         let mut seq = template.clone();
-        let var_pos = rng.gen_range(0..chain_len);
-        seq[var_pos] = match rng.gen::<u8>() % 3 {
-            0 => {
-                debug!("Ins,{}", var_pos);
-                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
+        let var_pos = rng.gen_range(0..seq.len());
+        let var_type = loop {
+            let var_type = rng.gen::<usize>() % 9;
+            if 4 <= var_type || b"ACGT"[var_type] != seq[var_pos] {
+                break var_type;
             }
-            1 => {
-                debug!("Del,{}", var_pos);
-                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
-            }
-            2 => {
+        };
+        match var_type {
+            0..=3 => {
                 debug!("Subs,{}", var_pos);
-                gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
+                seq[var_pos] = b"ACGT"[var_type];
+                // gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 0, 1)
             }
-            _ => panic!(),
+            4..=7 => {
+                debug!("Ins,{}", var_pos);
+                seq.insert(var_pos, b"ACGT"[var_type - 4]);
+                // gen_sample::introduce_errors(&seq[var_pos], &mut rng, 0, 1, 0)
+            }
+            _ => {
+                debug!("Del,{}", var_pos);
+                seq.remove(var_pos);
+                // gen_sample::introduce_errors(&seq[var_pos], &mut rng, 1, 0, 0)
+            }
         };
         templates.push(seq);
     }
-    use sandbox::generate_mul_data;
-    let (dataset, answer) = generate_mul_data(&templates, test_num, &mut rng, &probs, &profile);
+    use sandbox::generate_test_data;
+    let (dataset, answer) = generate_test_data(&templates, test_num, &mut rng, &probs, &profile);
     let mut counts: HashMap<_, u32> = HashMap::new();
     for &ans in answer.iter() {
         *counts.entry(ans).or_default() += 1;
@@ -62,39 +66,14 @@ fn main() -> std::io::Result<()> {
     for k in 0..clusters {
         debug!("CL\t{}\t{}", k, counts[&(k as u8)]);
     }
-    // {
-    //     let unit = definitions::Unit {
-    //         id: 0,
-    //         seq: String::new(),
-    //         cluster_num: clusters,
-    //     };
-    //     let start = std::time::Instant::now();
-    //     haplotyper::clustering_by_kmeans(&mut dataset, chain_len, &c, &unit, 10);
-    //     let end = std::time::Instant::now();
-    //     let preds: Vec<_> = dataset.iter().map(|x| x.cluster as u8).collect();
-    //     let score = haplotyper::rand_index(&preds, &answer);
-    //     let time = (end - start).as_millis();
-    //     let acc = preds
-    //         .iter()
-    //         .zip(answer.iter())
-    //         .filter(|(x, y)| x == y)
-    //         .count() as f64
-    //         / preds.len() as f64;
-    //     let acc = (1f64 - acc).max(acc);
-    //     println!("RESULT\t{}\tOLD\t{}\t{}\t{}", seed, score, time, acc);
-    // }
     {
-        let reads: Vec<Vec<_>> = dataset
-            .iter()
-            .map(|x| x.chunks.iter().flat_map(|x| x.seq.clone()).collect())
-            .collect();
         let start = std::time::Instant::now();
-        let coverage = (reads.len() / clusters) as f64;
+        let coverage = (dataset.len() / clusters) as f64;
         let clusters = clusters as u8;
         let mut config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _) = kmeans::clustering(&reads, &mut rng, &mut config).unwrap();
+        let (preds, _) = kmeans::clustering(&dataset, &mut rng, &mut config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

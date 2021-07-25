@@ -211,95 +211,11 @@ impl Assemble for DataSet {
     }
 }
 
-/// Assemble the dataset, re-clustering units with copy number more than 2.
-pub fn re_clustering(mut ds: DataSet, c: &AssembleConfig) -> DataSet {
-    let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
-    for asn in ds.assignments.iter() {
-        *cluster_and_num.entry(asn.cluster).or_default() += 1;
-    }
-    debug!("There is {} clusters.", cluster_and_num.len());
-    // ID of the cluster -> total excess of the clustering.
-    let mut re_cluster: HashMap<_, _> = HashMap::new();
-    for (&cl, _) in cluster_and_num.iter().filter(|&(_, &num)| 10 <= num) {
-        let clusters: HashSet<_> = ds
-            .assignments
-            .iter()
-            .filter(|asn| asn.cluster == cl)
-            .map(|asn| asn.id)
-            .collect();
-        let reads: Vec<_> = ds
-            .encoded_reads
-            .iter()
-            .filter(|r| clusters.contains(&r.id))
-            .collect();
-        let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-        graph.remove_lightweight_edges(1);
-        if let Some(cov) = ds.coverage {
-            let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            graph.remove_zero_copy_elements(cov, &lens, 0.51);
-            graph.z_edge_selection();
-            graph.remove_tips(0.5, 5);
-            graph.zip_up_overclustering();
-            let (node_copy_num, _) = graph.copy_number_estimation(cov, &lens);
-            for (&(node, _), &copy_num) in node_copy_num.iter().filter(|x| &1 < x.1) {
-                *re_cluster.entry(node).or_default() += (copy_num - 1) as u8;
-            }
-        }
-    }
-    for chunk in ds.selected_chunks.iter() {
-        if let Some(res) = re_cluster.get_mut(&chunk.id) {
-            *res += chunk.cluster_num as u8;
-        }
-    }
-    // Allocated.
-    let mut pileups: HashMap<u64, Vec<&mut _>> = HashMap::new();
-    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        if re_cluster.contains_key(&node.unit) {
-            pileups.entry(node.unit).or_default().push(node);
-        }
-    }
-    debug!("There are {} chunks to be re-clustered.", re_cluster.len());
-    // Clustering.
-    use rand::SeedableRng;
-    use rand_xoshiro::Xoroshiro128PlusPlus;
-    use rayon::prelude::*;
-    let coverage = ds.coverage.clone();
-    let consensus_and_clusternum: HashMap<_, _> = pileups
-        .par_iter_mut()
-        .map(|(&unit_id, units)| {
-            use crate::local_clustering::kmeans;
-            let cluster_num = re_cluster[&unit_id];
-            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit_id * 23);
-            let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-            let coverage = coverage.unwrap_or(units.len() as f64 / cluster_num as f64);
-            let mut config = kmeans::ClusteringConfig::new(100, cluster_num, coverage);
-            let start = std::time::Instant::now();
-            let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-            let end = std::time::Instant::now();
-            let elapsed = (end - start).as_secs();
-            debug!(
-                "RECLUSTER\t{}\t{}\t{}\t{}\t{}",
-                unit_id,
-                elapsed,
-                seqs.len(),
-                cluster_num,
-                config.cluster_num
-            );
-            for (node, asn) in units.iter_mut().zip(asn) {
-                node.cluster = asn as u64;
-            }
-            (unit_id, (consensus, config.cluster_num))
-        })
-        .collect();
-    for unit in ds.selected_chunks.iter_mut() {
-        if let Some((_consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-            unit.cluster_num = *cluster_num as usize;
-        }
-    }
-    ds
-}
-
-fn assemble(ds: &DataSet, cl: usize, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
+pub fn assemble(
+    ds: &DataSet,
+    cl: usize,
+    c: &AssembleConfig,
+) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     let clusters: HashSet<_> = ds
         .assignments
         .iter()
@@ -311,19 +227,22 @@ fn assemble(ds: &DataSet, cl: usize, c: &AssembleConfig) -> (Vec<gfa::Record>, V
         .iter()
         .filter(|r| clusters.contains(&r.id))
         .collect();
+    if reads.is_empty() {
+        panic!("Read is empty! {}", cl);
+    }
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    graph.remove_lightweight_edges(1);
+    graph.remove_lightweight_edges(2);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             debug!("Removing ZCEs");
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            graph.remove_zero_copy_elements(cov, &lens, 0.51);
+            graph.remove_zero_copy_elements(cov, &lens, 0.3);
             // graph.z_edge_selection();
             graph.remove_tips(0.5, 5);
-            // graph.zip_up_overclustering();
-            // graph.resolve_repeats(&reads, c, 5f64);
-            // graph.assign_copy_number(cov, &lens);
+            graph.zip_up_overclustering();
+            graph.resolve_repeats(&reads, c, 5f64);
+            graph.assign_copy_number(cov, &lens);
         }
     }
     let (segments, edge, group, summaries) = graph.spell(c, cl);

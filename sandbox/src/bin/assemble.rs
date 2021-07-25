@@ -5,7 +5,7 @@ fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     let ds: DataSet =
         serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new)?).unwrap();
-    let config = haplotyper::AssembleConfig::new(24, 2000, false, false);
+    let config = haplotyper::AssembleConfig::new(24, 2000, false, true);
     use haplotyper::Assemble;
     let gfa = ds.assemble(&config);
     println!("{}", gfa);

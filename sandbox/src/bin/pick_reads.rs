@@ -11,18 +11,31 @@ fn main() -> std::io::Result<()> {
     //     .iter()
     //     .map(|r| (r.id, r.desc.clone()))
     //     .collect();
-    let units: HashSet<(u64, u64)> = vec![(316, 0)].into_iter().collect();
+    // let units: HashSet<(u64, u64)> = vec![(1317, 0)].into_iter().collect();
+    let units: HashSet<u64> = vec![1317].into_iter().collect();
     for read in ds.encoded_reads.iter() {
         let mut dumps = vec![format!("{:<5}", 0); 7];
-        for (idx, _) in read
+        for (idx, node) in read
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, n)| units.contains(&(n.unit, n.cluster)))
+            // .filter(|(_, n)| units.contains(&(n.unit, n.cluster)))
+            .filter(|(_, n)| units.contains(&n.unit))
         {
+            let (nodes, idx) = {
+                let mut nodes: Vec<_> = read.nodes.iter().map(|n| n.unit).collect();
+                match node.is_forward {
+                    true => (nodes, idx),
+                    false => {
+                        nodes.reverse();
+                        let idx = nodes.len() - idx - 1;
+                        (nodes, idx)
+                    }
+                }
+            };
             for i in (0..7).filter(|&i| 3 <= idx + i) {
-                if let Some(node) = read.nodes.get(idx + i - 3) {
-                    dumps[i] = format!("{:<5}", node.unit);
+                if let Some(unit) = nodes.get(idx + i - 3) {
+                    dumps[i] = format!("{:<5}", unit);
                 }
             }
             println!("{}\t{}", dumps.join("\t"), read.id);

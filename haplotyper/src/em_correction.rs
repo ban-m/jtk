@@ -128,7 +128,7 @@ impl ClusteringCorrection for DataSet {
         mut self,
         repeat_num: usize,
         coverage_thr: usize,
-        len_thr: usize,
+        _len_thr: usize,
     ) -> Self {
         let (result, cluster_size_and_lk): (Vec<_>, Vec<_>) = self
             .selected_chunks
@@ -148,8 +148,9 @@ impl ClusteringCorrection for DataSet {
                 }
                 let (new_clustering, lk, cluster_num) = (1..=k)
                     .flat_map(|k| std::iter::repeat(k).take(repeat_num))
-                    .map(|k| {
-                        let seed = unit_id * k as u64;
+                    .enumerate()
+                    .map(|(i, k)| {
+                        let seed = unit_id * (i * k) as u64;
                         let config = Config::new(repeat_num, seed, k, unit_id, coverage_thr);
                         em_clustering(&reads, &config)
                     })
@@ -159,11 +160,12 @@ impl ClusteringCorrection for DataSet {
                 (new_clustering, (lk, cluster_num))
             })
             .unzip();
-        let cluster_size: Vec<_> = cluster_size_and_lk.iter().map(|x| x.1).collect();
-        self.selected_chunks
-            .iter_mut()
-            .zip(cluster_size)
-            .for_each(|(unit, c)| unit.cluster_num = c);
+        // We do not need to do this...
+        // let cluster_size: Vec<_> = cluster_size_and_lk.iter().map(|x| x.1).collect();
+        // self.selected_chunks
+        //     .iter_mut()
+        //     .zip(cluster_size)
+        //     .for_each(|(unit, c)| unit.cluster_num = c);
         let result: HashMap<u64, Vec<(usize, u64)>> =
             result.iter().fold(HashMap::new(), |mut acc, results| {
                 for &(id, pos, cluster) in results {
@@ -171,11 +173,7 @@ impl ClusteringCorrection for DataSet {
                 }
                 acc
             });
-        for read in self
-            .encoded_reads
-            .iter_mut()
-            .filter(|r| len_thr <= r.nodes.len())
-        {
+        for read in self.encoded_reads.iter_mut() {
             if let Some(corrected) = result.get(&read.id) {
                 for &(pos, cluster) in corrected {
                     read.nodes[pos].cluster = cluster;
@@ -327,7 +325,17 @@ pub fn em_clustering_inner<R: Rng>(
     k: usize,
     rng: &mut R,
 ) -> (Vec<(u64, usize, u64)>, f64) {
-    let mut weights = initialize_weights(contexts, k, rng);
+    let mut weights: Vec<_> = match rng.gen_bool(0.5) {
+        true => contexts
+            .iter()
+            .map(|_| {
+                let mut ws = vec![0f64; k];
+                ws[rng.gen_range(0..k)] += 1f64;
+                ws
+            })
+            .collect(),
+        false => initialize_weights(contexts, k, rng),
+    };
     let mut model = EMModel::new(&contexts, &weights, k);
     let mut lk: f64 = contexts
         .iter()
@@ -522,7 +530,11 @@ impl EMModel {
         }
         let sum: f64 = fraction.iter().sum();
         fraction.iter_mut().for_each(|x| *x /= sum);
-        let mut models = vec![RawModel::new(); cluster_num];
+        let (fm, bm) = contexts
+            .iter()
+            .map(|ctx| (ctx.forward.len(), ctx.backward.len()))
+            .fold((0, 0), |(f, b), (x, y)| (f.max(x), b.max(y)));
+        let mut models = vec![RawModel::new(fm, bm); cluster_num];
         for (weight, context) in weights.iter().zip(contexts) {
             models.iter_mut().zip(weight).for_each(|(model, &w)| {
                 if SMALL < w {
@@ -674,11 +686,11 @@ impl std::fmt::Display for RawModel {
 }
 
 impl RawModel {
-    fn new() -> Self {
+    fn new(forward_len: usize, backward_len: usize) -> Self {
         Self {
             center: HashMap::new(),
-            forward: vec![],
-            backward: vec![],
+            forward: vec![HashMap::new(); forward_len],
+            backward: vec![HashMap::new(); backward_len],
         }
     }
     // Add `context` into self. The position is the same as context.
@@ -733,12 +745,6 @@ impl RawModel {
         elements: &[(u64, u64)],
         profiles: &[HashMap<(u64, u64), f64>],
     ) -> (Vec<usize>, f64) {
-        // assert!(
-        //     elements.len() <= profiles.len(),
-        //     "{},{}",
-        //     elements.len(),
-        //     profiles.len()
-        // );
         let minimum = SMALL.ln() * (elements.len() * profiles.len()) as f64;
         let mut dp = vec![vec![minimum; profiles.len() + 1]; elements.len() + 1];
         // True for match, false for deletion.

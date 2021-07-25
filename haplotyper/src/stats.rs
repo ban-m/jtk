@@ -62,13 +62,16 @@ impl Stats for definitions::DataSet {
                 .filter(|e| !reads.contains(&e.id))
                 //.inspect(|e| writeln!(&mut wtr, "Gaped:{}", e.name).unwrap())
                 .count();
-            let gap_mean = self
+            let gap_sum = self
                 .raw_reads
                 .iter()
                 .filter(|e| !reads.contains(&e.id))
                 .map(|e| e.seq().len())
-                .sum::<usize>()
-                / gap_read;
+                .sum::<usize>();
+            let gap_mean = match gap_read {
+                0 => 0,
+                gap_read => gap_sum / gap_read,
+            };
             let covered_length = self
                 .encoded_reads
                 .iter()

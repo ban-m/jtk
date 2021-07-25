@@ -98,10 +98,13 @@ IsTheSameBipart <- function(error.num,length, coverage,cl.error){
 selected.vars <- read_tsv("selected.tsv", col_names = FALSE)
 len <- length(selected.vars$X1)
 longer.selected.vars <- selected.vars %>%  arrange(X1) %>% 
-    mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID & !X1, names_to = "Position", values_to = "LK") %>% 
+    mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID ,names_to = "Position", values_to = "LK") %>% 
     mutate(Position = as.integer(str_sub(Position,start=2)))
 g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) +
-     scale_fill_gradient2(low="blue", high="orange")
+    scale_fill_gradient2(low="blue", high="orange")
+
+
+
 
 longer.selected.vars <- selected.vars %>% 
     mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID & !X1, names_to = "Position", values_to = "LK") %>% 
@@ -128,3 +131,5 @@ cosine <- function(xs,ys){
 
 clustering.num <- read_tsv("clustering.tsv", col_names = c("ID","Time","Before","After"))
 
+assignments <- read_tsv("assignments.tsv", col_names = FALSE)
+z

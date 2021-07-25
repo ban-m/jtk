@@ -46,14 +46,18 @@ pub fn correct_deletion_error(
     let nodes = &read.nodes;
     let take_len = nodes.len();
     let mut inserts = vec![];
+    let abs = |x: usize, y: usize| match x.cmp(&y) {
+        std::cmp::Ordering::Greater => x - y,
+        _ => y - x,
+    };
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        debug!("{}\t{:?}", idx, pileup);
         let head_node = pileup.check_insertion_head(&nodes, threshold, idx);
         let head_node = head_node.and_then(|(start_position, direction, uid)| {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
-            debug!("Fill {}-{} with {}", start_position, end_position, unit.id);
-            match start_position < end_position {
+            let is_the_same_encode = nodes[idx].unit == uid
+                && abs(nodes[idx].position_from_start, start_position) < unit.seq().len();
+            match start_position < end_position && !is_the_same_encode {
                 true => encode_node(&seq, start_position, end_position, direction, unit),
                 false => None,
             }
@@ -80,11 +84,21 @@ pub fn correct_deletion_error(
         read.nodes.insert(idx + accum_insertes, node);
         accum_insertes += 1;
     }
-    read.edges = read
-        .nodes
-        .windows(2)
-        .map(|w| Edge::from_nodes(w, &seq))
-        .collect();
+    if !read.nodes.is_empty() {
+        let mut nodes = vec![];
+        nodes.append(&mut read.nodes);
+        use super::{nodes_to_encoded_read, remove_slippy_alignment};
+        nodes.sort_by_key(|n| n.unit);
+        nodes = remove_slippy_alignment(nodes);
+        nodes.sort_by_key(|n| n.position_from_start);
+        nodes = remove_slippy_alignment(nodes);
+        *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+    }
+    // read.edges = read
+    // .nodes
+    // .windows(2)
+    // .map(|w| Edge::from_nodes(w, &seq))
+    //     .collect();
 }
 
 // 0.3 * unit.seq() distance is regarded as too far: corresponding 30% errors.
@@ -108,19 +122,7 @@ fn encode_node(
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
     let alignment = edlib_sys::edlib_align(unit.seq(), &query, mode, task);
     let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
-    debug!(
-        "{}(Unit) vs {}(Read)\t{}",
-        unit.seq().len(),
-        query.len(),
-        alignment.dist
-    );
     let locations = alignment.locations.unwrap();
-    let dist = alignment
-        .operations
-        .as_ref()
-        .map(|aln| aln.iter().filter(|&&op| op != 0).count())
-        .unwrap();
-    debug!("Location:{:?}\t{}", locations[0], dist);
     let ops: Vec<_> = alignment
         .operations
         .unwrap()

@@ -207,7 +207,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|x| x.parse().ok())?;
                 let weight = calibrator.calib(coverage, unit_len) / cov;
-                debug!("DUMP\t{}\t{:.2}\tNode", coverage, weight);
+                // debug!("DUMP\t{}\t{:.2}\tNode", coverage, weight);
                 Some(weight)
             } else {
                 None
@@ -238,7 +238,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .expect(&format!("{:?}", record.tags));
                 let gap_len = (gap_len + 2 * unit_len as isize).max(0) as usize;
                 let weight = calibrator.calib(coverage, gap_len) / cov;
-                debug!("DUMP\t{}\t{:.2}\t{:.2}\tEdge", coverage, weight, gap_len);
+                // debug!("DUMP\t{}\t{:.2}\t{:.2}\tEdge", coverage, weight, gap_len);
                 Some((from, from_plus, to, to_plus, weight))
             }
             _ => None,

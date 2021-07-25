@@ -20,7 +20,7 @@ fn main() -> std::io::Result<()> {
     let result: Vec<_> = ds
         .selected_chunks
         .par_iter()
-        .filter(|u| vec![24].contains(&u.id))
+        .filter(|u| vec![417].contains(&u.id))
         .map(|unit| {
             let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit.id * 24);
             let (seqs, answer): (Vec<_>, Vec<_>) = ds

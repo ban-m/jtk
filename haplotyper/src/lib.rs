@@ -14,6 +14,7 @@ pub mod multiplicity_estimation;
 mod pick_component;
 mod polish_clustering;
 mod polish_units;
+pub mod re_clustering;
 pub mod remove_erroneous_nodes;
 pub mod repeat_masking;
 pub mod resolve_unit_repeats;

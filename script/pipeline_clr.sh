@@ -18,7 +18,7 @@ STAT=${2}.stat
 THREADS=23
 
 ### Take number.
-if [ $# -gt 3 ];then
+if [ $# -ge 3 ]; then
     echo "Unit guess is changed to" $3
     UNIT_GUESS=$3
 else
@@ -32,8 +32,12 @@ else
     jtk entry --input ${TARGET} --read_type CLR |\
         jtk mask_repeats -k 15 -t ${THREADS} -vv |\
         jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
+        jtk encode -vv --threads ${THREADS} |\
+        jtk pick_components -vv -c1 -t${THREADS} |\
+        jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
         jtk encode -vv --threads ${THREADS} >  ${2}.entry.json
 fi
+
 if [ -f ${CLUSTERED} ]
 then
     echo "Clustered file found.Skip clustering proc."
@@ -49,8 +53,8 @@ then
     echo "Global clustering seems to be done. Just assemble these files."
 else    
     cat ${CLUSTERED} |\
+        jtk resolve_tangle -vv --threads ${THREADS} |\
         jtk correct_clustering -vv  --threads ${THREADS} |\
-        # jtk partition_global -vv --threads ${THREADS} --graph |\
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
 cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} --no_polish > /dev/null

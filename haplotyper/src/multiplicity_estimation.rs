@@ -25,7 +25,10 @@ impl MultiplicityEstimationConfig {
 
 pub trait MultiplicityEstimation {
     fn estimate_multiplicity(self, config: &MultiplicityEstimationConfig) -> Self;
+    fn estimate_multiplicity_graph(self, config: &MultiplicityEstimationConfig) -> Self;
 }
+
+use super::Assemble;
 
 impl MultiplicityEstimation for DataSet {
     fn estimate_multiplicity(mut self, config: &MultiplicityEstimationConfig) -> Self {
@@ -39,7 +42,6 @@ impl MultiplicityEstimation for DataSet {
             .iter()
             .map(|r| definitions::Assignment::new(r.id, 0))
             .collect();
-        use super::Assemble;
         let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false);
         debug!("Start assembling {} reads", self.encoded_reads.len());
         let graph = self.assemble_draft_graph(&assemble_config);
@@ -69,15 +71,101 @@ impl MultiplicityEstimation for DataSet {
                 unit.cluster_num = cl_num;
             }
         }
-        // Update by more sophistited algorithm... or we do not need this?
-        // let (node_copy_num, _) = crate::assemble::copy_number_estimation(&self, &assemble_config);
-        // for unit in self.selected_chunks.iter_mut() {
-        //     if let Some(&cp) = node_copy_num.get(&(unit.id, 0)) {
-        //         unit.cluster_num = cp;
-        //     }
-        // }
         self
     }
+    fn estimate_multiplicity_graph(mut self, config: &MultiplicityEstimationConfig) -> Self {
+        self.assignments = self
+            .encoded_reads
+            .iter()
+            .map(|r| definitions::Assignment::new(r.id, 0))
+            .collect();
+        self.encoded_reads
+            .iter_mut()
+            .for_each(|read| read.nodes.iter_mut().for_each(|n| n.cluster = 0));
+        debug!("Start assembling {} reads", self.encoded_reads.len());
+        let (mut gfa, tigname) = assemble_with_tigname(&self, config);
+        let mut counts: HashMap<_, u32> = HashMap::new();
+        for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            *counts.entry(node.unit).or_default() += 1;
+        }
+        let cov = {
+            let mut counts: Vec<_> = counts.values().copied().collect();
+            counts.sort();
+            counts[counts.len() / 2] as f64 / 2f64
+        };
+        self.coverage = Some(cov);
+        let (unit_len, unit_num) = self
+            .selected_chunks
+            .iter()
+            .fold((0, 0), |(tot, num), u| (tot + u.seq().len(), num + 1));
+        let unit_len = unit_len / unit_num;
+        let lens: Vec<_> = self
+            .encoded_reads
+            .iter()
+            .map(|r| r.original_length)
+            .collect();
+        debug!("HAPLOID\t{}", cov);
+        debug!("ESTIM\tTIGID\tLEN\tCP\tCOV");
+        crate::assemble::copy_number::estimate_copy_number_on_gfa(&mut gfa, cov, &lens, unit_len);
+        let mut estimated_cluster_num: HashMap<_, _> = HashMap::new();
+        for record in gfa.iter() {
+            if let gfa::Content::Seg(seg) = &record.content {
+                let cp: usize = record
+                    .tags
+                    .iter()
+                    .find(|x| x.inner.starts_with("cp"))
+                    .and_then(|tag| tag.inner.split(':').nth(2))
+                    .and_then(|cp| cp.parse().ok())
+                    .expect(&format!("{:?}", record.tags));
+                let units = tigname.get(&seg.sid).unwrap();
+                let cov: u32 = units.iter().map(|u| counts[u]).sum();
+                let cov = cov / units.len() as u32;
+                debug!("ESTIM\t{}\t{}\t{}\t{}", seg.sid, units.len(), cp, cov);
+                for &unit in units.iter() {
+                    estimated_cluster_num.insert(unit, cp.max(1));
+                }
+            }
+        }
+        for unit in self.selected_chunks.iter_mut() {
+            if let Some(&cl_num) = estimated_cluster_num.get(&unit.id) {
+                unit.cluster_num = cl_num;
+            }
+        }
+        if let Some(mut file) = config
+            .path
+            .as_ref()
+            .and_then(|path| std::fs::File::create(path).ok())
+            .map(std::io::BufWriter::new)
+        {
+            use std::io::Write;
+            writeln!(&mut file, "{}", gfa).unwrap();
+        }
+        self
+    }
+}
+
+fn assemble_with_tigname(
+    ds: &DataSet,
+    config: &MultiplicityEstimationConfig,
+) -> (gfa::GFA, HashMap<String, Vec<u64>>) {
+    let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false);
+    debug!("Start assembly");
+    let header = gfa::Content::Header(gfa::Header::default());
+    let header = gfa::Record::from_contents(header, vec![]);
+    use crate::assemble::assemble;
+    let (records, summaries) = assemble(&ds, 0, &assemble_config);
+    let mut header = vec![header];
+    header.extend(records);
+    let tigname: HashMap<_, _> = summaries
+        .into_iter()
+        .map(
+            |crate::assemble::ditch_graph::ContigSummary { id, summary }| {
+                let summary: Vec<_> = summary.iter().map(|s| s.unit).collect();
+                (id, summary)
+            },
+        )
+        .collect();
+    (gfa::GFA::from_records(header), tigname)
 }
 
 fn estimate_graph_multiplicity(

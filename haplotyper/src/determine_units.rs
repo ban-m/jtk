@@ -146,6 +146,7 @@ impl DetermineUnit for definitions::DataSet {
             // 1st polishing.
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self = self.encode(config.threads);
+            self = remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, 20);
             self = self.polish_unit(&polish_config);
             // Filling gappy region.
@@ -154,6 +155,7 @@ impl DetermineUnit for definitions::DataSet {
             self = fill_sparse_region(self, config);
             // 2nd polishing.
             self = self.encode(config.threads);
+            self = remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 20);
             self = self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
@@ -176,6 +178,7 @@ impl DetermineUnit for definitions::DataSet {
         self.selected_chunks = selected_chunks;
         debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
         self = self.encode(config.threads);
+        self = remove_frequent_units(self, config.upper_count);
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
         self = self.encode(config.threads);
@@ -193,6 +196,28 @@ impl DetermineUnit for definitions::DataSet {
         });
         self
     }
+}
+
+fn remove_frequent_units(mut ds: DataSet, upper_count: usize) -> DataSet {
+    let mut counts: HashMap<_, usize> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        *counts.entry(node.unit).or_default() += 1;
+    }
+    counts.retain(|_, occ| *occ > upper_count);
+    ds.selected_chunks.retain(|u| !counts.contains_key(&u.id));
+    for read in ds.encoded_reads.iter_mut() {
+        'outer: loop {
+            let len = read.nodes.len();
+            for i in 0..len {
+                if counts.contains_key(&read.nodes[i].unit) {
+                    read.remove(i);
+                    continue 'outer;
+                }
+            }
+            break;
+        }
+    }
+    ds
 }
 
 const MIN_OCC: usize = 5;
@@ -368,7 +393,9 @@ fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
 const OVERLAP_THR: usize = 500;
 
 fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
-    let unit_len = ds.selected_chunks.len();
+    let unit_len = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
+    let unit_len = unit_len as usize + 1;
+    assert!(ds.selected_chunks.len() <= unit_len);
     // Maybe it became infeasible due to O(N^2) allcation would be occured.
     let mut edges: Vec<_> = (0..unit_len).map(|i| vec![false; i]).collect();
     for read in ds.encoded_reads.iter() {
@@ -386,8 +413,7 @@ fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
             }
         }
     }
-    let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
-    // let survived_unit = to_be_removed.iter().filter(|&&b| !b).count();
+    let to_be_removed = approx_vertex_cover(edges, unit_len);
     let mut count: HashMap<_, _> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         for node in read.nodes.iter() {
