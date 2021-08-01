@@ -903,6 +903,50 @@ impl<'a> DitchGraph<'a> {
             node.copy_number.map(|cp| cp != 0).unwrap_or(true) || !node.edges.is_empty()
         });
     }
+    /// Remove transitive edge.
+    #[allow(dead_code)]
+    pub fn transitive_edge_reduction(&mut self) {
+        let mut removed_edges: HashMap<_, Vec<_>> =
+            self.nodes.keys().map(|&k| (k, vec![])).collect();
+        for (from, node) in self.nodes.iter() {
+            for &pos in &[Position::Head, Position::Tail] {
+                let edges = node.edges.iter().filter(|e| e.from_position == pos);
+                let to_cands = edges.clone().count();
+                if to_cands > 1 {
+                    for e in edges.clone() {
+                        // Check whether or not this edge is transitive edge.
+                        let is_transitive =
+                            edges.clone().any(|edge| match self.nodes.get(&edge.to) {
+                                Some(child) => child
+                                    .edges
+                                    .iter()
+                                    .filter(|gc| gc.from_position == !edge.to_position)
+                                    .any(|gc| gc.to == e.to && gc.to_position == e.to_position),
+                                None => false,
+                            });
+                        if is_transitive {
+                            let (to, t_pos) = (e.to, e.to_position);
+                            removed_edges
+                                .entry(*from)
+                                .or_default()
+                                .push((pos, to, t_pos));
+                            removed_edges
+                                .entry(to)
+                                .or_default()
+                                .push((t_pos, *from, pos));
+                        }
+                    }
+                }
+            }
+        }
+        self.nodes.iter_mut().for_each(|(key, node)| {
+            let to_be_removed = &removed_edges[key];
+            node.edges.retain(|x| {
+                let probe = (x.from_position, x.to, x.to_position);
+                !to_be_removed.contains(&probe)
+            })
+        });
+    }
     #[allow(dead_code)]
     /// Enumerate bridges.
     /// Each element would be true if the node is an articulation point or each edge is bridge.

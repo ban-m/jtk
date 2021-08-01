@@ -132,4 +132,48 @@ cosine <- function(xs,ys){
 clustering.num <- read_tsv("clustering.tsv", col_names = c("ID","Time","Before","After"))
 
 assignments <- read_tsv("assignments.tsv", col_names = FALSE)
-z
+
+variants <- read_tsv("vars.tsv", col_names=c("read", "position", "lk"))
+variants <- read_tsv("vars.normal.tsv", col_names=c("read", "position", "lk"))
+
+variants <- variants %>%
+    mutate(location = position %/% 9, edit_type = (position %% 9) %/% 4, base = (position %%9 ) %% 4)
+
+
+variants %>% ggplot() + geom_raster(aes(y=read, x=location, fill=lk)) + scale_fill_gradient2(low="blue", high="orange") + facet_grid(edit_type~base)
+
+
+variants %>%
+    filter(900 < location & location < 1100) %>%
+    ## filter(base == 0 | base == 3) %>%
+    mutate(lk = ifelse(lk>0,lk,rep(0,length(lk)))) %>% 
+    ggplot() + geom_raster(aes(y=read, x=location, fill=lk)) + scale_fill_gradient2(low="blue", high="orange") + facet_grid(edit_type~base)
+
+normalize <- function(lk){
+    mean <- mean(lk)
+    sd <- sd(lk)
+    ifelse(rep(is.na(sd),length(lk)), rep(0,length(lk)), (lk-mean)/sd)
+}
+
+normalized.variants <- variants %>% group_by(position) %>%
+    nest() %>% 
+    mutate(data=map(data,~ mutate(.x, lk = (lk - mean(lk))/ ))) %>%
+    unnest(cols = c(data))
+
+normalized.variants %>%
+    filter(990 < location & location < 1050) %>% 
+    ggplot() + geom_raster(aes(y=read, x=location, fill=lk)) + scale_fill_gradient2(low="blue", high="orange") + facet_grid(edit_type~base)
+
+normalized.variants.sd <- variants %>% group_by(position) %>%
+    nest() %>% 
+    mutate(data=map(data,~ mutate(.x, lk = normalize(lk)))) %>%
+    unnest(cols = c(data))
+
+normalized.variants.sd %>%
+    ggplot() + geom_raster(aes(y=read, x=location, fill=lk)) + scale_fill_gradient2(low="blue", high="orange") + facet_grid(edit_type~base)
+
+features.vector <- normalized.variants.sd %>% group_by(position) %>% nest() %>%
+    mutate(data=map(data,~summarize(.x, location=location[1], edit_type=edit_type[1], base = base[1], vars = sum(lk[lk>0]), num = sum(lk>0)))) %>%
+    unnest(cols=c(data))
+
+

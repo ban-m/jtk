@@ -32,6 +32,11 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     } = config.clone();
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
+    for (i, prof) in profiles.iter().enumerate() {
+        for (j, x) in prof.iter().enumerate() {
+            debug!("DUMP\t{}\t{}\t{}", i, j, x);
+        }
+    }
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage);

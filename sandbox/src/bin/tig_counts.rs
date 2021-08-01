@@ -48,11 +48,6 @@ fn main() -> std::io::Result<()> {
                 let cs = clusters.iter().filter_map(|key| counts.get(key)).fold(
                     [0, 0],
                     |mut acc, xs| {
-                        // if xs[0] < xs[1] {
-                        //     acc[0] += 1;
-                        // } else {
-                        //     acc[1] += 1;
-                        // }
                         acc[0] += xs[0];
                         acc[1] += xs[1];
                         acc

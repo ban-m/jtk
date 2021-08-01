@@ -34,12 +34,6 @@ pub struct Edge {
 }
 
 impl Graph {
-    // pub fn gfa(&self) -> GFA {
-    //     let header = gfa::Content::Header(gfa::Header::default());
-    //     let header = gfa::Record::from_contents(header, vec![]);
-    //     let mut records = vec![header];
-    //     GFA::from_records(header)
-    // }
     pub fn enumerate_connected_components(&self) -> Vec<Vec<&Node>> {
         use crate::find_union::FindUnion;
         let mut fu = FindUnion::new(self.nodes.len());
@@ -109,44 +103,92 @@ pub trait Assemble {
     /// dive into difficult regions such as non-single-copy chunks or
     /// tangles. It just assemble the dataset into a graph.
     fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
+    /// Detecting and squishing clusters with small confidence.
+    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize);
 }
 
 impl Assemble for DataSet {
-    fn assemble(&self, c: &AssembleConfig) -> GFA {
-        let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
-        for asn in self.assignments.iter() {
-            *cluster_and_num.entry(asn.cluster).or_default() += 1;
+    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
+        let (_, summaries) = assemble(self, 0, c);
+        let mut squished: Vec<(HashSet<u64>, Vec<_>)> = vec![];
+        for summary in summaries.iter() {
+            let ids: Vec<_> = summary
+                .summary
+                .iter()
+                .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                .collect();
+            debug!("DUMP\t{}\t{}", summary.id, ids.join("\t"));
         }
-        debug!("There is {} clusters.", cluster_and_num.len());
+        for summary in summaries.iter().filter(|s| s.summary.len() < len) {
+            let probe: HashSet<_> = summary.summary.iter().map(|e| e.unit).collect();
+            let entry: Vec<_> = summary
+                .summary
+                .iter()
+                .map(|e| (e.unit, e.cluster))
+                .collect();
+            let thr = probe.len().saturating_sub(5) / 10;
+            if let Some((idx, _)) = squished
+                .iter()
+                .enumerate()
+                .find(|&(_, (repr, _))| probe.difference(repr).count() <= thr)
+            {
+                squished[idx].1.push(entry);
+                squished[idx].0.extend(probe);
+            } else {
+                squished.push((probe, vec![entry]));
+            }
+        }
+        for (i, (_, contigs)) in squished.iter().enumerate() {
+            for ctg in contigs.iter() {
+                let dump: Vec<_> = ctg.iter().map(|(u, c)| format!("{}-{}", u, c)).collect();
+                debug!("MERGE\t{}\t{}", i, dump.join("\t"));
+            }
+        }
+        let convert_table: HashMap<_, _> = squished
+            .iter()
+            .flat_map(|(_, contigs)| {
+                let mut collapsed: HashMap<_, u64> = HashMap::new();
+                for nodes in contigs {
+                    for &(unit, cluster) in nodes.iter() {
+                        if let Some(x) = collapsed.get_mut(&unit) {
+                            *x = (*x).min(cluster);
+                        } else {
+                            collapsed.insert(unit, cluster);
+                        }
+                    }
+                }
+                contigs
+                    .iter()
+                    .flat_map(|nodes| {
+                        nodes
+                            .iter()
+                            .map(|&(unit, cluster)| ((unit, cluster), collapsed[&unit]))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for read in self.encoded_reads.iter_mut() {
+            for node in read.nodes.iter_mut() {
+                if let Some(&to) = convert_table.get(&(node.unit, node.cluster)) {
+                    node.cluster = to;
+                }
+            }
+        }
+    }
+    fn assemble(&self, c: &AssembleConfig) -> GFA {
         debug!("Start assembly");
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![]);
-        let mut cluster_and_num: Vec<_> = cluster_and_num.into_iter().collect();
-        cluster_and_num.sort_by_key(|x| x.1);
-        cluster_and_num.reverse();
-        let records: Vec<_> = cluster_and_num
-            .into_iter()
-            .filter(|&(cl, num)| {
-                if num < 10 {
-                    debug!("Detected small group:{}(cluster:{})", num, cl);
-                    false
-                } else {
-                    true
-                }
-            })
-            .flat_map(|(cl, _)| {
-                let (records, summaries) = assemble(self, cl, c);
-                for summary in summaries {
-                    let ids: Vec<_> = summary
-                        .summary
-                        .iter()
-                        .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
-                        .collect();
-                    debug!("{}\t{}", summary.id, ids.join("\t"));
-                }
-                records
-            })
-            .collect();
+        let (records, summaries) = assemble(self, 0, c);
+        for summary in summaries {
+            let ids: Vec<_> = summary
+                .summary
+                .iter()
+                .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                .collect();
+            debug!("{}\t{}", summary.id, ids.join("\t"));
+        }
         let mut header = vec![header];
         header.extend(records);
         GFA::from_records(header)
@@ -238,9 +280,9 @@ pub fn assemble(
             debug!("Removing ZCEs");
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
             graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            // graph.z_edge_selection();
             graph.remove_tips(0.5, 5);
-            graph.zip_up_overclustering();
+            graph.transitive_edge_reduction();
+            // graph.zip_up_overclustering();
             graph.resolve_repeats(&reads, c, 5f64);
             graph.assign_copy_number(cov, &lens);
         }

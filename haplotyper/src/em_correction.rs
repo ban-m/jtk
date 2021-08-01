@@ -130,7 +130,7 @@ impl ClusteringCorrection for DataSet {
         coverage_thr: usize,
         _len_thr: usize,
     ) -> Self {
-        let (result, cluster_size_and_lk): (Vec<_>, Vec<_>) = self
+        let (result, _cluster_size_and_lk): (Vec<_>, Vec<_>) = self
             .selected_chunks
             .par_iter()
             .map(|ref_unit| {
