@@ -32,11 +32,11 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     } = config.clone();
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
-    for (i, prof) in profiles.iter().enumerate() {
-        for (j, x) in prof.iter().enumerate() {
-            debug!("DUMP\t{}\t{}\t{}", i, j, x);
-        }
-    }
+    // for (i, prof) in profiles.iter().enumerate() {
+    //     for (j, x) in prof.iter().enumerate() {
+    //         debug!("DUMP\t{}\t{}\t{}", i, j, x);
+    //     }
+    // }
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage);
@@ -223,11 +223,12 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
         .map(|read| {
             let prof = banded::ProfileBanded::new(&hmm, &template, &read, band_width).unwrap();
             let lk = prof.lk();
-            prof.to_modification_table()
-                .iter()
-                .take(9 * template.len())
-                .map(|x| x - lk)
-                .collect()
+            let mut modif_table = prof.to_modification_table();
+            modif_table.truncate(9 * template.len());
+            modif_table.extend(prof.to_deletion_table(6));
+            modif_table.extend(prof.to_copy_table(6));
+            modif_table.iter_mut().for_each(|x| *x -= lk);
+            modif_table
         })
         .collect()
 }
@@ -249,11 +250,13 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
             *count += (0.00001 < *p) as usize;
         }
     }
-    // Filtering out the position where the sum > 0, because it is apparently flippable.
+    // TODO: This filtering might be implemented from recursive clustering,
+    // and now we do not use recursive clustering, we do not filter any vriants.
+    // Filtering out the position where the sum > 0, because it is apparently flippable. -> Or not?
     let mut probes: Vec<(usize, f64)> = total_improvement
         .into_iter()
         .enumerate()
-        .filter(|&(_, (sum, _, _))| sum < 0.01 * profiles.len() as f64)
+        // .filter(|&(_, (sum, _, _))| sum < 0.01 * profiles.len() as f64)
         .map(|(pos, (_, maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
                 .map(|k| poisson_lk(count, profiles.len() as f64 / k as f64))
