@@ -1,4 +1,7 @@
 //! A small K-means clustering algorithm.
+
+const DEL_SIZE: usize = 6;
+const REP_SIZE: usize = 6;
 use rand::Rng;
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig {
@@ -42,7 +45,19 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage);
         // for (pos, lk) in probes.iter() {
         //     let (idx, t) = (pos / 9, pos % 9);
+        // if idx < cons_template.len() {
         //     debug!("POS\t{}\t{}\t{:.3}", idx, t, lk);
+        // } else {
+        //     let pos = pos - 9 * cons_template.len();
+        //     if pos < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
+        //         let (idx, len) = (pos / (DEL_SIZE - 1), pos % (DEL_SIZE - 1));
+        //         debug!("POS\t{}\t{}\t0\t{:.3}", idx, len, lk);
+        //     } else {
+        //         let pos = pos - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
+        //         let (idx, len) = (pos / REP_SIZE, pos % REP_SIZE);
+        //         debug!("POS\t{}\t{}\t1\t{:.3}", idx, len, lk);
+        //     };
+        // }
         // }
         profiles
             .iter()
@@ -225,8 +240,8 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
             let lk = prof.lk();
             let mut modif_table = prof.to_modification_table();
             modif_table.truncate(9 * template.len());
-            modif_table.extend(prof.to_deletion_table(6));
-            modif_table.extend(prof.to_copy_table(6));
+            modif_table.extend(prof.to_deletion_table(DEL_SIZE));
+            modif_table.extend(prof.to_copy_table(REP_SIZE));
             modif_table.iter_mut().for_each(|x| *x -= lk);
             modif_table
         })

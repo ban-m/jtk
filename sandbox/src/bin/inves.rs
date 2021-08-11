@@ -1,80 +1,73 @@
-use definitions::*;
-use serde_json;
-use std::collections::HashMap;
-use std::io::BufReader;
+use kiley::gphmm::*;
+use std::io::{BufRead, BufReader};
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
-        .map(BufReader::new)
-        .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *counts.entry(node.unit).or_default() += 1;
-    }
-    for (key, val) in counts.iter() {
-        println!("{}\t{}", key, val);
-    }
-    let mut counts: Vec<_> = counts.values().copied().collect();
-    counts.sort();
-    eprintln!("{}", counts[counts.len() / 2]);
-    // use haplotyper::re_clustering::*;
-    // let unit_id: u64 = args[2].parse().unwrap();
-    // use haplotyper::local_clustering::kmeans;
-    // use rand::SeedableRng;
-    // let mut rng: rand_xoshiro::Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit_id * 23);
-    // let units: Vec<_> = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .flat_map(|r| r.nodes.iter().filter(|n| n.unit == unit_id))
-    //     .collect();
-    // let cluster_num = 12;
-    // let seqs: Vec<_> = units.iter().map(|n| n.seq()).collect();
-    // let coverage = ds.coverage.unwrap();
-    // log::debug!("Coverage\t{}", coverage);
-    // let mut config = kmeans::ClusteringConfig::new(100, cluster_num, coverage);
-    // let (asn, _consensus) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-    // let ids: Vec<_> = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .flat_map(|r| {
-    //         let len = r.nodes.iter().filter(|n| n.unit == unit_id).count();
-    //         vec![r.id; len]
-    //     })
-    //     .collect();
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    // for (id, asn) in ids.iter().zip(asn) {
-    //     let answer = id2desc[id].contains("000252v");
-    //     log::debug!("RESULT\t{}\t{}\t{}", id, asn, answer);
+    let seqs: Vec<_> = std::fs::File::open(&args[1])
+        .map(BufReader::new)?
+        .lines()
+        .filter_map(|line| line.ok())
+        .map(|l| {
+            l.split('\t')
+                .nth(1)
+                // .map(|s| kiley::padseq::PadSeq::new(s.as_bytes()))
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    let template = seqs[0].as_bytes();
+    let hmm = GPHMM::clr();
+    profile_multi_deletion_banded_check(&hmm, template, seqs[1].as_bytes(), 100);
+    // let (_, ops, _) = hmm.align(seqs[0].as_bytes(), seqs[1].as_bytes());
+    // let (ta, oa, qa) = kiley::hmm::recover(seqs[0].as_bytes(), seqs[1].as_bytes(), &ops);
+    // for ((ta, oa), qa) in ta.chunks(200).zip(oa.chunks(200)).zip(qa.chunks(200)) {
+    //     println!("{}", String::from_utf8_lossy(ta));
+    //     println!("{}", String::from_utf8_lossy(oa));
+    //     println!("{}", String::from_utf8_lossy(qa));
+    //     println!();
     // }
-    // let target = 1374;
-    // for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
-    //     if edge.from == target || edge.to == target {
-    //         let (x, y) = if edge.from == target {
-    //             (edge.from, edge.to)
-    //         } else {
-    //             (edge.to, edge.from)
-    //         };
-    //         println!("{}\t{}\t{}", x, y, edge.offset);
-    //     }
+    // let prof = banded::ProfileBanded::new(&hmm, &seqs[0], &seqs[1], 100).unwrap();
+    // let lk = prof.lk();
+    // let mut deletions = prof.to_deletion_table(6);
+    // deletions.iter_mut().for_each(|x| *x -= lk);
+    // for (pos, lk) in deletions.iter().enumerate() {
+    //     println!("{}\t{}\t{:.3}", pos / 5, pos % 5, lk);
     // }
-    // let unit = ds.selected_chunks.iter().find(|u| u.id == 375).unwrap();
-    // for read in ds.encoded_reads.iter() {
-    //     for (idx, node) in read.nodes.iter().enumerate().filter(|(_, n)| n.unit == 375) {
-    //         let (_, ax, _) = node.recover(&unit);
-    //         let dist = ax.iter().filter(|&&x| x != b'|').count();
-    //         let to = match node.is_forward {
-    //             true => read.nodes.get(idx + 1).map(|x| x.unit).unwrap_or(0),
-    //             false => read.nodes.get(idx - 1).map(|x| x.unit).unwrap_or(0),
-    //         };
-    //         println!("DIST\t{}\t{}\t{}", unit.id, to, dist);
-    // for ((qx, ax), rx) in qx.chunks(200).zip(ax.chunks(200)).zip(rx.chunks(200)) {
-    //     let qx = String::from_utf8_lossy(qx);
-    //     let ax = String::from_utf8_lossy(ax);
-    //     let rx = String::from_utf8_lossy(rx);
-    //     println!("{}\n{}\n{}\n", qx, ax, rx);
-    // }
-    //     }
-    // }
+
     Ok(())
+}
+
+fn profile_multi_deletion_banded_check<T: HMMType>(
+    model: &GPHMM<T>,
+    xs: &[u8],
+    ys: &[u8],
+    radius: isize,
+) {
+    use banded::ProfileBanded;
+    use kiley::padseq::PadSeq;
+    let xs: Vec<_> = xs.iter().rev().copied().take(350).collect();
+    let ys: Vec<_> = ys.iter().rev().copied().take(350).collect();
+    let orig_xs: Vec<_> = xs.to_vec();
+    let (xs, ys) = (PadSeq::new(xs), PadSeq::new(ys));
+    let profile = ProfileBanded::new(model, &xs, &ys, radius).unwrap();
+    let len = 6;
+    let lk = profile.lk();
+    let difftable = profile.to_deletion_table(len);
+    println!("LK:{}", lk);
+    println!(
+        "{}",
+        difftable.iter().fold(f64::NEG_INFINITY, |x, &y| x.max(y)) - lk
+    );
+    for (pos, diffs) in difftable.chunks(len - 1).enumerate() {
+        let mut xs: Vec<_> = orig_xs.clone();
+        xs.remove(pos);
+        for (i, lkd) in diffs.iter().enumerate() {
+            xs.remove(pos);
+            let xs = PadSeq::new(xs.as_slice());
+            let lk = model
+                .likelihood_banded_inner(&xs, &ys, radius as usize)
+                .unwrap();
+            assert!((lk - lkd).abs() < 10f64, "{},{},{},{}", lk, lkd, pos, i);
+        }
+    }
 }
