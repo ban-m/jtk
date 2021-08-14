@@ -50,22 +50,22 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, cons_template.len());
-        for (pos, lk) in probes.iter() {
-            let (idx, t) = (pos / 9, pos % 9);
-            if idx < cons_template.len() {
-                debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
-            } else {
-                let idx = pos - 9 * cons_template.len();
-                if idx < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
-                    let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                    debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
-                } else {
-                    let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
-                    let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
-                    debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
-                };
-            }
-        }
+        // for (pos, lk) in probes.iter() {
+        //     let (idx, t) = (pos / 9, pos % 9);
+        //     if idx < cons_template.len() {
+        //         debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
+        //     } else {
+        //         let idx = pos - 9 * cons_template.len();
+        //         if idx < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
+        //             let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+        //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
+        //         } else {
+        //             let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
+        //             let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
+        //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
+        //         };
+        //     }
+        // }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
@@ -79,7 +79,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         let (asn, new_score) = (0..num)
             .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-        debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
+        // debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
         if score + AVERAGE_LK * coverage < new_score {
             assignments = asn;
             score = new_score;
@@ -100,10 +100,10 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //         Some((asn, mod_score, k))
     //     })
     //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())?;
-    for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
-        let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-        debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
-    }
+    // for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
+    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+    //     debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
+    // }
     Some((assignments, cons_template))
 }
 
@@ -420,7 +420,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                 });
             if let Some((next_var_idx, ((lk, w), _))) = next_var_idx {
                 let picked_pos = probes[next_var_idx].0;
-                debug!("Picked\t{}\t{:.3}\t{:.3}", picked_pos, lk, w);
                 is_selected[next_var_idx] = 1;
                 for ((&(pos, _), weight), selected) in probes
                     .iter()
@@ -429,12 +428,12 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                     .filter(|&(_, &mut selected)| selected == 0)
                 {
                     let sim = sokal_michener(profiles, picked_pos, pos);
+                    let cos_sim = cosine_similarity(profiles, picked_pos, pos);
+                    if 0.99 < sim || (1f64 - cos_sim.abs()).abs() < 0.0001 {
+                        *selected = 2;
+                    }
                     if 0.75 < sim {
                         *weight *= 1f64 - sim;
-                    }
-                    let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    if (1f64 - cos_sim.abs()).abs() < 0.0001 {
-                        *selected = 2;
                     }
                 }
             } else {
@@ -442,11 +441,19 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
             }
         }
     }
-    probes
+    let selected_variants: Vec<_> = probes
         .into_iter()
         .zip(is_selected)
         .filter_map(|(x, y)| (y == 1).then(|| x))
-        .collect()
+        .collect();
+    // for (i, &(pos, _)) in selected_variants.iter().enumerate() {
+    //     for &(posj, _) in selected_variants.iter().skip(i + 1) {
+    //         let sim = sokal_michener(profiles, pos, posj);
+    //         let cos = cosine_similarity(profiles, pos, posj);
+    //         debug!("SIM\t{}\t{}\t{:.3}\t{:.3}", pos, posj, sim, cos);
+    //     }
+    // }
+    selected_variants
     // let mut probes = probes;
     // probes.sort_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap());
     // probes.reverse();
