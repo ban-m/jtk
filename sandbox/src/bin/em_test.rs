@@ -10,7 +10,7 @@ fn main() -> std::io::Result<()> {
     let repeat_num = 40;
     let coverage_thr = 5;
     log::debug!("RESULT\tK\tLK\tCov");
-    for unit_id in vec![713] {
+    for unit_id in vec![1336] {
         log::debug!("{}", unit_id);
         let ref_unit = ds.selected_chunks.iter().find(|n| n.id == unit_id).unwrap();
         let reads: Vec<_> = ds
@@ -20,7 +20,10 @@ fn main() -> std::io::Result<()> {
             .collect();
         let k = ref_unit.cluster_num;
         let (new_clustering, lk, cluster_num) = (1..=k)
-            .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+            .flat_map(|k| {
+                let len = if k == 1 { 1 } else { repeat_num };
+                std::iter::repeat(k).take(len)
+            })
             .enumerate()
             .map(|(i, k)| {
                 let seed = unit_id * (i * k) as u64;

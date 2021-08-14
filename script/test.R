@@ -106,7 +106,8 @@ g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, 
 
 
 
-longer.selected.vars <- selected.vars %>% 
+longer.selected.vars <- selected.vars %>%
+    arrange(X2) %>% 
     mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID & !X1, names_to = "Position", values_to = "LK") %>% 
     mutate(Position = as.integer(str_sub(Position,start=2)))
 g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK))

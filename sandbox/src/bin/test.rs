@@ -16,7 +16,7 @@ fn main() -> std::io::Result<()> {
         .flat_map(|r| {
             r.nodes
                 .iter()
-                .filter(|n| n.unit == 1114)
+                .filter(|n| n.unit == 153)
                 .map(|n| (n.seq(), r.id))
                 .collect::<Vec<_>>()
         })
@@ -27,8 +27,15 @@ fn main() -> std::io::Result<()> {
     use rand_xoshiro::Xoroshiro128Plus;
     let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(293);
     let (asn, _) = local_clustering::kmeans::clustering(&nodes, &mut rng, &mut config).unwrap();
-    for (asn, id) in asn.iter().zip(ids.iter()) {
-        println!("{}\t{}\t{}", id2desc[id], id2desc[id].contains("252v"), asn);
+    for ((asn, id), seq) in asn.iter().zip(ids.iter()).zip(nodes.iter()) {
+        let seq = String::from_utf8_lossy(seq);
+        println!(
+            "{}\t{}\t{}\t{}",
+            id2desc[id],
+            id2desc[id].contains("252v"),
+            asn,
+            seq
+        );
     }
     Ok(())
 }

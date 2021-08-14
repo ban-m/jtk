@@ -227,25 +227,7 @@ pub fn em_clustering(
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let cluster_num = config.cluster_num;
     let (asn, lk) = em_clustering_inner(&contexts, cluster_num, &mut rng);
-    // Num of parameters.
-    let offset = {
-        let fraction = cluster_num - 1;
-        let model_param: u64 = use_units
-            .iter()
-            .filter_map(|&unit| {
-                reads
-                    .iter()
-                    .flat_map(|r| r.nodes.iter())
-                    .filter(|n| n.unit == unit)
-                    .map(|n| n.cluster)
-                    .max()
-            })
-            .sum();
-        // trace!("{}\t{}\t{}", cluster_num, model_param, fraction);
-        (model_param as usize * cluster_num + fraction) as f64
-    };
-    // let offset = (cluster_num * (use_units.len() - 1)) as f64;
-    (asn, lk - offset, cluster_num)
+    (asn, lk, cluster_num)
 }
 
 pub fn initialize_weights<R: Rng>(contexts: &[Context], k: usize, rng: &mut R) -> Vec<Vec<f64>> {
@@ -358,6 +340,7 @@ pub fn em_clustering_inner<R: Rng>(
             lk = next_lk;
         }
     }
+    trace!("FinalLK\t{:.4}", lk);
     let predictions: Vec<_> = contexts
         .iter()
         .zip(weights.iter())
@@ -391,7 +374,23 @@ pub fn em_clustering_inner<R: Rng>(
             context.dump_with(flen, blen)
         );
     }
-    (predictions, lk)
+    // Num of parameters.
+    let offset = {
+        let model_param: usize = model.models.iter().map(|m| m.num_param()).sum();
+        // let model_param: u64 = use_units
+        //     .iter()
+        //     .filter_map(|&unit| {
+        //         reads
+        //             .iter()
+        //             .flat_map(|r| r.nodes.iter())
+        //             .filter(|n| n.unit == unit)
+        //             .map(|n| n.cluster)
+        //             .max()
+        //     })
+        //     .sum();
+        (model_param + k - 1) as f64
+    };
+    (predictions, lk - offset)
 }
 
 // TODO: Add direction.
@@ -686,6 +685,12 @@ impl std::fmt::Display for RawModel {
 }
 
 impl RawModel {
+    fn num_param(&self) -> usize {
+        let center = self.center.len().max(1) - 1;
+        let forward: usize = self.forward.iter().map(|hm| hm.len().max(1) - 1).sum();
+        let backward: usize = self.backward.iter().map(|hm| hm.len().max(1) - 1).sum();
+        center + forward + backward
+    }
     fn new(forward_len: usize, backward_len: usize) -> Self {
         Self {
             center: HashMap::new(),
