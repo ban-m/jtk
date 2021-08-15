@@ -5,7 +5,7 @@ const DEL_SIZE: usize = 4;
 const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
-const AVERAGE_LK: f64 = 1.1;
+const AVERAGE_LK: f64 = 1.2;
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
 use rand::Rng;

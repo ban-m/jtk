@@ -279,11 +279,11 @@ pub fn assemble(
         if c.to_resolve {
             debug!("Removing ZCEs");
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            graph.remove_tips(0.5, 5);
-            graph.transitive_edge_reduction();
+            // graph.remove_zero_copy_elements(cov, &lens, 0.3);
+            // graph.remove_tips(0.5, 5);
+            // graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
-            graph.resolve_repeats(&reads, c, 5f64);
+            // graph.resolve_repeats(&reads, c, 5f64);
             graph.assign_copy_number(cov, &lens);
         }
     }
