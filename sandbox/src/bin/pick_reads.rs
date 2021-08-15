@@ -1,18 +1,17 @@
 use definitions::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    // let id2desc: HashMap<_, _> = ds
-    //     .raw_reads
-    //     .iter()
-    //     .map(|r| (r.id, r.desc.clone()))
-    //     .collect();
-    // let units: HashSet<(u64, u64)> = vec![(1317, 0)].into_iter().collect();
-    let units: HashSet<u64> = vec![1317].into_iter().collect();
+    let id2desc: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .map(|r| (r.id, r.desc.clone()))
+        .collect();
+    let units: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
     for read in ds.encoded_reads.iter() {
         let mut dumps = vec![format!("{:<5}", 0); 7];
         for (idx, node) in read
@@ -38,7 +37,8 @@ fn main() -> std::io::Result<()> {
                     dumps[i] = format!("{:<5}", unit);
                 }
             }
-            println!("{}\t{}", dumps.join("\t"), read.id);
+            let is_hap1 = id2desc[&read.id].contains("252v2");
+            println!("{}\t{}", dumps.join("\t"), is_hap1);
         }
         // let pos: Vec<_> = id2desc[&read.id]
         //     .split(' ')

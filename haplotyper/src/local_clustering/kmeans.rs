@@ -28,12 +28,12 @@ impl ClusteringConfig {
     }
 }
 
-/// Usual "flat(non-recursive)" clustering.
+/// Usual "flat(non-recursive)" clustering. Return assignments, template, and LK.
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
     config: &mut ClusteringConfig,
-) -> Option<(Vec<u8>, Vec<u8>)> {
+) -> Option<(Vec<u8>, Vec<u8>, f64)> {
     let ClusteringConfig {
         band_width,
         cluster_num,
@@ -104,7 +104,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
     //     debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
     // }
-    Some((assignments, cons_template))
+    Some((assignments, cons_template, score))
 }
 
 /// Usual "flat(non-recursive)" clustering.
@@ -361,7 +361,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
     cluster_num: usize,
     round: usize,
-    coverage: f64,
+    _coverage: f64,
     template_len: usize,
 ) -> Vec<(usize, f64)> {
     // (sum, maximum gain, number of positive element)
@@ -418,7 +418,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                         _ => (lk1 * *w1).partial_cmp(&(lk2 * *w2)).unwrap(),
                     }
                 });
-            if let Some((next_var_idx, ((lk, w), _))) = next_var_idx {
+            if let Some((next_var_idx, ((_lk, _w), _))) = next_var_idx {
                 let picked_pos = probes[next_var_idx].0;
                 is_selected[next_var_idx] = 1;
                 for ((&(pos, _), weight), selected) in probes
@@ -502,6 +502,7 @@ fn cosine_similarity<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j:
 }
 
 // Return true if it is the same bipartition.
+#[allow(dead_code)]
 fn is_the_same_bipart<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
     i: usize,

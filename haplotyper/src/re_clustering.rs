@@ -92,7 +92,7 @@ fn local_clustering(unit_id: u64, units: &mut [&mut Node], coverage: f64, cluste
     let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
     let mut config = kmeans::ClusteringConfig::new(100, cluster_num, coverage);
     let start = std::time::Instant::now();
-    let (asn, _) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    let (asn, _, _) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
     let end = std::time::Instant::now();
     let elapsed = (end - start).as_secs();
     debug!(

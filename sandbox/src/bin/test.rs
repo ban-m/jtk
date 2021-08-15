@@ -26,7 +26,7 @@ fn main() -> std::io::Result<()> {
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128Plus;
     let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(293);
-    let (asn, _) = local_clustering::kmeans::clustering(&nodes, &mut rng, &mut config).unwrap();
+    let (asn, _, _) = local_clustering::kmeans::clustering(&nodes, &mut rng, &mut config).unwrap();
     for ((asn, id), seq) in asn.iter().zip(ids.iter()).zip(nodes.iter()) {
         let seq = String::from_utf8_lossy(seq);
         println!(

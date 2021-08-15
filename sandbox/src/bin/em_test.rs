@@ -9,9 +9,16 @@ fn main() -> std::io::Result<()> {
     use haplotyper::em_correction::*;
     let repeat_num = 40;
     let coverage_thr = 5;
+    use std::collections::HashMap;
+    let id2desc: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .map(|read| (read.id, &read.desc))
+        .collect();
     log::debug!("RESULT\tK\tLK\tCov");
-    for unit_id in vec![1336] {
-        log::debug!("{}", unit_id);
+    let unit_ids: Vec<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    for unit_id in unit_ids {
+        log::debug!("Clustering...{}", unit_id);
         let ref_unit = ds.selected_chunks.iter().find(|n| n.id == unit_id).unwrap();
         let reads: Vec<_> = ds
             .encoded_reads
@@ -41,13 +48,19 @@ fn main() -> std::io::Result<()> {
             mean_lk,
             new_clustering.len()
         );
-        let reads = reads.iter().flat_map(|r| {
-            r.nodes
-                .iter()
-                .filter(|n| n.unit == unit_id)
-                .map(|n| n.cluster)
-        });
-        for (r, cl) in reads.zip(new_clustering.iter()) {
+        let reads: Vec<_> = reads
+            .iter()
+            .flat_map(|r| {
+                let is_hapa = id2desc[&r.id].contains("252v2") as u8;
+                r.nodes
+                    .iter()
+                    .filter(|n| n.unit == unit_id)
+                    .map(|_| is_hapa)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(reads.len(), new_clustering.len());
+        for (r, cl) in reads.iter().zip(new_clustering.iter()) {
             log::debug!("ASN\t{}\t{}", r, cl.2);
         }
     }

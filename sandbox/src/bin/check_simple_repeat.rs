@@ -60,7 +60,7 @@ fn main() -> std::io::Result<()> {
         let mut config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _) = kmeans::clustering(&dataset, &mut rng, &mut config).unwrap();
+        let (preds, _, _) = kmeans::clustering(&dataset, &mut rng, &mut config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

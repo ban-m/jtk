@@ -75,14 +75,17 @@ pub fn local_clustering_all(ds: &mut DataSet) {
             };
             let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
             let start = std::time::Instant::now();
-            let (asn, consensus) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
             let end = std::time::Instant::now();
             let elapsed = (end - start).as_secs();
             let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
-            debug!("RECORD\t{}\t{}\t{}\t{}", unit_id, elapsed, prevcl, cl);
+            debug!(
+                "RECORD\t{}\t{}\t{}\t{}\t{:.3}",
+                unit_id, elapsed, prevcl, cl, score
+            );
             (unit_id, (consensus, config.cluster_num))
         })
         .collect();
@@ -94,65 +97,6 @@ pub fn local_clustering_all(ds: &mut DataSet) {
             unit.cluster_num = *cluster_num as usize;
         }
     }
-}
-
-pub fn local_clustering_on_selected<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-    ds: &mut DataSet,
-    c: &ClusteringConfig<F>,
-    positions: &HashMap<u64, bool>,
-    iteration: u64,
-) {
-    // If positions[idx] is *false*, the position would be used.
-    let mut pileups: HashMap<u64, Vec<(_, _, &mut Node)>> = HashMap::new();
-    for read in ds.encoded_reads.iter_mut() {
-        for (idx, node) in read.nodes.iter_mut().enumerate() {
-            if let Some(&res) = positions.get(&node.unit) {
-                // This is correct.
-                if !res {
-                    pileups
-                        .entry(node.unit)
-                        .or_default()
-                        .push((read.id, idx, node));
-                }
-            }
-        }
-    }
-    let selected_chunks = ds.selected_chunks.clone();
-    let id_to_name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    let id_to_desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    let read_type = ds.read_type;
-    //let cluster_number: HashMap<_, _> =
-    pileups.par_iter_mut().for_each(|(&unit_id, mut units)| {
-        // pileups.iter_mut().for_each(|(&unit_id, mut units)| {
-        debug!("RECORD\t{}\t{}\tStart", unit_id, iteration);
-        let ref_unit = match selected_chunks.iter().find(|u| u.id == unit_id as u64) {
-            Some(res) => res,
-            None => return,
-        };
-        // If true, this position is already clustered.
-        if positions[&unit_id] {
-            return;
-        }
-        assert!(units.iter().all(|n| n.2.unit == unit_id as u64));
-        let _cluster_num = match read_type {
-            ReadType::CCS => unit_clustering_ccs(&mut units, c, ref_unit, iteration),
-            _ => unit_clustering(&mut units, c, ref_unit, iteration),
-        };
-        debug!("RECORD\t{}\t{}\tEnd", unit_id, iteration);
-        if log_enabled!(log::Level::Debug) {
-            for cl in 0..c.cluster_num.max(ref_unit.cluster_num) {
-                let cl = cl as u64;
-                for (id, _, _) in units.iter().filter(|&(_, _, n)| n.cluster == cl) {
-                    let name = id_to_name[&id];
-                    match id_to_desc.get(&id) {
-                        Some(d) => debug!("CLUSTER\t{}\t{}\t{}\t{}\t{}", unit_id, cl, id, name, d),
-                        None => debug!("CLUSTER\t{}\t{}\t{}\t{}", unit_id, cl, id, name),
-                    }
-                }
-            }
-        }
-        // Some((unit_id, cluster_num))
-    });
 }
 
 pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(

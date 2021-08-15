@@ -377,17 +377,6 @@ pub fn em_clustering_inner<R: Rng>(
     // Num of parameters.
     let offset = {
         let model_param: usize = model.models.iter().map(|m| m.num_param()).sum();
-        // let model_param: u64 = use_units
-        //     .iter()
-        //     .filter_map(|&unit| {
-        //         reads
-        //             .iter()
-        //             .flat_map(|r| r.nodes.iter())
-        //             .filter(|n| n.unit == unit)
-        //             .map(|n| n.cluster)
-        //             .max()
-        //     })
-        //     .sum();
         (model_param + k - 1) as f64
     };
     (predictions, lk - offset)
@@ -582,13 +571,15 @@ impl EMModel {
         // Clear the previous model.
         self.clear();
         // Update fraction.
-        for weight in weights.iter() {
-            for (i, w) in weight.iter().enumerate() {
-                self.fraction[i] += w;
+        {
+            for weight in weights.iter() {
+                for (i, w) in weight.iter().enumerate() {
+                    self.fraction[i] += w;
+                }
             }
+            let sum: f64 = self.fraction.iter().sum();
+            self.fraction.iter_mut().for_each(|x| *x /= sum);
         }
-        let sum: f64 = self.fraction.iter().sum();
-        self.fraction.iter_mut().for_each(|x| *x /= sum);
         // Update paramters.
         let summaries = weights.iter().zip(contexts).zip(mapping_positions);
         for ((weight, context), mapping_positions) in summaries {
@@ -652,7 +643,6 @@ impl EMModel {
 
 const DEL_PROB: f64 = 0.02;
 const MISM_PROB: f64 = 0.02;
-// const MATCH_PROB: f64 = 1f64 - DEL_PROB ;
 const MATCH_PROB: f64 = 1f64 - DEL_PROB - MISM_PROB;
 const SMALL: f64 = 0.00001;
 
@@ -687,8 +677,10 @@ impl std::fmt::Display for RawModel {
 impl RawModel {
     fn num_param(&self) -> usize {
         let center = self.center.len().max(1) - 1;
-        let forward: usize = self.forward.iter().map(|hm| hm.len().max(1) - 1).sum();
-        let backward: usize = self.backward.iter().map(|hm| hm.len().max(1) - 1).sum();
+        let count_param =
+            |hm: &HashMap<(u64, u64), f64>| hm.values().filter(|&&x| 0.01 < x).count().max(1) - 1;
+        let forward: usize = self.forward.iter().map(count_param).sum();
+        let backward: usize = self.backward.iter().map(count_param).sum();
         center + forward + backward
     }
     fn new(forward_len: usize, backward_len: usize) -> Self {
@@ -719,10 +711,6 @@ impl RawModel {
             .zip(context.backward.iter())
             .for_each(|(slot, &elm)| *slot.entry(elm).or_default() += w);
     }
-    // fn lk(&self, context: &Context) -> f64 {
-    //     let center_lk = self.center[&context.cluster].max(SMALL).ln();
-    //     self.forward_mapping(context).1 + center_lk + self.backward_mapping(context).1
-    // }
     // Normalize this model to stat model.
     fn normalize(&mut self) {
         let sum: f64 = self.center.values().sum();
@@ -730,9 +718,10 @@ impl RawModel {
             self.center.values_mut().for_each(|x| *x /= sum);
         }
         fn normalize(slots: &mut HashMap<(u64, u64), f64>) {
-            let sum: f64 = slots.values().sum();
+            let sum: f64 = slots.values().map(|x| x).sum();
             slots.values_mut().for_each(|x| *x /= sum);
-            slots.retain(|_, prob| SMALL < *prob);
+            slots.retain(|_, prob| 0.01 < *prob);
+            // slots.retain(|_, prob| SMALL < *prob);
         }
         self.forward.iter_mut().for_each(normalize);
         self.backward.iter_mut().for_each(normalize);
