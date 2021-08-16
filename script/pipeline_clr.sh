@@ -10,6 +10,7 @@ set -ue
 PATH="${PATH}:${PWD}/target/release/"
 TARGET=$1
 CLUSTERED=${2}.entry.units.encode.clustered.json
+RESOLVED=${2}.entry.units.encode.clustered.resolved.json
 RESULT=${2}.json
 GFA=${2}.gfa
 DRAFT_GFA=${2}.draft.gfa
@@ -48,14 +49,23 @@ else
             --draft_assembly ${DRAFT_GFA} --max_cluster_size 6 |\
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi
+
+if [ -f ${RESOLVED} ]
+then
+    echo "Tangle resolved. Skip resolving proc".
+else
+    cat ${CLUSTERED} |\
+        jtk resolve_tangle -vv --threads ${THREADS} >${RESOLVED}
+fi
+
 if [ -f ${RESULT} ]
 then
     echo "Global clustering seems to be done. Just assemble these files."
-else    
-    cat ${CLUSTERED} |\
-        jtk resolve_tangle -vv --threads ${THREADS} |\
+else
+    cat ${RESOLVED} |\
         jtk correct_clustering -vv  --threads ${THREADS} |\
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
+
 cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} --no_polish > /dev/null
 cat ${GFA} | awk '($1 ~ /S/)' | awk 'BEGIN{OFS="\n"}{print ">" $2, $4}' > ${GFA%.gfa}.fa

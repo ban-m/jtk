@@ -1044,6 +1044,7 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
             .map(|r| Assignment::new(r.id, 0))
             .collect();
     }
+    dataset.squish_small_contig(&config);
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

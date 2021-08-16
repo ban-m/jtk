@@ -1106,6 +1106,53 @@ impl<'a> DitchGraph<'a> {
         }
         nodes
     }
+    /// Return simple path start from the given node and position, and the destination nodes after this simple path.
+    pub fn simple_path_and_dest(
+        &self,
+        mut node: Node,
+        mut position: Position,
+    ) -> (Vec<Node>, Vec<Node>) {
+        let mut nodes = vec![];
+        loop {
+            // Move position.
+            position = !position;
+            nodes.push(node);
+            let mut edges = self.nodes[&node]
+                .edges
+                .iter()
+                .filter(|e| e.from_position == position);
+            let outdeg = edges.clone().count();
+            if outdeg != 1 {
+                break;
+            }
+            // Pick the edge to be traced.
+            let edge = edges.next().unwrap();
+            // Check the in-deg of the destination.
+            let indeg = self.nodes[&edge.to]
+                .edges
+                .iter()
+                .filter(|e| e.from_position == edge.to_position)
+                .count();
+            assert!(1 <= indeg);
+            if 1 < indeg {
+                break;
+            }
+            // Move node.
+            node = edge.to;
+            position = edge.to_position;
+        }
+        // Collect the destination.
+        let mut dests: Vec<_> = self.nodes[&node]
+            .edges
+            .iter()
+            .filter(|e| e.from_position == position)
+            .map(|e| e.to)
+            .collect();
+        dests.sort_unstable();
+        // Check if there's more than two indegree/outdegree.
+        (nodes, dests)
+    }
+
     /// Remove small tips.
     /// In this function, for all node with the degree of zero,
     /// we speculate the *local* coverage by traversing DIAG distance.
@@ -1454,7 +1501,7 @@ impl<'a> DitchGraph<'a> {
                     .iter()
                     .filter(|edge| edge.from_position == pos)
                     .count();
-                let branching = 1 < edge_num;
+                // let branching = 1 < edge_num;
                 let confluent = if edge_num == 1 {
                     let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
                     let siblings = self.nodes[&edge.to]
@@ -1467,7 +1514,8 @@ impl<'a> DitchGraph<'a> {
                 } else {
                     false
                 };
-                if branching || confluent {
+                // if branching || confluent {
+                if confluent {
                     if let Some(focus) = self.examine_focus(node, pos, &reads, config) {
                         foci.insert((node.node, pos), focus);
                     }
@@ -1488,7 +1536,13 @@ impl<'a> DitchGraph<'a> {
         let dist_nodes = self.enumerate_node_upto(node, pos, 5);
         let reads: Vec<_> = reads.iter().filter(|r| r.contains(node.node)).collect();
         let mut focus: Option<Focus> = None;
-        for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
+        // TODO: Currnetly do not assume 1-distance focus. Is it OK?
+        for (dist, nodes) in dist_nodes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(_, ns)| 1 < ns.len())
+        {
             let dist = dist + 1;
             let mut occs: Vec<_> = vec![0; nodes.len()];
             for read in reads.iter() {
@@ -1825,6 +1879,56 @@ impl<'a> DitchGraph<'a> {
         let mut merged_nodes = merged_nodes;
         merged_nodes.retain(|&x| x != first_node);
         ((first_node, !first_pos), merged_nodes)
+    }
+    /// Squish short bubbles.
+    pub fn squish_bubbles(&self, len: usize) -> HashMap<Node, u64> {
+        let mut squish_to: HashMap<Node, u64> = HashMap::new();
+        for node in self.nodes.values() {
+            for pos in [Position::Head, Position::Tail] {
+                let edges = node.edges.iter().filter(|e| e.from_position == pos);
+                if edges.clone().count() <= 1 {
+                    continue;
+                }
+                let path_and_dest: Vec<_> = edges
+                    .map(|e| self.simple_path_and_dest(e.to, e.to_position))
+                    .collect();
+                let is_bubble = path_and_dest.iter().skip(1).all(|(path, dest)| {
+                    path.len() == path_and_dest[0].0.len()
+                        && path.len() <= len
+                        && dest == &(path_and_dest[0].1)
+                });
+                debug!("BUBBLE\t{:?}\t{}\t{}", node.node, pos, is_bubble);
+                // if node.node.0 == 1421 {
+                //     debug!("DUMP\t{:?}\t{:?}", node.node, path_and_dest);
+                // }
+                if is_bubble {
+                    for (path, _) in path_and_dest.iter() {
+                        let path: Vec<_> =
+                            path.iter().map(|x| format!("{}-{}", x.0, x.1)).collect();
+                        debug!("\t{}", path.join("\t"));
+                    }
+                    let mut convert_table: HashMap<u64, u64> = HashMap::new();
+                    for (path, _) in path_and_dest.iter() {
+                        for &(unit, cluster) in path.iter() {
+                            convert_table
+                                .entry(unit)
+                                .and_modify(|x| *x = (*x).min(cluster))
+                                .or_insert(cluster);
+                        }
+                    }
+                    debug!("CONVERT\t{:?}\t{}\t{:?}", node.node, pos, convert_table);
+                    for (path, _) in path_and_dest.iter() {
+                        for &(unit, cluster) in path.iter() {
+                            squish_to
+                                .entry((unit, cluster))
+                                .and_modify(|to| *to = (*to).min(convert_table[&unit]))
+                                .or_insert(convert_table[&unit]);
+                        }
+                    }
+                }
+            }
+        }
+        squish_to
     }
     /// Z-selection of edges.
     /// In this function, we select edges based on the topology of the graph.

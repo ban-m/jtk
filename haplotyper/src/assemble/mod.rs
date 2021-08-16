@@ -104,76 +104,40 @@ pub trait Assemble {
     /// tangles. It just assemble the dataset into a graph.
     fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
     /// Detecting and squishing clusters with small confidence.
-    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize);
+    fn squish_small_contig(&mut self, c: &AssembleConfig);
 }
 
 impl Assemble for DataSet {
-    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
-        let (_, summaries) = assemble(self, 0, c);
-        let mut squished: Vec<(HashSet<u64>, Vec<_>)> = vec![];
-        for summary in summaries.iter() {
-            let ids: Vec<_> = summary
-                .summary
-                .iter()
-                .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
-                .collect();
-            debug!("DUMP\t{}\t{}", summary.id, ids.join("\t"));
+    fn squish_small_contig(&mut self, c: &AssembleConfig) {
+        {
+            let reads: Vec<_> = self.encoded_reads.iter().collect();
+            let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+            graph.remove_lightweight_edges(2);
+            let squish = graph.squish_bubbles(15);
+            self.encoded_reads
+                .iter_mut()
+                .flat_map(|r| r.nodes.iter_mut())
+                .for_each(|n| match squish.get(&(n.unit, n.cluster)) {
+                    Some(res) => n.cluster = *res,
+                    None => {}
+                });
         }
-        for summary in summaries.iter().filter(|s| s.summary.len() < len) {
-            let probe: HashSet<_> = summary.summary.iter().map(|e| e.unit).collect();
-            let entry: Vec<_> = summary
-                .summary
-                .iter()
-                .map(|e| (e.unit, e.cluster))
-                .collect();
-            let thr = probe.len().saturating_sub(5) / 10;
-            if let Some((idx, _)) = squished
-                .iter()
-                .enumerate()
-                .find(|&(_, (repr, _))| probe.difference(repr).count() <= thr)
-            {
-                squished[idx].1.push(entry);
-                squished[idx].0.extend(probe);
-            } else {
-                squished.push((probe, vec![entry]));
-            }
-        }
-        for (i, (_, contigs)) in squished.iter().enumerate() {
-            for ctg in contigs.iter() {
-                let dump: Vec<_> = ctg.iter().map(|(u, c)| format!("{}-{}", u, c)).collect();
-                debug!("MERGE\t{}\t{}", i, dump.join("\t"));
-            }
-        }
-        let convert_table: HashMap<_, _> = squished
-            .iter()
-            .flat_map(|(_, contigs)| {
-                let mut collapsed: HashMap<_, u64> = HashMap::new();
-                for nodes in contigs {
-                    for &(unit, cluster) in nodes.iter() {
-                        if let Some(x) = collapsed.get_mut(&unit) {
-                            *x = (*x).min(cluster);
-                        } else {
-                            collapsed.insert(unit, cluster);
-                        }
-                    }
-                }
-                contigs
-                    .iter()
-                    .flat_map(|nodes| {
-                        nodes
-                            .iter()
-                            .map(|&(unit, cluster)| ((unit, cluster), collapsed[&unit]))
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        for read in self.encoded_reads.iter_mut() {
-            for node in read.nodes.iter_mut() {
-                if let Some(&to) = convert_table.get(&(node.unit, node.cluster)) {
-                    node.cluster = to;
-                }
-            }
+        {
+            let reads: Vec<_> = self.encoded_reads.iter().collect();
+            let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+            graph.remove_lightweight_edges(2);
+            let cov = self.coverage.unwrap();
+            let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+            graph.remove_zero_copy_elements(cov, &lens, 0.3);
+            graph.transitive_edge_reduction();
+            let squish = graph.squish_bubbles(15);
+            self.encoded_reads
+                .iter_mut()
+                .flat_map(|r| r.nodes.iter_mut())
+                .for_each(|n| match squish.get(&(n.unit, n.cluster)) {
+                    Some(res) => n.cluster = *res,
+                    None => {}
+                });
         }
     }
     fn assemble(&self, c: &AssembleConfig) -> GFA {
@@ -182,12 +146,21 @@ impl Assemble for DataSet {
         let header = gfa::Record::from_contents(header, vec![]);
         let (records, summaries) = assemble(self, 0, c);
         for summary in summaries {
+            let (copy_num, tig_num) = summary
+                .summary
+                .iter()
+                .filter_map(|s| s.copy_number.clone())
+                .fold((0, 0), |(c, x), copynum| (c + copynum, x + 1));
+            let copy_num = match tig_num {
+                0 => 0,
+                _ => (copy_num as f64 / tig_num as f64).round() as usize,
+            };
             let ids: Vec<_> = summary
                 .summary
                 .iter()
                 .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
                 .collect();
-            debug!("{}\t{}", summary.id, ids.join("\t"));
+            debug!("{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
         }
         let mut header = vec![header];
         header.extend(records);
@@ -279,11 +252,12 @@ pub fn assemble(
         if c.to_resolve {
             debug!("Removing ZCEs");
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            // graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            // graph.remove_tips(0.5, 5);
-            // graph.transitive_edge_reduction();
+            graph.remove_zero_copy_elements(cov, &lens, 0.3);
+            graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
-            // graph.resolve_repeats(&reads, c, 5f64);
+            graph.resolve_repeats(&reads, c, 5f64);
+            graph.remove_tips(0.5, 5);
+            // graph.collapse_bubble(c);
             graph.assign_copy_number(cov, &lens);
         }
     }

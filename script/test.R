@@ -178,3 +178,9 @@ features.vector <- normalized.variants.sd %>% group_by(position) %>% nest() %>%
     unnest(cols=c(data))
 
 
+
+combined.data <- corel.data %>% group_by(ID1) %>% nest() %>%
+    mutate(data=map(data,~summarize(.x,PValue=min(PValue)))) %>%
+    unnest(cols=c(data)) %>%
+    rename("unit"=ID1) %>% 
+    full_join(unit.pre, by="unit")

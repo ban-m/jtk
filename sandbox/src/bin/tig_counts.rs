@@ -11,7 +11,6 @@ fn main() -> std::io::Result<()> {
     use std::collections::HashMap;
     // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-
     let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         // let ans = id2desc[&read.id].contains("hapA") as usize;
@@ -31,6 +30,7 @@ fn main() -> std::io::Result<()> {
         .map(|line| {
             let mut line = line.split('\t');
             let id = line.next().unwrap().to_string();
+            let copy_num: usize = line.next().unwrap().parse().unwrap();
             let clusters: Vec<_> = line
                 .filter_map(|x| {
                     let mut elm = x.split('-');
@@ -39,12 +39,12 @@ fn main() -> std::io::Result<()> {
                     Some((unit, cluster))
                 })
                 .collect();
-            (id, clusters)
+            (id, copy_num, clusters)
         })
         .collect();
-    let counts: HashMap<String, [u32; 2]> =
+    let counts: HashMap<String, (usize, [u32; 2])> =
         tigs.iter()
-            .map(|(id, clusters)| {
+            .map(|(id, copy_num, clusters)| {
                 let cs = clusters.iter().filter_map(|key| counts.get(key)).fold(
                     [0, 0],
                     |mut acc, xs| {
@@ -53,12 +53,15 @@ fn main() -> std::io::Result<()> {
                         acc
                     },
                 );
-                (id.clone(), cs)
+                (id.clone(), (*copy_num, cs))
             })
             .collect();
-    for (id, c) in counts {
-        let length = tigs.iter().find(|x| x.0 == id).map(|x| x.1.len()).unwrap();
-        println!("CONTIG\t{}\t{}\t{}\t{}", id, length, c[0], c[1]);
+    for (id, (copy_num, c)) in counts {
+        let length = tigs.iter().find(|x| x.0 == id).map(|x| x.2.len()).unwrap();
+        println!(
+            "CONTIG\t{}\t{}\t{}\t{}\t{}",
+            id, copy_num, length, c[0], c[1]
+        );
     }
     Ok(())
 }
