@@ -184,3 +184,10 @@ combined.data <- corel.data %>% group_by(ID1) %>% nest() %>%
     unnest(cols=c(data)) %>%
     rename("unit"=ID1) %>% 
     full_join(unit.pre, by="unit")
+
+features %>% filter(type=="Cp" & pos < 500)  %>% ggplot() + geom_raster(aes(x=pos,y=readid,fill=lk)) + scale_fill_gradient2(low="blue",high = "orange") + facet_wrap(.~len) + labs(x="Position(bp)", y="ReadID", fill="Fold change(Score)")
+
+edge.data <- read_tsv("dip-A-CS.edge")
+edge.data <- read_tsv("dbb.edge")
+edge.data <- read_tsv("hg002.edge")
+g <- edge.data %>% filter(len < 6000) %>%  ggplot() + geom_histogram(aes(x=len))

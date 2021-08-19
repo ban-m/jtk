@@ -1,58 +1,44 @@
-use std::io::{BufRead, BufReader};
+use definitions::*;
+use std::collections::HashMap;
+use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let seqs = std::fs::File::open(&args[1])
-        .map(BufReader::new)?
-        .lines()
-        .filter_map(|line| line.ok());
-    let template: Vec<_> = std::fs::File::open(&args[2])
-        .map(BufReader::new)?
-        .lines()
-        .find_map(|line| line.ok())
-        .unwrap()
-        .into_bytes();
-    let features: Vec<_> = std::fs::File::open(&args[3])
-        .map(BufReader::new)?
-        .lines()
-        .filter_map(|line| line.ok())
-        .map(|line| {
-            line.split(',')
-                .map(|x| -> f64 { x.parse().unwrap() })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let queries: Vec<_> = seqs
-        .map(|line| {
-            let mut line = line.split('\t');
-            let name = line.next().unwrap().to_string();
-            let is_dbb = line.next().unwrap() == "true";
-            let asn: u8 = line.next().unwrap().parse().unwrap();
-            let seq = line.next().unwrap().to_string();
-            (is_dbb, asn, name, seq)
-        })
-        .collect();
-    let (answer, queries): (Vec<_>, Vec<_>) = queries
-        .into_iter()
-        //.filter_map(|(is_dbb, asn, seq)| (asn != 0).then(|| (is_dbb, seq)))
-        .map(|(is_dbb, _, name, seq)| ((is_dbb, name), seq))
-        .unzip();
+    let ds: DataSet =
+        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
+            .unwrap();
     use haplotyper::local_clustering;
-    let mut config = local_clustering::kmeans::ClusteringConfig::new(100, 4, 28f64);
-    use rand::SeedableRng;
-    use rand_xoshiro::Xoroshiro128Plus;
-    let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(293);
-    let queries: Vec<_> = queries.iter().map(|x| x.as_bytes()).collect();
-    let asn = local_clustering::kmeans::clustering_w_template(
-        &template,
-        &features,
-        &queries,
-        &mut rng,
-        &mut config,
-    )
-    .unwrap();
-    for (asn, (id, name)) in asn.iter().zip(answer.iter()) {
-        println!("{}\t{}\t{}", asn, id, name);
+    let units: Vec<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    // let id2desc: HashMap<_, _> = ds
+    //     .raw_reads
+    //     .iter()
+    //     .map(|read| (read.id, &read.desc))
+    //     .collect();
+    for unit in units {
+        let unit = ds.selected_chunks.iter().find(|u| u.id == unit).unwrap();
+        let mut config =
+            local_clustering::kmeans::ClusteringConfig::new(100, unit.cluster_num as u8, 28f64);
+        use rand::SeedableRng;
+        use rand_xoshiro::Xoroshiro128Plus;
+        let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(293);
+        let (queries, ids): (Vec<_>, Vec<_>) = ds
+            .encoded_reads
+            .iter()
+            .flat_map(|r| {
+                r.nodes
+                    .iter()
+                    .filter(|n| n.unit == unit.id)
+                    .map(|n| (n.seq(), r.id))
+                    .collect::<Vec<_>>()
+            })
+            .unzip();
+        log::debug!("{}", queries.len());
+        let (asn, _, _) =
+            local_clustering::kmeans::clustering(&queries, &mut rng, &mut config).unwrap();
+        // for (asn, id) in asn.iter().zip(ids) {
+        //     let is_hapa = id2desc[&id].contains("252v2") as u8;
+        //     println!("{}\t{}", asn, is_hapa);
+        // }
     }
     Ok(())
 }
