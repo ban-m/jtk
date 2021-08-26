@@ -101,8 +101,8 @@ pub fn correct_deletion_error(
     //     .collect();
 }
 
-// 0.3 * unit.seq() distance is regarded as too far: corresponding 30% errors.
-const ALIGN_LIMIT: f64 = 0.3;
+// 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
+const ALIGN_LIMIT: f64 = 0.35;
 // Try to Encode Node. Return Some(node) if the alignment is good.
 fn encode_node(
     seq: &[u8],
@@ -161,57 +161,6 @@ fn encode_node(
         cigar: ops,
     };
     Some(node)
-    // let (dist, ops) = kiley::bialignment::edit_dist_slow_ops_semiglobal(unit.seq(), &query);
-    // let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
-    // Leading/Trailing bases are offsets.
-    // if dist_thr + 2 * (OFFSET as u32) < dist {
-    //     return None;
-    // };
-    // let mut ops = super::compress_kiley_ops(&ops);
-    // How many bases are regarded as insertion from `start` position.
-    // If the sequence is revcmped, it is lengt of the unnesesarry trailing sequence.
-    // Remove leading insertions.
-    // let removed_base_from_start = if let Some(&Op::Ins(l)) = ops.first() {
-    //     ops.remove(0);
-    //     l
-    // } else {
-    //     0
-    // };
-    // // Remove trailing insertions.
-    // let removed_base_from_end = if let Some(&Op::Ins(l)) = ops.last() {
-    //     ops.pop();
-    //     l
-    // } else {
-    //     0
-    // };
-    // // Check whether there is too large indels.
-    // if ops.iter().any(|op| match *op {
-    //     Op::Ins(l) | Op::Del(l) => l > super::INDEL_THRESHOLD,
-    //     _ => false,
-    // }) {
-    //     return None;
-    // }
-    // // Now we know this alignment is valid.
-    // let (start, end) = if is_forward {
-    //     (start + removed_base_from_start, end - removed_base_from_end)
-    // } else {
-    //     (start + removed_base_from_end, end - removed_base_from_start)
-    // };
-    // let seq = if is_forward {
-    //     seq[start..end].to_vec()
-    // } else {
-    //     bio_utils::revcmp(&seq[start..end])
-    // };
-    // unit.seq().iter().all(|x| x.is_ascii_uppercase());
-    // seq.iter().all(|x| x.is_ascii_uppercase());
-    // Some(Node {
-    //     position_from_start: start,
-    //     unit: unit.id,
-    //     cluster: 0,
-    //     is_forward,
-    //     seq: String::from_utf8(seq).unwrap(),
-    //     cigar: ops,
-    // })
 }
 
 // Align read skeltons to read, return the pileup sumamries.
