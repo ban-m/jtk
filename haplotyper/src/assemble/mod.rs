@@ -322,31 +322,36 @@ fn polish_segment(
     gfa::Segment::from(segment.sid.clone(), seq.len(), Some(seq))
 }
 
-fn get_reads_in_cluster<'a>(ds: &'a DataSet, summary: &ContigSummary) -> Vec<&'a RawRead> {
+fn get_reads_in_cluster<'a>(ds: &'a DataSet, summary: &ContigSummary) -> Vec<&'a [u8]> {
     let contained_unit: HashSet<(u64, u64)> = summary
         .summary
         .iter()
         .map(|elm| (elm.unit, elm.cluster))
         .collect();
-    let ids: HashSet<_> = ds
+    let ranges: HashMap<_, _> = ds
         .encoded_reads
         .iter()
-        .filter(|r| {
-            r.nodes
+        .filter_map(|r| {
+            let mut nodes = r
+                .nodes
                 .iter()
-                .any(|n| contained_unit.contains(&(n.unit, n.cluster)))
+                .filter(|n| contained_unit.contains(&(n.unit, n.cluster)));
+            let start = nodes.next()?;
+            let end = nodes.last()?;
+            let start = start.position_from_start;
+            let end = end.position_from_start + end.query_length();
+            Some((r.id, (start, end)))
         })
-        .map(|r| r.id)
         .collect();
     ds.raw_reads
         .iter()
-        .filter(|r| ids.contains(&r.id))
+        .filter_map(|r| ranges.get(&r.id).map(|&(s, e)| &r.seq()[s..e]))
         .collect()
 }
 
 fn align_reads(
     segment: &gfa::Segment,
-    reads: &[&RawRead],
+    reads: &[&[u8]],
     c: &AssembleConfig,
 ) -> std::io::Result<kiley::sam::Sam> {
     use rand::{thread_rng, Rng};
@@ -368,8 +373,8 @@ fn align_reads(
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
         let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
-        for read in reads.iter() {
-            writeln!(&mut wtr, ">{}\n{}", read.name, read.seq)?;
+        for (i, seq) in reads.iter().enumerate() {
+            writeln!(&mut wtr, ">{}\n{}", i, String::from_utf8_lossy(seq))?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();
@@ -397,7 +402,7 @@ fn align_reads(
 pub fn polish_by_chunking(
     alignments: &kiley::sam::Sam,
     segment: &gfa::Segment,
-    reads: &[&RawRead],
+    reads: &[&[u8]],
     c: &AssembleConfig,
 ) -> Vec<u8> {
     let template_seq = match segment.sequence.as_ref() {
@@ -408,7 +413,8 @@ pub fn polish_by_chunking(
     debug!("Recording {} alignments...", alignments.records.len());
     let reads: Vec<_> = reads
         .iter()
-        .map(|r| (r.name.clone(), r.seq().to_vec()))
+        .enumerate()
+        .map(|(i, r)| (format!("{}", i), r.to_vec()))
         .collect();
     use kiley::gphmm::*;
     let model = GPHMM::<Cond>::clr();

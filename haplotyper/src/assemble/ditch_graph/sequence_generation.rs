@@ -2,6 +2,7 @@
 use super::*;
 impl<'a> super::DitchGraph<'a> {
     /// Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
+    /// The contig summary contains the units used to construct a contig in the traversing order.
     pub fn spell(
         &self,
         c: &AssembleConfig,
@@ -50,6 +51,8 @@ impl<'a> super::DitchGraph<'a> {
     }
 
     // Traverse from the given `start` node of `start_position` Position.
+    // The retuened ContigSummary contains which (unit,cluster) elements is used to
+    // construct this contig, in the order of apprearance.
     fn traverse_from(
         &self,
         arrived: &mut HashSet<Node>,

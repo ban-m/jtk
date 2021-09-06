@@ -6,16 +6,12 @@ fn main() -> std::io::Result<()> {
     let start = std::time::Instant::now();
     let mut ds: DataSet =
         serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new)?).unwrap();
-    // ds.encoded_reads
-    //     .iter_mut()
-    //     .flat_map(|r| r.nodes.iter_mut())
-    //     .for_each(|n| n.cluster = 0);
     let end = std::time::Instant::now();
     eprintln!("Open\t{}", (end - start).as_secs());
     use haplotyper::assemble::AssembleConfig;
     use haplotyper::Assemble;
     let config = AssembleConfig::new(2, 100, false, true);
-    ds.squish_small_contig(&config);
+    // ds.squish_small_contig(&config);
     let gfa = ds.assemble(&config);
     println!("{}", gfa);
     Ok(())

@@ -191,3 +191,8 @@ edge.data <- read_tsv("dip-A-CS.edge")
 edge.data <- read_tsv("dbb.edge")
 edge.data <- read_tsv("hg002.edge")
 g <- edge.data %>% filter(len < 6000) %>%  ggplot() + geom_histogram(aes(x=len))
+
+
+tig.data <- read_tsv("temp.count", col_names = c("id","copy","len","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, )
+

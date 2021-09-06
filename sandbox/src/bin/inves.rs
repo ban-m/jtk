@@ -1,25 +1,45 @@
-use definitions::*;
-use std::collections::HashMap;
+use kiley::sam::Sam;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet =
-        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
-            .unwrap();
-    let id2desc: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|r| (r.id, r.desc.contains("252v2")))
-        .collect();
-    let mut counts = vec![[0; 2], [0; 2]];
-    for read in ds.encoded_reads.iter() {
-        for node in read.nodes.iter().filter(|n| n.unit == 296) {
-            counts[node.cluster as usize][id2desc[&read.id] as usize] += 1;
+    let records = std::fs::File::open(&args[1])
+        .map(BufReader::new)
+        .map(Sam::from_reader)?;
+    let record = kiley::fasta::read_fasta(&Some(&args[2]))?;
+    let (mut xpos, mut ypos) = (0, 0);
+    let (xs, ys) = (&record[0].1, &record[1].1);
+    let ofs = 5;
+    for op in records.records[0].cigar().iter() {
+        match op {
+            kiley::sam::Op::Match(l) | kiley::sam::Op::Align(l) => {
+                xpos += l;
+                ypos += l;
+            }
+            kiley::sam::Op::Insertion(l) => {
+                ypos += l;
+                let xseq = String::from_utf8_lossy(&xs[xpos - ofs..xpos + ofs]);
+                let yseq = String::from_utf8_lossy(&ys[ypos - ofs..ypos + ofs]);
+                println!("{},{},{},I,{},{}", xpos, ypos, l, xseq, yseq);
+            }
+            kiley::sam::Op::Deletion(l) => {
+                xpos += l;
+                let xseq = String::from_utf8_lossy(&xs[xpos - ofs..xpos + ofs]);
+                let yseq = String::from_utf8_lossy(&ys[ypos - ofs..ypos + ofs]);
+                println!("{},{},{},D,{},{}", xpos, ypos, l, xseq, yseq);
+            }
+            kiley::sam::Op::Mismatch(l) => {
+                xpos += l;
+                ypos += l;
+                let xseq = String::from_utf8_lossy(&xs[xpos - ofs..xpos + ofs]);
+                let yseq = String::from_utf8_lossy(&ys[ypos - ofs..ypos + ofs]);
+                println!("{},{},{},M,{},{}", xpos, ypos, l, xseq, yseq);
+            }
+            kiley::sam::Op::SoftClip(l) | kiley::sam::Op::HardClip(l) => {
+                ypos += l;
+            }
+            _ => {}
         }
-    }
-    for i in 0..2 {
-        println!("{:?}", counts[i]);
     }
     Ok(())
 }

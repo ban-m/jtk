@@ -90,12 +90,24 @@ pub fn local_clustering_all(ds: &mut DataSet) {
         })
         .collect();
     for unit in ds.selected_chunks.iter_mut() {
-        if let Some((_consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-            // TODO: By modifying the unit sequence, we should also modify the
-            // alignment in the unit sequence!
-            // unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+        if let Some((consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+            unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
             unit.cluster_num = *cluster_num as usize;
         }
+    }
+    // Modify alignment so that the alignment would be valid.
+    // We would do this very rough, because anyway we do not like to use this alignment in the future.
+    // TODO: Make this banded procedure into SWG with banded mode.
+    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
+    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+        let unit = units[&node.unit];
+        let band_size = (unit.seq().len() / 10).max(5);
+        let (_, cigar) =
+            match kiley::bialignment::edit_dist_banded(unit.seq(), node.seq(), band_size) {
+                Some(res) => res,
+                None => kiley::bialignment::edit_dist_slow_ops(unit.seq(), node.seq()),
+            };
+        node.cigar = crate::encode::compress_kiley_ops(&cigar);
     }
 }
 

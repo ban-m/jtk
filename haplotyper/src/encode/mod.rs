@@ -226,7 +226,7 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         })
 }
 
-fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
+pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
     assert!(!k_ops.is_empty());
     let (mut current_op, mut len) = (k_ops[0], 1);
     let mut ops = vec![];

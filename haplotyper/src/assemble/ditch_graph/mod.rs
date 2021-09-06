@@ -1881,6 +1881,18 @@ impl<'a> DitchGraph<'a> {
         ((first_node, !first_pos), merged_nodes)
     }
     /// Squish short bubbles.
+    /// In other words, if there is a branch,
+    /// where the children have the same length,
+    /// and the same content w.r.t their unit IDs,
+    /// then it squish these children into one contig.
+    /// Note that this proc is *not* bubble collapsing.
+    /// For example, it squish the small contig B,C, as follows:
+    ///          --|--B--|----- -|--D--|-- ...
+    ///        /              /
+    /// ---A---              /
+    ///        \___|__C__|__/__|__E__|___ ...
+    /// (Be careful. The B contig is connecting to D, not E, whereas
+    /// C is connecting to both D and E.
     pub fn squish_bubbles(&self, len: usize) -> HashMap<Node, u64> {
         let mut squish_to: HashMap<Node, u64> = HashMap::new();
         for node in self.nodes.values() {
@@ -1892,15 +1904,23 @@ impl<'a> DitchGraph<'a> {
                 let path_and_dest: Vec<_> = edges
                     .map(|e| self.simple_path_and_dest(e.to, e.to_position))
                     .collect();
-                let is_bubble = path_and_dest.iter().skip(1).all(|(path, dest)| {
-                    path.len() == path_and_dest[0].0.len()
-                        && path.len() <= len
-                        && dest == &(path_and_dest[0].1)
-                });
+                // TODO: By unncomment this comment, the function would be 'bubble collapsing'.
+                // let is_bubble = path_and_dest.iter().skip(1).all(|(path, _dest)| {
+                // path.len() == path_and_dest[0].0.len() && path.len() <= len
+                // && dest == &(path_and_dest[0].1)
+                // });
+                let is_bubble = {
+                    let paths: Vec<_> = path_and_dest
+                        .iter()
+                        .map(|x| {
+                            let mut units: Vec<_> = x.0.iter().map(|x| x.0).collect();
+                            units.sort();
+                            units
+                        })
+                        .collect();
+                    paths.iter().all(|us| us == &paths[0] && us.len() <= len)
+                };
                 debug!("BUBBLE\t{:?}\t{}\t{}", node.node, pos, is_bubble);
-                // if node.node.0 == 1421 {
-                //     debug!("DUMP\t{:?}\t{:?}", node.node, path_and_dest);
-                // }
                 if is_bubble {
                     for (path, _) in path_and_dest.iter() {
                         let path: Vec<_> =
