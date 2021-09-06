@@ -152,15 +152,16 @@ impl HiCPair {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit {
     pub id: u64,
     /// Unit sequence. This is a string on a alphabet A,C,G,T,a,c,g,t
     pub seq: String,
     /// Current estimation of the cluster number.
     pub cluster_num: usize,
-    // /// The initial guess of the cluster number.
-    // pub initial_cluster_num: usize,
+    /// Local clustering score. If not clustered, zero.
+    pub score: f64, // /// The initial guess of the cluster number.
+                    // pub initial_cluster_num: usize
 }
 
 impl Unit {
@@ -169,6 +170,7 @@ impl Unit {
             id,
             seq,
             cluster_num,
+            score: 0f64,
             // initial_cluster_num: cluster_num,
         }
     }

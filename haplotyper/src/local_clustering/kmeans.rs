@@ -63,22 +63,22 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, cons_template.len());
-        for (pos, lk) in probes.iter() {
-            let (idx, t) = (pos / 9, pos % 9);
-            if idx < cons_template.len() {
-                debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
-            } else {
-                let idx = pos - 9 * cons_template.len();
-                if idx < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
-                    let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                    debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
-                } else {
-                    let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
-                    let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
-                    debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
-                };
-            }
-        }
+        // for (pos, lk) in probes.iter() {
+        //     let (idx, t) = (pos / 9, pos % 9);
+        //     if idx < cons_template.len() {
+        //         debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
+        //     } else {
+        //         let idx = pos - 9 * cons_template.len();
+        //         if idx < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
+        //             let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+        //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
+        //         } else {
+        //             let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
+        //             let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
+        //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
+        //         };
+        //     }
+        // }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
@@ -113,10 +113,10 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //         Some((asn, mod_score, k))
     //     })
     //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())?;
-    for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
-        let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-        debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
-    }
+    // for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
+    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+    //     debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
+    // }
     Some((assignments, cons_template, score))
 }
 
@@ -142,22 +142,22 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
-        for (pos, lk) in probes.iter() {
-            let (idx, t) = (pos / 9, pos % 9);
-            if idx < template.len() {
-                debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
-            } else {
-                let idx = pos - 9 * template.len();
-                if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-                    let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                    debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
-                } else {
-                    let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-                    let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
-                    debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
-                };
-            }
-        }
+        // for (pos, lk) in probes.iter() {
+        //     let (idx, t) = (pos / 9, pos % 9);
+        //     if idx < template.len() {
+        //         debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
+        //     } else {
+        //         let idx = pos - 9 * template.len();
+        //         if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+        //             let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+        //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
+        //         } else {
+        //             let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+        //             let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
+        //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
+        //         };
+        //     }
+        // }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
@@ -171,7 +171,7 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         let (asn, new_score) = (0..num)
             .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-        debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
+        // debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
         if score + AVERAGE_LK * coverage < new_score {
             assignments = asn;
             score = new_score;
@@ -192,10 +192,10 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //         Some((asn, mod_score, k))
     //     })
     //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())?;
-    for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
-        let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-        debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
-    }
+    // for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
+    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+    //     debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
+    // }
     Some(assignments)
 }
 

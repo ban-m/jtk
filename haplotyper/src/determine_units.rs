@@ -121,6 +121,7 @@ impl DetermineUnit for definitions::DataSet {
                     id: idx as u64,
                     seq: String::from_utf8_lossy(seq).to_string(),
                     cluster_num: config.min_cluster,
+                    score: 0f64,
                 })
                 .collect()
         } else {
@@ -139,6 +140,7 @@ impl DetermineUnit for definitions::DataSet {
                     id: idx as u64,
                     seq: String::from_utf8_lossy(seq).to_string(),
                     cluster_num: config.min_cluster,
+                    score: 0f64,
                 })
                 .collect();
             debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
@@ -362,6 +364,7 @@ fn fill_sparse_region(mut ds: DataSet, config: &UnitConfig) -> DataSet {
             id: i as u64 + last_unit,
             seq: String::from_utf8_lossy(seq).to_string(),
             cluster_num: config.min_cluster,
+            score: 0f64,
         }));
     ds
 }

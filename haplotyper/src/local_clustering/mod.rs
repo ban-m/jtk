@@ -86,13 +86,14 @@ pub fn local_clustering_all(ds: &mut DataSet) {
                 "RECORD\t{}\t{}\t{}\t{}\t{:.3}",
                 unit_id, elapsed, prevcl, cl, score
             );
-            (unit_id, (consensus, config.cluster_num))
+            (unit_id, (consensus, score, config.cluster_num))
         })
         .collect();
     for unit in ds.selected_chunks.iter_mut() {
-        if let Some((consensus, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+        if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
             unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
             unit.cluster_num = *cluster_num as usize;
+            unit.score = *score;
         }
     }
     // Modify alignment so that the alignment would be valid.

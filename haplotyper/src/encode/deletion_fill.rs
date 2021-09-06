@@ -120,6 +120,7 @@ fn encode_node(
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
+    // TODO: Make this into usual SWG-banded alignment, or its local mode..
     let alignment = edlib_sys::edlib_align(unit.seq(), &query, mode, task);
     let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
     let locations = alignment.locations.unwrap();

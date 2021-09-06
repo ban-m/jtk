@@ -64,14 +64,17 @@ class Unit:
     seq: str
     cluster_num: int
         The number clusters this unit should have.
+    score: float
+        The likelihood-gain in the local clustering procedure. 0 if not clustered yet.
     """
-    def __init__(self, identification, seq, cluster_num):
+    def __init__(self, identification, seq, cluster_num, score):
         """
         Initialization method. Users should not call this method directlly.
         """
         self.id = identification
         self.seq = seq
         self.cluster_num = cluster_num
+        self.score = score
 
 class EncodedRead:
     """
@@ -244,8 +247,9 @@ def as_dataset(dct):
                        seq = dct['seq'])
     elif 'id' in dct and\
          'seq' in dct and\
-         'cluster_num' in dct:
-        return Unit(identification = dct['id'], seq = dct['seq'], cluster_num=dct['cluster_num'])
+         'cluster_num' in dct and \
+         'score' in dct:
+        return Unit(identification = dct['id'], seq = dct['seq'], cluster_num=dct['cluster_num'], score=dct['score'])
     elif 'original_length' in dct :
         return EncodedRead(idn = dct['id'],
                            original_length = dct['original_length'],
@@ -311,7 +315,9 @@ class DataSetEncoder(json.JSONEncoder):
         elif isinstance(obj, Unit):
             return {
                 'id': obj.id,
-                'seq': obj.seq
+                'seq': obj.seq,
+                'cluster_num': obj.cluster_num,
+                'score': obj.score,
             }
         elif isinstance(obj, EncodedRead):
             return {
