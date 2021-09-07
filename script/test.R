@@ -193,6 +193,32 @@ edge.data <- read_tsv("hg002.edge")
 g <- edge.data %>% filter(len < 6000) %>%  ggplot() + geom_histogram(aes(x=len))
 
 
-tig.data <- read_tsv("temp.count", col_names = c("id","copy","len","hap1","hap2")) %>%
-    mutate(total=hap1+hap2, )
+tig.data <- read_tsv("dbb.contig", col_names = c("id","copy","len","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
+em.lk.data <- read_tsv("em_data.tsv")
+
+em.lk.summary <- em.lk.data %>% group_by(num,span) %>% nest() %>%
+    mutate(data=map(data,~summarize(.x,lk=mean(lk),null=mean(null)))) %>%
+    unnest(cols=c(data))
+
+em.lk.summary <- em.lk.data %>% mutate(diff=lk-null) %>% group_by(span,num) %>%
+    nest() %>%
+    mutate(data=map(data,~summarize(.x,  counts=sum(diff>0), diff=mean(diff), rand_index=mean(rand_index)))) %>%
+    unnest(cols=c(data))
+
+
+
+
+em.lk.summary.onlysuc <- em.lk.data %>% filter(clusternum==2) %>% group_by(span,num) %>%
+    nest() %>%
+    mutate(data=map(data,~summarize(.x,  rand_index=mean(rand_index)))) %>%
+    unnest(cols=c(data))
+
+em.lk.summary %>% ggplot() + geom_line(aes(x=num,y=diff)) + facet_wrap(.~span)
+
+span.probs <- read_tsv("span.tsv")
+
+
+var_pos <- read_csv("diffs.csv",col_names=FALSE)
+var_pos %>% ggplot() + geom_point(aes(x=X1,y=X2,size=X3,color=X4))

@@ -152,8 +152,8 @@ pub fn em_clustering(
     };
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let cluster_num = config.cluster_num;
-    let (asn, lk) = em_clustering_inner(&contexts, cluster_num, &mut rng);
-    (asn, lk, cluster_num)
+    let (asn, lk, offset) = em_clustering_inner(&contexts, cluster_num, &mut rng);
+    (asn, lk - offset, cluster_num)
 }
 
 pub fn initialize_weights<R: Rng>(contexts: &[Context], k: usize, rng: &mut R) -> Vec<Vec<f64>> {
@@ -232,7 +232,7 @@ pub fn em_clustering_inner<R: Rng>(
     contexts: &[Context],
     k: usize,
     rng: &mut R,
-) -> (Vec<(u64, usize, u64)>, f64) {
+) -> (Vec<(u64, usize, u64)>, f64, f64) {
     let mut weights: Vec<_> = match rng.gen_bool(0.5) {
         true => contexts
             .iter()
@@ -305,7 +305,7 @@ pub fn em_clustering_inner<R: Rng>(
         let model_param: usize = model.models.iter().map(|m| m.num_param()).sum();
         (model_param + k - 1) as f64
     };
-    (predictions, lk - offset)
+    (predictions, lk, offset)
 }
 
 // TODO: Add direction.

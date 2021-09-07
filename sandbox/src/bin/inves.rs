@@ -1,8 +1,35 @@
-use kiley::sam::Sam;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
+    // use definitions::*;
+    // let ds: DataSet = std::fs::File::open(&args[1])
+    //     .map(BufReader::new)
+    //     .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    // let counts: Vec<_> = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .filter_map(|r| {
+    //         let nodes: Vec<_> = r
+    //             .nodes
+    //             .iter()
+    //             .filter_map(|n| [905, 924].contains(&n.unit).then(|| (n.unit, n.cluster)))
+    //             .collect();
+    //         (nodes.len() == 2).then(|| nodes)
+    //     })
+    //     .collect();
+    // for nodes in counts {
+    //     println!("{:?}", nodes);
+    // }
+
+    // let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    // use haplotyper::assemble::copy_number::CoverageCalibrator;
+    // let calib = CoverageCalibrator::new(&lens);
+    // println!("gaplen\tspan");
+    // for len in (0..).map(|i| 1_000 + 1_000 * i).take_while(|&x| x < 50_000) {
+    //     println!("{}\t{}", len, calib.prob_spanning(len));
+    // }
+    use kiley::sam::Sam;
     let records = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(Sam::from_reader)?;
