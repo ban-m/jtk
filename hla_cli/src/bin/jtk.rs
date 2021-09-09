@@ -604,7 +604,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
 }
 
 fn subcommand_encode_densely() -> App<'static, 'static> {
-    SubCommand::with_name("encode_densly")
+    SubCommand::with_name("encode_densely")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Encoding homologoud diplotig in densely.")
@@ -1159,7 +1159,7 @@ fn main() -> std::io::Result<()> {
         ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
         ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
         ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),
-        ("encode_densly", Some(sub_m)) => encode_densely(sub_m, ds),
+        ("encode_densely", Some(sub_m)) => encode_densely(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
         ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
         ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),
