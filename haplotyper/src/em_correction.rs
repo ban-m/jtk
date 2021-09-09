@@ -12,6 +12,7 @@ pub struct Config {
     seed: u64,
     cluster_num: usize,
     coverage_thr: usize,
+    to_use_offset: bool,
     focal: u64,
 }
 
@@ -21,6 +22,7 @@ impl Config {
         seed: u64,
         cluster_num: usize,
         focal: u64,
+        to_use_offset: bool,
         coverage: usize,
     ) -> Self {
         Self {
@@ -28,13 +30,26 @@ impl Config {
             seed,
             cluster_num,
             focal,
+            to_use_offset,
             coverage_thr: coverage,
         }
     }
 }
 
 pub trait ClusteringCorrection {
-    fn correct_clustering_em(self, repeat_num: usize, coverage_thr: usize, len_thr: usize) -> Self;
+    fn correct_clustering_em(
+        self,
+        repeat_num: usize,
+        coverage_thr: usize,
+        to_regularize: bool,
+    ) -> Self;
+    fn correct_clustering_em_on_selected(
+        self,
+        repeat_num: usize,
+        coverage_thr: usize,
+        to_regularize: bool,
+        selection: &HashSet<u64>,
+    ) -> Self;
 }
 
 impl ClusteringCorrection for DataSet {
@@ -42,7 +57,7 @@ impl ClusteringCorrection for DataSet {
         mut self,
         repeat_num: usize,
         coverage_thr: usize,
-        _len_thr: usize,
+        to_regularize: bool,
     ) -> Self {
         // First, try to "squish" all the units with no variants.
         let to_squish = {
@@ -77,7 +92,8 @@ impl ClusteringCorrection for DataSet {
                     .enumerate()
                     .map(|(i, k)| {
                         let seed = unit_id * (i * k) as u64;
-                        let config = Config::new(repeat_num, seed, k, unit_id, coverage_thr);
+                        let config =
+                            Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
                         em_clustering(&reads, &config)
                     })
                     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
@@ -86,12 +102,60 @@ impl ClusteringCorrection for DataSet {
                 (new_clustering, (lk, cluster_num))
             })
             .unzip();
-        // We do not need to do this...
-        // let cluster_size: Vec<_> = cluster_size_and_lk.iter().map(|x| x.1).collect();
-        // self.selected_chunks
-        //     .iter_mut()
-        //     .zip(cluster_size)
-        //     .for_each(|(unit, c)| unit.cluster_num = c);
+        let result: HashMap<u64, Vec<(usize, u64)>> =
+            result.iter().fold(HashMap::new(), |mut acc, results| {
+                for &(id, pos, cluster) in results {
+                    acc.entry(id).or_default().push((pos, cluster));
+                }
+                acc
+            });
+        for read in self.encoded_reads.iter_mut() {
+            if let Some(corrected) = result.get(&read.id) {
+                for &(pos, cluster) in corrected {
+                    read.nodes[pos].cluster = cluster;
+                }
+            }
+        }
+        self
+    }
+    fn correct_clustering_em_on_selected(
+        mut self,
+        repeat_num: usize,
+        coverage_thr: usize,
+        to_regularize: bool,
+        selection: &HashSet<u64>,
+    ) -> Self {
+        let result: Vec<_> = self
+            .selected_chunks
+            .par_iter()
+            .filter(|c| selection.contains(&c.id))
+            .map(|ref_unit| {
+                let unit_id = ref_unit.id;
+                let reads: Vec<_> = self
+                    .encoded_reads
+                    .iter()
+                    .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
+                    .collect();
+                let k = ref_unit.cluster_num;
+                if reads.is_empty() {
+                    debug!("Unit {} does not appear in any read.", unit_id);
+                    return vec![];
+                }
+                let (new_clustering, lk, cluster_num) = (1..=k)
+                    .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+                    .enumerate()
+                    .map(|(i, k)| {
+                        let seed = unit_id * (i * k) as u64;
+                        let config =
+                            Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
+                        em_clustering(&reads, &config)
+                    })
+                    .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+                    .unwrap();
+                debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
+                new_clustering
+            })
+            .collect();
         let result: HashMap<u64, Vec<(usize, u64)>> =
             result.iter().fold(HashMap::new(), |mut acc, results| {
                 for &(id, pos, cluster) in results {
@@ -153,7 +217,12 @@ pub fn em_clustering(
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let cluster_num = config.cluster_num;
     let (asn, lk, offset) = em_clustering_inner(&contexts, cluster_num, &mut rng);
-    (asn, lk - offset, cluster_num)
+    let lk = if config.to_use_offset {
+        lk - offset
+    } else {
+        lk
+    };
+    (asn, lk, cluster_num)
 }
 
 pub fn initialize_weights<R: Rng>(contexts: &[Context], k: usize, rng: &mut R) -> Vec<Vec<f64>> {

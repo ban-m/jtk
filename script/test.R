@@ -222,3 +222,25 @@ span.probs <- read_tsv("span.tsv")
 
 var_pos <- read_csv("diffs.csv",col_names=FALSE)
 var_pos %>% ggplot() + geom_point(aes(x=X1,y=X2,size=X3,color=X4))
+
+
+selected.answers <- read_tsv("1744.ans", col_names = FALSE) %>% select(X1,X2) %>% rename(answer=X2)
+selected.vars <- read_tsv("1744.var", col_names = FALSE) %>% 
+    full_join(selected.answers, by="X1")
+len <- length(selected.vars$X1)
+
+longer.selected.vars <- selected.vars %>%
+    rename(ReadID=X1)%>% 
+    arrange(X2) %>%
+    pivot_longer(cols= !ReadID, names_to = "Position", values_to = "LK") 
+g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) +
+    scale_fill_gradient2(low="blue", high="orange")
+
+
+longer.selected.vars <- selected.vars %>%
+    arrange(X2) %>%
+    rename(ReadID=X1)%>%
+    mutate(ReadID=1:len) %>% 
+    pivot_longer(cols= !ReadID, names_to = "Position", values_to = "LK") 
+g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) +
+    scale_fill_gradient2(low="blue", high="orange")

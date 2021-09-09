@@ -603,6 +603,29 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_encode_densely() -> App<'static, 'static> {
+    SubCommand::with_name("encode_densly")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Encoding homologoud diplotig in densely.")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value(&"1")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_assemble() -> App<'static, 'static> {
     SubCommand::with_name("assemble")
         .version("0.1")
@@ -979,17 +1002,13 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
         .value_of("coverage_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let len_thr: usize = matches
-        .value_of("length_threshold")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    Ok(dataset.correct_clustering_em(repeat_num, threshold, len_thr))
+    Ok(dataset.correct_clustering_em(repeat_num, threshold, true))
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -1015,6 +1034,22 @@ fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
     use haplotyper::re_clustering::*;
     let config = ReClusteringConfig::new(threads, repeat_num, threshold);
     Ok(dataset.re_clustering(&config))
+}
+
+fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    use haplotyper::dense_encoding::*;
+    let config = DenseEncodingConfig::new();
+    Ok(dataset.dense_encoding(&config))
 }
 
 fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
@@ -1094,6 +1129,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_partition_local())
         .subcommand(subcommand_partition_global())
         .subcommand(subcommand_correct_clustering())
+        .subcommand(subcommand_encode_densely())
         .subcommand(subcommand_assemble())
         .subcommand(subcommand_pick_components())
         .subcommand(subcommand_mask_repeats())
@@ -1123,6 +1159,7 @@ fn main() -> std::io::Result<()> {
         ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
         ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
         ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),
+        ("encode_densly", Some(sub_m)) => encode_densely(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
         ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
         ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),

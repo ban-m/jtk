@@ -251,7 +251,7 @@ pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
     ops
 }
 
-fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
+pub fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
     fn score(n: &Node) -> i32 {
         n.cigar
             .iter()

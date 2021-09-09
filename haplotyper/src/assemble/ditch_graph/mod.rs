@@ -1920,13 +1920,13 @@ impl<'a> DitchGraph<'a> {
                         .collect();
                     paths.iter().all(|us| us == &paths[0] && us.len() <= len)
                 };
-                debug!("BUBBLE\t{:?}\t{}\t{}", node.node, pos, is_bubble);
+                // debug!("BUBBLE\t{:?}\t{}\t{}", node.node, pos, is_bubble);
                 if is_bubble {
-                    for (path, _) in path_and_dest.iter() {
-                        let path: Vec<_> =
-                            path.iter().map(|x| format!("{}-{}", x.0, x.1)).collect();
-                        debug!("\t{}", path.join("\t"));
-                    }
+                    // for (path, _) in path_and_dest.iter() {
+                    // let path: Vec<_> =
+                    //     path.iter().map(|x| format!("{}-{}", x.0, x.1)).collect();
+                    // debug!("\t{}", path.join("\t"));
+                    // }
                     let mut convert_table: HashMap<u64, u64> = HashMap::new();
                     for (path, _) in path_and_dest.iter() {
                         for &(unit, cluster) in path.iter() {
@@ -1936,7 +1936,7 @@ impl<'a> DitchGraph<'a> {
                                 .or_insert(cluster);
                         }
                     }
-                    debug!("CONVERT\t{:?}\t{}\t{:?}", node.node, pos, convert_table);
+                    // debug!("CONVERT\t{:?}\t{}\t{:?}", node.node, pos, convert_table);
                     for (path, _) in path_and_dest.iter() {
                         for &(unit, cluster) in path.iter() {
                             squish_to

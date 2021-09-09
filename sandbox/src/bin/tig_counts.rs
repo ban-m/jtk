@@ -22,6 +22,10 @@ fn main() -> std::io::Result<()> {
     for ((unit, cluster), counts) in counts.iter() {
         println!("UNIT\t{}\t{}\t{}\t{}", unit, cluster, counts[0], counts[1]);
     }
+    if args.len() < 3 {
+        eprintln!("Contig information was not supplied. Finish after dumping unit information.");
+        return Ok(());
+    }
     let tigs = std::fs::File::open(&args[2]).map(BufReader::new)?;
     use std::io::BufRead;
     let tigs: Vec<_> = tigs

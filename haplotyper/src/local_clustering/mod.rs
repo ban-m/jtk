@@ -2,7 +2,7 @@ use definitions::*;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 mod config;
 mod var_clustering;
 pub use config::*;
@@ -47,6 +47,67 @@ impl LocalClustering for DataSet {
     ) -> Self {
         local_clustering_all(&mut self);
         self
+    }
+}
+
+pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
+    let mut pileups: HashMap<u64, Vec<&mut Node>> =
+        selection.iter().map(|&id| (id, vec![])).collect();
+    let cluster_num: HashMap<u64, u8> = ds
+        .selected_chunks
+        .iter()
+        .filter(|c| selection.contains(&c.id))
+        .map(|c| (c.id, c.cluster_num as u8))
+        .collect();
+    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+        if let Some(bucket) = pileups.get_mut(&node.unit) {
+            bucket.push(node);
+        }
+    }
+    let coverage = ds.coverage.clone();
+    let consensus_and_clusternum: HashMap<_, _> = pileups
+        .par_iter_mut()
+        .map(|(&unit_id, units)| {
+            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
+            let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
+            let coverage = match coverage {
+                Some(res) => res,
+                None => {
+                    debug!("No coverage estimation. Use adhoc coverage");
+                    (units.len() / 2) as f64
+                }
+            };
+            let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
+            let start = std::time::Instant::now();
+            let cov = seqs.len();
+            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+            for (node, asn) in units.iter_mut().zip(asn) {
+                node.cluster = asn as u64;
+            }
+            let end = std::time::Instant::now();
+            let elapsed = (end - start).as_secs();
+            let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
+            debug!(
+                "RECORD\t{}\t{}\t{}\t{}\t{:.3}\t{}",
+                unit_id, elapsed, prevcl, cl, score, cov
+            );
+            (unit_id, (consensus, score, config.cluster_num))
+        })
+        .collect();
+    for unit in ds.selected_chunks.iter_mut() {
+        if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+            unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+            unit.cluster_num = *cluster_num as usize;
+            unit.score = *score;
+        }
+    }
+    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+        if let Some((cons, _, _)) = consensus_and_clusternum.get(&node.unit) {
+            let band_size = (cons.len() / 10).max(5);
+            let (_, cigar) =
+                kiley::bialignment::global_banded(cons, node.seq(), 2, -2, -4, -2, band_size);
+            node.cigar = crate::encode::compress_kiley_ops(&cigar);
+        }
     }
 }
 
@@ -99,16 +160,13 @@ pub fn local_clustering_all(ds: &mut DataSet) {
     // Modify alignment so that the alignment would be valid.
     // We would do this very rough, because anyway we do not like to use this alignment in the future.
     // TODO: Make this banded procedure into SWG with banded mode.
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        let unit = units[&node.unit];
-        let band_size = (unit.seq().len() / 10).max(5);
-        let (_, cigar) =
-            match kiley::bialignment::edit_dist_banded(unit.seq(), node.seq(), band_size) {
-                Some(res) => res,
-                None => kiley::bialignment::edit_dist_slow_ops(unit.seq(), node.seq()),
-            };
-        node.cigar = crate::encode::compress_kiley_ops(&cigar);
+        if let Some((cons, _, _)) = consensus_and_clusternum.get(&node.unit) {
+            let band_size = (cons.len() / 10).max(5);
+            let (_, cigar) =
+                kiley::bialignment::global_banded(cons, node.seq(), 2, -2, -4, -2, band_size);
+            node.cigar = crate::encode::compress_kiley_ops(&cigar);
+        }
     }
 }
 

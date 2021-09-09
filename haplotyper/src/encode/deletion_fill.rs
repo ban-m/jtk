@@ -2,7 +2,7 @@
 use definitions::*;
 use rayon::prelude::*;
 // use log::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Fill deletions
 pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
@@ -29,6 +29,36 @@ pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
             correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
         });
     ds
+}
+
+/// Same as `correct unit deletion selected`. The only difference is that this function controls which read
+/// would be corrected. Maybe boost the efficiency.
+pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
+    // This skeltons contain all reads, as some of the unfocal reads
+    // would be help to correct focal reads.
+    let read_skeltons: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .filter(|read| read.nodes.len() > 1)
+        .map(|read| ReadSkelton::from_rich_nodes(&read.nodes))
+        .collect();
+    let raw_seq: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .filter(|r| reads.contains(&r.id))
+        .map(|read| (read.id, read.seq()))
+        .collect();
+    let selected_chunks = &ds.selected_chunks;
+    ds.encoded_reads
+        .par_iter_mut()
+        .filter(|r| r.nodes.len() > 1 && reads.contains(&r.id))
+        .for_each(|r| {
+            let seq: Vec<_> = raw_seq[&r.id]
+                .iter()
+                .map(|x| x.to_ascii_uppercase())
+                .collect();
+            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
+        });
 }
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
@@ -166,7 +196,6 @@ fn encode_node(
 
 // Align read skeltons to read, return the pileup sumamries.
 fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
-    use std::collections::HashSet;
     let read_nodes: HashSet<_> = read.nodes.iter().map(|n| n.unit).collect();
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     for query in reads

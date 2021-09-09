@@ -1,5 +1,6 @@
 #![feature(is_sorted)]
 pub mod assemble;
+pub mod dense_encoding;
 mod determine_units;
 pub mod em_correction;
 pub mod encode;

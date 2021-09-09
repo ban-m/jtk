@@ -34,7 +34,7 @@ fn main() -> std::io::Result<()> {
             .enumerate()
             .map(|(i, k)| {
                 let seed = unit_id * (i * k) as u64;
-                let config = Config::new(repeat_num, seed, k, unit_id, coverage_thr);
+                let config = Config::new(repeat_num, seed, k, unit_id, true, coverage_thr);
                 let (xs, lk, cn) = em_clustering(&reads, &config);
                 log::debug!("INSPECT\t{}\t{}", lk / xs.len() as f64, seed);
                 (xs, lk, cn)

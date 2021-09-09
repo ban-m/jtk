@@ -113,9 +113,9 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //         Some((asn, mod_score, k))
     //     })
     //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())?;
-    // for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
+    // for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
     //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-    //     debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
+    //     debug!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
     // }
     Some((assignments, cons_template, score))
 }

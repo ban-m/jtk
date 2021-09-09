@@ -317,6 +317,8 @@ impl EncodedRead {
 }
 
 // TODO: We do not need `from` and `to`, actually.
+// TODO: Or, we do need additional information, such as the cluster id of the `from` node and `to` node, and their direction.
+// Anyway, we can do the same thing by `nodes.window(2).zip(edges)`, so we can leave it as-is. Never fix something not broken. Period.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Edge {
     pub from: u64,
