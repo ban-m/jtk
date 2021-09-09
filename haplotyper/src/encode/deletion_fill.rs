@@ -132,7 +132,7 @@ pub fn correct_deletion_error(
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
-const ALIGN_LIMIT: f64 = 0.35;
+pub const ALIGN_LIMIT: f64 = 0.35;
 // Try to Encode Node. Return Some(node) if the alignment is good.
 fn encode_node(
     seq: &[u8],

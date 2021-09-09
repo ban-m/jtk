@@ -2,6 +2,8 @@ use crate::em_correction::ClusteringCorrection;
 use definitions::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+const CONS_MIN_LENGTH: usize = 100;
+const COV_THR_FACTOR: usize = 4;
 #[derive(Debug, Clone, Copy)]
 pub struct DenseEncodingConfig {}
 impl DenseEncodingConfig {
@@ -57,12 +59,21 @@ impl DenseEncoding for DataSet {
             edges.retain(|_, val| 2 < val.len());
             // Create new units.
             let mut max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
+            let cov_thr = self.coverage.unwrap().floor() as usize / COV_THR_FACTOR;
             let edge_consensus: HashMap<Edge, Vec<u8>> = edges
                 .into_par_iter()
                 .filter_map(|(key, labels)| {
+                    let labels: Vec<&[u8]> = labels
+                        .iter()
+                        .filter(|ls| ls.len() > CONS_MIN_LENGTH)
+                        .map(|x| x.as_slice())
+                        .collect();
+                    if labels.len() < cov_thr {
+                        return None;
+                    }
                     let rough_contig = kiley::ternary_consensus_by_chunk(&labels, 100);
                     match rough_contig.len() {
-                        0..=100 => None,
+                        0..=CONS_MIN_LENGTH => None,
                         _ => Some((key, rough_contig)),
                     }
                 })
@@ -247,6 +258,7 @@ fn encode_edge(
     use log::*;
     debug!("Encoding\t{}\t{}\t{:?}", seq.len(), contig.len(), unit_info);
     let band = contig.len() / 20;
+    // TODO: These parameters shoule be changed depending on the sequencing tech.
     let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -2, -4, -2, band);
     // Split the alignment into encoded nodes.
     // Current position on the contg and the query.
@@ -291,7 +303,8 @@ fn encode_edge(
                 Op::Ins(l) | Op::Del(l) => l > crate::encode::INDEL_THRESHOLD,
                 _ => false,
             });
-            let dist_thr = (unitlen as f64 * 0.35).floor() as u32;
+            use crate::encode::deletion_fill::ALIGN_LIMIT;
+            let dist_thr = (unitlen as f64 * ALIGN_LIMIT).floor() as u32;
             if !has_large_indel && edit_dist < dist_thr {
                 nodes.push(Node {
                     position_from_start: start + ypos - ylen,
