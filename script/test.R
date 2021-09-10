@@ -244,3 +244,5 @@ longer.selected.vars <- selected.vars %>%
     pivot_longer(cols= !ReadID, names_to = "Position", values_to = "LK") 
 g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) +
     scale_fill_gradient2(low="blue", high="orange")
+
+scores <- read_tsv("./score.tsv")

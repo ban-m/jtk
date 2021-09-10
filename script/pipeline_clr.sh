@@ -55,7 +55,8 @@ then
     echo "Tangle resolved. Skip resolving proc".
 else
     cat ${CLUSTERED} |\
-        jtk resolve_tangle -vv --threads ${THREADS} >${RESOLVED}
+        jtk resolve_tangle -vv --threads ${THREADS} |\
+        jtk encode_densely -vv --threads ${THREADS} >${RESOLVED}
 fi
 
 if [ -f ${RESULT} ]

@@ -71,52 +71,58 @@ impl ClusteringCorrection for DataSet {
             .filter(|n| to_squish.contains_key(&n.unit))
             .for_each(|n| n.cluster = 0);
         // Then, usual correction.
-        let (result, _cluster_size_and_lk): (Vec<_>, Vec<_>) = self
+        let targets: HashSet<_> = self
             .selected_chunks
-            .par_iter()
-            .map(|ref_unit| {
-                let unit_id = ref_unit.id;
-                let reads: Vec<_> = self
-                    .encoded_reads
-                    .iter()
-                    .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
-                    .collect();
-                // TODO: We need to tune the number of the cluster here.
-                let k = ref_unit.cluster_num;
-                if reads.is_empty() {
-                    debug!("Unit {} does not appear in any read.", unit_id);
-                    return (vec![], (0f64, 0));
-                }
-                let (new_clustering, lk, cluster_num) = (1..=k)
-                    .flat_map(|k| std::iter::repeat(k).take(repeat_num))
-                    .enumerate()
-                    .map(|(i, k)| {
-                        let seed = unit_id * (i * k) as u64;
-                        let config =
-                            Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
-                        em_clustering(&reads, &config)
-                    })
-                    .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
-                    .unwrap();
-                debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
-                (new_clustering, (lk, cluster_num))
-            })
-            .unzip();
-        let result: HashMap<u64, Vec<(usize, u64)>> =
-            result.iter().fold(HashMap::new(), |mut acc, results| {
-                for &(id, pos, cluster) in results {
-                    acc.entry(id).or_default().push((pos, cluster));
-                }
-                acc
-            });
-        for read in self.encoded_reads.iter_mut() {
-            if let Some(corrected) = result.get(&read.id) {
-                for &(pos, cluster) in corrected {
-                    read.nodes[pos].cluster = cluster;
-                }
-            }
-        }
-        self
+            .iter()
+            .filter_map(|c| (1f64 < c.score).then(|| c.id))
+            .collect();
+        self.correct_clustering_em_on_selected(repeat_num, coverage_thr, to_regularize, &targets)
+        // let (result, _cluster_size_and_lk): (Vec<_>, Vec<_>) = self
+        //     .selected_chunks
+        //     .par_iter()
+        //     .map(|ref_unit| {
+        //         let unit_id = ref_unit.id;
+        //         let reads: Vec<_> = self
+        //             .encoded_reads
+        //             .iter()
+        //             .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
+        //             .collect();
+        //         // TODO: We need to tune the number of the cluster here.
+        //         let k = ref_unit.cluster_num;
+        //         if reads.is_empty() {
+        //             debug!("Unit {} does not appear in any read.", unit_id);
+        //             return (vec![], (0f64, 0));
+        //         }
+        //         let (new_clustering, lk, cluster_num) = (1..=k)
+        //             .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+        //             .enumerate()
+        //             .map(|(i, k)| {
+        //                 let seed = unit_id * (i * k) as u64;
+        //                 let config =
+        //                     Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
+        //                 em_clustering(&reads, &config)
+        //             })
+        //             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+        //             .unwrap();
+        //         debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
+        //         (new_clustering, (lk, cluster_num))
+        //     })
+        //     .unzip();
+        // let result: HashMap<u64, Vec<(usize, u64)>> =
+        //     result.iter().fold(HashMap::new(), |mut acc, results| {
+        //         for &(id, pos, cluster) in results {
+        //             acc.entry(id).or_default().push((pos, cluster));
+        //         }
+        //         acc
+        //     });
+        // for read in self.encoded_reads.iter_mut() {
+        //     if let Some(corrected) = result.get(&read.id) {
+        //         for &(pos, cluster) in corrected {
+        //             read.nodes[pos].cluster = cluster;
+        //         }
+        //     }
+        // }
+        // self
     }
     fn correct_clustering_em_on_selected(
         mut self,
@@ -677,14 +683,14 @@ impl std::fmt::Display for RawModel {
 }
 
 impl RawModel {
-    fn num_param(&self) -> usize {
-        let center = self.center.len().max(1) - 1;
-        let count_param =
-            |hm: &HashMap<(u64, u64), f64>| hm.values().filter(|&&x| 0.01 < x).count().max(1) - 1;
-        let forward: usize = self.forward.iter().map(count_param).sum();
-        let backward: usize = self.backward.iter().map(count_param).sum();
-        center + forward + backward
-    }
+    // fn num_param(&self) -> usize {
+    //     let center = self.center.len().max(1) - 1;
+    //     let count_param =
+    //         |hm: &HashMap<(u64, u64), f64>| hm.values().filter(|&&x| 0.01 < x).count().max(1) - 1;
+    //     let forward: usize = self.forward.iter().map(count_param).sum();
+    //     let backward: usize = self.backward.iter().map(count_param).sum();
+    //     center + forward + backward
+    // }
     fn new(forward_len: usize, backward_len: usize) -> Self {
         Self {
             center: HashMap::new(),

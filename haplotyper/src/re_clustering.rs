@@ -58,58 +58,9 @@ impl ReClustering for DataSet {
         // Re clustering.
         let target_units: HashSet<_> = re_cluster.keys().copied().collect();
         crate::local_clustering::local_clustering_selected(&mut self, &target_units);
-        // let mut pileups: HashMap<u64, Vec<&mut _>> = HashMap::new();
-        // self.encoded_reads
-        //     .iter_mut()
-        //     .flat_map(|r| r.nodes.iter_mut())
-        //     .filter(|node| re_cluster.contains_key(&node.unit))
-        //     .for_each(|node| pileups.entry(node.unit).or_default().push(node));
-        // debug!("There are {} chunks to be re-clustered.", re_cluster.len());
-        // // Clustering.
-        // use rayon::prelude::*;
-        // let coverage = self.coverage.clone();
-        // let consensus_and_clusternum: HashMap<_, _> = pileups
-        //     .par_iter_mut()
-        //     .map(|(&unit_id, units)| {
-        //         let cluster_num = re_cluster[&unit_id];
-        //         let coverage = coverage.unwrap_or(units.len() as f64 / cluster_num as f64);
-        //         let cluster_num = local_clustering(unit_id, units, coverage, cluster_num);
-        //         (unit_id, cluster_num)
-        //     })
-        //     .collect();
-        // for unit in self.selected_chunks.iter_mut() {
-        //     if let Some(cluster_num) = consensus_and_clusternum.get(&unit.id) {
-        //         unit.cluster_num = *cluster_num as usize;
-        //     }
-        // }
         self
     }
 }
-
-// fn local_clustering(unit_id: u64, units: &mut [&mut Node], coverage: f64, cluster_num: u8) -> u8 {
-//     use crate::local_clustering::kmeans;
-//     use rand::SeedableRng;
-//     use rand_xoshiro::Xoroshiro128PlusPlus;
-//     let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(unit_id * 23);
-//     let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-//     let mut config = kmeans::ClusteringConfig::new(100, cluster_num, coverage);
-//     let start = std::time::Instant::now();
-//     let (asn, _, _) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-//     let end = std::time::Instant::now();
-//     let elapsed = (end - start).as_secs();
-//     debug!(
-//         "RECLUSTER\t{}\t{}\t{}\t{}\t{}",
-//         unit_id,
-//         elapsed,
-//         seqs.len(),
-//         cluster_num,
-//         config.cluster_num
-//     );
-//     for (node, asn) in units.iter_mut().zip(asn) {
-//         node.cluster = asn as u64;
-//     }
-//     config.cluster_num
-// }
 
 fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<u64, u8> {
     let mut re_cluster: HashMap<_, u8> = HashMap::new();

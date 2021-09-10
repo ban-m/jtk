@@ -49,6 +49,82 @@ impl<'a> super::DitchGraph<'a> {
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
         (g_segs, g_edges, group, summaries)
     }
+    fn enumerate_adjacent_tag(
+        &self,
+        seqname: &String,
+        start: Node,
+        start_position: Position,
+        sids: &HashMap<Node, ContigTag>,
+        gfa_edge_start: gfa::Position,
+    ) -> Vec<(gfa::Edge, Vec<gfa::SamTag>)> {
+        self.get_edges(start, start_position)
+            .filter_map(|e| {
+                let (sid2, beg2) = match sids.get(&e.to)? {
+                    &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
+                        (gfa::RefID::from(name, true), gfa::Position::from(0, false))
+                    }
+                    &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
+                        (gfa::RefID::from(name, true), gfa::Position::from(len, true))
+                    }
+                    &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
+                        (gfa::RefID::from(name, true), gfa::Position::from(0, false))
+                    }
+                    &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
+                        (gfa::RefID::from(name, true), gfa::Position::from(len, true))
+                    }
+                    _ => return None,
+                };
+                let eid = None;
+                let sid1 = gfa::RefID::from(seqname, true);
+                // let beg1 = gfa::Position::from(0, false);
+                let beg1 = gfa_edge_start;
+                let a = None;
+                let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
+                let mut samtag = vec![
+                    gfa::SamTag::new(format!("cv:i:{}", e.occ)),
+                    gfa::SamTag::new(format!("ln:i:{}", e.seq.len())),
+                ];
+                if let Some(cp) = e.copy_number {
+                    samtag.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
+                }
+                Some((edge, samtag))
+            })
+            .collect()
+    }
+    // let tail_edges = self.nodes[&node]
+    // .edges
+    // .iter()
+    // .filter(|e| e.from_position == position)
+    // .filter_map(|e| {
+    //     let (sid2, beg2) = match sids.get(&e.to)? {
+    //         &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
+    //             (gfa::RefID::from(name, true), gfa::Position::from(0, false))
+    //         }
+    //         &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
+    //             (gfa::RefID::from(name, true), gfa::Position::from(len, true))
+    //         }
+    //         &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
+    //             (gfa::RefID::from(name, true), gfa::Position::from(0, false))
+    //         }
+    //         &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
+    //             (gfa::RefID::from(name, true), gfa::Position::from(len, true))
+    //         }
+    //         _ => return None,
+    //     };
+    //     let eid = None;
+    //     let sid1 = gfa::RefID::from(&seqname, true);
+    //     let beg1 = gfa::Position::from(seq.len(), true);
+    //     let a = None;
+    //     let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
+    //     let mut samtag = vec![
+    //         gfa::SamTag::new(format!("cv:i:{}", e.occ)),
+    //         gfa::SamTag::new(format!("ln:i:{}", e.seq.len())),
+    //     ];
+    //     if let Some(cp) = e.copy_number {
+    //         samtag.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
+    //     }
+    //     Some((edge, samtag))
+    // });
 
     // Traverse from the given `start` node of `start_position` Position.
     // The retuened ContigSummary contains which (unit,cluster) elements is used to
@@ -67,42 +143,8 @@ impl<'a> super::DitchGraph<'a> {
         ContigSummary,
     ) {
         // Find edges.
-        let mut edges: Vec<_> = self.nodes[&start]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == start_position)
-            .filter_map(|e| {
-                assert!(e.from == start);
-                let (sid2, beg2) = match sids.get(&e.to)? {
-                    &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(0, false))
-                    }
-                    &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(len, true))
-                    }
-                    &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(0, false))
-                    }
-                    &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(len, true))
-                    }
-                    _ => return None,
-                };
-                let eid = None;
-                let sid1 = gfa::RefID::from(&seqname, true);
-                let beg1 = gfa::Position::from(0, false);
-                let a = None;
-                let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
-                let mut samtag = vec![
-                    gfa::SamTag::new(format!("cv:i:{}", e.occ)),
-                    gfa::SamTag::new(format!("ln:i:{}", e.seq.len())),
-                ];
-                if let Some(cp) = e.copy_number {
-                    samtag.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
-                }
-                Some((edge, samtag))
-            })
-            .collect();
+        let gfa_pos = gfa::Position::from(0, false);
+        let edges = self.enumerate_adjacent_tag(&seqname, start, start_position, sids, gfa_pos);
         let (mut node, mut position) = (start, start_position);
         let mut seq = self.initial_sequence(start, start_position);
         // Start traveresing.
@@ -127,20 +169,12 @@ impl<'a> super::DitchGraph<'a> {
             seq += &cons;
             position = !position;
             // Check.
-            let num_edges = self.nodes[&node]
-                .edges
-                .iter()
-                .filter(|e| e.from_position == position)
-                .count();
+            let num_edges = self.get_edges(node, position).count();
             if num_edges == 0 || num_edges > 1 {
                 break;
             }
             // There is only one child.
-            let selected_edge = self.nodes[&node]
-                .edges
-                .iter()
-                .find(|e| e.from_position == position)
-                .unwrap();
+            let selected_edge = self.get_edges(node, position).next().unwrap();
             assert_eq!(selected_edge.from, node);
             assert_eq!(selected_edge.from_position, position);
             // Succeed along with the edge.
@@ -148,6 +182,17 @@ impl<'a> super::DitchGraph<'a> {
                 EdgeLabel::Ovlp(l) => assert!((0..(-l)).all(|_| seq.pop().is_some())),
                 EdgeLabel::Seq(label) => seq.extend(label.iter().map(|&x| x as char)),
             };
+            // Append nodes proxied by this edge to the last node. The order is correct(I created so.).
+            for &((unit, cluster), strand, occ) in selected_edge.proxying.iter() {
+                let elm = ContigElement {
+                    unit,
+                    cluster,
+                    strand,
+                    occ,
+                    copy_number: None,
+                };
+                unit_names.push(elm);
+            }
             let (next, next_position) = (selected_edge.to, selected_edge.to_position);
             // Check the number of child.
             let num_children = self.nodes[&next]
@@ -178,41 +223,9 @@ impl<'a> super::DitchGraph<'a> {
         }
         let seg = gfa::Segment::from(seqname.clone(), seq.len(), Some(seq.clone()));
         // Add gfa edges.
-        let tail_edges = self.nodes[&node]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == position)
-            .filter_map(|e| {
-                assert!(e.from == node);
-                let (sid2, beg2) = match sids.get(&e.to)? {
-                    &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(0, false))
-                    }
-                    &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(len, true))
-                    }
-                    &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(0, false))
-                    }
-                    &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
-                        (gfa::RefID::from(name, true), gfa::Position::from(len, true))
-                    }
-                    _ => return None,
-                };
-                let eid = None;
-                let sid1 = gfa::RefID::from(&seqname, true);
-                let beg1 = gfa::Position::from(seq.len(), true);
-                let a = None;
-                let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
-                let mut samtag = vec![
-                    gfa::SamTag::new(format!("cv:i:{}", e.occ)),
-                    gfa::SamTag::new(format!("ln:i:{}", e.seq.len())),
-                ];
-                if let Some(cp) = e.copy_number {
-                    samtag.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
-                }
-                Some((edge, samtag))
-            });
+        let gfa_pos = gfa::Position::from(seq.len(), true);
+        let tail_edges = self.enumerate_adjacent_tag(&seqname, node, position, &sids, gfa_pos);
+        let mut edges = edges;
         edges.extend(tail_edges);
         (seg, edges, summary)
     }
