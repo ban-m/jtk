@@ -371,8 +371,15 @@ pub fn em_clustering_inner<R: Rng>(
     }
     // Num of parameters.
     let offset = {
-        let model_param: usize = model.models.iter().map(|m| m.num_param()).sum();
-        (model_param + k - 1) as f64
+        let mut units: HashMap<_, HashSet<_>> = HashMap::new();
+        for ctx in contexts.iter() {
+            units.entry(ctx.unit).or_default().insert(ctx.cluster);
+            for &(u, c) in ctx.forward.iter().chain(ctx.backward.iter()) {
+                units.entry(u).or_default().insert(c);
+            }
+        }
+        let model_param: usize = units.values().map(|x| x.len() - 1).sum();
+        (model_param * k + k - 1) as f64
     };
     (predictions, lk, offset)
 }
