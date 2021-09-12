@@ -29,6 +29,8 @@ impl DenseEncoding for DataSet {
             .filter_map(|u| (1.0 < u.score).then(|| u.id))
             .collect();
         self = self.correct_clustering_em_on_selected(10, 3, true, &units);
+        // The maximum value of the previous unit.
+        // If the unit id is greater than this, it is newly added one.
         let multi_tig = enumerate_diplotigs(&mut self, config.len);
         // Nodes to be clustered, or node newly added by filling edge.
         let mut to_clustering_nodes = HashSet::new();
@@ -58,14 +60,11 @@ impl DenseEncoding for DataSet {
             }
             let read_seq: HashMap<u64, &[u8]> =
                 self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
-            let filled_reads: HashSet<_> = reads.iter().map(|r| r.id).collect();
             // Encoding.
             for read in reads.iter_mut() {
                 let seq = &read_seq[&read.id];
                 let inserts =
                     fill_edges_by_new_units(&read, seq, &edge_encoding_patterns, &edge_consensus);
-                // Here, we can recover the original clustering!
-                recover_original_assignments(read, &original_assignments[&read.id]);
                 // Encode.
                 for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
                     read.nodes.insert(idx + accum_inserts, node);
@@ -73,11 +72,16 @@ impl DenseEncoding for DataSet {
                 // Formatting.
                 re_encode_read(read, seq);
             }
+            let filled_reads: HashSet<_> = reads.iter().map(|r| r.id).collect();
             crate::encode::deletion_fill::correct_unit_deletion_selected(&mut self, &filled_reads);
             to_clustering_nodes.extend(nodes.iter().map(|x| x.0));
             edge_encoding_patterns.values().for_each(|new_units| {
                 to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
             });
+        }
+        for read in self.encoded_reads.iter_mut() {
+            let orig = &original_assignments[&read.id];
+            recover_original_assignments(read, &orig);
         }
         // Local clustering.
         crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
@@ -109,10 +113,18 @@ fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<(u64, u64)>> {
         .collect()
 }
 
+// Recover the previous clustering. Note that sometimes the node is added
+// so that the length of the read is different from the logged one.
+// But it does not removed!
 fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)]) {
-    for (node, &(unit, old)) in read.nodes.iter_mut().zip(log) {
-        assert_eq!(unit, node.unit);
-        node.cluster = old;
+    let mut read = read.nodes.iter_mut();
+    for &(unit, cluster) in log {
+        while let Some(node) = read.next() {
+            if node.unit == unit {
+                node.cluster = cluster;
+                break;
+            }
+        }
     }
 }
 

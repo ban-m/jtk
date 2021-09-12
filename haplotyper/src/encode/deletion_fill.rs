@@ -124,11 +124,6 @@ pub fn correct_deletion_error(
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
-    // read.edges = read
-    // .nodes
-    // .windows(2)
-    // .map(|w| Edge::from_nodes(w, &seq))
-    //     .collect();
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
