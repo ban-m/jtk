@@ -32,6 +32,6 @@ pub fn pca(data: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
     // }
     let pca_vectors = &eigen_and_eigenvec[..k];
     data.iter()
-        .map(|x| pca_vectors.iter().map(|(v, _)| x.dot(&v)).collect())
+        .map(|x| pca_vectors.iter().map(|(v, _)| x.dot(v)).collect())
         .collect()
 }

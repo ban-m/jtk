@@ -103,11 +103,11 @@ fn consensus(pileup: &[&Node], len: usize, c: &PolishUnitConfig) -> Option<Strin
     if chunks.iter().any(|cs| cs.len() < c.consensus_size) {
         None
     } else {
-        let consensus: Vec<_> = chunks
+        let consensus: String = chunks
             .into_iter()
             .flat_map(|cs| consensus_chunk(&cs, c))
+            .map(|n| n as char)
             .collect();
-        let consensus: String = consensus.into_iter().map(|n| n as char).collect();
         Some(consensus)
     }
 }

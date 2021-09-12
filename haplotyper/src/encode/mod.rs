@@ -44,7 +44,7 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize) -> std::io::Result<Data
     let mm2 = mm2_alignment(&ds, p)?;
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
-        .filter_map(|l| bio_utils::paf::PAF::new(&l))
+        .filter_map(|l| bio_utils::paf::PAF::new(l))
         .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
         .collect();
     Ok(encode_by(ds, &alignments))
@@ -93,10 +93,7 @@ pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<En
         let end_pos = last_node.position_from_start + last_node.query_length();
         seq[end_pos..].to_vec()
     };
-    let edges: Vec<_> = nodes
-        .windows(2)
-        .map(|w| Edge::from_nodes(w, &seq))
-        .collect();
+    let edges: Vec<_> = nodes.windows(2).map(|w| Edge::from_nodes(w, seq)).collect();
     Some(EncodedRead {
         id,
         original_length: seq.len(),
@@ -130,7 +127,7 @@ fn encode_read_to_nodes_by_paf(
 
 fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
     use bio_utils::sam;
-    let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
+    let cigar = sam::parse_cigar_string(aln.tags.get("cg")?);
     // It is padded sequence. Should be adjusted.
     let (mut leading, aligned, mut trailing) = if aln.relstrand {
         let aligned = seq[aln.qstart..aln.qend].to_vec();

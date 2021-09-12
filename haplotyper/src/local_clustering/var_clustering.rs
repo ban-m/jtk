@@ -137,7 +137,7 @@ impl Model {
         self.calc_lks(datum)
             .iter()
             .enumerate()
-            .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+            .max_by(|x, y| (x.1).partial_cmp(y.1).unwrap())
             .unwrap()
             .0
     }
@@ -152,7 +152,7 @@ impl Model {
                 weights
             })
             .collect();
-        self.params = Self::calc_params(&data, &self.weights, self.cluster_num, self.var_size);
+        self.params = Self::calc_params(data, &self.weights, self.cluster_num, self.var_size);
         self.fractions = Self::calc_fractions(&self.weights, self.cluster_num);
     }
     fn lk(&self, data: &[Vec<i8>]) -> f64 {
@@ -164,7 +164,7 @@ fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
     }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
     let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
     assert!(sum >= 0., "{:?}->{}", xs, sum);
     max + sum

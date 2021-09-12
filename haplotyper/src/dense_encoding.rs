@@ -65,7 +65,7 @@ impl DenseEncoding for DataSet {
             for read in reads.iter_mut() {
                 let seq = &read_seq[&read.id];
                 let inserts =
-                    fill_edges_by_new_units(&read, seq, &edge_encoding_patterns, &edge_consensus);
+                    fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &edge_consensus);
                 // Encode.
                 for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
                     read.nodes.insert(idx + accum_inserts, node);
@@ -82,7 +82,7 @@ impl DenseEncoding for DataSet {
         }
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
-            recover_original_assignments(read, &orig);
+            recover_original_assignments(read, orig);
         }
         // Local clustering.
         debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
@@ -121,7 +121,8 @@ fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<(u64, u64)>> {
 fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)]) {
     let mut read = read.nodes.iter_mut();
     for &(unit, cluster) in log {
-        while let Some(node) = read.next() {
+        for node in &mut read {
+            // while let Some(node) = read.next() {
             if node.unit == unit {
                 node.cluster = cluster;
                 break;
@@ -187,7 +188,7 @@ fn split_edges_into_units(
 
 fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
     reads: &[T],
-    nodes: &Vec<(u64, u64)>,
+    nodes: &[(u64, u64)],
     discard_thr: usize,
 ) -> HashMap<DEdge, Vec<u8>> {
     let mut edges: HashMap<DEdge, Vec<Vec<u8>>> = HashMap::new();
@@ -205,7 +206,7 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
             };
             // Register.
             label.iter_mut().for_each(u8::make_ascii_uppercase);
-            edges.entry(edge_entry).or_insert(vec![]).push(label);
+            edges.entry(edge_entry).or_insert_with(Vec::new).push(label);
         }
     }
     debug!("EDGE\tDump edges. Contains empty edges.");

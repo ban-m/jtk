@@ -14,7 +14,7 @@ pub fn generate_mul_data<T: Rng>(
         .filter_map(|_| choices.choose(rng))
         .map(|&x| x as u8)
         .collect();
-    answer.sort();
+    answer.sort_unstable();
     let mut gen = |t: &[Vec<u8>]| {
         t.iter()
             .map(|e| gen_sample::introduce_randomness(e, rng, profile))
@@ -61,7 +61,7 @@ pub fn generate_test_data<T: Rng>(
     let mut answer: Vec<_> = (0..test_num)
         .filter_map(|_| choices.choose_weighted(rng, |&k| probs[k]).ok().copied())
         .collect();
-    answer.sort();
+    answer.sort_unstable();
     let dataset: Vec<_> = answer
         .iter()
         .map(|&idx| gen_sample::introduce_randomness(&templates[idx], rng, profile))

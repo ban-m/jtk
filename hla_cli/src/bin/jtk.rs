@@ -29,7 +29,7 @@ fn subcommand_entry() -> App<'static, 'static> {
             Arg::with_name("read_type")
                 .long("read_type")
                 .takes_value(true)
-                .default_value(&"CLR")
+                .default_value("CLR")
                 .possible_values(&["CCS", "CLR", "ONT"])
                 .help("Read type. CCS, CLR, or ONT."),
         )
@@ -103,7 +103,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("l")
                 .long("chunk_len")
                 .takes_value(true)
-                .default_value(&"2000")
+                .default_value("2000")
                 .help("Length of a chunk"),
         )
         .arg(
@@ -111,7 +111,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("s")
                 .long("skip_len")
                 .takes_value(true)
-                .default_value(&"2000")
+                .default_value("2000")
                 .help("Margin between units"),
         )
         .arg(
@@ -119,7 +119,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("n")
                 .long("take_num")
                 .takes_value(true)
-                .default_value(&"3000")
+                .default_value("3000")
                 .help("Number of units;4*Genome size/chunk_len would be nice."),
         )
         .arg(
@@ -127,7 +127,7 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("m")
                 .long("margin")
                 .takes_value(true)
-                .default_value(&"500")
+                .default_value("500")
                 .help("Margin at the both end of a read."),
         )
         .arg(
@@ -135,14 +135,14 @@ fn subcommand_select_unit() -> App<'static, 'static> {
                 .short("t")
                 .long("threads")
                 .takes_value(true)
-                .default_value(&"1")
+                .default_value("1")
                 .help("number of threads"),
         )
         .arg(
             Arg::with_name("exclude")
                 .long("exclude")
                 .takes_value(true)
-                .default_value(&"0.4")
+                .default_value("0.4")
                 .help("filter out unit having more than [exclude] repetitiveness."),
         )
         .arg(
@@ -179,21 +179,21 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
                 .short("t")
                 .long("threads")
                 .takes_value(true)
-                .default_value(&"1")
+                .default_value("1")
                 .help("number of threads"),
         )
         .arg(
             Arg::with_name("consensus_size")
                 .long("consensus_size")
                 .takes_value(true)
-                .default_value(&"6")
+                .default_value("6")
                 .help("The number of string to take consensus"),
         )
         .arg(
             Arg::with_name("iteration")
                 .long("iteration")
                 .takes_value(true)
-                .default_value(&"10")
+                .default_value("10")
                 .help("Iteration number"),
         )
 }
@@ -215,14 +215,14 @@ fn subcommand_mask_repeats() -> App<'static, 'static> {
                 .short("t")
                 .help("Number of threads")
                 .takes_value(true)
-                .default_value(&"1"),
+                .default_value("1"),
         )
         .arg(
             Arg::with_name("k")
                 .short("k")
                 .help("K-mer size(<32)")
                 .takes_value(true)
-                .default_value(&"15"),
+                .default_value("15"),
         )
         .arg(
             Arg::with_name("freq")
@@ -259,7 +259,7 @@ fn subcommand_encode() -> App<'static, 'static> {
                 .short("t")
                 .help("Number of threads")
                 .takes_value(true)
-                .default_value(&"1"),
+                .default_value("1"),
         )
 }
 
@@ -280,7 +280,7 @@ fn subcommand_polish_encoding() -> App<'static, 'static> {
                 .short("t")
                 .help("Number of threads")
                 .takes_value(true)
-                .default_value(&"1"),
+                .default_value("1"),
         )
 }
 
@@ -301,7 +301,7 @@ fn subcommand_pick_components() -> App<'static, 'static> {
                 .short("t")
                 .help("Number of threads")
                 .takes_value(true)
-                .default_value(&"1"),
+                .default_value("1"),
         )
         .arg(
             Arg::with_name("component_num")
@@ -327,7 +327,7 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -337,7 +337,7 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MAXCLUSTER")
                 .help("Maximum number of cluster")
-                .default_value(&"2")
+                .default_value("2")
                 .takes_value(true),
         )
         .arg(
@@ -347,7 +347,7 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
                 .required(false)
                 .value_name("SEED")
                 .help("Seed for pseudorandon number generators.")
-                .default_value(&"24")
+                .default_value("24")
                 .takes_value(true),
         )
         .arg(
@@ -379,7 +379,7 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -389,7 +389,7 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .required(false)
                 .value_name("LIMIT")
                 .help("Maximum Execution time(sec)")
-                .default_value(&"600")
+                .default_value("600")
                 .takes_value(true),
         )
         .arg(
@@ -399,7 +399,7 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .required(false)
                 .value_name("CLUSTER_NUM")
                 .help("Minimum cluster number.")
-                .default_value(&"2")
+                .default_value("2")
                 .takes_value(true),
         )
         .arg(
@@ -409,7 +409,7 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .required(false)
                 .value_name("SubChunkLength")
                 .help("The length of sub-chunks")
-                .default_value(&"100")
+                .default_value("100")
                 .takes_value(true),
         )
         .arg(
@@ -419,7 +419,7 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .required(false)
                 .value_name("RETRY")
                 .help("If clustering fails, retry [RETRY] times.")
-                .default_value(&"2")
+                .default_value("2")
                 .takes_value(true),
         )
         .arg(
@@ -452,7 +452,7 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -462,7 +462,7 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .required(false)
                 .value_name("KMER_SIZE")
                 .help("The size of the kmer")
-                .default_value(&"4")
+                .default_value("4")
                 .takes_value(true),
         )
         .arg(
@@ -472,7 +472,7 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MIN_CLUSTER_SIZE")
                 .help("The minimum size of a cluster")
-                .default_value(&"50")
+                .default_value("50")
                 .takes_value(true),
         )
         .arg(
@@ -482,7 +482,7 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MATCH_SCORE")
                 .help("The match score")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -492,7 +492,7 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .required(false)
                 .value_name("MISMATCH_SCORE")
                 .help("The mismatch score")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -502,7 +502,7 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .required(false)
                 .value_name("GAP_SCORE")
                 .help("The gap penalty")
-                .default_value(&"2")
+                .default_value("2")
                 .takes_value(true),
         )
 }
@@ -525,7 +525,7 @@ fn subcommand_resolve_tangle() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -535,7 +535,7 @@ fn subcommand_resolve_tangle() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value(&"7")
+                .default_value("7")
                 .takes_value(true),
         )
         .arg(
@@ -545,7 +545,7 @@ fn subcommand_resolve_tangle() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THRESHOLD")
                 .help("Unit with less that this coverage would be ignored.")
-                .default_value(&"5")
+                .default_value("5")
                 .takes_value(true),
         )
 }
@@ -568,7 +568,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -578,7 +578,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value(&"7")
+                .default_value("7")
                 .takes_value(true),
         )
         .arg(
@@ -588,7 +588,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THRESHOLD")
                 .help("Unit with less that this coverage would be ignored.")
-                .default_value(&"5")
+                .default_value("5")
                 .takes_value(true),
         )
         .arg(
@@ -598,7 +598,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THRESHOLD")
                 .help("Reads with less that this value would not be corrected.")
-                .default_value(&"3")
+                .default_value("3")
                 .takes_value(true),
         )
 }
@@ -621,7 +621,7 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -631,7 +631,7 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
                 .required(false)
                 .value_name("LENGTH")
                 .help("Contig shorter than this value would be compressed.")
-                .default_value(&"15")
+                .default_value("15")
                 .takes_value(true),
         )
 }
@@ -654,7 +654,7 @@ fn subcommand_assemble() -> App<'static, 'static> {
                 .required(false)
                 .value_name("THREADS")
                 .help("Number of Threads")
-                .default_value(&"1")
+                .default_value("1")
                 .takes_value(true),
         )
         .arg(
@@ -664,7 +664,7 @@ fn subcommand_assemble() -> App<'static, 'static> {
                 .required(false)
                 .value_name("WINDOW_SIZE")
                 .help("Size of the window to take consensus sequences.")
-                .default_value(&"2000")
+                .default_value("2000")
                 .takes_value(true),
         )
         .arg(

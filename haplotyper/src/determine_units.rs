@@ -23,6 +23,7 @@ pub struct UnitConfig {
 
 // const DEFAULT_RNG: usize = 200;
 impl UnitConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_ccs(
         chunk_len: usize,
         unit_num: usize,
@@ -48,6 +49,7 @@ impl UnitConfig {
             lower_count,
         }
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn new_clr(
         chunk_len: usize,
         unit_num: usize,
@@ -73,6 +75,7 @@ impl UnitConfig {
             lower_count,
         }
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn new_ont(
         chunk_len: usize,
         unit_num: usize,
@@ -228,7 +231,7 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
     let mm2 = crate::encode::mm2_alignment(ds, thr)?;
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
-        .filter_map(|l| bio_utils::paf::PAF::new(&l))
+        .filter_map(|l| bio_utils::paf::PAF::new(l))
         .filter(|aln| aln.tstart < ALLOWED_END_GAP && aln.tlen - aln.tend < ALLOWED_END_GAP)
         .collect();
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
@@ -262,10 +265,8 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
     let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
     let mut chunks = ds.selected_chunks.clone();
     chunks.retain(|unit| !to_be_removed[unit.id as usize]);
-    let mut idx = 0;
-    for unit in chunks.iter_mut() {
-        unit.id = idx;
-        idx += 1;
+    for (idx, unit) in chunks.iter_mut().enumerate() {
+        unit.id = idx as u64;
     }
     Ok(chunks)
 }

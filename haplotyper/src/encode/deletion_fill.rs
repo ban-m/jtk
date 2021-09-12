@@ -81,27 +81,27 @@ pub fn correct_deletion_error(
         _ => y - x,
     };
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        let head_node = pileup.check_insertion_head(&nodes, threshold, idx);
+        let head_node = pileup.check_insertion_head(nodes, threshold, idx);
         let head_node = head_node.and_then(|(start_position, direction, uid)| {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
             let is_the_same_encode = nodes[idx].unit == uid
                 && abs(nodes[idx].position_from_start, start_position) < unit.seq().len();
             match start_position < end_position && !is_the_same_encode {
-                true => encode_node(&seq, start_position, end_position, direction, unit),
+                true => encode_node(seq, start_position, end_position, direction, unit),
                 false => None,
             }
         });
         if let Some(head_node) = head_node {
             inserts.push((idx, head_node))
         }
-        let tail_node = pileup.check_insertion_tail(&nodes, threshold, idx);
+        let tail_node = pileup.check_insertion_tail(nodes, threshold, idx);
         let tail_node = tail_node.and_then(|(end_position, direction, uid)| {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = end_position.min(seq.len());
             let start_position = end_position.saturating_sub(unit.seq().len() + 2 * OFFSET);
             match start_position < end_position {
-                true => encode_node(&seq, start_position, end_position, direction, unit),
+                true => encode_node(seq, start_position, end_position, direction, unit),
                 false => None,
             }
         });
@@ -109,10 +109,8 @@ pub fn correct_deletion_error(
             inserts.push((idx, tail_node));
         }
     }
-    let mut accum_insertes = 0;
-    for (idx, node) in inserts {
-        read.nodes.insert(idx + accum_insertes, node);
-        accum_insertes += 1;
+    for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+        read.nodes.insert(idx + accum_inserts, node);
     }
     if !read.nodes.is_empty() {
         let mut nodes = vec![];
@@ -220,8 +218,8 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
                         r_ptr += l;
                     }
                     Op::Match(l) => {
-                        for i in r_ptr..r_ptr + l {
-                            pileups[i].coverage += 1;
+                        for pileup in pileups.iter_mut().skip(r_ptr).take(l) {
+                            pileup.coverage += 1;
                         }
                         r_ptr += l;
                         q_ptr += l;
@@ -264,10 +262,8 @@ fn alignment(read: &EncodedRead, query: &ReadSkelton) -> Option<(Vec<Op>, bool)>
 
 // Return true if the alignment is proper dovetail.
 fn is_proper(ops: &[Op]) -> bool {
-    ops.windows(2).all(|xs| match xs {
-        &[Op::Ins(_), Op::Del(_)] | &[Op::Del(_), Op::Ins(_)] => false,
-        _ => true,
-    })
+    ops.windows(2)
+        .all(|xs| !matches!(xs, &[Op::Ins(_), Op::Del(_)] | &[Op::Del(_), Op::Ins(_)]))
 }
 
 const MIN_ALN: i32 = -10000000;
@@ -529,12 +525,10 @@ impl Pileup {
         };
         let after_offset = {
             let (count, total) =
-                inserts
-                    .clone()
-                    .fold((0, 0), |(count, total), node| match node.after_offset {
-                        Some(len) => (count + 1, total + len),
-                        None => (count, total),
-                    });
+                inserts.fold((0, 0), |(count, total), node| match node.after_offset {
+                    Some(len) => (count + 1, total + len),
+                    None => (count, total),
+                });
             total / count
         };
         (prev_offset, after_offset)

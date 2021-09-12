@@ -182,11 +182,11 @@ impl ClusteringCorrection for DataSet {
 
 fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
-        return 0.;
+        0.
     } else if xs.len() == 1 {
         xs[0]
     } else {
-        let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+        let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
         assert!(sum >= 0., "{:?}->{}", xs, sum);
         max + sum
@@ -319,18 +319,18 @@ pub fn em_clustering_inner<R: Rng>(
             .collect(),
         false => initialize_weights(contexts, k, rng),
     };
-    let mut model = EMModel::new(&contexts, &weights, k);
+    let mut model = EMModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts
         .iter()
-        .map(|ctx| model.get_weight(ctx, &mut vec![]).1)
+        .map(|ctx| model.get_weight(ctx, &mut []).1)
         .sum();
     trace!("LK:{}", lk);
     loop {
         let (prev_model, prev_weights) = (model.clone(), weights.clone());
-        model.update(&mut weights, &contexts);
+        model.update(&mut weights, contexts);
         let next_lk = contexts
             .iter()
-            .map(|ctx| model.get_weight(ctx, &mut vec![]).1)
+            .map(|ctx| model.get_weight(ctx, &mut []).1)
             .sum();
         trace!("LK:{}", next_lk);
         if (next_lk - lk) < 0.001 {
@@ -349,7 +349,7 @@ pub fn em_clustering_inner<R: Rng>(
             let cluster: usize = ws
                 .iter()
                 .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                 .map(|x| x.0)
                 .unwrap();
             (ctx.id, ctx.index, cluster as u64)
@@ -364,7 +364,7 @@ pub fn em_clustering_inner<R: Rng>(
         let (cluster, _) = weight
             .iter()
             .enumerate()
-            .max_by(|x, y| x.1.partial_cmp(&(y.1)).unwrap())
+            .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
             .unwrap();
         let unit = context.unit;
         trace!(
@@ -611,6 +611,7 @@ impl EMModel {
         total_lk
     }
     // Mapping position is the location of the j-th element to the i-th model.[i][j]
+    #[allow(clippy::type_complexity)]
     fn get_weight(
         &self,
         context: &Context,
@@ -726,7 +727,7 @@ impl RawModel {
             self.center.values_mut().for_each(|x| *x /= sum);
         }
         fn normalize(slots: &mut HashMap<(u64, u64), f64>) {
-            let sum: f64 = slots.values().map(|x| x).sum();
+            let sum: f64 = slots.values().sum();
             slots.values_mut().for_each(|x| *x /= sum);
             slots.retain(|_, prob| 0.01 < *prob);
             // slots.retain(|_, prob| SMALL < *prob);
@@ -777,7 +778,7 @@ impl RawModel {
         let (mut j, lk) = dp[i]
             .iter()
             .enumerate()
-            .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+            .max_by(|x, y| (x.1).partial_cmp(y.1).unwrap())
             .unwrap();
         while 0 < i && 0 < j {
             if is_matched[i][j] {

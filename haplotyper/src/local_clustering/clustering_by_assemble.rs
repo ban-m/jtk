@@ -30,7 +30,7 @@ impl ClusteringConfig {
 use definitions::Node;
 pub fn clustering_by_assemble(data: &mut [Node], config: &ClusteringConfig) -> usize {
     let seqs: Vec<_> = data.iter().map(|x| x.seq().to_vec()).collect();
-    let assignments = clustering(&seqs, &config);
+    let assignments = clustering(&seqs, config);
     data.iter_mut()
         .zip(assignments)
         .for_each(|(x, a)| x.cluster = a as u64);
@@ -40,10 +40,10 @@ pub fn clustering_by_assemble(data: &mut [Node], config: &ClusteringConfig) -> u
 pub fn clustering_m(seqs: &[Vec<u8>], config: &ClusteringConfig) -> Vec<u8> {
     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(config.seed);
     (0..4)
-        .map(|_| clustering_from(&seqs, config, &mut rng))
+        .map(|_| clustering_from(seqs, config, &mut rng))
         .min_by_key(|x| x.0)
         .map(|x| x.1.iter().map(|&x| x as u8).collect::<Vec<_>>())
-        .unwrap_or(vec![0; seqs.len()])
+        .unwrap_or_else(|| vec![0; seqs.len()])
 }
 
 fn clustering_from<R: Rng>(
@@ -55,10 +55,10 @@ fn clustering_from<R: Rng>(
         .map(|_| rng.gen_range(0..config.cluster_num))
         .collect();
     let template =
-        kiley::ternary_consensus(&seqs, rng.gen(), config.repeat_number, config.band_size);
-    let mut consensus = vec![template.clone(); config.cluster_num];
-    consensus = polish_consensus(&assignments, &seqs, &consensus, config);
-    let mut dist: u32 = get_total_edit_distance(&assignments, &seqs, &consensus);
+        kiley::ternary_consensus(seqs, rng.gen(), config.repeat_number, config.band_size);
+    let mut consensus = vec![template; config.cluster_num];
+    consensus = polish_consensus(&assignments, seqs, &consensus, config);
+    let mut dist: u32 = get_total_edit_distance(&assignments, seqs, &consensus);
     debug!("Dist:{}", dist);
     use rand::seq::SliceRandom;
     for _ in 0.. {
@@ -72,9 +72,9 @@ fn clustering_from<R: Rng>(
             mins.shuffle(rng);
             let new_asn = mins.iter().min_by_key(|x| x.1).map(|x| x.0).unwrap();
             assignments[idx] = new_asn;
-            consensus = polish_consensus(&assignments, &seqs, &consensus, config);
+            consensus = polish_consensus(&assignments, seqs, &consensus, config);
         }
-        let new_dist = get_total_edit_distance(&assignments, &seqs, &consensus);
+        let new_dist = get_total_edit_distance(&assignments, seqs, &consensus);
         debug!("Dist:{}", new_dist);
         if dist <= new_dist {
             break;
@@ -91,10 +91,10 @@ pub fn clustering(seqs: &[Vec<u8>], config: &ClusteringConfig) -> Vec<u8> {
         .map(|_| rng.gen_range(0..config.cluster_num))
         .collect();
     let template =
-        kiley::ternary_consensus(&seqs, rng.gen(), config.repeat_number, config.band_size);
-    let mut consensus = vec![template.clone(); config.cluster_num];
-    consensus = polish_consensus(&assignments, &seqs, &consensus, config);
-    let mut dist: u32 = get_total_edit_distance(&assignments, &seqs, &consensus);
+        kiley::ternary_consensus(seqs, rng.gen(), config.repeat_number, config.band_size);
+    let mut consensus = vec![template; config.cluster_num];
+    consensus = polish_consensus(&assignments, seqs, &consensus, config);
+    let mut dist: u32 = get_total_edit_distance(&assignments, seqs, &consensus);
     debug!("Dist:{}", dist);
     use rand::seq::SliceRandom;
     for _ in 0.. {
@@ -109,9 +109,9 @@ pub fn clustering(seqs: &[Vec<u8>], config: &ClusteringConfig) -> Vec<u8> {
             let new_asn = mins.iter().min_by_key(|x| x.1).map(|x| x.0).unwrap();
             assignments[idx] = new_asn;
             // Update parameters.
-            consensus = polish_consensus(&assignments, &seqs, &consensus, config);
+            consensus = polish_consensus(&assignments, seqs, &consensus, config);
         }
-        let new_dist = get_total_edit_distance(&assignments, &seqs, &consensus);
+        let new_dist = get_total_edit_distance(&assignments, seqs, &consensus);
         debug!("Dist:{}", new_dist);
         if dist <= new_dist {
             break;
@@ -136,7 +136,7 @@ fn polish_consensus(
     consensus
         .iter()
         .zip(slots)
-        .map(|(c, xs)| kiley::polish_until_converge_banded(&c, &xs, config.band_size))
+        .map(|(c, xs)| kiley::polish_until_converge_banded(c, &xs, config.band_size))
         .collect()
 }
 

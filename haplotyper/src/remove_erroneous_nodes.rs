@@ -8,6 +8,7 @@ use crate::assemble::copy_number::CoverageCalibrator;
 use definitions::*;
 use std::collections::{HashMap, HashSet};
 impl RemoveErroneousNodes for DataSet {
+    #[allow(clippy::needless_collect)]
     fn remove_erroneous_nodes(mut self) -> Self {
         let mut counts: HashMap<_, (usize, i64)> = HashMap::new();
         let normalize = |from: &Node, to: &Node| -> (u64, u64) {
@@ -82,7 +83,7 @@ impl RemoveErroneousNodes for DataSet {
                     };
                     let mod_cov = *calib_coverage.get(&probe).unwrap_or(&0f64);
                     if IMPROVE_THR * cov < mod_cov {
-                        let (from, to) = key.clone();
+                        let (from, to) = key;
                         debug!(
                             "REMOVING\t{}\t{}\t{}\t{}\t{}\t{}",
                             from, to, to, next_unit, cov, mod_cov
@@ -98,7 +99,7 @@ impl RemoveErroneousNodes for DataSet {
                     };
                     let mod_cov = *calib_coverage.get(&probe).unwrap_or(&0f64);
                     if IMPROVE_THR * cov < mod_cov {
-                        let (from, to) = key.clone();
+                        let (from, to) = key;
                         debug!(
                             "REMOVING\t{}\t{}\t{}\t{}\t{}\t{}",
                             from, to, from, prev_unit, cov, mod_cov
@@ -125,10 +126,8 @@ impl RemoveErroneousNodes for DataSet {
                     })
                 })
                 .collect();
-            let mut offset = 0;
-            for i in remove_idx {
+            for (offset, i) in remove_idx.into_iter().enumerate() {
                 read.remove(i - offset);
-                offset += 1;
             }
         }
         self

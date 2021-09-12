@@ -64,7 +64,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             bucket.push(node);
         }
     }
-    let coverage = ds.coverage.clone();
+    let coverage = ds.coverage;
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {
@@ -77,20 +77,26 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                     (units.len() / 2) as f64
                 }
             };
-            let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
+            let config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
             let start = std::time::Instant::now();
             let cov = seqs.len();
-            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
             let end = std::time::Instant::now();
             let elapsed = (end - start).as_secs();
-            let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
+            let len = consensus.len();
             debug!(
-                "RECORD\t{}\t{}\t{}\t{}\t{:.3}\t{}",
-                unit_id, elapsed, prevcl, cl, score, cov
+                "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
+                unit_id, elapsed, len, score, cov
             );
+
+            // let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
+            // debug!(
+            //     "RECORD\t{}\t{}\t{}\t{}\t{:.3}\t{}",
+            //     unit_id, elapsed, prevcl, cl, score, cov
+            // );
             (unit_id, (consensus, score, config.cluster_num))
         })
         .collect();
@@ -121,7 +127,7 @@ pub fn local_clustering_all(ds: &mut DataSet) {
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         pileups.entry(node.unit).or_default().push(node);
     }
-    let coverage = ds.coverage.clone();
+    let coverage = ds.coverage;
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {
@@ -134,9 +140,9 @@ pub fn local_clustering_all(ds: &mut DataSet) {
                     (units.len() / 2) as f64
                 }
             };
-            let mut config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
+            let config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
             let start = std::time::Instant::now();
-            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
@@ -201,7 +207,7 @@ pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
         })
         .collect();
     let seed = ref_unit.id * iteration;
-    clustering_by_kmeans(&mut data, len, &c, ref_unit, seed);
+    clustering_by_kmeans(&mut data, len, c, ref_unit, seed);
     for ((_, _, ref mut n), d) in units.iter_mut().zip(data.iter()) {
         n.cluster = d.cluster as u64;
     }
@@ -778,7 +784,7 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
             initial_clustering(data, ref_unit, dim, seed);
         }
         let vn = 3 * c.variant_num;
-        let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
+        let (_, pos, lks, margin) = get_variants(data, dim, rng, c, vn);
         (pos, lks, margin)
     };
     trace!("Init Margin:{}", margin);
@@ -786,12 +792,12 @@ pub fn clustering_by_kmeans<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     update_by_precomputed_lks(data, dim, 0., &pos, &lks, rng);
     loop {
         let vn = 3 * c.variant_num - c.variant_num * count as usize / (c.stable_limit as usize - 1);
-        let (_, pos, lks, margin) = get_variants(&data, dim, rng, c, vn);
+        let (_, pos, lks, margin) = get_variants(data, dim, rng, c, vn);
         let lks = average_correction(lks, dim);
         let changed_num = update_by_precomputed_lks(data, dim, 0., &pos, &lks, rng);
         count += (changed_num <= stable_thr) as u32;
         count *= (changed_num <= stable_thr) as u32;
-        report(ref_unit.id, &data, count, margin, 1., changed_num);
+        report(ref_unit.id, data, count, margin, 1., changed_num);
         if (std::time::Instant::now() - start).as_secs() > c.limit {
             info!("Break by timelimit:{}", c.limit);
             break margin;
@@ -975,7 +981,7 @@ fn alignment<F: bio::alignment::pairwise::MatchFunc>(
     query: &[u8],
     template: &[u8],
 ) -> Vec<u8> {
-    let aln = aligner.global(&query, &template);
+    let aln = aligner.global(query, template);
     let mut seq = vec![];
     let mut ins = vec![b'-'; template.len()];
     let (mut rpos, mut qpos) = (0, 0);
@@ -1048,7 +1054,7 @@ fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
     }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
     let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
     assert!(sum >= 0., "{:?}->{}", xs, sum);
     max + sum
@@ -1188,7 +1194,7 @@ pub fn em_clustering(
         .filter_map(|ws| {
             ws.iter()
                 .enumerate()
-                .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+                .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
         })
         .map(|x| x.0)
         .collect();

@@ -467,7 +467,7 @@ fn take_consensus(
         .map(|(key, value)| {
             let draft = match units.get(&(key.0)) {
                 Some(res) => res.to_vec(),
-                None => value.iter().nth(0).map(|x| x.seq().to_vec()).unwrap(),
+                None => value.get(0).map(|x| x.seq().to_vec()).unwrap(),
             };
             let cons = if c.to_polish {
                 let seqs: Vec<_> = value.iter().map(|x| x.seq()).collect();
@@ -614,11 +614,7 @@ impl<'a> DitchGraph<'a> {
 
 impl<'a> DitchGraph<'a> {
     // Return iterator yeilding the edge from a specified node and position.
-    fn get_edges<'b>(
-        &'b self,
-        node: Node,
-        pos: Position,
-    ) -> impl std::iter::Iterator<Item = &'b DitchEdge> {
+    fn get_edges(&self, node: Node, pos: Position) -> impl std::iter::Iterator<Item = &DitchEdge> {
         match self.nodes.get(&node) {
             Some(node) => node.edges.iter().filter(move |e| e.from_position == pos),
             None => panic!(
@@ -638,7 +634,7 @@ impl<'a> DitchGraph<'a> {
         let mut selected = vec![false; self.nodes.len()];
         let mut primary_candidates = vec![];
         for (idx, (key, node)) in self.nodes.iter().enumerate() {
-            for position in vec![Position::Head, Position::Tail] {
+            for position in [Position::Head, Position::Tail] {
                 let num_of_edge = node
                     .edges
                     .iter()
@@ -657,7 +653,7 @@ impl<'a> DitchGraph<'a> {
             .zip(selected)
             .filter(|(_, selected)| !selected)
         {
-            for position in vec![Position::Head, Position::Tail] {
+            for position in [Position::Head, Position::Tail] {
                 let grand_child = node
                     .edges
                     .iter()
@@ -686,7 +682,7 @@ impl<'a> DitchGraph<'a> {
     fn partition_edges_by_simple_path(&self) -> (Vec<&DitchEdge>, Vec<&DitchEdge>) {
         let (mut in_simple_path, mut between_simple_path) = (vec![], vec![]);
         for node in self.nodes.values() {
-            for pos in vec![Position::Head, Position::Tail] {
+            for pos in [Position::Head, Position::Tail] {
                 let count = node.edges.iter().filter(|e| e.from_position == pos).count();
                 // if this is bidirectionaly unique, it is a edge in a simple path.
                 let is_bi_unique = (count == 1) && {
@@ -729,7 +725,7 @@ impl<'a> DitchGraph<'a> {
             .map(|(idx, key)| (key, idx))
             .collect();
         use super::copy_number::CoverageCalibrator;
-        let calibrator = CoverageCalibrator::new(&lens);
+        let calibrator = CoverageCalibrator::new(lens);
         let unit_len_sum: usize = self.nodes.values().map(|n| n.seq().len()).sum();
         let cov = calibrator.calib_f64(naive_cov, unit_len_sum / self.nodes.len());
         debug!("COVERAGE\t{:.3}\t{:.3}", naive_cov, cov,);
@@ -865,7 +861,7 @@ impl<'a> DitchGraph<'a> {
             }
         };
         use super::copy_number::CoverageCalibrator;
-        let calibrator = CoverageCalibrator::new(&lens);
+        let calibrator = CoverageCalibrator::new(lens);
         let sum_unit_len: usize = self.nodes.values().map(|node| node.seq().len()).sum();
         let ave_unit_len = sum_unit_len / self.nodes.len();
         let calib_occ = |edge: &DitchEdge| {
@@ -879,7 +875,7 @@ impl<'a> DitchGraph<'a> {
                 retain_edges.extend(node.edges.iter().map(format_edge));
                 continue;
             }
-            for position in vec![Position::Head, Position::Tail] {
+            for position in [Position::Head, Position::Tail] {
                 let edges = node.edges.iter().filter(|e| e.from_position == position);
                 // It is ok to take max by this way, as if the max is 0 there's no edge.
                 let max = edges.clone().map(calib_occ).fold(0f64, |x, y| x.max(y));
@@ -1007,7 +1003,7 @@ impl<'a> DitchGraph<'a> {
                         edges[from].contains(&to)
                     })
                     .collect();
-                (node.clone(), (is_artic, are_bridge))
+                (*node, (is_artic, are_bridge))
             })
             .collect()
     }
@@ -1547,7 +1543,7 @@ impl<'a> DitchGraph<'a> {
                 };
                 // if branching || confluent {
                 if confluent {
-                    if let Some(focus) = self.examine_focus(node, pos, &reads, config) {
+                    if let Some(focus) = self.examine_focus(node, pos, reads, config) {
                         foci.insert((node.node, pos), focus);
                     }
                 }
@@ -1704,12 +1700,7 @@ impl<'a> DitchGraph<'a> {
             self.nodes.keys().map(|&k| (k, vec![])).collect();
         for (from, node) in self.nodes.iter() {
             for &pos in &[Position::Head, Position::Tail] {
-                let to_cands = node
-                    .edges
-                    .iter()
-                    .filter(|e| e.from_position == pos)
-                    .map(|e| (e.to_position, e.to))
-                    .count();
+                let to_cands = node.edges.iter().filter(|e| e.from_position == pos).count();
                 if to_cands > 1 {
                     let max_occ = node.edges.iter().map(|x| x.occ).max().unwrap();
                     for e in node
@@ -1848,7 +1839,7 @@ impl<'a> DitchGraph<'a> {
                     new_node.tips.push(tip)
                 }
             }
-            while let Some(mut edge) = self.nodes.get_mut(&node).unwrap().edges.pop() {
+            while let Some(mut edge) = self.nodes.get_mut(node).unwrap().edges.pop() {
                 if let Some(existing) = new_node
                     .edges
                     .iter_mut()
@@ -1932,7 +1923,7 @@ impl<'a> DitchGraph<'a> {
                         .iter()
                         .map(|x| {
                             let mut units: Vec<_> = x.0.iter().map(|x| x.0).collect();
-                            units.sort();
+                            units.sort_unstable();
                             units
                         })
                         .collect();
@@ -1955,7 +1946,7 @@ impl<'a> DitchGraph<'a> {
                             squish_to
                                 .entry((unit, cluster))
                                 .and_modify(|to| *to = (*to).min(convert_table[&unit]))
-                                .or_insert(convert_table[&unit]);
+                                .or_insert_with(|| convert_table[&unit]);
                         }
                     }
                 }

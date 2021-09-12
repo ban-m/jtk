@@ -211,7 +211,7 @@ fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
         let gaussian: Vec<_> = (0..k)
             .map(|i| {
                 let weights: Vec<_> = weights.iter().map(|x| x[i]).collect();
-                Gaussian::update(&xs, &weights)
+                Gaussian::update(xs, &weights)
             })
             .collect();
         weights = xs
@@ -236,7 +236,7 @@ fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
     let gaussian: Vec<_> = (0..k)
         .map(|i| {
             let weights: Vec<_> = weights.iter().map(|x| x[i]).collect();
-            Gaussian::update(&xs, &weights)
+            Gaussian::update(xs, &weights)
         })
         .collect();
     let result: Vec<_> = weights
@@ -244,7 +244,7 @@ fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
         .map(|xs| {
             xs.iter()
                 .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(&(b.1)).unwrap())
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                 .map(|x| x.0)
                 .unwrap()
         })
@@ -263,7 +263,7 @@ fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
     }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
     let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
     assert!(sum >= 0., "{:?}->{}", xs, sum);
     max + sum

@@ -73,7 +73,7 @@ where
         .map(|e| POA::new(&e.consensus(), 1.))
         .unwrap_or_default();
     match c.read_type {
-        ReadType::CCS => base.update(&cs, &vec![1.; cs.len()], param),
+        ReadType::CCS => base.update(cs, &vec![1.; cs.len()], param),
         _ => {
             let mut cs: Vec<_> = cs.iter().copied().collect();
             let mut rng: rand_xoshiro::Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(924);

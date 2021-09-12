@@ -206,12 +206,13 @@ impl Optimizer {
             let node_consist = 2f64 * (from_coef * node_penalty[from] + to_coef * node_penalty[to]);
             *grad = alpha * residual + beta * node_consist + gamma * int_pen;
         }
-        let total_loss = alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen;
+        alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen
+        // let total_loss = alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen;
         // debug!(
         //     "LOSS\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
         //     edge_res, node_res, node_pen, int_pen, total_loss
         // );
-        total_loss
+        // total_loss
     }
 }
 
@@ -271,13 +272,13 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .find(|x| x.inner.starts_with("cv"))
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|cov| cov.parse().ok())
-                    .expect(&format!("{:?}", record.tags));
+                    .unwrap_or_else(|| panic!("{:?}", record.tags));
                 let gap_len: isize = tags
                     .iter()
                     .find(|x| x.inner.starts_with("ln"))
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|cov| cov.parse().ok())
-                    .expect(&format!("{:?}", record.tags));
+                    .unwrap_or_else(|| panic!("{:?}", record.tags));
                 let gap_len = (gap_len + 2 * unit_len as isize).max(0) as usize;
                 let weight = calibrator.calib(coverage, gap_len) / cov;
                 // debug!("DUMP\t{}\t{:.2}\t{:.2}\tEdge", coverage, weight, gap_len);
@@ -288,18 +289,16 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
         .collect();
     let (node_cp, edge_cp) = estimate_copy_number(&nodes, &edges);
     assert_eq!(nodes.len(), node_cp.len());
-    let nodes = gfa.iter_mut().filter(|record| match &record.content {
-        gfa::Content::Seg(_) => true,
-        _ => false,
-    });
+    let nodes = gfa
+        .iter_mut()
+        .filter(|record| matches!(&record.content, gfa::Content::Seg(_)));
     for (record, cp) in nodes.zip(node_cp) {
         record.tags.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
     }
     assert_eq!(edges.len(), edge_cp.len());
-    let edges = gfa.iter_mut().filter(|record| match &record.content {
-        gfa::Content::Edge(_) => true,
-        _ => false,
-    });
+    let edges = gfa
+        .iter_mut()
+        .filter(|record| matches!(&record.content, gfa::Content::Edge(_)));
     for (record, cp) in edges.zip(edge_cp) {
         record.tags.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
     }
@@ -329,7 +328,7 @@ pub fn estimate_copy_number(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<u
         debug!("{}\t{}\t{}", isolated, tip - isolated, all - tip);
     }
     let mut copy_num: Vec<_> = edges.iter().map(|f| f.4).collect();
-    let mut optimizer = Optimizer::new(&nodes, &edges, &is_tip);
+    let mut optimizer = Optimizer::new(nodes, edges, &is_tip);
     optimizer.optimize(&mut copy_num);
     let mut node_cp = vec![0f64; nodes.len()];
     for (&(from, _, to, _, _), cp) in edges.iter().zip(copy_num.iter()) {

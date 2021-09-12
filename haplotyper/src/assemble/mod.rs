@@ -117,9 +117,10 @@ impl Assemble for DataSet {
             self.encoded_reads
                 .iter_mut()
                 .flat_map(|r| r.nodes.iter_mut())
-                .for_each(|n| match squish.get(&(n.unit, n.cluster)) {
-                    Some(res) => n.cluster = *res,
-                    None => {}
+                .for_each(|n| {
+                    if let Some(res) = squish.get(&(n.unit, n.cluster)) {
+                        n.cluster = *res;
+                    }
                 });
         }
         {
@@ -134,9 +135,10 @@ impl Assemble for DataSet {
             self.encoded_reads
                 .iter_mut()
                 .flat_map(|r| r.nodes.iter_mut())
-                .for_each(|n| match squish.get(&(n.unit, n.cluster)) {
-                    Some(res) => n.cluster = *res,
-                    None => {}
+                .for_each(|n| {
+                    if let Some(res) = squish.get(&(n.unit, n.cluster)) {
+                        n.cluster = *res;
+                    }
                 });
         }
     }
@@ -149,7 +151,7 @@ impl Assemble for DataSet {
             let (copy_num, tig_num) = summary
                 .summary
                 .iter()
-                .filter_map(|s| s.copy_number.clone())
+                .filter_map(|s| s.copy_number)
                 .fold((0, 0), |(c, x), copynum| (c + copynum, x + 1));
             let copy_num = match tig_num {
                 0 => 0,
@@ -183,7 +185,7 @@ impl Assemble for DataSet {
                 }
             })
             .fold((vec![], vec![]), |(mut nodes, mut edges), (cl, _)| {
-                let (records, summaries) = assemble(&self, cl, c);
+                let (records, summaries) = assemble(self, cl, c);
                 nodes.extend(summaries.iter().map(|s| {
                     let id = s.id.clone();
                     let segments: Vec<_> = s
@@ -295,7 +297,7 @@ pub fn assemble(
                 }
                 tags
             })
-            .unwrap_or(vec![]);
+            .unwrap_or_else(Vec::new);
         gfa::Record::from_contents(gfa::Content::Seg(node), tags)
     });
     let edges = edge
@@ -318,7 +320,7 @@ fn polish_segment(
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
     };
-    let seq = String::from_utf8(polish_by_chunking(&alignments, &segment, &reads, c)).unwrap();
+    let seq = String::from_utf8(polish_by_chunking(&alignments, segment, &reads, c)).unwrap();
     gfa::Segment::from(segment.sid.clone(), seq.len(), Some(seq))
 }
 
@@ -419,7 +421,7 @@ pub fn polish_by_chunking(
     use kiley::gphmm::*;
     let model = GPHMM::<Cond>::clr();
     let config = kiley::PolishConfig::with_model(100, c.window_size, 30, 50, 15, model);
-    let mut polished = kiley::polish(&vec![segment], &reads, &alignments.records, &config);
+    let mut polished = kiley::polish(&[segment], &reads, &alignments.records, &config);
     assert_eq!(polished.len(), 1);
     polished.pop().unwrap().1
 }

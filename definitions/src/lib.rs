@@ -238,7 +238,7 @@ impl EncodedRead {
         if i + 1 == len {
             let removed_edge = self.edges.remove(i - 1);
             let node_seq = removed_node.original_seq();
-            let skip = (-1 * removed_edge.offset.min(0)) as usize;
+            let skip = (-removed_edge.offset.min(-0)) as usize;
             let trailing_seq: Vec<_> = removed_edge
                 .label()
                 .iter()
@@ -258,7 +258,7 @@ impl EncodedRead {
             }
         } else {
             let removed_edge = self.edges.remove(i);
-            let skip = (-1 * self.edges[i - 1].offset.min(0)) as usize;
+            let skip = (-self.edges[i - 1].offset.min(-0)) as usize;
             self.edges[i - 1].to = removed_edge.to;
             self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
             self.edges[i - 1]

@@ -154,7 +154,7 @@ impl<'a> StringGraph<'a> {
         let isolated: HashSet<u64> = edges
             .values()
             .filter_map(|edge| edge.as_ref().err())
-            .filter(|node| match edges[&node] {
+            .filter(|node| match edges[node] {
                 Ok(ref res) => res.is_empty(),
                 _ => false,
             })
@@ -239,7 +239,7 @@ impl<'a> StringGraph<'a> {
         // Remove transitive edges.
         let num_edges = self.edges.values().map(|x| x.len()).sum::<usize>();
         self.edges.iter_mut().for_each(|(k, v)| {
-            let transitive_flags = &is_transitive_edge[&k];
+            let transitive_flags = &is_transitive_edge[k];
             let mut idx = 0;
             v.retain(|_| {
                 idx += 1;
@@ -275,7 +275,7 @@ impl<'a> StringGraph<'a> {
     pub fn tip_removal(&mut self) {
         let mut to_be_removed: HashSet<_> = HashSet::new();
         for (_, edges) in self.edges.iter() {
-            for position in vec![Position::Head, Position::Tail] {
+            for position in [Position::Head, Position::Tail] {
                 let num_edges = edges
                     .iter()
                     .filter(|ed| ed.from_position == position)
@@ -416,19 +416,19 @@ impl<'a> StringGraph<'a> {
         self.parent.unite(edge.from as usize, edge.to as usize)
     }
     pub fn light_node_trim(&mut self, thr: usize) {
-        let nodes: Vec<_> = self.nodes.keys().copied().collect();
         let ids: Vec<_> = self.reads.iter().map(|r| r.id).collect();
-        let is_lightweight: HashSet<u64> = nodes
-            .into_iter()
-            .filter(|&k| {
+        let is_lightweight: HashSet<u64> = {
+            let mut is_lightweight: HashSet<u64> = self.nodes.keys().copied().collect();
+            is_lightweight.retain(|&k| {
                 let parent = self.parent.find(k as usize).unwrap();
                 let coverage = ids
                     .iter()
                     .filter(|&&id| self.parent.find(id as usize).unwrap() == parent)
                     .count();
-                coverage < thr
-            })
-            .collect();
+                thr <= coverage
+            });
+            is_lightweight
+        };
         for edges in self.edges.values_mut() {
             edges.retain(|edge| {
                 !is_lightweight.contains(&edge.from) && !is_lightweight.contains(&edge.to)
@@ -471,57 +471,51 @@ impl<'a> StringGraph<'a> {
         let (nodes, edges, group, summaries) = self.assemble();
         let nodes_length: HashMap<_, _> = nodes.iter().map(|n| (n.sid.clone(), n.slen)).collect();
         let mut removed_nodes = HashSet::new();
-        let group: Vec<_> = group
-            .into_iter()
-            .filter(|g| {
-                let short_contig = g
-                    .set()
-                    .unwrap()
-                    .iter()
-                    .all(|id| nodes_length.get(id).unwrap() < &100_000);
-                let singleton = g.len() == 1;
-                if short_contig && singleton {
-                    for id in g.set().unwrap().iter() {
-                        removed_nodes.insert(id.clone());
+        let mut records = vec![];
+        records.extend(
+            group
+                .into_iter()
+                .filter(|g| {
+                    let short_contig = g
+                        .set()
+                        .unwrap()
+                        .iter()
+                        .all(|id| nodes_length.get(id).unwrap() < &100_000);
+                    let singleton = g.len() == 1;
+                    if short_contig && singleton {
+                        for id in g.set().unwrap().iter() {
+                            removed_nodes.insert(id.clone());
+                        }
+                        false
+                    } else {
+                        true
                     }
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
-        let nodes: Vec<_> = nodes
-            .into_iter()
-            .filter(|node| !removed_nodes.contains(&node.sid))
-            .collect();
+                })
+                .map(gfa::Content::Group)
+                .map(|g| gfa::Record::from_contents(g, vec![])),
+        );
+        records.extend(
+            nodes
+                .into_iter()
+                .filter(|node| !removed_nodes.contains(&node.sid))
+                .map(gfa::Content::Seg)
+                .map(|n| gfa::Record::from_contents(n, vec![])),
+        );
         let total = removed_nodes.iter().map(|k| nodes_length[k]).sum::<u64>();
         debug!("Removed {} contigs({}bp)", removed_nodes.len(), total);
         // Edge would be the same, unless it is circular loop.
-        let edges: Vec<_> = edges
-            .into_iter()
-            .filter(|edge| {
-                !removed_nodes.contains(&edge.sid1.id) && !removed_nodes.contains(&edge.sid2.id)
-            })
-            .collect();
+        records.extend(
+            edges
+                .into_iter()
+                .filter(|edge| {
+                    !removed_nodes.contains(&edge.sid1.id) && !removed_nodes.contains(&edge.sid2.id)
+                })
+                .map(gfa::Content::Edge)
+                .map(|n| gfa::Record::from_contents(n, vec![])),
+        );
         for summary in summaries.iter().filter(|n| !removed_nodes.contains(&n.id)) {
             debug!("CONTIG\t{}\t{}", summary.id, summary.reads.len());
         }
-        let mut records = vec![];
-        let nodes = nodes
-            .into_iter()
-            .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
-        records.extend(nodes);
-        let edges = edges
-            .into_iter()
-            .map(gfa::Content::Edge)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
-        records.extend(edges);
-        let group = group
-            .into_iter()
-            .map(gfa::Content::Group)
-            .map(|g| gfa::Record::from_contents(g, vec![]));
-        records.extend(group);
         let mut header = vec![header];
         header.extend(records);
         GFA::from_records(header)
@@ -557,6 +551,7 @@ impl<'a> StringGraph<'a> {
         }
         subseqs.iter().flat_map(|seq| consensus(seq, 10)).collect()
     }
+    #[allow(clippy::type_complexity)]
     fn edge_consensus(&self) -> HashMap<((u64, u64), (u64, u64)), EdgeSeq> {
         let mut slots: HashMap<_, Vec<_>> = HashMap::new();
         for read in self.reads.iter() {
@@ -654,7 +649,7 @@ impl<'a> StringGraph<'a> {
             .nodes
             .iter()
             .map(|(key, node)| {
-                let name = name_of_nodes[&key].clone();
+                let name = name_of_nodes[key].clone();
                 // Consensus.
                 let mut seq = vec![];
                 for w in node.windows(2) {
@@ -695,7 +690,7 @@ impl<'a> StringGraph<'a> {
                         }
                     }
                 }
-                let &(ref last, last_dir) = node.last().unwrap();
+                let &(last, last_dir) = node.last().unwrap();
                 if last.is_forward == last_dir {
                     seq.extend(&node_sequences[&(last.unit, last.cluster)]);
                 } else {
@@ -1019,7 +1014,7 @@ impl StrEdge {
         use AlignmentResult::*;
         use Position::*;
         let mut edges = vec![];
-        for aln in unit_alignment(&rseq, &qseq, c, score) {
+        if let Some(aln) = unit_alignment(&rseq, &qseq, c, score) {
             match aln {
                 HeadToTail(ofs) => edges.push(StrEdge::new(r.id, q.id, Head, Tail, ofs)),
                 TailToHead(ofs) => edges.push(StrEdge::new(r.id, q.id, Tail, Head, ofs)),
@@ -1030,7 +1025,7 @@ impl StrEdge {
             }
         }
         rseq.reverse();
-        for aln in unit_alignment(&rseq, &qseq, c, score) {
+        if let Some(aln) = unit_alignment(&rseq, &qseq, c, score) {
             match aln {
                 HeadToTail(ofs) => edges.push(StrEdge::new(r.id, q.id, Tail, Tail, ofs)),
                 TailToHead(ofs) => edges.push(StrEdge::new(r.id, q.id, Head, Head, ofs)),

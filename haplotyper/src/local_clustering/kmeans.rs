@@ -32,13 +32,13 @@ impl ClusteringConfig {
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
-    config: &mut ClusteringConfig,
+    config: &ClusteringConfig,
 ) -> Option<(Vec<u8>, Vec<u8>, f64)> {
     let ClusteringConfig {
         band_width,
         cluster_num,
         coverage,
-    } = config.clone();
+    } = *config;
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
     // debug!("TEMPLATE\t{}", String::from_utf8_lossy(&cons_template));
@@ -133,7 +133,7 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         cluster_num,
         coverage,
         ..
-    } = config.clone();
+    } = *config;
     // let profiles = get_profiles(&template, reads, band_width as isize);
     // for prof in profiles.iter() {
     //     let seq: Vec<_> = prof.iter().map(|x| format!("{}", x)).collect();
@@ -141,7 +141,7 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     // }
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
-        let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
+        let probes = filter_profiles(profiles, cluster_num, 3, coverage, template.len());
         // for (pos, lk) in probes.iter() {
         //     let (idx, t) = (pos / 9, pos % 9);
         //     if idx < template.len() {
@@ -241,7 +241,7 @@ fn recursive_clustering<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let cluster_num = 2;
     let selected_variants: Vec<Vec<_>> = {
         // let probes = filter_profiles(&profiles, cluster_num, 3, coverage);
-        let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template_len);
+        let probes = filter_profiles(profiles, cluster_num, 3, coverage, template_len);
         let profiles: Vec<Vec<_>> = profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs.borrow()[pos]).collect())
@@ -350,7 +350,7 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
     reads
         .iter()
         .map(|read| {
-            let prof = banded::ProfileBanded::new(&hmm, &template, &read, band_width).unwrap();
+            let prof = banded::ProfileBanded::new(&hmm, &template, read, band_width).unwrap();
             let lk = prof.lk();
             let mut modif_table = prof.to_modification_table();
             modif_table.truncate(9 * template.len());
@@ -731,7 +731,7 @@ fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
     }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
     let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
     assert!(sum >= 0., "{:?}->{}", xs, sum);
     max + sum

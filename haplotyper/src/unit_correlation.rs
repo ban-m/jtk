@@ -79,10 +79,8 @@ fn is_ok_unit(unit: &definitions::Unit, dataset: &DataSet, p_value: f64) -> bool
             }
         }
     }
-    if connections.is_empty() {
+    if connections.is_empty() || connections.iter().all(|(_, pairs)| pairs.len() < 5) {
         // It is OK to have isolated node.
-        true
-    } else if connections.iter().all(|(_, pairs)| pairs.len() < 5) {
         true
     } else {
         connections
@@ -91,7 +89,7 @@ fn is_ok_unit(unit: &definitions::Unit, dataset: &DataSet, p_value: f64) -> bool
             .any(|(&p, pairs)| {
                 let pair_unit = dataset.selected_chunks.iter().find(|u| u.id == p).unwrap();
                 let seed = unit.id * pair_unit.id;
-                calc_p_value(&pairs, seed) < p_value
+                calc_p_value(pairs, seed) < p_value
             })
     }
 }

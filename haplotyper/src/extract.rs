@@ -59,7 +59,7 @@ impl Extract for definitions::DataSet {
                 .iter()
                 .map(|u| {
                     let id = format!("{}", u.id);
-                    fasta::Record::with_data(&id, &None, &u.seq())
+                    fasta::Record::with_data(&id, &None, u.seq())
                 })
                 .collect(),
             _ => unreachable!(),

@@ -3,6 +3,7 @@ use super::*;
 impl<'a> super::DitchGraph<'a> {
     /// Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
     /// The contig summary contains the units used to construct a contig in the traversing order.
+    #[allow(clippy::type_complexity)]
     pub fn spell(
         &self,
         c: &AssembleConfig,
@@ -51,7 +52,7 @@ impl<'a> super::DitchGraph<'a> {
     }
     fn enumerate_adjacent_tag(
         &self,
-        seqname: &String,
+        seqname: &str,
         start: Node,
         start_position: Position,
         sids: &HashMap<Node, ContigTag>,
@@ -59,17 +60,17 @@ impl<'a> super::DitchGraph<'a> {
     ) -> Vec<(gfa::Edge, Vec<gfa::SamTag>)> {
         self.get_edges(start, start_position)
             .filter_map(|e| {
-                let (sid2, beg2) = match sids.get(&e.to)? {
-                    &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
+                let (sid2, beg2) = match *sids.get(&e.to)? {
+                    ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(0, false))
                     }
-                    &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
+                    ContigTag::End(ref name, pos, len) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(len, true))
                     }
-                    &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
+                    ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(0, false))
                     }
-                    &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
+                    ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
                         (gfa::RefID::from(name, true), gfa::Position::from(len, true))
                     }
                     _ => return None,
@@ -224,7 +225,7 @@ impl<'a> super::DitchGraph<'a> {
         let seg = gfa::Segment::from(seqname.clone(), seq.len(), Some(seq.clone()));
         // Add gfa edges.
         let gfa_pos = gfa::Position::from(seq.len(), true);
-        let tail_edges = self.enumerate_adjacent_tag(&seqname, node, position, &sids, gfa_pos);
+        let tail_edges = self.enumerate_adjacent_tag(&seqname, node, position, sids, gfa_pos);
         let mut edges = edges;
         edges.extend(tail_edges);
         (seg, edges, summary)

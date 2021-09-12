@@ -29,7 +29,8 @@ fn main() -> std::io::Result<()> {
             _ => ((u1, c1), (u2, c2)),
         },
     };
-    let mut counts: HashMap<((u64, u64), (u64, u64)), (u32, i64)> = HashMap::new();
+    type LEdge = ((u64, u64), (u64, u64));
+    let mut counts: HashMap<LEdge, (u32, i64)> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         for w in read.nodes.windows(2) {
             let edge_len = w[1].position_from_start as i64

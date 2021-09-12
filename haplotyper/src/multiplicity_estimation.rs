@@ -90,7 +90,7 @@ impl MultiplicityEstimation for DataSet {
         }
         let cov = {
             let mut counts: Vec<_> = counts.values().copied().collect();
-            counts.sort();
+            counts.sort_unstable();
             counts[counts.len() / 2] as f64 / 2f64
         };
         self.coverage = Some(cov);
@@ -116,7 +116,7 @@ impl MultiplicityEstimation for DataSet {
                     .find(|x| x.inner.starts_with("cp"))
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|cp| cp.parse().ok())
-                    .expect(&format!("{:?}", record.tags));
+                    .unwrap_or_else(|| panic!("{:?}", record.tags));
                 let units = tigname.get(&seg.sid).unwrap();
                 let cov: u32 = units.iter().map(|u| counts[u]).sum();
                 let cov = cov / units.len() as u32;
@@ -153,7 +153,7 @@ fn assemble_with_tigname(
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![]);
     use crate::assemble::assemble;
-    let (records, summaries) = assemble(&ds, 0, &assemble_config);
+    let (records, summaries) = assemble(ds, 0, &assemble_config);
     let mut header = vec![header];
     header.extend(records);
     let tigname: HashMap<_, _> = summaries
