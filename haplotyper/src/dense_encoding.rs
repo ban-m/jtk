@@ -6,10 +6,12 @@ const COV_THR_FACTOR: usize = 4;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 #[derive(Debug, Clone, Copy)]
-pub struct DenseEncodingConfig {}
+pub struct DenseEncodingConfig {
+    pub len: usize,
+}
 impl DenseEncodingConfig {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(len: usize) -> Self {
+        Self { len }
     }
 }
 pub trait DenseEncoding {
@@ -17,7 +19,7 @@ pub trait DenseEncoding {
 }
 
 impl DenseEncoding for DataSet {
-    fn dense_encoding(mut self, _config: &DenseEncodingConfig) -> Self {
+    fn dense_encoding(mut self, config: &DenseEncodingConfig) -> Self {
         let ave_unit_len = get_average_unit_length(&self);
         let original_assignments = log_original_assignments(&self);
         use crate::em_correction::ClusteringCorrection;
@@ -27,7 +29,7 @@ impl DenseEncoding for DataSet {
             .filter_map(|u| (1.0 < u.score).then(|| u.id))
             .collect();
         self = self.correct_clustering_em_on_selected(10, 3, true, &units);
-        let multi_tig = enumerate_diplotigs(&mut self);
+        let multi_tig = enumerate_diplotigs(&mut self, config.len);
         // Nodes to be clustered, or node newly added by filling edge.
         let mut to_clustering_nodes = HashSet::new();
         for (cluster_num, nodes) in multi_tig {
@@ -244,10 +246,11 @@ fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gai
     }
 }
 
-fn enumerate_diplotigs(ds: &mut DataSet) -> Vec<(usize, Vec<(u64, u64)>)> {
+// Squish short contig, return the generated diplotigs.
+fn enumerate_diplotigs(ds: &mut DataSet, len: usize) -> Vec<(usize, Vec<(u64, u64)>)> {
     use crate::assemble::*;
     let config = AssembleConfig::new(1, 1000, false, true);
-    ds.squish_small_contig(&config);
+    ds.squish_small_contig(&config, len);
     let (_, summaries) = assemble(ds, 0, &config);
     let mut multi_tig: Vec<_> = summaries
         .iter()

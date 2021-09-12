@@ -104,16 +104,16 @@ pub trait Assemble {
     /// tangles. It just assemble the dataset into a graph.
     fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
     /// Detecting and squishing clusters with small confidence.
-    fn squish_small_contig(&mut self, c: &AssembleConfig);
+    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize);
 }
 
 impl Assemble for DataSet {
-    fn squish_small_contig(&mut self, c: &AssembleConfig) {
+    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
         {
             let reads: Vec<_> = self.encoded_reads.iter().collect();
             let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
             graph.remove_lightweight_edges(2);
-            let squish = graph.squish_bubbles(15);
+            let squish = graph.squish_bubbles(len);
             self.encoded_reads
                 .iter_mut()
                 .flat_map(|r| r.nodes.iter_mut())
@@ -130,7 +130,7 @@ impl Assemble for DataSet {
             let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
             graph.remove_zero_copy_elements(cov, &lens, 0.3);
             graph.transitive_edge_reduction();
-            let squish = graph.squish_bubbles(15);
+            let squish = graph.squish_bubbles(len);
             self.encoded_reads
                 .iter_mut()
                 .flat_map(|r| r.nodes.iter_mut())
@@ -250,14 +250,14 @@ pub fn assemble(
     graph.remove_lightweight_edges(2);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
-            debug!("Removing ZCEs");
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
             // graph.remove_zero_copy_elements(cov, &lens, 0.3);
             // graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
+            graph.assign_copy_number(cov, &lens);
             // graph.resolve_repeats(&reads, c, 5f64);
             // graph.remove_tips(0.5, 5);
-            graph.assign_copy_number(cov, &lens);
+            // graph.assign_copy_number(cov, &lens);
         }
     }
     let (segments, edge, group, summaries) = graph.spell(c, cl);

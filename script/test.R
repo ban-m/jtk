@@ -196,6 +196,11 @@ g <- edge.data %>% filter(len < 6000) %>%  ggplot() + geom_histogram(aes(x=len))
 tig.data <- read_tsv("dbb.contig", col_names = c("id","copy","len","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
+
+tig.data <- read_tsv("focus3.contig", col_names = c("id","copy","len","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
+
+
 em.lk.data <- read_tsv("em_data.tsv")
 
 em.lk.summary <- em.lk.data %>% group_by(num,span) %>% nest() %>%

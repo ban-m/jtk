@@ -663,11 +663,7 @@ impl<'a> DitchGraph<'a> {
                     .iter()
                     .find(|e| e.from_position == position)
                     .map(|e| {
-                        let count = self.nodes[&e.to]
-                            .edges
-                            .iter()
-                            .filter(|f| f.from_position == e.to_position)
-                            .count();
+                        let count = self.get_edges(e.to, e.to_position).count();
                         if count == 0 {
                             debug!("{:?},{}", node, position);
                             debug!("Edge:{:?}", e);
@@ -1070,11 +1066,7 @@ impl<'a> DitchGraph<'a> {
                 break;
             }
             // Move node. Unwrap never panics here.
-            let traced_edge = self.nodes[&current_node]
-                .edges
-                .iter()
-                .find(|e| e.from_position == current_pos)
-                .unwrap();
+            let traced_edge = self.get_edges(current_node, current_pos).next().unwrap();
             current_node = traced_edge.to;
             current_pos = traced_edge.to_position;
         }
@@ -1111,11 +1103,7 @@ impl<'a> DitchGraph<'a> {
                 break;
             }
             // Move node. Unwrap never panics here.
-            let traced_edge = self.nodes[&current_node]
-                .edges
-                .iter()
-                .find(|e| e.from_position == current_pos)
-                .unwrap();
+            let traced_edge = self.get_edges(current_node, current_pos).next().unwrap();
             current_node = traced_edge.to;
             current_pos = traced_edge.to_position;
         }
@@ -1132,22 +1120,17 @@ impl<'a> DitchGraph<'a> {
             // Move position.
             position = !position;
             nodes.push(node);
-            let mut edges = self.nodes[&node]
-                .edges
-                .iter()
-                .filter(|e| e.from_position == position);
-            let outdeg = edges.clone().count();
-            if outdeg != 1 {
+            let mut edges = self.get_edges(node, position);
+            let edge = match edges.next() {
+                Some(res) => res,
+                None => break,
+            };
+            // If the dgree is more than 1, break.
+            if edges.next().is_some() {
                 break;
             }
-            // Pick the edge to be traced.
-            let edge = edges.next().unwrap();
             // Check the in-deg of the destination.
-            let indeg = self.nodes[&edge.to]
-                .edges
-                .iter()
-                .filter(|e| e.from_position == edge.to_position)
-                .count();
+            let indeg = self.get_edges(edge.to, edge.to_position).count();
             assert!(1 <= indeg);
             if 1 < indeg {
                 break;
@@ -1155,14 +1138,10 @@ impl<'a> DitchGraph<'a> {
             // Move node.
             node = edge.to;
             position = edge.to_position;
+            nodes.extend(edge.proxying.iter().map(|(n, _, _)| n));
         }
         // Collect the destination.
-        let mut dests: Vec<_> = self.nodes[&node]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == position)
-            .map(|e| e.to)
-            .collect();
+        let mut dests: Vec<_> = self.get_edges(node, position).map(|e| e.to).collect();
         dests.sort_unstable();
         // Check if there's more than two indegree/outdegree.
         (nodes, dests)
@@ -1230,6 +1209,10 @@ impl<'a> DitchGraph<'a> {
             *llr = (*llr).max(focus.llr());
         }
         for key in keys {
+            // Check if this node is alive(not removed yet);
+            if !self.nodes.contains_key(&key) {
+                continue;
+            }
             for &pos in &[Position::Head, Position::Tail] {
                 // Check if this is branching.
                 let num_edges = self.get_edges(key, pos).count();
@@ -1269,10 +1252,11 @@ impl<'a> DitchGraph<'a> {
             .get(&focus.to)
             .and_then(|node| node.copy_number.filter(|&x| x <= 1))?;
         assert!(from_copy_num <= 1 && to_copy_num <= 1);
+        debug!("Resolving...");
         let path_to_focus = self.bfs_to_the_target(key, pos, foci, info)?;
         // Get the label along the edge.
         let (label, proxying) = self.spell_along_path(&path_to_focus, (key, pos));
-        debug!("Spanning {} in {}bp", focus, label.len());
+        debug!("Resolved. Span {} in {}bp", focus, label.len());
         // Link (from,from_pos)<->(to,to_pos);
         let (from, from_pos) = (focus.from, focus.from_position);
         let (to, to_pos) = (focus.to, focus.to_position);
@@ -1314,6 +1298,30 @@ impl<'a> DitchGraph<'a> {
         for (node, pos) in remove_to {
             self.remove_edge_and_pruning(to, to_pos, node, pos);
         }
+        for (node, pos) in path_to_focus {
+            // Sometimes, this node is already removed from the graph.
+            if !self.nodes.contains_key(&node) {
+                continue;
+            }
+            // If it is not zero-copy node, do not anything.
+            match self.nodes[&node].copy_number {
+                Some(cp) if cp == 0 => {}
+                _ => continue,
+            }
+            let parents: Vec<_> = self
+                .get_edges(node, pos)
+                .map(|e| (e.to, e.to_position))
+                .collect();
+            for (parent, par_pos) in parents {
+                // debug!("Parent :{:?},{}", parent, par_pos);
+                if self
+                    .get_edges(parent, par_pos)
+                    .any(|e| !(e.to == node && e.to_position == pos))
+                {
+                    self.remove_edge_and_pruning(parent, par_pos, node, pos);
+                }
+            }
+        }
         Some(())
     }
     // Fron (start,pos) position to the focus target.
@@ -1348,11 +1356,7 @@ impl<'a> DitchGraph<'a> {
                 {
                     return None;
                 }
-                for edge in self.nodes[&node]
-                    .edges
-                    .iter()
-                    .filter(|edge| edge.from_position == pos)
-                {
+                for edge in self.get_edges(node, pos) {
                     next_nodes.push((edge.to, edge.to_position));
                     parent.push(idx);
                 }
@@ -1388,6 +1392,7 @@ impl<'a> DitchGraph<'a> {
         }
         Some(back_track)
     }
+    // Spll along the given path, reducing the copy number and the occs.
     fn spell_along_path(
         &mut self,
         path: &[(Node, Position)],
@@ -1409,28 +1414,23 @@ impl<'a> DitchGraph<'a> {
                 Position::Head => self.nodes[&from].seq().to_vec(),
                 Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
             };
-            let occ = match self.nodes.get_mut(&from) {
-                Some(node) => match node.copy_number {
-                    Some(cp) => {
+            let occ = {
+                // This unwrap never panics.
+                let node = self.nodes.get_mut(&from).unwrap();
+                match node.copy_number {
+                    Some(cp) if 0 < cp => {
                         let occ = node.occ / cp;
                         node.occ -= occ;
+                        node.copy_number = Some(cp - 1);
                         occ
                     }
-                    None => 0,
-                },
-                None => 0,
+                    _ => 0,
+                }
             };
             processed_nodes.push((from, from_pos == Position::Head, occ));
-            // let mut node_seq = match to_pos {
-            //     Position::Head => self.nodes[&to].seq().to_vec(),
-            //     Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
-            // };
-            let label = self.nodes[&from]
-                .edges
-                .iter()
-                .find(|edge| {
-                    edge.from_position == !from_pos && edge.to == to && edge.to_position == to_pos
-                })
+            let label = self
+                .get_edges(from, !from_pos)
+                .find(|edge| edge.to == to && edge.to_position == to_pos)
                 .map(|edge| &edge.seq)
                 .unwrap();
             match label {
@@ -1515,9 +1515,6 @@ impl<'a> DitchGraph<'a> {
     /// Resolve repeats by "foci" algorithm.
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         let mut foci = self.get_foci(reads, config);
-        // for (((u, cl), p), val) in foci.iter() {
-        //     debug!("FOCUS\t{}\t{}\t{}\t{:?}", u, cl, p, val);
-        // }
         let prev = foci.len();
         foci.retain(|_, val| thr < val.llr());
         debug!("FOCI\t{}\t{}", prev, foci.len());
@@ -1542,11 +1539,7 @@ impl<'a> DitchGraph<'a> {
                 // let branching = 1 < edge_num;
                 let confluent = if edge_num == 1 {
                     let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
-                    let siblings = self.nodes[&edge.to]
-                        .edges
-                        .iter()
-                        .filter(|e| e.from_position == edge.to_position)
-                        .count();
+                    let siblings = self.get_edges(edge.to, edge.to_position).count();
                     assert!(1 <= siblings);
                     1 < siblings
                 } else {
@@ -1784,11 +1777,7 @@ impl<'a> DitchGraph<'a> {
             queue.push_back((key, Position::Tail));
         }
         while let Some((key, position)) = queue.pop_front() {
-            let edges: Vec<_> = self.nodes[&key]
-                .edges
-                .iter()
-                .filter(|e| e.from_position == position)
-                .collect();
+            let edges: Vec<_> = self.get_edges(key, position).collect();
             if edges.len() <= 1 {
                 continue;
             }
@@ -1827,11 +1816,7 @@ impl<'a> DitchGraph<'a> {
     ) -> ((Node, Position), Vec<Node>) {
         assert!(self.sanity_check());
         // Check the collapsing condition.
-        let edges: Vec<_> = self.nodes[&root]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == position)
-            .collect();
+        let edges: Vec<_> = self.get_edges(root, position).collect();
         // Check.
         assert!(edges.len() > 1);
         // TODO: Maybe we need to consensus these bubbles.
@@ -1891,17 +1876,12 @@ impl<'a> DitchGraph<'a> {
         };
         self.nodes.get_mut(&root).unwrap().edges.push(root_to_edge);
         self.nodes.insert(first_node, new_node);
-        let num_edge = self.nodes[&root]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == position)
-            .count();
+        let num_edge = self.get_edges(root, position).count();
         assert_eq!(num_edge, 1);
         for (other, other_position) in node_otherside {
-            let (removed_occ, label) = self.nodes[&other]
-                .edges
-                .iter()
-                .filter(|e| other_position == e.from_position && merged_nodes.contains(&e.to))
+            let (removed_occ, label) = self
+                .get_edges(other, other_position)
+                .filter(|e| merged_nodes.contains(&e.to))
                 .fold((0, EdgeLabel::Ovlp(0)), |(cum, _), e| {
                     (cum + e.occ, e.seq.clone())
                 });
@@ -1960,11 +1940,6 @@ impl<'a> DitchGraph<'a> {
                 };
                 // debug!("BUBBLE\t{:?}\t{}\t{}", node.node, pos, is_bubble);
                 if is_bubble {
-                    // for (path, _) in path_and_dest.iter() {
-                    // let path: Vec<_> =
-                    //     path.iter().map(|x| format!("{}-{}", x.0, x.1)).collect();
-                    // debug!("\t{}", path.join("\t"));
-                    // }
                     let mut convert_table: HashMap<u64, u64> = HashMap::new();
                     for (path, _) in path_and_dest.iter() {
                         for &(unit, cluster) in path.iter() {

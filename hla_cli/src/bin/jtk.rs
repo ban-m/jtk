@@ -624,6 +624,16 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
                 .default_value(&"1")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("length")
+                .short("l")
+                .long("length")
+                .required(false)
+                .value_name("LENGTH")
+                .help("Contig shorter than this value would be compressed.")
+                .default_value(&"15")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_assemble() -> App<'static, 'static> {
@@ -1047,8 +1057,12 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
+    let length: usize = matches
+        .value_of("length")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     use haplotyper::dense_encoding::*;
-    let config = DenseEncodingConfig::new();
+    let config = DenseEncodingConfig::new(length);
     Ok(dataset.dense_encoding(&config))
 }
 

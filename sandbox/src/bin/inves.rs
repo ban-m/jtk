@@ -3,18 +3,13 @@ fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
     use definitions::*;
-    let ds: DataSet = std::fs::File::open(&args[1])
+    let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    println!("unit\tcoverage\tscore");
-    use std::collections::HashMap;
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *counts.entry(node.unit).or_default() += 1;
-    }
-    for unit in ds.selected_chunks.iter() {
-        println!("{}\t{}\t{}", unit.id, counts[&unit.id], unit.score);
-    }
+    use haplotyper::assemble::*;
+    let config = AssembleConfig::new(3, 1000, false, true);
+    ds.squish_small_contig(&config, 10);
+    println!("{}", ds.assemble(&config));
     // let counts: Vec<_> = ds
     //     .encoded_reads
     //     .iter()
