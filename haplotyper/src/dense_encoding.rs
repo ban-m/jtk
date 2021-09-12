@@ -1,4 +1,5 @@
 use definitions::*;
+use log::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 const CONS_MIN_LENGTH: usize = 100;
@@ -84,6 +85,7 @@ impl DenseEncoding for DataSet {
             recover_original_assignments(read, &orig);
         }
         // Local clustering.
+        debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
         crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
         squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
         self
@@ -152,7 +154,7 @@ fn fill_edges_by_new_units(
             None => continue,
         };
         let unit_info = &edge_encoding_patterns[&edge];
-        log::debug!("TRY\t{:?}\t{}...{}bp({})", edge, start, end, end - start);
+        // log::debug!("TRY\t{:?}\t{}...{}bp({})", edge, start, end, end - start);
         for node in encode_edge(seq, start, end, direction, contig, unit_info) {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
@@ -326,8 +328,7 @@ fn encode_edge(
         bio_utils::revcmp(&seq[start..end])
     };
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
-    use log::*;
-    debug!("Encoding\t{}\t{}\t{:?}", seq.len(), contig.len(), unit_info);
+    // debug!("Encoding\t{}\t{}\t{:?}", seq.len(), contig.len(), unit_info);
     let band = contig.len() / 20;
     // TODO: These parameters shoule be changed depending on the sequencing tech.
     let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -2, -4, -2, band);
