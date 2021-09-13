@@ -57,6 +57,7 @@ impl ReClustering for DataSet {
             .for_each(|c| c.cluster_num = cluster_num[&c.id]);
         // Re clustering.
         let target_units: HashSet<_> = re_cluster.keys().copied().collect();
+        debug!("RECLUSTRE\t{}", target_units.len());
         crate::local_clustering::local_clustering_selected(&mut self, &target_units);
         self
     }

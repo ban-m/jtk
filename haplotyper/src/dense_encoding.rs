@@ -34,8 +34,19 @@ impl DenseEncoding for DataSet {
         // If the unit id is greater than this, it is newly added one.
         let multi_tig = enumerate_diplotigs(&mut self, config.len);
         // Nodes to be clustered, or node newly added by filling edge.
+        let targets = vec![280, 545];
         let mut to_clustering_nodes = HashSet::new();
         for (cluster_num, nodes) in multi_tig {
+            if !targets
+                .iter()
+                .all(|n| nodes.iter().any(|(node, _)| node == n))
+            {
+                continue;
+            }
+            let nodes: Vec<_> = nodes
+                .into_iter()
+                .filter(|(node, _)| targets.contains(node))
+                .collect();
             log::debug!("CONTIG\t{:?}", nodes);
             let mut reads: Vec<_> = self
                 .encoded_reads
@@ -154,6 +165,10 @@ fn fill_edges_by_new_units(
             Some(contig) => contig,
             None => continue,
         };
+        // debug!(
+        //     "DUMP\t{}\t{}\t{}",
+        //     window[0].unit, window[1].unit, direction
+        // );
         let unit_info = &edge_encoding_patterns[&edge];
         // log::debug!("TRY\t{:?}\t{}...{}bp({})", edge, start, end, end - start);
         for node in encode_edge(seq, start, end, direction, contig, unit_info) {
@@ -379,8 +394,12 @@ fn encode_edge(
             use crate::encode::deletion_fill::ALIGN_LIMIT;
             let dist_thr = (unitlen as f64 * ALIGN_LIMIT).floor() as u32;
             if !has_large_indel && edit_dist < dist_thr {
+                let position_from_start = match is_forward {
+                    true => start + ypos - ylen,
+                    false => end - ypos,
+                };
                 nodes.push(Node {
-                    position_from_start: start + ypos - ylen,
+                    position_from_start,
                     unit: uid,
                     cluster: 0,
                     is_forward,

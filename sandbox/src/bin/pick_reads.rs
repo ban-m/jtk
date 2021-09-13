@@ -18,7 +18,6 @@ fn main() -> std::io::Result<()> {
             .nodes
             .iter()
             .enumerate()
-            // .filter(|(_, n)| units.contains(&(n.unit, n.cluster)))
             .filter(|(_, n)| units.contains(&n.unit))
         {
             let (nodes, idx) = {

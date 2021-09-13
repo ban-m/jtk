@@ -197,7 +197,7 @@ tig.data <- read_tsv("dbb.contig", col_names = c("id","copy","len","hap1","hap2"
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
 
-tig.data <- read_tsv("focus3.contig", col_names = c("id","copy","len","hap1","hap2")) %>%
+tig.data <- read_tsv("pre_em.tsv", col_names = c("id","copy","len","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
 
@@ -251,3 +251,10 @@ g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, 
     scale_fill_gradient2(low="blue", high="orange")
 
 scores <- read_tsv("./score.tsv")
+
+
+pre.em.data <- read_tsv("pre_em.tsv", col_names = c("id","cluster","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
+
+aft.em.data <- read_tsv("aft_em.tsv", col_names = c("id","cluster","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))

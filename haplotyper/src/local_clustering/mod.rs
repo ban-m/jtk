@@ -91,12 +91,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
                 unit_id, elapsed, len, score, cov
             );
-
-            // let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
-            // debug!(
-            //     "RECORD\t{}\t{}\t{}\t{}\t{:.3}\t{}",
-            //     unit_id, elapsed, prevcl, cl, score, cov
-            // );
             (unit_id, (consensus, score, config.cluster_num))
         })
         .collect();

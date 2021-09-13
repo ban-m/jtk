@@ -147,7 +147,7 @@ impl ClusteringCorrection for DataSet {
                     debug!("Unit {} does not appear in any read.", unit_id);
                     return vec![];
                 }
-                let (new_clustering, lk, cluster_num) = (1..=k)
+                let (new_clustering, _lk, _cluster_num) = (1..=k)
                     .flat_map(|k| std::iter::repeat(k).take(repeat_num))
                     .enumerate()
                     .map(|(i, k)| {
@@ -158,7 +158,7 @@ impl ClusteringCorrection for DataSet {
                     })
                     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
                     .unwrap();
-                debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
+                // debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
                 new_clustering
             })
             .collect();
