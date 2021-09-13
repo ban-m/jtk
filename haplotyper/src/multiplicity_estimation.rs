@@ -148,7 +148,7 @@ fn assemble_with_tigname(
     ds: &DataSet,
     config: &MultiplicityEstimationConfig,
 ) -> (gfa::GFA, HashMap<String, Vec<u64>>) {
-    let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false);
+    let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false, 6);
     debug!("Start assembly");
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![]);

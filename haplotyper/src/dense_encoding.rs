@@ -9,10 +9,14 @@ type DEdge = ((u64, u64, bool), (u64, u64, bool));
 #[derive(Debug, Clone, Copy)]
 pub struct DenseEncodingConfig {
     pub len: usize,
+    pub min_span_reads: usize,
 }
 impl DenseEncodingConfig {
-    pub fn new(len: usize) -> Self {
-        Self { len }
+    pub fn new(len: usize, min_span_reads: usize) -> Self {
+        Self {
+            len,
+            min_span_reads,
+        }
     }
 }
 pub trait DenseEncoding {
@@ -32,7 +36,7 @@ impl DenseEncoding for DataSet {
         self = self.correct_clustering_em_on_selected(10, 3, true, &units);
         // The maximum value of the previous unit.
         // If the unit id is greater than this, it is newly added one.
-        let multi_tig = enumerate_diplotigs(&mut self, config.len);
+        let multi_tig = enumerate_diplotigs(&mut self, config);
         // Nodes to be clustered, or node newly added by filling edge.
         let mut to_clustering_nodes = HashSet::new();
         for (cluster_num, nodes) in multi_tig {
@@ -266,9 +270,15 @@ fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gai
 }
 
 // Squish short contig, return the generated diplotigs.
-fn enumerate_diplotigs(ds: &mut DataSet, len: usize) -> Vec<(usize, Vec<(u64, u64)>)> {
+fn enumerate_diplotigs(
+    ds: &mut DataSet,
+    &DenseEncodingConfig {
+        len,
+        min_span_reads,
+    }: &DenseEncodingConfig,
+) -> Vec<(usize, Vec<(u64, u64)>)> {
     use crate::assemble::*;
-    let config = AssembleConfig::new(1, 1000, false, true);
+    let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
     ds.squish_small_contig(&config, len);
     let (_, summaries) = assemble(ds, 0, &config);
     let mut multi_tig: Vec<_> = summaries

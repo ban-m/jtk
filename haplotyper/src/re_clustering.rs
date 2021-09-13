@@ -67,7 +67,7 @@ fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<u64, u8
     let mut re_cluster: HashMap<_, u8> = HashMap::new();
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use crate::assemble::ditch_graph::DitchGraph;
-    let config = crate::assemble::AssembleConfig::new(c.threads, 200, false, false);
+    let config = crate::assemble::AssembleConfig::new(c.threads, 200, false, false, 6);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
     graph.remove_lightweight_edges(2);
     if let Some(cov) = ds.coverage {

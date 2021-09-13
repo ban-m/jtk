@@ -46,20 +46,28 @@ fn main() -> std::io::Result<()> {
             (id, copy_num, clusters)
         })
         .collect();
-    let counts: HashMap<String, (usize, [u32; 2])> =
-        tigs.iter()
-            .map(|(id, copy_num, clusters)| {
-                let cs = clusters.iter().filter_map(|key| counts.get(key)).fold(
-                    [0, 0],
-                    |mut acc, xs| {
-                        acc[0] += xs[0];
-                        acc[1] += xs[1];
-                        acc
-                    },
-                );
-                (id.clone(), (*copy_num, cs))
-            })
-            .collect();
+    let mut max_cluster_id: HashMap<u64, u64> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        let _ = max_cluster_id
+            .entry(node.unit)
+            .and_modify(|x| *x = (*x).max(node.cluster))
+            .or_insert(node.cluster);
+    }
+    let counts: HashMap<String, (usize, [u32; 2])> = tigs
+        .iter()
+        .map(|&(ref id, copy_num, ref clusters)| {
+            let cs = clusters
+                .iter()
+                .filter(|&(u, _)| copy_num != 1 || 0 < max_cluster_id[u])
+                .filter_map(|key| counts.get(key))
+                .fold([0, 0], |mut acc, xs| {
+                    acc[0] += xs[0];
+                    acc[1] += xs[1];
+                    acc
+                });
+            (id.clone(), (copy_num, cs))
+        })
+        .collect();
     for (id, (copy_num, c)) in counts {
         let length = tigs.iter().find(|x| x.0 == id).map(|x| x.2.len()).unwrap();
         println!(

@@ -578,7 +578,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value("7")
+                .default_value("15")
                 .takes_value(true),
         )
         .arg(
@@ -589,16 +589,6 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .value_name("THRESHOLD")
                 .help("Unit with less that this coverage would be ignored.")
                 .default_value("5")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("length_threshold")
-                .short("l")
-                .long("length_limit")
-                .required(false)
-                .value_name("THRESHOLD")
-                .help("Reads with less that this value would not be corrected.")
-                .default_value("3")
                 .takes_value(true),
         )
 }
@@ -634,6 +624,16 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
                 .default_value("15")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("min_span_reads")
+                .short("m")
+                .long("min_span_reads")
+                .required(false)
+                .value_name("MIN")
+                .help("Minimum required number of reads to solve repeats")
+                .default_value("4")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_assemble() -> App<'static, 'static> {
@@ -665,6 +665,16 @@ fn subcommand_assemble() -> App<'static, 'static> {
                 .value_name("WINDOW_SIZE")
                 .help("Size of the window to take consensus sequences.")
                 .default_value("2000")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("min_span_reads")
+                .short("m")
+                .long("min_span_reads")
+                .required(false)
+                .value_name("MIN")
+                .help("Minimum required number of reads to solve repeats")
+                .default_value("4")
                 .takes_value(true),
         )
         .arg(
@@ -1061,8 +1071,12 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
         .value_of("length")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let min_span_reads: usize = matches
+        .value_of("min_span_reads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     use haplotyper::dense_encoding::*;
-    let config = DenseEncodingConfig::new(length);
+    let config = DenseEncodingConfig::new(length, min_span_reads);
     Ok(dataset.dense_encoding(&config))
 }
 
@@ -1076,6 +1090,11 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
         .value_of("window_size")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let min_span_reads: usize = matches
+        .value_of("min_span_reads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
@@ -1085,7 +1104,7 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
-    let config = AssembleConfig::new(threads, window_size, !skip_polish, true);
+    let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
     if dataset.assignments.is_empty() {
         dataset.assignments = dataset
             .encoded_reads

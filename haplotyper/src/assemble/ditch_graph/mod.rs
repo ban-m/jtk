@@ -1242,12 +1242,15 @@ impl<'a> DitchGraph<'a> {
         let from_copy_num = self
             .nodes
             .get(&focus.from)
-            .and_then(|node| node.copy_number.filter(|&x| x <= 1))?;
+            .and_then(|node| node.copy_number)?;
         let to_copy_num = self
             .nodes
             .get(&focus.to)
-            .and_then(|node| node.copy_number.filter(|&x| x <= 1))?;
-        assert!(from_copy_num <= 1 && to_copy_num <= 1);
+            .and_then(|node| node.copy_number)?;
+        if 1 < from_copy_num || 1 < to_copy_num {
+            //debug!("F\t{}\tT\t{}", from_copy_num, to_copy_num);
+            return None;
+        }
         debug!("Resolving...");
         let path_to_focus = self.bfs_to_the_target(key, pos, foci, info)?;
         // Get the label along the edge.
@@ -1350,6 +1353,7 @@ impl<'a> DitchGraph<'a> {
                     .map(|&llr| focus.llr() < llr)
                     .unwrap_or(false)
                 {
+                    debug!("Met stronger focus.");
                     return None;
                 }
                 for edge in self.get_edges(node, pos) {
@@ -1384,7 +1388,7 @@ impl<'a> DitchGraph<'a> {
         }
         back_track.reverse();
         for (i, (node, pos)) in back_track.iter().enumerate() {
-            debug!("{}\t{:?}\t{}", i, node, pos);
+            debug!("TRACE\t{}\t{:?}\t{}", i, node, pos);
         }
         Some(back_track)
     }
@@ -1510,6 +1514,7 @@ impl<'a> DitchGraph<'a> {
     }
     /// Resolve repeats by "foci" algorithm.
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
+        debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         let mut foci = self.get_foci(reads, config);
         let prev = foci.len();
         foci.retain(|_, val| thr < val.llr());
@@ -1518,21 +1523,20 @@ impl<'a> DitchGraph<'a> {
     }
 
     /// Return a hash map containing all foci, thresholded by `config` parameter.
+    /// For each (node, position), keep the strongest focus.
     pub fn get_foci(
         &self,
         reads: &[&EncodedRead],
         config: &AssembleConfig,
     ) -> HashMap<(Node, Position), Focus> {
-        let mut foci = HashMap::new();
+        let mut foci: HashMap<_, Focus> = HashMap::new();
         for node in self.nodes.values() {
-            for &pos in &[Position::Head, Position::Tail] {
-                // Check if it is branching or confluing.
+            for pos in [Position::Head, Position::Tail] {
                 let edge_num = node
                     .edges
                     .iter()
                     .filter(|edge| edge.from_position == pos)
                     .count();
-                // let branching = 1 < edge_num;
                 let confluent = if edge_num == 1 {
                     let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
                     let siblings = self.get_edges(edge.to, edge.to_position).count();
@@ -1541,15 +1545,27 @@ impl<'a> DitchGraph<'a> {
                 } else {
                     false
                 };
-                // if branching || confluent {
                 if confluent {
                     if let Some(focus) = self.examine_focus(node, pos, reads, config) {
-                        foci.insert((node.node, pos), focus);
+                        match foci.get(&(node.node, pos)) {
+                            Some(ex) if focus.llr() < ex.llr() => {}
+                            _ => {
+                                foci.insert((node.node, pos), focus);
+                            }
+                        };
                     }
                 }
             }
         }
         foci
+    }
+    fn get_covered_nodes(reads: &[&EncodedRead], thr: usize) -> HashSet<Node> {
+        let mut counts: HashMap<_, usize> = HashMap::new();
+        for node in reads.iter().flat_map(|r| r.nodes.iter()) {
+            *counts.entry((node.unit, node.cluster)).or_default() += 1;
+        }
+        counts.retain(|_, val| thr <= *val);
+        counts.keys().copied().collect()
     }
     /// Return the focus if given node has a focus. Otherwise, return None.
     pub fn examine_focus(
@@ -1557,11 +1573,15 @@ impl<'a> DitchGraph<'a> {
         node: &DitchNode,
         pos: Position,
         reads: &[&EncodedRead],
-        _config: &AssembleConfig,
+        config: &AssembleConfig,
     ) -> Option<Focus> {
-        // TODO: param.
-        let dist_nodes = self.enumerate_node_upto(node, pos, 5);
-        let reads: Vec<_> = reads.iter().filter(|r| r.contains(node.node)).collect();
+        let reads: Vec<_> = reads
+            .iter()
+            .filter(|r| r.contains(node.node))
+            .copied()
+            .collect();
+        let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
+        let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
         let mut focus: Option<Focus> = None;
         // TODO: Currnetly do not assume 1-distance focus. Is it OK?
         for (dist, nodes) in dist_nodes
@@ -1594,7 +1614,15 @@ impl<'a> DitchGraph<'a> {
             // TODO: Assume that the copy numeber is 1. Thus, each element in nodes would
             // happen in 1/nodes.len() probability.
             // Maybe we need to correct this setting, by introducing copy number at each nodes/edges.
-            let ith_ln = vec![-(nodes.len() as f64).ln(); nodes.len()];
+            // Note that whenever it is possible to reach a node, that DOES exists in the graph(not removed)
+            //let ith_ln = vec![-(nodes.len() as f64).ln(); nodes.len()];
+            let ith_ln = {
+                let mut probs: Vec<_> = nodes.iter().map(|n| self.nodes[&n.0].occ as f64).collect();
+                let sum: f64 = probs.iter().sum();
+                probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
+                assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
+                probs
+            };
             let null_prob: f64 = occs
                 .iter()
                 .zip(ith_ln.iter())
@@ -1612,33 +1640,39 @@ impl<'a> DitchGraph<'a> {
                     (correct_to_error + error_to_error).ln()
                 }
             };
-            let (alt_prob, alt_idx): (f64, _) = (0..nodes.len())
-                .map(|k| {
+            if let Some((lk_ratio, (to, to_pos))) = nodes
+                .iter()
+                .enumerate()
+                .filter(
+                    |(_, (node, _))| !matches!(self.nodes[node].copy_number, Some(cp) if 1 < cp),
+                )
+                .map(|(k, &n)| {
                     let lk: f64 = occs
                         .iter()
                         .map(|&x| x as f64)
                         .enumerate()
                         .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
                         .sum();
-                    (lk, k)
+                    (lk - null_prob, n)
                 })
                 .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
-                .unwrap();
-            let lk_ratio = alt_prob - null_prob;
-            if focus.as_ref().map(|f| f.llr()).unwrap_or(0f64) < lk_ratio {
-                let (to, to_pos) = nodes[alt_idx];
-                focus = Some(Focus::new(node.node, pos, to, to_pos, dist, lk_ratio));
+            {
+                if focus.as_ref().map(|f| f.llr()).unwrap_or(0f64) < lk_ratio {
+                    focus = Some(Focus::new(node.node, pos, to, to_pos, dist, lk_ratio));
+                }
             }
         }
         focus
     }
-    /// Return nodes achievable from the given node. The i-th vector is
-    /// the nodes reachable from `node` in i+1 hop.
+    /// Return nodes achievable from the given node.
+    /// The i-th vector is the nodes reachable from `node` in i+1 hop.
+    /// Fot the i-th vector, one of the node shoule be in the
+    /// covered region.
     pub fn enumerate_node_upto(
         &self,
         node: &DitchNode,
         pos: Position,
-        radius: usize,
+        covered: &HashSet<Node>,
     ) -> Vec<Vec<(Node, Position)>> {
         let initial_nodes: Vec<_> = node
             .edges
@@ -1647,7 +1681,7 @@ impl<'a> DitchGraph<'a> {
             .map(|edge| (edge.to, edge.to_position))
             .collect();
         let mut nodes_at: Vec<Vec<_>> = vec![initial_nodes];
-        for i in 0..radius {
+        for i in 0.. {
             let mut next_nodes = vec![];
             for (node, p) in nodes_at[i].iter() {
                 if let Some(next_node) = self.nodes.get(node) {
@@ -1661,7 +1695,11 @@ impl<'a> DitchGraph<'a> {
             }
             next_nodes.sort();
             next_nodes.dedup();
-            nodes_at.push(next_nodes);
+            if next_nodes.iter().all(|n| !covered.contains(&(n.0))) {
+                break;
+            } else {
+                nodes_at.push(next_nodes);
+            }
         }
         nodes_at
     }

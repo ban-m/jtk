@@ -72,6 +72,7 @@ pub struct AssembleConfig {
     window_size: usize,
     // If true, resolve repeats.
     to_resolve: bool,
+    min_span_reads: usize,
 }
 
 impl std::default::Default for AssembleConfig {
@@ -81,16 +82,24 @@ impl std::default::Default for AssembleConfig {
             to_polish: false,
             window_size: 100,
             to_resolve: false,
+            min_span_reads: 6,
         }
     }
 }
 impl AssembleConfig {
-    pub fn new(threads: usize, window_size: usize, to_polish: bool, to_resolve: bool) -> Self {
+    pub fn new(
+        threads: usize,
+        window_size: usize,
+        to_polish: bool,
+        to_resolve: bool,
+        min_span_reads: usize,
+    ) -> Self {
         Self {
             window_size,
             threads,
             to_polish,
             to_resolve,
+            min_span_reads,
         }
     }
 }
@@ -111,26 +120,14 @@ impl Assemble for DataSet {
     fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
         {
             let reads: Vec<_> = self.encoded_reads.iter().collect();
-            let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
-            graph.remove_lightweight_edges(2);
-            let squish = graph.squish_bubbles(len);
-            self.encoded_reads
-                .iter_mut()
-                .flat_map(|r| r.nodes.iter_mut())
-                .for_each(|n| {
-                    if let Some(res) = squish.get(&(n.unit, n.cluster)) {
-                        n.cluster = *res;
-                    }
-                });
-        }
-        {
-            let reads: Vec<_> = self.encoded_reads.iter().collect();
-            let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
-            graph.remove_lightweight_edges(2);
             let cov = self.coverage.unwrap();
             let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-            graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            graph.transitive_edge_reduction();
+            let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+            graph.remove_lightweight_edges(2);
+            graph.remove_zero_copy_elements(cov, &lens, 0.5);
+            graph.resolve_repeats(&reads, c, 5f64);
+            graph.assign_copy_number(cov, &lens);
+            graph.resolve_repeats(&reads, c, 2f64);
             let squish = graph.squish_bubbles(len);
             self.encoded_reads
                 .iter_mut()
@@ -253,13 +250,15 @@ pub fn assemble(
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            // graph.remove_zero_copy_elements(cov, &lens, 0.3);
             // graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
-            graph.assign_copy_number(cov, &lens);
-            graph.resolve_repeats(&reads, c, 5f64);
             // graph.remove_tips(0.5, 5);
-            // graph.assign_copy_number(cov, &lens);
+            graph.remove_zero_copy_elements(cov, &lens, 0.5);
+            graph.resolve_repeats(&reads, c, 5f64);
+            graph.assign_copy_number(cov, &lens);
+            graph.resolve_repeats(&reads, c, 2f64);
+            graph.z_edge_selection();
+            graph.assign_copy_number(cov, &lens);
         }
     }
     let (segments, edge, group, summaries) = graph.spell(c, cl);

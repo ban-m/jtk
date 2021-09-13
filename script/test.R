@@ -193,7 +193,7 @@ edge.data <- read_tsv("hg002.edge")
 g <- edge.data %>% filter(len < 6000) %>%  ggplot() + geom_histogram(aes(x=len))
 
 
-tig.data <- read_tsv("dbb.contig", col_names = c("id","copy","len","hap1","hap2")) %>%
+tig.data <- read_tsv("sq.contig", col_names = c("id","copy","len","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
 
@@ -253,8 +253,20 @@ g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, 
 scores <- read_tsv("./score.tsv")
 
 
-pre.em.data <- read_tsv("pre_em.tsv", col_names = c("id","cluster","hap1","hap2")) %>%
+pre.em.data <- read_tsv("pre_em.unit", col_names = c("id","cluster","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
-aft.em.data <- read_tsv("aft_em.tsv", col_names = c("id","cluster","hap1","hap2")) %>%
+em.data <- read_tsv("span.unit", col_names = c("id","cluster","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
+
+rand.data <- read_tsv("em.unit", col_names = c("id","cluster","hap1","hap2")) %>%
+    mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
+
+joind.data <- full_join(em.data %>% rename(old=acc) %>% select(id,cluster,old) ,
+                        rand.data %>% rename(new=acc) %>% select(id,cluster,new), by =c("id","cluster"))
+
+full.data <- joind.data %>% left_join(y=pre.em.data,by=c("id","cluster")) 
+
+
+diplotig.data <- read_tsv("diplotig.unit", col_names = c("id","cluster","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))

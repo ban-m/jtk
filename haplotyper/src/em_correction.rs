@@ -76,53 +76,14 @@ impl ClusteringCorrection for DataSet {
             .iter()
             .filter_map(|c| (1f64 < c.score).then(|| c.id))
             .collect();
+        debug!("EM\tSquish\tTarget\tTotal");
+        debug!(
+            "EM\t{}\t\t{}\t{}",
+            to_squish.len(),
+            targets.len(),
+            self.selected_chunks.len(),
+        );
         self.correct_clustering_em_on_selected(repeat_num, coverage_thr, to_regularize, &targets)
-        // let (result, _cluster_size_and_lk): (Vec<_>, Vec<_>) = self
-        //     .selected_chunks
-        //     .par_iter()
-        //     .map(|ref_unit| {
-        //         let unit_id = ref_unit.id;
-        //         let reads: Vec<_> = self
-        //             .encoded_reads
-        //             .iter()
-        //             .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
-        //             .collect();
-        //         // TODO: We need to tune the number of the cluster here.
-        //         let k = ref_unit.cluster_num;
-        //         if reads.is_empty() {
-        //             debug!("Unit {} does not appear in any read.", unit_id);
-        //             return (vec![], (0f64, 0));
-        //         }
-        //         let (new_clustering, lk, cluster_num) = (1..=k)
-        //             .flat_map(|k| std::iter::repeat(k).take(repeat_num))
-        //             .enumerate()
-        //             .map(|(i, k)| {
-        //                 let seed = unit_id * (i * k) as u64;
-        //                 let config =
-        //                     Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
-        //                 em_clustering(&reads, &config)
-        //             })
-        //             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
-        //             .unwrap();
-        //         debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
-        //         (new_clustering, (lk, cluster_num))
-        //     })
-        //     .unzip();
-        // let result: HashMap<u64, Vec<(usize, u64)>> =
-        //     result.iter().fold(HashMap::new(), |mut acc, results| {
-        //         for &(id, pos, cluster) in results {
-        //             acc.entry(id).or_default().push((pos, cluster));
-        //         }
-        //         acc
-        //     });
-        // for read in self.encoded_reads.iter_mut() {
-        //     if let Some(corrected) = result.get(&read.id) {
-        //         for &(pos, cluster) in corrected {
-        //             read.nodes[pos].cluster = cluster;
-        //         }
-        //     }
-        // }
-        // self
     }
     fn correct_clustering_em_on_selected(
         mut self,
@@ -313,7 +274,10 @@ pub fn em_clustering_inner<R: Rng>(
             .iter()
             .map(|_| {
                 let mut ws = vec![0f64; k];
-                ws[rng.gen_range(0..k)] += 1f64;
+                for _ in 0..100 {
+                    ws[rng.gen_range(0..k)] += 1f64;
+                }
+                ws.iter_mut().for_each(|x| *x /= 100f64);
                 ws
             })
             .collect(),
@@ -342,16 +306,26 @@ pub fn em_clustering_inner<R: Rng>(
         }
     }
     trace!("FinalLK\t{:.4}", lk);
+    // Sometimes un-informative reads would be clustered into the largest
+    // cluster. It is indeed a ML-predictor, but not good (Consider that
+    // all such reads are into the largest cluster. Then, the relative fraction of the
+    // largest cluster is no longer proportional to the EM-estimator!).
+    let choises: Vec<_> = (0..k).collect();
     let predictions: Vec<_> = contexts
         .iter()
         .zip(weights.iter())
         .map(|(ctx, ws)| {
-            let cluster: usize = ws
+            let (cluster, &max_w): (usize, &f64) = ws
                 .iter()
                 .enumerate()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|x| x.0)
                 .unwrap();
+            let cluster = if max_w < 0.9 {
+                cluster as u64
+            } else {
+                use rand::seq::SliceRandom;
+                *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
+            };
             (ctx.id, ctx.index, cluster as u64)
         })
         .collect();

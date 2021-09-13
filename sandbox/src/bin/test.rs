@@ -5,9 +5,19 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    // let mut ds: DataSet = std::fs::File::open(&args[1])
-    //     .map(BufReader::new)
-    //     .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    let ds: DataSet = std::fs::File::open(&args[1])
+        .map(BufReader::new)
+        .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    use std::collections::HashMap;
+    let mut counts: HashMap<_, u32> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        for node in read.nodes.iter().filter(|n| n.unit == 1077) {
+            for mode in read.nodes.iter().filter(|n| n.unit == 1075) {
+                *counts.entry((node.cluster, mode.cluster)).or_default() += 1;
+            }
+        }
+    }
+    println!("{:?}", counts);
     // let targets = vec![280, 545];
     // let unit = 1746;
     // let (ids, seqs): (Vec<_>, Vec<_>) = ds
