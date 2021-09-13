@@ -109,8 +109,6 @@ pub fn correct_deletion_error(
             inserts.push((idx, tail_node));
         }
     }
-    let rn: Vec<_> = read.nodes.iter().map(|n| n.unit).collect();
-    debug!("ENC\t{:?}\tpre", rn);
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
         read.nodes.insert(idx + accum_inserts, node);
     }
@@ -124,8 +122,6 @@ pub fn correct_deletion_error(
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
-    let rn: Vec<_> = read.nodes.iter().map(|n| n.unit).collect();
-    debug!("ENC\t{:?}\taft", rn);
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.

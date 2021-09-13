@@ -257,7 +257,7 @@ pub fn assemble(
             // graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
             graph.assign_copy_number(cov, &lens);
-            // graph.resolve_repeats(&reads, c, 5f64);
+            graph.resolve_repeats(&reads, c, 5f64);
             // graph.remove_tips(0.5, 5);
             // graph.assign_copy_number(cov, &lens);
         }

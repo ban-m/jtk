@@ -34,19 +34,8 @@ impl DenseEncoding for DataSet {
         // If the unit id is greater than this, it is newly added one.
         let multi_tig = enumerate_diplotigs(&mut self, config.len);
         // Nodes to be clustered, or node newly added by filling edge.
-        let targets = vec![280, 545];
         let mut to_clustering_nodes = HashSet::new();
         for (cluster_num, nodes) in multi_tig {
-            if !targets
-                .iter()
-                .all(|n| nodes.iter().any(|(node, _)| node == n))
-            {
-                continue;
-            }
-            let nodes: Vec<_> = nodes
-                .into_iter()
-                .filter(|(node, _)| targets.contains(node))
-                .collect();
             log::debug!("CONTIG\t{:?}", nodes);
             let mut reads: Vec<_> = self
                 .encoded_reads
