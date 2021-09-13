@@ -253,10 +253,10 @@ pub fn assemble(
             // graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
             // graph.remove_tips(0.5, 5);
-            graph.remove_zero_copy_elements(cov, &lens, 0.5);
+            graph.remove_zero_copy_elements(cov, &lens, 0.3);
             graph.resolve_repeats(&reads, c, 5f64);
             graph.assign_copy_number(cov, &lens);
-            graph.resolve_repeats(&reads, c, 2f64);
+            graph.resolve_repeats(&reads, c, 3f64);
             graph.z_edge_selection();
             graph.assign_copy_number(cov, &lens);
         }

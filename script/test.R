@@ -259,13 +259,17 @@ pre.em.data <- read_tsv("pre_em.unit", col_names = c("id","cluster","hap1","hap2
 em.data <- read_tsv("span.unit", col_names = c("id","cluster","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
-rand.data <- read_tsv("em.unit", col_names = c("id","cluster","hap1","hap2")) %>%
+rand.data <- read_tsv("sq.unit", col_names = c("id","cluster","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
 joind.data <- full_join(em.data %>% rename(old=acc) %>% select(id,cluster,old) ,
                         rand.data %>% rename(new=acc) %>% select(id,cluster,new), by =c("id","cluster"))
 
 full.data <- joind.data %>% left_join(y=pre.em.data,by=c("id","cluster")) 
+
+merged.data <- full_join(rand.data %>% select(id,cluster,acc) %>% rename(em=acc),
+                         pre.em.data %>% select(id,cluster,acc),
+                         by = c("id", "cluster"))
 
 
 diplotig.data <- read_tsv("diplotig.unit", col_names = c("id","cluster","hap1","hap2")) %>%

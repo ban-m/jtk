@@ -578,7 +578,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value("15")
+                .default_value("20")
                 .takes_value(true),
         )
         .arg(

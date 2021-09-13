@@ -73,9 +73,9 @@ fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<u64, u8
     if let Some(cov) = ds.coverage {
         let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
         graph.remove_zero_copy_elements(cov, &lens, 0.3);
-        graph.z_edge_selection();
+        // graph.z_edge_selection();
         graph.remove_tips(0.5, 5);
-        graph.zip_up_overclustering();
+        // graph.zip_up_overclustering();
         let (node_copy_num, _) = graph.copy_number_estimation(cov, &lens);
         for (&(node, _), &copy_num) in node_copy_num.iter() {
             *re_cluster.entry(node).or_default() += copy_num as u8;

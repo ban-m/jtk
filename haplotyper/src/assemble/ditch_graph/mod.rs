@@ -1196,7 +1196,6 @@ impl<'a> DitchGraph<'a> {
     }
     /// Check the dynamic of foci.
     pub fn survey_foci(&mut self, foci: &HashMap<(Node, Position), Focus>) {
-        let keys: Vec<Node> = self.nodes.keys().copied().collect();
         let mut foci_information: HashMap<_, _> = HashMap::new();
         for focus in foci.values() {
             let llr = foci_information.entry(focus.from).or_insert(0f64);
@@ -1204,28 +1203,28 @@ impl<'a> DitchGraph<'a> {
             let llr = foci_information.entry(focus.to).or_insert(0f64);
             *llr = (*llr).max(focus.llr());
         }
-        for key in keys {
+        let mut keys: Vec<_> = foci.iter().map(|(&k, f)| (k, f.llr())).collect();
+        keys.sort_by(|x, y| (x.1).partial_cmp(&y.1).unwrap());
+        for ((key, pos), _) in keys {
             // Check if this node is alive(not removed yet);
             if !self.nodes.contains_key(&key) {
                 continue;
             }
-            for &pos in &[Position::Head, Position::Tail] {
-                // Check if this is branching.
-                let num_edges = self.get_edges(key, pos).count();
-                let is_repeat_in = if num_edges == 1 {
-                    let edge = self.get_edges(key, pos).next().unwrap();
-                    1 < self.get_edges(edge.to, edge.to_position).count()
+            // Check if this is branching.
+            let num_edges = self.get_edges(key, pos).count();
+            let is_repeat_in = if num_edges == 1 {
+                let edge = self.get_edges(key, pos).next().unwrap();
+                1 < self.get_edges(edge.to, edge.to_position).count()
+            } else {
+                false
+            };
+            if 1 < num_edges || is_repeat_in {
+                if is_repeat_in {
+                    debug!("{}\tREPEAT", &foci[&(key, pos)]);
                 } else {
-                    false
-                };
-                if (1 < num_edges || is_repeat_in) && foci.contains_key(&(key, pos)) {
-                    if is_repeat_in {
-                        debug!("{}\tREPEAT", &foci[&(key, pos)]);
-                    } else {
-                        debug!("{}\tBRANCH", &foci[&(key, pos)]);
-                    }
-                    self.survey_focus(key, pos, foci, &foci_information);
+                    debug!("{}\tBRANCH", &foci[&(key, pos)]);
                 }
+                self.survey_focus(key, pos, foci, &foci_information);
             }
         }
     }
@@ -1587,7 +1586,7 @@ impl<'a> DitchGraph<'a> {
         for (dist, nodes) in dist_nodes
             .iter()
             .enumerate()
-            .skip(1)
+            // .skip(1)
             .filter(|(_, ns)| 1 < ns.len())
         {
             let dist = dist + 1;
