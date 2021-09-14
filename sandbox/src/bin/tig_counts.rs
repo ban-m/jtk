@@ -19,8 +19,14 @@ fn main() -> std::io::Result<()> {
             counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
         }
     }
+    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity");
     for ((unit, cluster), counts) in counts.iter() {
-        println!("UNIT\t{}\t{}\t{}\t{}", unit, cluster, counts[0], counts[1]);
+        let total = counts[0] + counts[1];
+        let pur = counts[0].max(counts[1]) as f64 / total as f64;
+        println!(
+            "UNIT\t{}\t{}\t{}\t{}\t{:.4}",
+            unit, cluster, counts[0], counts[1], pur
+        );
     }
     if args.len() < 3 {
         eprintln!("Contig information was not supplied. Finish after dumping unit information.");
@@ -68,11 +74,14 @@ fn main() -> std::io::Result<()> {
             (id.clone(), (copy_num, cs))
         })
         .collect();
+    println!("CONTIG\tID\tCopyNum\tLen\tHap1\tHap2\tPurity");
     for (id, (copy_num, c)) in counts {
         let length = tigs.iter().find(|x| x.0 == id).map(|x| x.2.len()).unwrap();
+        let total = c[0] + c[1];
+        let pur = c[0].max(c[1]) as f64 / total as f64;
         println!(
-            "CONTIG\t{}\t{}\t{}\t{}\t{}",
-            id, copy_num, length, c[0], c[1]
+            "CONTIG\t{}\t{}\t{}\t{}\t{}\t{:.4}",
+            id, copy_num, length, c[0], c[1], pur,
         );
     }
     Ok(())

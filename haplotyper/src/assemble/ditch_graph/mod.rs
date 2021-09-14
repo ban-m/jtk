@@ -1195,66 +1195,48 @@ impl<'a> DitchGraph<'a> {
         }
     }
     /// Check the dynamic of foci.
-    pub fn survey_foci(&mut self, foci: &HashMap<(Node, Position), Focus>) {
-        let mut foci_information: HashMap<_, _> = HashMap::new();
-        for focus in foci.values() {
-            let llr = foci_information.entry(focus.from).or_insert(0f64);
-            *llr = (*llr).max(focus.llr());
-            let llr = foci_information.entry(focus.to).or_insert(0f64);
-            *llr = (*llr).max(focus.llr());
-        }
-        let mut keys: Vec<_> = foci.iter().map(|(&k, f)| (k, f.llr())).collect();
-        keys.sort_by(|x, y| (x.1).partial_cmp(&y.1).unwrap());
-        for ((key, pos), _) in keys {
-            // Check if this node is alive(not removed yet);
-            if !self.nodes.contains_key(&key) {
-                continue;
+    pub fn survey_foci(&mut self, foci: &[Focus]) {
+        let mut foci: Vec<&Focus> = foci.iter().collect();
+        while !foci.is_empty() {
+            debug!("FOCI\tNUM\t{}", foci.len());
+            let mut foci_information: HashMap<_, _> = HashMap::new();
+            for focus in foci.iter() {
+                let llr = foci_information.entry(focus.from).or_insert(0f64);
+                *llr = (*llr).max(focus.llr());
+                let llr = foci_information.entry(focus.to).or_insert(0f64);
+                *llr = (*llr).max(focus.llr());
             }
-            // Check if this is branching.
-            let num_edges = self.get_edges(key, pos).count();
-            let is_repeat_in = if num_edges == 1 {
-                let edge = self.get_edges(key, pos).next().unwrap();
-                1 < self.get_edges(edge.to, edge.to_position).count()
-            } else {
-                false
-            };
-            if 1 < num_edges || is_repeat_in {
-                if is_repeat_in {
-                    debug!("{}\tREPEAT", &foci[&(key, pos)]);
-                } else {
-                    debug!("{}\tBRANCH", &foci[&(key, pos)]);
+            // Retain foci met stronger one during resolving.
+            foci.retain(|focus| {
+                let (key, pos) = (focus.from, focus.from_position);
+                // Check if the targets are present in the graph.
+                let from_copy_num = self.nodes.get(&focus.from).and_then(|n| n.copy_number);
+                let to_copy_num = self.nodes.get(&focus.to).and_then(|node| node.copy_number);
+                if !matches!(from_copy_num, Some(1)) || !matches!(to_copy_num, Some(1)) {
+                    return false;
                 }
-                self.survey_focus(key, pos, foci, &foci_information);
-            }
+                // Check if this is branching.
+                let num_edges = self.get_edges(key, pos).count();
+                if num_edges != 1 {
+                    return false;
+                }
+                let edge = self.get_edges(key, pos).next().unwrap();
+                let sibs = self.get_edges(edge.to, edge.to_position).count();
+                if sibs <= 1 {
+                    return false;
+                }
+                debug!("FOCUS\tTRY\t{}", focus);
+                self.survey_focus(focus, &foci_information).is_none()
+            });
         }
     }
-    fn survey_focus(
-        &mut self,
-        key: Node,
-        pos: Position,
-        foci: &HashMap<(Node, Position), Focus>,
-        info: &HashMap<Node, f64>,
-    ) -> Option<()> {
-        // You can assume that `self` indeed has key and pos.
-        let focus = &foci[&(key, pos)];
-        // Check if both elemnets is single copy.
-        let from_copy_num = self
-            .nodes
-            .get(&focus.from)
-            .and_then(|node| node.copy_number)?;
-        let to_copy_num = self
-            .nodes
-            .get(&focus.to)
-            .and_then(|node| node.copy_number)?;
-        if 1 < from_copy_num || 1 < to_copy_num {
-            //debug!("F\t{}\tT\t{}", from_copy_num, to_copy_num);
-            return None;
-        }
-        debug!("Resolving...");
-        let path_to_focus = self.bfs_to_the_target(key, pos, foci, info)?;
+    // If resolveing successed, return Some(())
+    // othewise, it encountered a stronger focus, and return None.
+    fn survey_focus(&mut self, focus: &Focus, info: &HashMap<Node, f64>) -> Option<()> {
+        let path_to_focus = self.bfs_to_the_target(focus, info)?;
         // Get the label along the edge.
-        let (label, proxying) = self.spell_along_path(&path_to_focus, (key, pos));
-        debug!("Resolved. Span {} in {}bp", focus, label.len());
+        let (label, proxying) = self.spell_along_path(&path_to_focus, focus);
+        debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
         // Link (from,from_pos)<->(to,to_pos);
         let (from, from_pos) = (focus.from, focus.from_position);
         let (to, to_pos) = (focus.to, focus.to_position);
@@ -1302,9 +1284,8 @@ impl<'a> DitchGraph<'a> {
                 continue;
             }
             // If it is not zero-copy node, do not anything.
-            match self.nodes[&node].copy_number {
-                Some(cp) if cp == 0 => {}
-                _ => continue,
+            if !matches!(self.nodes[&node].copy_number, Some(0)) {
+                continue;
             }
             let parents: Vec<_> = self
                 .get_edges(node, pos)
@@ -1322,19 +1303,17 @@ impl<'a> DitchGraph<'a> {
         }
         Some(())
     }
-    // Fron (start,pos) position to the focus target.
+    // Fron (start,pos) position to the focus target(start=focus.node, position=focus.position).
     // Note that, the path would contain the (target,target pos) at the end of the path and
     // not contain the (start,pos) position itself.
     fn bfs_to_the_target(
         &self,
-        start: Node,
-        pos: Position,
-        foci: &HashMap<(Node, Position), Focus>,
+        focus: &Focus,
         info: &HashMap<Node, f64>,
     ) -> Option<Vec<(Node, Position)>> {
-        let focus = &foci[&(start, pos)];
         // Breadth first search until get to the target.
         // Just !pos to make code tidy.
+        let (start, pos) = (focus.from, focus.from_position);
         let mut nodes_at = vec![vec![(start, !pos)]];
         let mut parents = vec![vec![]];
         'outer: for dist in 0..focus.dist + 1 {
@@ -1395,8 +1374,9 @@ impl<'a> DitchGraph<'a> {
     fn spell_along_path(
         &mut self,
         path: &[(Node, Position)],
-        (start, pos): (Node, Position),
+        focus: &Focus,
     ) -> (EdgeLabel, Vec<(Node, bool, usize)>) {
+        let (start, pos) = (focus.from, focus.from_position);
         let first_elm = path[0];
         let first_label = self
             .get_edges(start, pos)
@@ -1514,45 +1494,42 @@ impl<'a> DitchGraph<'a> {
     /// Resolve repeats by "foci" algorithm.
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
-        let mut foci = self.get_foci(reads, config);
-        let prev = foci.len();
-        foci.retain(|_, val| thr < val.llr());
-        debug!("FOCI\t{}\t{}", prev, foci.len());
-        self.survey_foci(&foci);
+        loop {
+            let mut foci = self.get_foci(reads, config);
+            foci.retain(|val| thr < val.llr());
+            if foci.is_empty() {
+                break;
+            }
+            foci.sort_by(|x, y| y.llr().partial_cmp(&x.llr()).unwrap());
+            self.survey_foci(&foci);
+        }
     }
-
     /// Return a hash map containing all foci, thresholded by `config` parameter.
     /// For each (node, position), keep the strongest focus.
-    pub fn get_foci(
-        &self,
-        reads: &[&EncodedRead],
-        config: &AssembleConfig,
-    ) -> HashMap<(Node, Position), Focus> {
-        let mut foci: HashMap<_, Focus> = HashMap::new();
-        for node in self.nodes.values() {
+    pub fn get_foci(&self, reads: &[&EncodedRead], config: &AssembleConfig) -> Vec<Focus> {
+        let mut foci = vec![];
+        for node in self
+            .nodes
+            .values()
+            .filter(|n| matches!(n.copy_number, Some(1)))
+        {
             for pos in [Position::Head, Position::Tail] {
                 let edge_num = node
                     .edges
                     .iter()
                     .filter(|edge| edge.from_position == pos)
                     .count();
-                let confluent = if edge_num == 1 {
-                    let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
-                    let siblings = self.get_edges(edge.to, edge.to_position).count();
-                    assert!(1 <= siblings);
-                    1 < siblings
-                } else {
-                    false
-                };
-                if confluent {
-                    if let Some(focus) = self.examine_focus(node, pos, reads, config) {
-                        match foci.get(&(node.node, pos)) {
-                            Some(ex) if focus.llr() < ex.llr() => {}
-                            _ => {
-                                foci.insert((node.node, pos), focus);
-                            }
-                        };
-                    }
+                if edge_num != 1 {
+                    continue;
+                }
+                let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
+                let siblings = self.get_edges(edge.to, edge.to_position).count();
+                assert!(1 <= siblings);
+                if siblings <= 1 {
+                    continue;
+                }
+                if let Some(focus) = self.examine_focus(node, pos, reads, config) {
+                    foci.push(focus);
                 }
             }
         }
@@ -1610,11 +1587,6 @@ impl<'a> DitchGraph<'a> {
                     occs[hit_node] += 1;
                 }
             }
-            // TODO: Assume that the copy numeber is 1. Thus, each element in nodes would
-            // happen in 1/nodes.len() probability.
-            // Maybe we need to correct this setting, by introducing copy number at each nodes/edges.
-            // Note that whenever it is possible to reach a node, that DOES exists in the graph(not removed)
-            //let ith_ln = vec![-(nodes.len() as f64).ln(); nodes.len()];
             let ith_ln = {
                 let mut probs: Vec<_> = nodes.iter().map(|n| self.nodes[&n.0].occ as f64).collect();
                 let sum: f64 = probs.iter().sum();
@@ -1642,9 +1614,7 @@ impl<'a> DitchGraph<'a> {
             if let Some((lk_ratio, (to, to_pos))) = nodes
                 .iter()
                 .enumerate()
-                .filter(
-                    |(_, (node, _))| !matches!(self.nodes[node].copy_number, Some(cp) if 1 < cp),
-                )
+                .filter(|(_, (node, _))| matches!(self.nodes[node].copy_number, Some(1)))
                 .map(|(k, &n)| {
                     let lk: f64 = occs
                         .iter()
