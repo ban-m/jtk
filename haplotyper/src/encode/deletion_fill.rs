@@ -239,11 +239,11 @@ fn encode_node(
 
 // Align read skeltons to read, return the pileup sumamries.
 fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
-    let read_nodes: HashSet<_> = read.nodes.iter().map(|n| n.unit).collect();
+    // let read_nodes: HashSet<_> = read.nodes.iter().map(|n| n.unit).collect();
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     for query in reads
         .iter()
-        .filter(|q| q.nodes.iter().any(|n| read_nodes.contains(&n.unit)))
+        .filter(|q| read.nodes.iter().any(|n| q.sets.contains(&n.unit)))
     {
         if let Some((aln, is_forward)) = alignment(read, query) {
             let query = if is_forward {
@@ -292,11 +292,9 @@ const SCORE_THR: i32 = 1;
 // (*false* if needed).
 fn alignment(read: &EncodedRead, query: &ReadSkelton) -> Option<(Vec<Op>, bool)> {
     let read = ReadSkelton::from_rich_nodes(&read.nodes);
-    // let (f_score, f_ops) = pairwise_alignment(&read, query);
     let (f_score, f_ops) = pairwise_alignment_gotoh(&read, query);
     let f_match = get_match_units(&f_ops);
     let query = query.rev();
-    // let (r_score, r_ops) = pairwise_alignment(&read, &query);
     let (r_score, r_ops) = pairwise_alignment_gotoh(&read, &query);
     let r_match = get_match_units(&r_ops);
     let score_thr = if read.nodes.len() == 2 { 1 } else { SCORE_THR };
@@ -627,6 +625,7 @@ impl Pileup {
 #[derive(Clone)]
 pub struct ReadSkelton {
     nodes: Vec<LightNode>,
+    sets: HashSet<u64>,
 }
 
 impl std::fmt::Debug for ReadSkelton {
@@ -664,11 +663,13 @@ impl ReadSkelton {
                 }
             })
             .collect();
-        ReadSkelton { nodes }
+        let sets: HashSet<_> = nodes.iter().map(|n| n.unit).collect();
+        ReadSkelton { nodes, sets }
     }
     fn rev(&self) -> Self {
         let nodes: Vec<_> = self.nodes.iter().rev().map(LightNode::rev).collect();
-        Self { nodes }
+        let sets = self.sets.clone();
+        Self { nodes, sets }
     }
 }
 
