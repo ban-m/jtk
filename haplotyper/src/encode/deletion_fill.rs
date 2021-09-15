@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 /// Fill deletions
+
 pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
     let read_skeltons: Vec<_> = ds
         .encoded_reads
@@ -18,16 +19,19 @@ pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
         .map(|read| (read.id, read.seq()))
         .collect();
     let selected_chunks = &ds.selected_chunks;
-    ds.encoded_reads
+    let failed_trials: usize = ds
+        .encoded_reads
         .par_iter_mut()
         .filter(|r| r.nodes.len() > 1)
-        .for_each(|r| {
+        .map(|r| {
             let seq: Vec<_> = raw_seq[&r.id]
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
-        });
+            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq)
+        })
+        .sum();
+    debug!("ENCODE\t{}", failed_trials);
     ds
 }
 
@@ -68,7 +72,7 @@ pub fn correct_deletion_error(
     units: &[Unit],
     reads: &[ReadSkelton],
     seq: &[u8],
-) {
+) -> usize {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
     // let threshold = get_threshold(&pileups);
@@ -80,33 +84,32 @@ pub fn correct_deletion_error(
         std::cmp::Ordering::Greater => x - y,
         _ => y - x,
     };
+    let mut failed_trials = 0;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
         let head_node = pileup.check_insertion_head(nodes, threshold, idx);
-        let head_node = head_node.and_then(|(start_position, direction, uid)| {
+        if let Some((start_position, direction, uid)) = head_node {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
             let is_the_same_encode = nodes[idx].unit == uid
                 && abs(nodes[idx].position_from_start, start_position) < unit.seq().len();
-            match start_position < end_position && !is_the_same_encode {
-                true => encode_node(seq, start_position, end_position, direction, unit),
-                false => None,
+            if start_position < end_position && !is_the_same_encode {
+                match encode_node(seq, start_position, end_position, direction, unit) {
+                    Some(head_node) => inserts.push((idx, head_node)),
+                    None => failed_trials += 1,
+                }
             }
-        });
-        if let Some(head_node) = head_node {
-            inserts.push((idx, head_node))
         }
         let tail_node = pileup.check_insertion_tail(nodes, threshold, idx);
-        let tail_node = tail_node.and_then(|(end_position, direction, uid)| {
+        if let Some((end_position, direction, uid)) = tail_node {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = end_position.min(seq.len());
             let start_position = end_position.saturating_sub(unit.seq().len() + 2 * OFFSET);
-            match start_position < end_position {
-                true => encode_node(seq, start_position, end_position, direction, unit),
-                false => None,
+            if start_position < end_position {
+                match encode_node(seq, start_position, end_position, direction, unit) {
+                    Some(tail_node) => inserts.push((idx, tail_node)),
+                    None => failed_trials += 1,
+                }
             }
-        });
-        if let Some(tail_node) = tail_node {
-            inserts.push((idx, tail_node));
         }
     }
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
@@ -122,6 +125,7 @@ pub fn correct_deletion_error(
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
+    failed_trials
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
@@ -143,27 +147,52 @@ fn encode_node(
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
-    // TODO: Make this into usual SWG-banded alignment, or its local mode..
-    let alignment = edlib_sys::edlib_align(unit.seq(), &query, mode, task);
-    let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
+    let unitseq = unit.seq();
+    let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
+    let dist_thr = (unitseq.len() as f64 * ALIGN_LIMIT).floor() as u32;
     let locations = alignment.locations.unwrap();
-    let ops: Vec<_> = alignment
-        .operations
-        .unwrap()
-        .iter()
-        .map(|&op| match op {
-            0 | 3 => kiley::bialignment::Op::Mat,
-            1 => kiley::bialignment::Op::Del,
-            2 => kiley::bialignment::Op::Ins,
-            _ => unreachable!(),
-        })
-        .collect();
-    let ops = super::compress_kiley_ops(&ops);
-    if dist_thr < alignment.dist {
-        return None;
-    };
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
+    // Let's try to align the read once more.
+    // TODO: Parametrize here. Band size is 100 if the sequence is 2K.
+    let band = (seq.len() / 20).max(20);
+    let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
+    let aln_dist = {
+        let (mut upos, mut spos) = (0, 0);
+        ops.iter()
+            .map(|op| match op {
+                kiley::bialignment::Op::Del => {
+                    upos += 1;
+                    1
+                }
+                kiley::bialignment::Op::Ins => {
+                    spos += 1;
+                    1
+                }
+                kiley::bialignment::Op::Mat => {
+                    spos += 1;
+                    upos += 1;
+                    (unitseq[upos - 1] != seq[spos - 1]) as u32
+                }
+            })
+            .sum::<u32>()
+    };
+    // let ops: Vec<_> = alignment
+    //     .operations
+    //     .unwrap()
+    //     .iter()
+    //     .map(|&op| match op {
+    //         0 | 3 => kiley::bialignment::Op::Mat,
+    //         1 => kiley::bialignment::Op::Del,
+    //         2 => kiley::bialignment::Op::Ins,
+    //         _ => unreachable!(),
+    //     })
+    //     .collect();
+    let ops = super::compress_kiley_ops(&ops);
+    // if dist_thr < alignment.dist {
+    if dist_thr < aln_dist {
+        return None;
+    };
     let position_from_start = if is_forward {
         start + aln_start
     } else {

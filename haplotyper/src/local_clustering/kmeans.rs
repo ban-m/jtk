@@ -9,6 +9,8 @@ const AVERAGE_LK: f64 = 1.2;
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
 use rand::Rng;
+
+// use crate::assemble::string_graph::consensus;
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig {
     // TODO: Remove this?
@@ -40,6 +42,10 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         coverage,
     } = *config;
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
+    // debug!(
+    //     "SEQ\t>temp\nSEQ\t{}",
+    //     String::from_utf8_lossy(&cons_template)
+    // );
     let profiles = get_profiles(&cons_template, reads, band_width as isize);
     // debug!("TEMPLATE\t{}", String::from_utf8_lossy(&cons_template));
     // for (i, prof) in profiles.iter().enumerate() {
@@ -74,7 +80,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
         //         } else {
         //             let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
-        //             let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
+        //             let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
         //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
         //         };
         //     }

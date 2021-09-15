@@ -19,13 +19,15 @@ fn main() -> std::io::Result<()> {
             counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
         }
     }
-    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity");
+    let score: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.score)).collect();
+    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore");
     for ((unit, cluster), counts) in counts.iter() {
+        let score = score[&unit];
         let total = counts[0] + counts[1];
         let pur = counts[0].max(counts[1]) as f64 / total as f64;
         println!(
-            "UNIT\t{}\t{}\t{}\t{}\t{:.4}",
-            unit, cluster, counts[0], counts[1], pur
+            "UNIT\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}",
+            unit, cluster, counts[0], counts[1], pur, score
         );
     }
     if args.len() < 3 {

@@ -27,6 +27,9 @@ impl PolishUnitConfig {
             consensus_size: filter_size,
         }
     }
+    pub fn read_type(&self) -> ReadType {
+        self.read_type
+    }
 }
 /// Polishing units by partial order alignment graph.
 /// Note that after calling this function,

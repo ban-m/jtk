@@ -24,6 +24,8 @@ impl Encode for definitions::DataSet {
         if self.read_type != definitions::ReadType::CCS {
             let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
             for _ in 0..15 {
+                // TODO: To remember where the insertion is failed to encode,
+                // to speed up the filling procedure.
                 self = deletion_fill::correct_unit_deletion(self);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
                 debug!("Filled:{}\t{}", current, after);
@@ -55,10 +57,6 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
     for aln in alignments.iter() {
         bucket.entry(aln.qname.clone()).or_default().push(aln);
     }
-    // Do not need this.
-    // bucket.values_mut().for_each(|alns| {
-    //     alns.sort_by_key(|aln| aln.qstart);
-    // });
     let chunks = &ds.selected_chunks;
     ds.encoded_reads = ds
         .raw_reads
@@ -117,6 +115,11 @@ fn encode_read_to_nodes_by_paf(
             encode_paf(seq, aln, unit)
         })
         .collect();
+    // TODO: Is it nessesary to confirm the alignment by using "usual" SWG?
+    // I do not think so, because minimap2's alignment is
+    // usually OK. And if we do need it, we should do it
+    // after the alignment.
+    // For example, try to confirm alignment here.
     (!nodes.is_empty()).then(|| {
         nodes.sort_by_key(|n| n.unit);
         let mut nodes = remove_slippy_alignment(nodes);

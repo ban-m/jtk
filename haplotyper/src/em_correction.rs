@@ -17,6 +17,9 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn repeat_num(&self) -> usize {
+        self.repeat_num
+    }
     pub fn new(
         repeat_num: usize,
         seed: u64,
