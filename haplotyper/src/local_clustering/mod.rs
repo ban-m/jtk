@@ -104,21 +104,25 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             unit.score = *score;
         }
     }
+    // Maybe, by doing this, the graph would be splitted into two.
+    // For example, suppose there's very long "in"-exact rerepats.
+    // To prevent this happening, we can collect these "discaded" node
+    // with respect its original unit,
+    // rename the unit ID into something new,
+    // and let it go(or take consensus).
+    // It would be nice, wouldn't it?
+    // (Especially, it does not require any "re-encoding.").
+    // However, take care that it sometimes there's a unit
+    // with very clear clustering, with very clear
+    // -> We do not even cut a encoded unit,
+    // as there's some cases that there is large in/del in a
+    // read just by sequencing errors.
+    // In that case, discarding such node with other "seg-dupped" node
+    // just makes the graph more complicated.
     re_encode_reads(ds, &consensus_and_clusternum);
-    // for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-    //     if let Some((cons, _, _)) = consensus_and_clusternum.get(&node.unit) {
-    //         let band_size = (cons.len() / 10).max(5);
-    //         let (_, cigar) =
-    //             kiley::bialignment::global_banded(cons, node.seq(), 2, -2, -4, -2, band_size);
-    //         node.cigar = crate::encode::compress_kiley_ops(&cigar);
-    //     }
-    // }
 }
 
 fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)>) {
-    let raw_seqs: HashMap<_, &[u8]> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
-    let prev_node_num: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
-    use crate::encode::nodes_to_encoded_read;
     ds.encoded_reads
         .par_iter_mut()
         .flat_map(|r| r.nodes.par_iter_mut())
@@ -132,27 +136,30 @@ fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)
                 kiley::bialignment::global_banded(cons, node.seq(), 2, -5, -6, -1, band_size).1;
             node.cigar = crate::encode::compress_kiley_ops(&ops);
         });
-    for read in ds.encoded_reads.iter_mut() {
-        let prev_len = read.nodes.len();
-        read.nodes.retain(|node| {
-            if !consensus.contains_key(&node.unit) {
-                true
-            } else {
-                node.cigar.iter().all(|&op| match op {
-                    Op::Match(_) => true,
-                    Op::Del(l) | Op::Ins(l) => l < crate::encode::INDEL_THRESHOLD,
-                })
-            }
-        });
-        if prev_len != read.nodes.len() {
-            let mut nodes = vec![];
-            nodes.append(&mut read.nodes);
-            let seq = raw_seqs[&read.id];
-            *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-        }
-    }
-    let after_node_num: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
-    debug!("LOCAL\t{}\t{}", prev_node_num, after_node_num);
+    // let raw_seqs: HashMap<_, &[u8]> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    // let prev_node_num: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
+    // use crate::encode::nodes_to_encoded_read;
+    // for read in ds.encoded_reads.iter_mut() {
+    //     let prev_len = read.nodes.len();
+    //     read.nodes.retain(|node| {
+    //         if !consensus.contains_key(&node.unit) {
+    //             true
+    //         } else {
+    //             node.cigar.iter().all(|&op| match op {
+    //                 Op::Match(_) => true,
+    //                 Op::Del(l) | Op::Ins(l) => l < crate::encode::INDEL_THRESHOLD,
+    //             })
+    //         }
+    //     });
+    //     if prev_len != read.nodes.len() {
+    //         let mut nodes = vec![];
+    //         nodes.append(&mut read.nodes);
+    //         let seq = raw_seqs[&read.id];
+    //         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+    //     }
+    // }
+    // let after_node_num: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
+    // debug!("LOCAL\t{}\t{}", prev_node_num, after_node_num);
 }
 
 // pub fn local_clustering_all(ds: &mut DataSet) {
