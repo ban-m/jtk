@@ -6,7 +6,12 @@ use std::collections::{HashMap, HashSet};
 
 /// Fill deletions
 
-pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
+// The second argument is the vector of (index,unit_id) of the previous failed trials.
+// for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
+// position of the i-th read, and failed it.
+// If we can encode some position in the i-th read, the failed trials would be erased, as it change the
+// condition of the read, making it possible to encode an unit previously failed to encode.
+pub fn correct_unit_deletion(mut ds: DataSet, failed_trials: &mut [Vec<(usize, u64)>]) -> DataSet {
     let read_skeltons: Vec<_> = ds
         .encoded_reads
         .iter()
@@ -19,16 +24,18 @@ pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
         .map(|read| (read.id, read.seq()))
         .collect();
     let selected_chunks = &ds.selected_chunks;
+    assert_eq!(ds.encoded_reads.len(), failed_trials.len());
     let failed_trials: usize = ds
         .encoded_reads
         .par_iter_mut()
-        .filter(|r| r.nodes.len() > 1)
-        .map(|r| {
+        .zip(failed_trials.par_iter_mut())
+        .filter(|(r, _)| r.nodes.len() > 1)
+        .map(|(r, failed_trial)| {
             let seq: Vec<_> = raw_seq[&r.id]
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq)
+            correct_deletion_error(r, failed_trial, selected_chunks, &read_skeltons, &seq)
         })
         .sum();
     debug!("ENCODE\t{}", failed_trials);
@@ -61,7 +68,7 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
+            correct_deletion_error(r, &mut Vec::new(), selected_chunks, &read_skeltons, &seq);
         });
 }
 
@@ -69,6 +76,7 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
 const OFFSET: usize = 300;
 pub fn correct_deletion_error(
     read: &mut EncodedRead,
+    failed_trials: &mut Vec<(usize, u64)>,
     units: &[Unit],
     reads: &[ReadSkelton],
     seq: &[u8],
@@ -84,9 +92,11 @@ pub fn correct_deletion_error(
         std::cmp::Ordering::Greater => x - y,
         _ => y - x,
     };
-    let mut failed_trials = 0;
+    let mut failed_number = 0;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        let head_node = pileup.check_insertion_head(nodes, threshold, idx);
+        let head_node = pileup
+            .check_insertion_head(nodes, threshold, idx)
+            .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
         if let Some((start_position, direction, uid)) = head_node {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
@@ -95,11 +105,16 @@ pub fn correct_deletion_error(
             if start_position < end_position && !is_the_same_encode {
                 match encode_node(seq, start_position, end_position, direction, unit) {
                     Some(head_node) => inserts.push((idx, head_node)),
-                    None => failed_trials += 1,
+                    None => {
+                        failed_number += 1;
+                        failed_trials.push((idx, uid));
+                    }
                 }
             }
         }
-        let tail_node = pileup.check_insertion_tail(nodes, threshold, idx);
+        let tail_node = pileup
+            .check_insertion_tail(nodes, threshold, idx)
+            .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
         if let Some((end_position, direction, uid)) = tail_node {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = end_position.min(seq.len());
@@ -107,10 +122,16 @@ pub fn correct_deletion_error(
             if start_position < end_position {
                 match encode_node(seq, start_position, end_position, direction, unit) {
                     Some(tail_node) => inserts.push((idx, tail_node)),
-                    None => failed_trials += 1,
+                    None => {
+                        failed_number += 1;
+                        failed_trials.push((idx, uid));
+                    }
                 }
             }
         }
+    }
+    if !inserts.is_empty() {
+        failed_trials.clear();
     }
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
         read.nodes.insert(idx + accum_inserts, node);
@@ -125,7 +146,7 @@ pub fn correct_deletion_error(
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
-    failed_trials
+    failed_number
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.

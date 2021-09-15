@@ -23,10 +23,12 @@ impl Encode for definitions::DataSet {
         self = encode_by_mm2(self, threads).unwrap();
         if self.read_type != definitions::ReadType::CCS {
             let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+            // i->vector of failed index and units.
+            let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
             for _ in 0..15 {
                 // TODO: To remember where the insertion is failed to encode,
                 // to speed up the filling procedure.
-                self = deletion_fill::correct_unit_deletion(self);
+                self = deletion_fill::correct_unit_deletion(self, &mut failed_trials);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
                 debug!("Filled:{}\t{}", current, after);
                 if after <= current {
