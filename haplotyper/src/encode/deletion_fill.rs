@@ -217,15 +217,15 @@ fn encode_node(
             .sum::<u32>()
     };
     let ops = super::compress_kiley_ops(&ops);
-    let max_indel = ops
-        .iter()
-        .map(|&op| match op {
-            Op::Ins(l) | Op::Del(l) => l,
-            _ => 0,
-        })
-        .max()
-        .unwrap();
-    debug!("TRY\t{}\t{}\t{}", dist_thr, aln_dist, max_indel);
+    // let max_indel = ops
+    //     .iter()
+    //     .map(|&op| match op {
+    //         Op::Ins(l) | Op::Del(l) => l,
+    //         _ => 0,
+    //     })
+    //     .max()
+    //     .unwrap();
+    // debug!("TRY\t{}\t{}\t{}", dist_thr, aln_dist, max_indel);
     if dist_thr < aln_dist {
         return None;
     };
@@ -236,7 +236,7 @@ fn encode_node(
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     let has_large_indel = ops.iter().any(|&op| match op {
-        Op::Ins(l) | Op::Del(l) => l < super::INDEL_THRESHOLD,
+        Op::Ins(l) | Op::Del(l) => l > super::INDEL_THRESHOLD,
         _ => false,
     });
     if has_large_indel {
