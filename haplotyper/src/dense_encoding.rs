@@ -36,6 +36,7 @@ impl DenseEncoding for DataSet {
             .collect();
         debug!("DE\t{}\tEMCorrection", units.len());
         self = self.correct_clustering_em_on_selected(10, 3, true, &units);
+        debug!("DE\t{:?}\tEnumDiplotig", config);
         // The maximum value of the previous unit.
         // If the unit id is greater than this, it is newly added one.
         let multi_tig = enumerate_diplotigs(&mut self, config);
