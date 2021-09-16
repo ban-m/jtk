@@ -202,8 +202,8 @@ impl DetermineUnit for definitions::DataSet {
             chunk.seq.truncate(config.chunk_len);
             chunk.id = idx as u64;
         }
-        // TODO:After this, the read SHOULD be encoded.
-        // TODO:Filling deletion here?
+        self = self.encode(config.threads, CLR_CTG_SIM);
+        self = remove_frequent_units(self, config.upper_count);
         self
     }
 }

@@ -52,7 +52,6 @@ fn main() -> std::io::Result<()> {
                     })
                     .sum::<u32>()
             };
-
             let cigar = haplotyper::encode::compress_kiley_ops(&ops);
             let after = cigar
                 .iter()
