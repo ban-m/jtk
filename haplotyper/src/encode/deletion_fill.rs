@@ -217,6 +217,15 @@ fn encode_node(
             .sum::<u32>()
     };
     let ops = super::compress_kiley_ops(&ops);
+    let max_indel = ops
+        .iter()
+        .map(|&op| match op {
+            Op::Ins(l) | Op::Del(l) => l,
+            _ => 0,
+        })
+        .max()
+        .unwrap();
+    debug!("TRY\t{}\t{}\t{}", dist_thr, aln_dist, max_indel);
     if dist_thr < aln_dist {
         return None;
     };
@@ -231,15 +240,6 @@ fn encode_node(
         _ => false,
     });
     if has_large_indel {
-        // let max_indel = ops
-        //     .iter()
-        //     .map(|&op| match op {
-        //         Op::Ins(l) | Op::Del(l) => l,
-        //         _ => 0,
-        //     })
-        //     .max()
-        //     .unwrap();
-        // debug!("NO\t{}\t{}", unit.id, max_indel);
         return None;
     }
     let node = Node {
