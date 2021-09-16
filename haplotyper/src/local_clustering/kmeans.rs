@@ -840,7 +840,15 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
             .collect();
         let total: f64 = dists.iter().sum();
         dists.iter_mut().for_each(|x| *x /= total);
-        let idx = *indices.choose_weighted(rng, |&idx| dists[idx]).unwrap();
+        let idx = match indices.choose_weighted(rng, |&idx| dists[idx]) {
+            Ok(res) => *res,
+            Err(why) => {
+                for d in data.iter() {
+                    error!("{:?}", d);
+                }
+                panic!("{:?}", why);
+            }
+        };
         centers.push(&data[idx]);
     }
     let mut assignments: Vec<_> = data
