@@ -399,8 +399,8 @@ fn encode_edge(
                 Op::Ins(l) | Op::Del(l) => l > crate::encode::INDEL_THRESHOLD,
                 _ => false,
             });
-            use crate::encode::deletion_fill::ALIGN_LIMIT;
-            let dist_thr = (unitlen as f64 * ALIGN_LIMIT).floor() as u32;
+            // TODO: Parametrize here.
+            let dist_thr = (unitlen as f64 * CLR_CTG_SIM).floor() as u32;
             if !has_large_indel && edit_dist < dist_thr {
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,
