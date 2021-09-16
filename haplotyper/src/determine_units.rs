@@ -368,7 +368,7 @@ fn fill_sparse_region(mut ds: DataSet, config: &UnitConfig) -> DataSet {
     let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
     ds.selected_chunks
         .extend(picked_units.iter().enumerate().map(|(i, seq)| Unit {
-            id: i as u64 + last_unit,
+            id: i as u64 + last_unit + 1,
             seq: String::from_utf8_lossy(seq).to_string(),
             cluster_num: config.min_cluster,
             score: 0f64,
