@@ -1558,7 +1558,7 @@ impl<'a> DitchGraph<'a> {
             .copied()
             .collect();
         let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
-        debug!("FOCUS\t{:?}\t{}\t{}\tS", node.node, pos, covered.len());
+        debug!("FOCUS\t{:?}\t{}\t{}", node.node, pos, covered.len());
         let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
         debug!("FOCUS\t{}\tTraversed", dist_nodes.len());
         let mut focus: Option<Focus> = None;
@@ -1646,6 +1646,8 @@ impl<'a> DitchGraph<'a> {
         pos: Position,
         covered: &HashSet<Node>,
     ) -> Vec<Vec<(Node, Position)>> {
+        // TODO:Maybe it is efficient?
+        let mut has_arrived = HashSet::new();
         let initial_nodes: Vec<_> = node
             .edges
             .iter()
@@ -1655,15 +1657,20 @@ impl<'a> DitchGraph<'a> {
         let mut nodes_at: Vec<Vec<_>> = vec![initial_nodes];
         for i in 0.. {
             let mut next_nodes = vec![];
-            for (node, p) in nodes_at[i].iter() {
-                if let Some(next_node) = self.nodes.get(node) {
-                    let to_nodes = next_node
-                        .edges
-                        .iter()
-                        .filter(|e| e.from_position == !*p)
-                        .map(|e| (e.to, e.to_position));
-                    next_nodes.extend(to_nodes);
-                }
+            for &(node, p) in nodes_at[i].iter() {
+                has_arrived.insert(node);
+                let to_nodes = self
+                    .get_edges(node, !p)
+                    .filter_map(|e| (!has_arrived.contains(&e.to)).then(|| (e.to, e.to_position)));
+                next_nodes.extend(to_nodes);
+                // if let Some(next_node) = self.nodes.get(node) {
+                //     let to_nodes = next_node
+                //         .edges
+                //         .iter()
+                //         .filter(|e| e.from_position == !*p)
+                //         .map(|e| (e.to, e.to_position));
+                //     next_nodes.extend(to_nodes);
+                // }
             }
             next_nodes.sort();
             next_nodes.dedup();

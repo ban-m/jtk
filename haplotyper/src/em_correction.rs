@@ -97,7 +97,7 @@ impl ClusteringCorrection for DataSet {
     ) -> Self {
         let result: Vec<_> = self
             .selected_chunks
-            .iter()
+            .par_iter()
             .filter(|c| selection.contains(&c.id))
             .map(|ref_unit| {
                 let unit_id = ref_unit.id;
