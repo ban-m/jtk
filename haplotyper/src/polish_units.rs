@@ -47,11 +47,6 @@ impl PolishUnit for DataSet {
             .iter()
             .map(|unit| (unit.id, vec![]))
             .collect();
-        // let subchunk_len: HashMap<_, _> = self
-        //     .selected_chunks
-        //     .iter()
-        //     .map(|unit| (unit.id, unit.seq().len() / 100))
-        //     .collect();
         for read in self.encoded_reads.iter() {
             for node in read.nodes.iter() {
                 if let Some(res) = pileups.get_mut(&node.unit) {
@@ -63,15 +58,9 @@ impl PolishUnit for DataSet {
             .par_iter()
             .filter_map(|(id, pileup)| {
                 if pileup.len() > c.filter_size {
-                    // let len = subchunk_len[id];
-                    // let cons = consensus(pileup, len, c);
-                    // cons.map(|c| (id, c))
-                    // let start = std::time::Instant::now();
                     let seqs: Vec<_> = pileup.iter().map(|x| x.seq()).take(c.cons_size).collect();
                     let cons = kiley::ternary_consensus_by_chunk(&seqs, 100);
                     let cons = kiley::bialignment::polish_until_converge_banded(&cons, &seqs, 100);
-                    // let end = std::time::Instant::now();
-                    // debug!("CONS\t{}\t{}", seqs.len(), (end - start).as_millis());
                     Some((id, String::from_utf8(cons).unwrap()))
                 } else {
                     None
@@ -83,6 +72,7 @@ impl PolishUnit for DataSet {
         self.selected_chunks.iter_mut().for_each(|unit| {
             unit.seq = result[&unit.id].clone();
         });
+        // TODO:WHY? We do not need to remove these alignemnt! Just update them!
         self.encoded_reads.clear();
         self
     }

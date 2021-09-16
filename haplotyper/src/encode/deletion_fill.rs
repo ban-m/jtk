@@ -4,14 +4,17 @@ use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
 
-/// Fill deletions
-
 // The second argument is the vector of (index,unit_id) of the previous failed trials.
 // for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
 // position of the i-th read, and failed it.
 // If we can encode some position in the i-th read, the failed trials would be erased, as it change the
 // condition of the read, making it possible to encode an unit previously failed to encode.
-pub fn correct_unit_deletion(mut ds: DataSet, failed_trials: &mut [Vec<(usize, u64)>]) -> DataSet {
+// sim_thr is the similarity threshold.
+pub fn correct_unit_deletion(
+    mut ds: DataSet,
+    failed_trials: &mut [Vec<(usize, u64)>],
+    sim_thr: f64,
+) -> DataSet {
     let read_skeltons: Vec<_> = ds
         .encoded_reads
         .iter()
@@ -35,7 +38,14 @@ pub fn correct_unit_deletion(mut ds: DataSet, failed_trials: &mut [Vec<(usize, u
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, failed_trial, selected_chunks, &read_skeltons, &seq)
+            correct_deletion_error(
+                r,
+                failed_trial,
+                selected_chunks,
+                &read_skeltons,
+                &seq,
+                sim_thr,
+            )
         })
         .sum();
     debug!("ENCODE\t{}", failed_trials);
@@ -44,7 +54,7 @@ pub fn correct_unit_deletion(mut ds: DataSet, failed_trials: &mut [Vec<(usize, u
 
 /// Same as `correct unit deletion selected`. The only difference is that this function controls which read
 /// would be corrected. Maybe boost the efficiency.
-pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
+pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>, sim_thr: f64) {
     // This skeltons contain all reads, as some of the unfocal reads
     // would be help to correct focal reads.
     let read_skeltons: Vec<_> = ds
@@ -68,7 +78,14 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, &mut Vec::new(), selected_chunks, &read_skeltons, &seq);
+            correct_deletion_error(
+                r,
+                &mut Vec::new(),
+                selected_chunks,
+                &read_skeltons,
+                &seq,
+                sim_thr,
+            );
         });
 }
 
@@ -80,6 +97,7 @@ pub fn correct_deletion_error(
     units: &[Unit],
     reads: &[ReadSkelton],
     seq: &[u8],
+    sim_thr: f64,
 ) -> usize {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
@@ -103,7 +121,7 @@ pub fn correct_deletion_error(
             let is_the_same_encode = nodes[idx].unit == uid
                 && abs(nodes[idx].position_from_start, start_position) < unit.seq().len();
             if start_position < end_position && !is_the_same_encode {
-                match encode_node(seq, start_position, end_position, direction, unit) {
+                match encode_node(seq, start_position, end_position, direction, unit, sim_thr) {
                     Some(head_node) => inserts.push((idx, head_node)),
                     None => {
                         failed_number += 1;
@@ -120,7 +138,7 @@ pub fn correct_deletion_error(
             let end_position = end_position.min(seq.len());
             let start_position = end_position.saturating_sub(unit.seq().len() + 2 * OFFSET);
             if start_position < end_position {
-                match encode_node(seq, start_position, end_position, direction, unit) {
+                match encode_node(seq, start_position, end_position, direction, unit, sim_thr) {
                     Some(tail_node) => inserts.push((idx, tail_node)),
                     None => {
                         failed_number += 1;
@@ -158,6 +176,7 @@ fn encode_node(
     end: usize,
     is_forward: bool,
     unit: &Unit,
+    sim_thr: f64,
 ) -> Option<Node> {
     let mut query = if is_forward {
         seq[start..end].to_vec()
@@ -170,13 +189,14 @@ fn encode_node(
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
     let unitseq = unit.seq();
     let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
-    let dist_thr = (unitseq.len() as f64 * ALIGN_LIMIT).floor() as u32;
+    //let dist_thr = (unitseq.len() as f64 * ALIGN_LIMIT).floor() as u32;
+    let dist_thr = (unitseq.len() as f64 * sim_thr).floor() as u32;
     let locations = alignment.locations.unwrap();
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
     // Let's try to align the read once more.
-    // TODO: Parametrize here. Band size is 100 if the sequence is 2K.
-    let band = (seq.len() / 20).max(20);
+    // TODO: Parametrize here. Band size is 200 if the sequence is 2K.
+    let band = (seq.len() / 10).max(20);
     let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
     let aln_dist = {
         let (mut upos, mut spos) = (0, 0);
@@ -198,19 +218,7 @@ fn encode_node(
             })
             .sum::<u32>()
     };
-    // let ops: Vec<_> = alignment
-    //     .operations
-    //     .unwrap()
-    //     .iter()
-    //     .map(|&op| match op {
-    //         0 | 3 => kiley::bialignment::Op::Mat,
-    //         1 => kiley::bialignment::Op::Del,
-    //         2 => kiley::bialignment::Op::Ins,
-    //         _ => unreachable!(),
-    //     })
-    //     .collect();
     let ops = super::compress_kiley_ops(&ops);
-    // if dist_thr < alignment.dist {
     if dist_thr < aln_dist {
         return None;
     };
@@ -220,10 +228,20 @@ fn encode_node(
         start + query.len() - aln_end - 1
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    if ops.iter().any(|op| match *op {
-        Op::Ins(l) | Op::Del(l) => l > super::INDEL_THRESHOLD,
+    let has_large_indel = ops.iter().any(|&op| match op {
+        Op::Ins(l) | Op::Del(l) => l < super::INDEL_THRESHOLD,
         _ => false,
-    }) {
+    });
+    if has_large_indel {
+        // let max_indel = ops
+        //     .iter()
+        //     .map(|&op| match op {
+        //         Op::Ins(l) | Op::Del(l) => l,
+        //         _ => 0,
+        //     })
+        //     .max()
+        //     .unwrap();
+        // debug!("NO\t{}\t{}", unit.id, max_indel);
         return None;
     }
     let node = Node {

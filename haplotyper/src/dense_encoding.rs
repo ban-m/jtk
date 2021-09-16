@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 const CONS_MIN_LENGTH: usize = 100;
 const COV_THR_FACTOR: usize = 4;
+use crate::encode::CLR_CTG_SIM;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 #[derive(Debug, Clone, Copy)]
@@ -82,7 +83,11 @@ impl DenseEncoding for DataSet {
                 re_encode_read(read, seq);
             }
             let filled_reads: HashSet<_> = reads.iter().map(|r| r.id).collect();
-            crate::encode::deletion_fill::correct_unit_deletion_selected(&mut self, &filled_reads);
+            crate::encode::deletion_fill::correct_unit_deletion_selected(
+                &mut self,
+                &filled_reads,
+                CLR_CTG_SIM,
+            );
             to_clustering_nodes.extend(nodes.iter().map(|x| x.0));
             edge_encoding_patterns.values().for_each(|new_units| {
                 to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))

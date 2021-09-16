@@ -4,6 +4,10 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::io::*;
 pub mod deletion_fill;
+/// Expected upper bound of the disparsity between polished segment vs raw reads.
+/// TODO: should be changed based on the read types.
+pub const CLR_CTG_SIM: f64 = 0.25;
+pub const CLR_CLR_SIM: f64 = 0.35;
 /// This is a parameter only valid for last program.
 /// TODO: As the Licencing issue, maybe we should remove these parameters as well as dependencies for last.
 pub const MARGIN: usize = 50;
@@ -15,20 +19,19 @@ const ALLOWED_END_GAP: usize = 50;
 /// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
 pub const INDEL_THRESHOLD: usize = 50;
 pub trait Encode {
-    fn encode(self, threads: usize) -> Self;
+    fn encode(self, threads: usize, sim_thr: f64) -> Self;
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(mut self, threads: usize) -> Self {
-        self = encode_by_mm2(self, threads).unwrap();
+    fn encode(mut self, threads: usize, sim_thr: f64) -> Self {
+        self = encode_by_mm2(self, threads, sim_thr).unwrap();
+        // TODO: maybe we should remove someghin.
         if self.read_type != definitions::ReadType::CCS {
             let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
             // i->vector of failed index and units.
             let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
             for _ in 0..15 {
-                // TODO: To remember where the insertion is failed to encode,
-                // to speed up the filling procedure.
-                self = deletion_fill::correct_unit_deletion(self, &mut failed_trials);
+                self = deletion_fill::correct_unit_deletion(self, &mut failed_trials, sim_thr);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
                 debug!("Filled:{}\t{}", current, after);
                 if after <= current {
@@ -44,29 +47,49 @@ impl Encode for definitions::DataSet {
     }
 }
 
-pub fn encode_by_mm2(ds: definitions::DataSet, p: usize) -> std::io::Result<DataSet> {
+pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::io::Result<DataSet> {
     let mm2 = mm2_alignment(&ds, p)?;
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
         .filter_map(|l| bio_utils::paf::PAF::new(l))
         .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
+        .filter_map(|aln| {
+            // Check the max-indel.
+            use bio_utils::sam;
+            let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
+            let has_large_indel = cigar.iter().any(|op| match *op {
+                sam::Op::Deletion(l) | sam::Op::Insertion(l) => INDEL_THRESHOLD < l,
+                _ => false,
+            });
+            let dist: usize = cigar
+                .iter()
+                .map(|op| match *op {
+                    sam::Op::Deletion(l) | sam::Op::Insertion(l) | sam::Op::Mismatch(l) => l,
+                    _ => 0,
+                })
+                .sum();
+            let tname = aln.tname.parse::<u64>().unwrap();
+            let dist_thr = (chunks.get(&tname)?.seq().len() as f64 * sim_thr).floor() as usize;
+            (!has_large_indel && dist < dist_thr).then(|| aln)
+        })
         .collect();
     Ok(encode_by(ds, &alignments))
 }
 
 pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet {
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
     for aln in alignments.iter() {
         bucket.entry(aln.qname.clone()).or_default().push(aln);
     }
-    let chunks = &ds.selected_chunks;
     ds.encoded_reads = ds
         .raw_reads
         .par_iter()
         .filter_map(|read| {
             bucket
                 .get(&read.name)
-                .and_then(|alns| encode_read_by_paf(read, alns, chunks))
+                .and_then(|alns| encode_read_by_paf(read, alns, &chunks))
         })
         .collect::<Vec<_>>();
     ds
@@ -75,7 +98,7 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
 fn encode_read_by_paf(
     read: &RawRead,
     alns: &[&bio_utils::paf::PAF],
-    units: &[Unit],
+    units: &HashMap<u64, &Unit>,
 ) -> Option<EncodedRead> {
     let mut seq: Vec<_> = read.seq().to_vec();
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
@@ -107,21 +130,15 @@ pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<En
 fn encode_read_to_nodes_by_paf(
     seq: &[u8],
     alns: &[&bio_utils::paf::PAF],
-    units: &[Unit],
+    units: &HashMap<u64, &Unit>,
 ) -> Option<Vec<Node>> {
     let mut nodes: Vec<_> = alns
         .iter()
         .filter_map(|aln| {
-            let tname = aln.tname.parse::<u64>().unwrap();
-            let unit = units.iter().find(|unit| unit.id == tname).unwrap();
-            encode_paf(seq, aln, unit)
+            let tname = aln.tname.parse::<u64>().ok()?;
+            encode_paf(seq, aln, units.get(&tname)?)
         })
         .collect();
-    // TODO: Is it nessesary to confirm the alignment by using "usual" SWG?
-    // I do not think so, because minimap2's alignment is
-    // usually OK. And if we do need it, we should do it
-    // after the alignment.
-    // For example, try to confirm alignment here.
     (!nodes.is_empty()).then(|| {
         nodes.sort_by_key(|n| n.unit);
         let mut nodes = remove_slippy_alignment(nodes);
@@ -212,20 +229,14 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         .sum::<usize>();
     assert_eq!(query_length, leading.len());
     let aligned = String::from_utf8(leading).unwrap();
-    // If there's too large In/Dels, return None.
-    ops.iter()
-        .all(|op| match *op {
-            Op::Ins(l) | Op::Del(l) => l < INDEL_THRESHOLD,
-            _ => true,
-        })
-        .then(|| Node {
-            position_from_start,
-            unit: unit.id,
-            cluster: 0,
-            is_forward: aln.relstrand,
-            seq: aligned,
-            cigar: ops,
-        })
+    Some(Node {
+        position_from_start,
+        unit: unit.id,
+        cluster: 0,
+        is_forward: aln.relstrand,
+        seq: aligned,
+        cigar: ops,
+    })
 }
 
 pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
@@ -309,7 +320,7 @@ pub fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec
     use crate::minimap2;
     let threads = format!("{}", p);
     use definitions::ReadType;
-    let mut args = vec!["-t", &threads, "-c", "-P"];
+    let mut args = vec!["-t", &threads, "-c", "--eqx", "-P"];
     match ds.read_type {
         ReadType::CCS => args.extend(vec!["-H"]),
         ReadType::CLR => args.extend(vec!["-H", "-k", "15"]),

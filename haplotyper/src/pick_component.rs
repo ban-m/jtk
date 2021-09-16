@@ -1,5 +1,5 @@
 use definitions::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Copy)]
 pub struct ComponentPickingConfig {
     /// How many component would we take?
@@ -51,12 +51,25 @@ impl ComponentPicking for DataSet {
         );
         self.selected_chunks
             .retain(|unit| picked_units.contains(&unit.id));
+        let mut unit_id_convert_table = HashMap::new();
+        for unit in self.selected_chunks.iter_mut() {
+            let new_id = unit_id_convert_table.len() as u64;
+            unit_id_convert_table.insert(unit.id, new_id);
+            unit.id = new_id;
+        }
         let len = self.encoded_reads.len();
         self.encoded_reads.retain(|read| {
             read.nodes
                 .iter()
                 .all(|node| picked_units.contains(&node.unit))
         });
+        for node in self
+            .encoded_reads
+            .iter_mut()
+            .flat_map(|r| r.nodes.iter_mut())
+        {
+            node.unit = unit_id_convert_table[&node.unit];
+        }
         let retained_reads: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
         self.raw_reads
             .retain(|read| retained_reads.contains(&read.id));
@@ -65,6 +78,7 @@ impl ComponentPicking for DataSet {
             len,
             self.encoded_reads.len(),
         );
+        // TODO: Maybe we need to fill the spase regions, right?
         self
     }
 }

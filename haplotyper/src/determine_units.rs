@@ -1,4 +1,5 @@
 use super::encode::Encode;
+use super::encode::{CLR_CLR_SIM, CLR_CTG_SIM};
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
 // use super::Encode;
@@ -108,6 +109,7 @@ pub trait DetermineUnit {
 }
 
 impl DetermineUnit for definitions::DataSet {
+    // TODO: We can make this process much faster, by just skipping the needless re-encoding.
     fn select_chunks(mut self, config: &UnitConfig) -> Self {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
@@ -150,16 +152,16 @@ impl DetermineUnit for definitions::DataSet {
             self.selected_chunks = remove_overlapping_units(&self, config.threads).unwrap();
             // 1st polishing.
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
-            self = self.encode(config.threads);
+            self = self.encode(config.threads, CLR_CLR_SIM);
             self = remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, 20);
             self = self.polish_unit(&polish_config);
             // Filling gappy region.
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
-            self = self.encode(config.threads);
+            self = self.encode(config.threads, CLR_CLR_SIM);
             self = fill_sparse_region(self, config);
             // 2nd polishing.
-            self = self.encode(config.threads);
+            self = self.encode(config.threads, CLR_CLR_SIM);
             self = remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 20);
             self = self.polish_unit(&polish_config);
@@ -182,11 +184,11 @@ impl DetermineUnit for definitions::DataSet {
         };
         self.selected_chunks = selected_chunks;
         debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
-        self = self.encode(config.threads);
+        self = self.encode(config.threads, CLR_CTG_SIM);
         self = remove_frequent_units(self, config.upper_count);
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
-        self = self.encode(config.threads);
+        self = self.encode(config.threads, CLR_CTG_SIM);
         // Final polishing.
         let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 25, 24);
         self = self.polish_unit(&polish_config);
@@ -313,6 +315,7 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
 //     Ok(alignments)
 // }
 
+// TODO: This should be much more efficient!
 fn fill_sparse_region(mut ds: DataSet, config: &UnitConfig) -> DataSet {
     let mut edge_count: HashMap<_, (usize, i64)> = HashMap::new();
     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {

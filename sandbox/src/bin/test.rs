@@ -5,10 +5,39 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
+    let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    // use std::collections::HashMap;
+    use std::collections::HashSet;
+    let target = (848, 335);
+    let reads: HashSet<_> = ds
+        .encoded_reads
+        .iter()
+        .filter_map(|r| {
+            r.edges
+                .iter()
+                .any(|e| ((e.from, e.to) == target) || ((e.to, e.from) == target))
+                .then(|| r.id)
+        })
+        .collect();
+    haplotyper::encode::deletion_fill::correct_unit_deletion_selected(&mut ds, &reads, 0.25);
+    // let ref_unit: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.seq())).collect();
+    // let start = std::time::Instant::now();
+    // for node in ds
+    //     .encoded_reads
+    //     .iter_mut()
+    //     .flat_map(|r| r.nodes.iter_mut())
+    //     .take(1000)
+    // {
+    //     let (_, ops) =
+    //         kiley::bialignment::global_banded(node.seq(), ref_unit[&node.unit], 2, -5, -6, -1, 100);
+    //     node.cigar = haplotyper::encode::compress_kiley_ops(&ops);
+    // }
+    // let end = std::time::Instant::now();
+    // println!("{:?}", (end - start));
+    // let nodes: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
+    // println!("{}", (end - start).as_millis() * nodes as u128 / 1_000_000);
+    //(/ (/ (/ (* 450 3000) 4) 30) 3600.0)
     // let mut counts: HashMap<_, u32> = HashMap::new();
     // for read in ds.encoded_reads.iter() {
     //     for node in read.nodes.iter().filter(|n| n.unit == 1077) {
@@ -18,31 +47,31 @@ fn main() -> std::io::Result<()> {
     //     }
     // }
     // println!("{:?}", counts);
-    let unit = 90;
-    let (ids, seqs): (Vec<_>, Vec<_>) = ds
-        .encoded_reads
-        .iter()
-        .filter_map(|r| {
-            r.nodes
-                .iter()
-                .find(|n| n.unit == unit)
-                .map(|n| (r.id, n.seq()))
-        })
-        .unzip();
-    let cov = 26f64;
-    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 3, cov);
-    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
-    let start = std::time::Instant::now();
-    let (asn, _, score) =
-        haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-    let end = std::time::Instant::now();
-    use std::collections::HashMap;
-    log::debug!("SCORE\t{}\t{}", score, (end - start).as_secs());
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    for (id, (readid, asn)) in ids.iter().zip(asn.iter()).enumerate() {
-        let ans = id2desc[readid].contains("000252v2") as usize;
-        log::debug!("ANSWER\t{}\t{}\t{}", id, ans, asn);
-    }
+    // let unit = 90;
+    // let (ids, seqs): (Vec<_>, Vec<_>) = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .filter_map(|r| {
+    //         r.nodes
+    //             .iter()
+    //             .find(|n| n.unit == unit)
+    //             .map(|n| (r.id, n.seq()))
+    //     })
+    //     .unzip();
+    // let cov = 26f64;
+    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 3, cov);
+    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
+    // let start = std::time::Instant::now();
+    // let (asn, _, score) =
+    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    // let end = std::time::Instant::now();
+    // use std::collections::HashMap;
+    // log::debug!("SCORE\t{}\t{}", score, (end - start).as_secs());
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    // for (id, (readid, asn)) in ids.iter().zip(asn.iter()).enumerate() {
+    //     let ans = id2desc[readid].contains("000252v2") as usize;
+    //     log::debug!("ANSWER\t{}\t{}\t{}", id, ans, asn);
+    // }
     // use haplotyper::em_correction::Context;
     // let cluster_num = 2;
     // let error_rate = 0.13;
