@@ -904,7 +904,7 @@ impl<'a> DitchGraph<'a> {
                 !is_ok_to_remove.contains(&format_edge(e))
             });
         }
-        debug!("MOREVED\t{}\t{}", removed, max_removed_weight);
+        debug!("REMOVED\t{}\t{}", removed, max_removed_weight);
         // If the condition 2. and 3. hold, then the degree should be 0.
         self.nodes.retain(|_, node| {
             node.copy_number.map(|cp| cp != 0).unwrap_or(true) || !node.edges.is_empty()
@@ -1496,6 +1496,7 @@ impl<'a> DitchGraph<'a> {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         loop {
             let mut foci = self.get_foci(reads, config);
+            debug!("FOCI\tNUM\t{}\tBefore removing weak foci.", foci.len());
             foci.retain(|val| thr < val.llr());
             if foci.is_empty() {
                 break;
@@ -1557,7 +1558,9 @@ impl<'a> DitchGraph<'a> {
             .copied()
             .collect();
         let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
+        debug!("FOCUS\t{:?}\t{}\t{}\tS", node.node, pos, covered.len());
         let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
+        debug!("FOCUS\t{}\tTraversed", dist_nodes.len());
         let mut focus: Option<Focus> = None;
         // TODO: Currnetly do not assume 1-distance focus. Is it OK?
         for (dist, nodes) in dist_nodes
