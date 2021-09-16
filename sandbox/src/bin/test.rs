@@ -5,22 +5,47 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    use std::collections::HashSet;
-    let target = (848, 335);
-    let reads: HashSet<_> = ds
+    let target = 1257;
+    let repeat_num = 10;
+    let to_regularize = true;
+    let coverage_thr = 3;
+    let ref_unit = ds.selected_chunks.iter().find(|n| n.id == target).unwrap();
+    let unit_id = ref_unit.id;
+    let reads: Vec<_> = ds
         .encoded_reads
         .iter()
-        .filter_map(|r| {
-            r.edges
-                .iter()
-                .any(|e| ((e.from, e.to) == target) || ((e.to, e.from) == target))
-                .then(|| r.id)
-        })
+        .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
         .collect();
-    haplotyper::encode::deletion_fill::correct_unit_deletion_selected(&mut ds, &reads, 0.25);
+    let k = ref_unit.cluster_num;
+
+    let (new_clustering, _, _) = (1..=k)
+        .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+        .enumerate()
+        .map(|(i, k)| {
+            use haplotyper::em_correction::*;
+            let seed = unit_id * (i * k) as u64;
+            let config = Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
+            em_clustering(&reads, &config)
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+        .unwrap();
+
+    // use std::collections::HashSet;
+    // let target = (848, 335);
+    // let reads: HashSet<_> = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .filter_map(|r| {
+    //         r.edges
+    //             .iter()
+    //             .any(|e| ((e.from, e.to) == target) || ((e.to, e.from) == target))
+    //             .then(|| r.id)
+    //     })
+    //     .collect();
+    // haplotyper::encode::deletion_fill::correct_unit_deletion_selected(&mut ds, &reads, 0.25);
     // let ref_unit: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.seq())).collect();
     // let start = std::time::Instant::now();
     // for node in ds

@@ -97,7 +97,7 @@ impl ClusteringCorrection for DataSet {
     ) -> Self {
         let result: Vec<_> = self
             .selected_chunks
-            .par_iter()
+            .iter()
             .filter(|c| selection.contains(&c.id))
             .map(|ref_unit| {
                 let unit_id = ref_unit.id;
@@ -111,7 +111,8 @@ impl ClusteringCorrection for DataSet {
                     debug!("Unit {} does not appear in any read.", unit_id);
                     return vec![];
                 }
-                let (new_clustering, _lk, _cluster_num) = (1..=k)
+                debug!("SGC\t{}", unit_id);
+                let (new_clustering, _, _) = (1..=k)
                     .flat_map(|k| std::iter::repeat(k).take(repeat_num))
                     .enumerate()
                     .map(|(i, k)| {
@@ -122,7 +123,6 @@ impl ClusteringCorrection for DataSet {
                     })
                     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
                     .unwrap();
-                // debug!("EMSGC\t{}\t{}\t{}\t{}", unit_id, k, cluster_num, lk);
                 new_clustering
             })
             .collect();
@@ -186,7 +186,9 @@ pub fn em_clustering(
     };
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let cluster_num = config.cluster_num;
+    debug!("BEG");
     let (asn, lk, offset) = em_clustering_inner(&contexts, cluster_num, &mut rng);
+    debug!("ED");
     let lk = if config.to_use_offset {
         lk - offset
     } else {
