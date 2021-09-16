@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    let target = 1094;
+    let target = 1257;
     let ref_unit = ds.selected_chunks.iter().find(|u| u.id == target).unwrap();
     use std::collections::HashMap;
     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();

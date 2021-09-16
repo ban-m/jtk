@@ -186,9 +186,7 @@ pub fn em_clustering(
     };
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let cluster_num = config.cluster_num;
-    debug!("BEG");
     let (asn, lk, offset) = em_clustering_inner(&contexts, cluster_num, &mut rng);
-    debug!("ED");
     let lk = if config.to_use_offset {
         lk - offset
     } else {
