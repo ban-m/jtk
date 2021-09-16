@@ -72,7 +72,10 @@ impl PolishUnit for DataSet {
         self.selected_chunks.iter_mut().for_each(|unit| {
             unit.seq = result[&unit.id].clone();
         });
-        // TODO:WHY? We do not need to remove these alignemnt! Just update them!
+        // TODO: WHY? We do not need to remove these alignemnt! Just update them!
+        // TODO: 1. Remove unused chunks. Change IDs in encoded read.
+        // 1. Change alignment in the encoded read.
+        // 2. Filtering out errorneous nodes by consider the distance and the indel patterns.
         self.encoded_reads.clear();
         self
     }

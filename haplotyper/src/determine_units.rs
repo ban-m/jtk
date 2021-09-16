@@ -115,8 +115,8 @@ impl DetermineUnit for definitions::DataSet {
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
         debug!("Select Unit: Configuration:{:?}", config);
-        let selected_chunks = if self.read_type == ReadType::CCS {
-            reads
+        if self.read_type == ReadType::CCS {
+            self.selected_chunks = reads
                 .iter()
                 .flat_map(|r| split_into(r, config))
                 .filter(|u| !is_repetitive(u, config))
@@ -128,7 +128,7 @@ impl DetermineUnit for definitions::DataSet {
                     cluster_num: config.min_cluster,
                     score: 0f64,
                 })
-                .collect()
+                .collect();
         } else {
             let clr_config = {
                 let mut temp = config.clone();
@@ -156,10 +156,23 @@ impl DetermineUnit for definitions::DataSet {
             self = remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, 20);
             self = self.polish_unit(&polish_config);
+            // TODO: Rather than calling self.encode many times,
+            // use the initial encoding, calling self.deletion_fill many times.
+            // It would be much faster.
             // Filling gappy region.
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
             self = self.encode(config.threads, CLR_CLR_SIM);
+            {
+                use std::collections::HashSet;
+                let ids: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
+                assert_eq!(ids.len(), self.selected_chunks.len());
+            }
             self = fill_sparse_region(self, config);
+            {
+                use std::collections::HashSet;
+                let ids: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
+                assert_eq!(ids.len(), self.selected_chunks.len());
+            }
             // 2nd polishing.
             self = self.encode(config.threads, CLR_CLR_SIM);
             self = remove_frequent_units(self, config.upper_count);
@@ -167,40 +180,30 @@ impl DetermineUnit for definitions::DataSet {
             self = self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
             self.selected_chunks
-                .into_iter()
-                .filter(|unit| unit.seq.len() > config.chunk_len)
-                .map(|mut unit| {
-                    while unit.seq.len() > config.chunk_len {
-                        unit.seq.pop();
-                    }
-                    unit
-                })
-                .enumerate()
-                .map(|(idx, unit)| Unit {
-                    id: idx as u64,
-                    ..unit
-                })
-                .collect()
+                .retain(|unit| config.chunk_len < unit.seq.len());
+            for (idx, unit) in self.selected_chunks.iter_mut().enumerate() {
+                unit.seq.truncate(config.chunk_len);
+                unit.id = idx as u64;
+            }
         };
-        self.selected_chunks = selected_chunks;
         debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
+        // This encoding is inevitable.
         self = self.encode(config.threads, CLR_CTG_SIM);
         self = remove_frequent_units(self, config.upper_count);
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
+        // This IS avoidable.
         self = self.encode(config.threads, CLR_CTG_SIM);
         // Final polishing.
         let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 25, 24);
         self = self.polish_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
-        let mut idx = 0;
-        self.selected_chunks.iter_mut().for_each(|mut unit| {
-            while unit.seq.len() > config.chunk_len {
-                unit.seq.pop();
-            }
-            unit.id = idx;
-            idx += 1;
-        });
+        for (idx, chunk) in self.selected_chunks.iter_mut().enumerate() {
+            chunk.seq.truncate(config.chunk_len);
+            chunk.id = idx as u64;
+        }
+        // TODO:After this, the read SHOULD be encoded.
+        // TODO:Filling deletion here?
         self
     }
 }

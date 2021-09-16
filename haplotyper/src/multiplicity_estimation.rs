@@ -1,10 +1,5 @@
-// TODO: Use copy number estimation module to determine how many clusteres are there, or just ...
 use definitions::DataSet;
-// use rand::{Rng, SeedableRng};
-// use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::*;
-// use std::collections::{HashMap, HashSet};
-// use super::Assemble;
 use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiplicityEstimationConfig {
