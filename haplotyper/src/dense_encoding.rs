@@ -39,6 +39,9 @@ impl DenseEncoding for DataSet {
         let multi_tig = enumerate_diplotigs(&mut self, config);
         // Nodes to be clustered, or node newly added by filling edge.
         let mut to_clustering_nodes = HashSet::new();
+        let cov = self
+            .coverage
+            .unwrap_or_else(|| panic!("do not have coverage"));
         for (cluster_num, nodes) in multi_tig {
             log::debug!("CONTIG\t{:?}", nodes);
             let mut reads: Vec<_> = self
@@ -48,7 +51,8 @@ impl DenseEncoding for DataSet {
                 .collect();
             // Create new nodes between nodes to make this region "dense."
             // (unit,cluster,is_tail).
-            let edge_consensus = take_consensus_between_nodes(&reads, &nodes, 2);
+            let discard_thr = cov.floor() as usize / 2;
+            let edge_consensus = take_consensus_between_nodes(&reads, &nodes, discard_thr);
             let max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
             let edge_encoding_patterns =
                 split_edges_into_units(&edge_consensus, ave_unit_len, max_unit_id);

@@ -899,7 +899,6 @@ fn convert_to_maf(
             }
         })
         .collect();
-    use bio::alignment::pairwise::Aligner;
     if data
         .iter()
         .any(|d| d.chunks.iter().any(|c| c.pos >= consensus.len()))
@@ -915,13 +914,13 @@ fn convert_to_maf(
         }
         panic!();
     }
-    let mut aligner = Aligner::new(-3, -1, |x, y| if x == y { 2 } else { -5 });
+    // let mut aligner = Aligner::new(-3, -1, |x, y| if x == y { 2 } else { -5 });
     let maf: Vec<HashMap<usize, Vec<u8>>> = data
         .iter()
         .map(|d| {
             d.chunks
                 .iter()
-                .map(|c| (c.pos, alignment(&mut aligner, &c.seq, &consensus[c.pos])))
+                .map(|c| (c.pos, alignment(&c.seq, &consensus[c.pos])))
                 .collect()
         })
         .collect();
@@ -1018,18 +1017,14 @@ fn convert_to_maf(
         .collect()
 }
 
-fn alignment<F: bio::alignment::pairwise::MatchFunc>(
-    aligner: &mut bio::alignment::pairwise::Aligner<F>,
-    query: &[u8],
-    template: &[u8],
-) -> Vec<u8> {
-    let aln = aligner.global(query, template);
+fn alignment(query: &[u8], template: &[u8]) -> Vec<u8> {
+    let (_, aln) = kiley::bialignment::global(template, query, 4, -6, -6, -1);
     let mut seq = vec![];
     let mut ins = vec![b'-'; template.len()];
     let (mut rpos, mut qpos) = (0, 0);
     let mut prev = None;
-    for &op in aln.operations.iter() {
-        use bio::alignment::AlignmentOperation::*;
+    for &op in aln.iter() {
+        use kiley::bialignment::Op::*;
         match op {
             Del => {
                 seq.push(b'-');
@@ -1041,12 +1036,11 @@ fn alignment<F: bio::alignment::pairwise::MatchFunc>(
                 }
                 qpos += 1;
             }
-            Subst | Match => {
+            Mat => {
                 seq.push(query[qpos]);
                 rpos += 1;
                 qpos += 1;
             }
-            _ => panic!(),
         }
         prev = Some(op);
     }

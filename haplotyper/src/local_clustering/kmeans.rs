@@ -823,7 +823,7 @@ fn kmeans_f64_plusplus<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> Vec<u8>
 // Take dataset, the number of the cluster, the haploid coverage and seed generator,
 // return the total likelihood.
 fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -> (Vec<u8>, f64) {
-    if k == 1 || data.iter().all(|xs| xs.is_empty()) {
+    if k == 1 || data.iter().all(|xs| xs.is_empty()) || data.len() <= k {
         return (vec![0; data.len()], 0f64);
     }
     // 1. Construct the first assignments.

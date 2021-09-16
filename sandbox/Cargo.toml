@@ -22,7 +22,6 @@ log = "*"
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
 rayon = "*"
 bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
-bio = "*"
 nalgebra = "*"
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 kiley = {path = "../../kiley"}
