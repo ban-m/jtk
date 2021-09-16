@@ -29,11 +29,12 @@ impl DenseEncoding for DataSet {
         let ave_unit_len = get_average_unit_length(&self);
         let original_assignments = log_original_assignments(&self);
         use crate::em_correction::ClusteringCorrection;
-        let units = self
+        let units: HashSet<_> = self
             .selected_chunks
             .iter()
             .filter_map(|u| (1.0 < u.score).then(|| u.id))
             .collect();
+        debug!("DE\t{}\tEMCorrection", units.len());
         self = self.correct_clustering_em_on_selected(10, 3, true, &units);
         // The maximum value of the previous unit.
         // If the unit id is greater than this, it is newly added one.
