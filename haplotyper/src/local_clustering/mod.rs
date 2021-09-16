@@ -45,11 +45,14 @@ impl LocalClustering for DataSet {
         mut self,
         _c: &ClusteringConfig<F>,
     ) -> Self {
-        local_clustering_all(&mut self);
+        let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
+        local_clustering_selected(&mut self, &selection);
+        // local_clustering_all(&mut self);
         self
     }
 }
 
+/// Selection: HashSet of the chunk ID to be clustered on.
 pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     let mut pileups: HashMap<u64, Vec<&mut Node>> =
         selection.iter().map(|&id| (id, vec![])).collect();
@@ -101,74 +104,119 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             unit.score = *score;
         }
     }
-    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        if let Some((cons, _, _)) = consensus_and_clusternum.get(&node.unit) {
-            let band_size = (cons.len() / 10).max(5);
-            let (_, cigar) =
-                kiley::bialignment::global_banded(cons, node.seq(), 2, -2, -4, -2, band_size);
-            node.cigar = crate::encode::compress_kiley_ops(&cigar);
-        }
-    }
+    // Maybe, by doing this, the graph would be splitted into two.
+    // For example, suppose there's very long "in"-exact rerepats.
+    // To prevent this happening, we can collect these "discaded" node
+    // with respect its original unit,
+    // rename the unit ID into something new,
+    // and let it go(or take consensus).
+    // It would be nice, wouldn't it?
+    // (Especially, it does not require any "re-encoding.").
+    // However, take care that it sometimes there's a unit
+    // with very clear clustering, with very clear
+    // -> We do not even cut a encoded unit,
+    // as there's some cases that there is large in/del in a
+    // read just by sequencing errors.
+    // In that case, discarding such node with other "seg-dupped" node
+    // just makes the graph more complicated.
+    re_encode_reads(ds, &consensus_and_clusternum);
 }
 
-pub fn local_clustering_all(ds: &mut DataSet) {
-    let mut pileups: HashMap<u64, Vec<&mut Node>> = HashMap::new();
-    let cluster_num: HashMap<u64, u8> = ds
-        .selected_chunks
-        .iter()
-        .map(|c| (c.id, c.cluster_num as u8))
-        .collect();
-    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        pileups.entry(node.unit).or_default().push(node);
-    }
-    let coverage = ds.coverage;
-    let consensus_and_clusternum: HashMap<_, _> = pileups
+fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)>) {
+    ds.encoded_reads
         .par_iter_mut()
-        .map(|(&unit_id, units)| {
-            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
-            let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-            let coverage = match coverage {
-                Some(res) => res,
-                None => {
-                    debug!("No coverage estimation. Use adhoc coverage");
-                    (units.len() / 2) as f64
-                }
+        .flat_map(|r| r.nodes.par_iter_mut())
+        .for_each(|node| {
+            let cons = match consensus.get(&node.unit) {
+                Some((cons, _, _)) => cons,
+                None => return,
             };
-            let config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
-            let start = std::time::Instant::now();
-            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
-            for (node, asn) in units.iter_mut().zip(asn) {
-                node.cluster = asn as u64;
-            }
-            let end = std::time::Instant::now();
-            let elapsed = (end - start).as_secs();
-            let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
-            debug!(
-                "RECORD\t{}\t{}\t{}\t{}\t{:.3}",
-                unit_id, elapsed, prevcl, cl, score
-            );
-            (unit_id, (consensus, score, config.cluster_num))
-        })
-        .collect();
-    for unit in ds.selected_chunks.iter_mut() {
-        if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-            unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
-            unit.cluster_num = *cluster_num as usize;
-            unit.score = *score;
-        }
-    }
-    // Modify alignment so that the alignment would be valid.
-    // We would do this very rough, because anyway we do not like to use this alignment in the future.
-    // TODO: Make this banded procedure into SWG with banded mode.
-    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        if let Some((cons, _, _)) = consensus_and_clusternum.get(&node.unit) {
             let band_size = (cons.len() / 10).max(5);
-            let (_, cigar) =
-                kiley::bialignment::global_banded(cons, node.seq(), 2, -2, -4, -2, band_size);
-            node.cigar = crate::encode::compress_kiley_ops(&cigar);
-        }
-    }
+            let ops =
+                kiley::bialignment::global_banded(cons, node.seq(), 2, -5, -6, -1, band_size).1;
+            node.cigar = crate::encode::compress_kiley_ops(&ops);
+        });
+    // let raw_seqs: HashMap<_, &[u8]> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    // let prev_node_num: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
+    // use crate::encode::nodes_to_encoded_read;
+    // for read in ds.encoded_reads.iter_mut() {
+    //     let prev_len = read.nodes.len();
+    //     read.nodes.retain(|node| {
+    //         if !consensus.contains_key(&node.unit) {
+    //             true
+    //         } else {
+    //             node.cigar.iter().all(|&op| match op {
+    //                 Op::Match(_) => true,
+    //                 Op::Del(l) | Op::Ins(l) => l < crate::encode::INDEL_THRESHOLD,
+    //             })
+    //         }
+    //     });
+    //     if prev_len != read.nodes.len() {
+    //         let mut nodes = vec![];
+    //         nodes.append(&mut read.nodes);
+    //         let seq = raw_seqs[&read.id];
+    //         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+    //     }
+    // }
+    // let after_node_num: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
+    // debug!("LOCAL\t{}\t{}", prev_node_num, after_node_num);
 }
+
+// pub fn local_clustering_all(ds: &mut DataSet) {
+//     let mut pileups: HashMap<u64, Vec<&mut Node>> = HashMap::new();
+//     let cluster_num: HashMap<u64, u8> = ds
+//         .selected_chunks
+//         .iter()
+//         .map(|c| (c.id, c.cluster_num as u8))
+//         .collect();
+//     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+//         pileups.entry(node.unit).or_default().push(node);
+//     }
+//     let coverage = ds.coverage;
+//     let consensus_and_clusternum: HashMap<_, _> = pileups
+//         .par_iter_mut()
+//         .map(|(&unit_id, units)| {
+//             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 23);
+//             let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
+//             let coverage = match coverage {
+//                 Some(res) => res,
+//                 None => {
+//                     debug!("No coverage estimation. Use adhoc coverage");
+//                     (units.len() / 2) as f64
+//                 }
+//             };
+//             let config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
+//             let start = std::time::Instant::now();
+//             let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
+//             for (node, asn) in units.iter_mut().zip(asn) {
+//                 node.cluster = asn as u64;
+//             }
+//             let end = std::time::Instant::now();
+//             let elapsed = (end - start).as_secs();
+//             let (prevcl, cl) = (cluster_num[&unit_id], config.cluster_num);
+//             debug!(
+//                 "RECORD\t{}\t{}\t{}\t{}\t{:.3}",
+//                 unit_id, elapsed, prevcl, cl, score
+//             );
+//             (unit_id, (consensus, score, config.cluster_num))
+//         })
+//         .collect();
+//     for unit in ds.selected_chunks.iter_mut() {
+//         if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+//             unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+//             unit.cluster_num = *cluster_num as usize;
+//             unit.score = *score;
+//         }
+//     }
+//     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+//         if let Some((cons, _, _)) = consensus_and_clusternum.get(&node.unit) {
+//             let band_size = (cons.len() / 10).max(5);
+//             let (_, cigar) =
+//                 kiley::bialignment::global_banded(cons, node.seq(), 2, -2, -4, -2, band_size);
+//             node.cigar = crate::encode::compress_kiley_ops(&cigar);
+//         }
+//     }
+// }
 
 pub fn unit_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
     units: &mut [(u64, usize, &mut Node)],

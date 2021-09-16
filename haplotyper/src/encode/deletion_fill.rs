@@ -5,7 +5,13 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 /// Fill deletions
-pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
+
+// The second argument is the vector of (index,unit_id) of the previous failed trials.
+// for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
+// position of the i-th read, and failed it.
+// If we can encode some position in the i-th read, the failed trials would be erased, as it change the
+// condition of the read, making it possible to encode an unit previously failed to encode.
+pub fn correct_unit_deletion(mut ds: DataSet, failed_trials: &mut [Vec<(usize, u64)>]) -> DataSet {
     let read_skeltons: Vec<_> = ds
         .encoded_reads
         .iter()
@@ -18,16 +24,21 @@ pub fn correct_unit_deletion(mut ds: DataSet) -> DataSet {
         .map(|read| (read.id, read.seq()))
         .collect();
     let selected_chunks = &ds.selected_chunks;
-    ds.encoded_reads
+    assert_eq!(ds.encoded_reads.len(), failed_trials.len());
+    let failed_trials: usize = ds
+        .encoded_reads
         .par_iter_mut()
-        .filter(|r| r.nodes.len() > 1)
-        .for_each(|r| {
+        .zip(failed_trials.par_iter_mut())
+        .filter(|(r, _)| r.nodes.len() > 1)
+        .map(|(r, failed_trial)| {
             let seq: Vec<_> = raw_seq[&r.id]
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
-        });
+            correct_deletion_error(r, failed_trial, selected_chunks, &read_skeltons, &seq)
+        })
+        .sum();
+    debug!("ENCODE\t{}", failed_trials);
     ds
 }
 
@@ -57,7 +68,7 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect();
-            correct_deletion_error(r, selected_chunks, &read_skeltons, &seq);
+            correct_deletion_error(r, &mut Vec::new(), selected_chunks, &read_skeltons, &seq);
         });
 }
 
@@ -65,10 +76,11 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>) {
 const OFFSET: usize = 300;
 pub fn correct_deletion_error(
     read: &mut EncodedRead,
+    failed_trials: &mut Vec<(usize, u64)>,
     units: &[Unit],
     reads: &[ReadSkelton],
     seq: &[u8],
-) {
+) -> usize {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
     // let threshold = get_threshold(&pileups);
@@ -80,34 +92,46 @@ pub fn correct_deletion_error(
         std::cmp::Ordering::Greater => x - y,
         _ => y - x,
     };
+    let mut failed_number = 0;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        let head_node = pileup.check_insertion_head(nodes, threshold, idx);
-        let head_node = head_node.and_then(|(start_position, direction, uid)| {
+        let head_node = pileup
+            .check_insertion_head(nodes, threshold, idx)
+            .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
+        if let Some((start_position, direction, uid)) = head_node {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
             let is_the_same_encode = nodes[idx].unit == uid
                 && abs(nodes[idx].position_from_start, start_position) < unit.seq().len();
-            match start_position < end_position && !is_the_same_encode {
-                true => encode_node(seq, start_position, end_position, direction, unit),
-                false => None,
+            if start_position < end_position && !is_the_same_encode {
+                match encode_node(seq, start_position, end_position, direction, unit) {
+                    Some(head_node) => inserts.push((idx, head_node)),
+                    None => {
+                        failed_number += 1;
+                        failed_trials.push((idx, uid));
+                    }
+                }
             }
-        });
-        if let Some(head_node) = head_node {
-            inserts.push((idx, head_node))
         }
-        let tail_node = pileup.check_insertion_tail(nodes, threshold, idx);
-        let tail_node = tail_node.and_then(|(end_position, direction, uid)| {
+        let tail_node = pileup
+            .check_insertion_tail(nodes, threshold, idx)
+            .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
+        if let Some((end_position, direction, uid)) = tail_node {
             let unit = units.iter().find(|u| u.id == uid).unwrap();
             let end_position = end_position.min(seq.len());
             let start_position = end_position.saturating_sub(unit.seq().len() + 2 * OFFSET);
-            match start_position < end_position {
-                true => encode_node(seq, start_position, end_position, direction, unit),
-                false => None,
+            if start_position < end_position {
+                match encode_node(seq, start_position, end_position, direction, unit) {
+                    Some(tail_node) => inserts.push((idx, tail_node)),
+                    None => {
+                        failed_number += 1;
+                        failed_trials.push((idx, uid));
+                    }
+                }
             }
-        });
-        if let Some(tail_node) = tail_node {
-            inserts.push((idx, tail_node));
         }
+    }
+    if !inserts.is_empty() {
+        failed_trials.clear();
     }
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
         read.nodes.insert(idx + accum_inserts, node);
@@ -122,6 +146,7 @@ pub fn correct_deletion_error(
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
+    failed_number
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
@@ -143,27 +168,52 @@ fn encode_node(
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
-    // TODO: Make this into usual SWG-banded alignment, or its local mode..
-    let alignment = edlib_sys::edlib_align(unit.seq(), &query, mode, task);
-    let dist_thr = (unit.seq().len() as f64 * ALIGN_LIMIT).floor() as u32;
+    let unitseq = unit.seq();
+    let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
+    let dist_thr = (unitseq.len() as f64 * ALIGN_LIMIT).floor() as u32;
     let locations = alignment.locations.unwrap();
-    let ops: Vec<_> = alignment
-        .operations
-        .unwrap()
-        .iter()
-        .map(|&op| match op {
-            0 | 3 => kiley::bialignment::Op::Mat,
-            1 => kiley::bialignment::Op::Del,
-            2 => kiley::bialignment::Op::Ins,
-            _ => unreachable!(),
-        })
-        .collect();
-    let ops = super::compress_kiley_ops(&ops);
-    if dist_thr < alignment.dist {
-        return None;
-    };
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
+    // Let's try to align the read once more.
+    // TODO: Parametrize here. Band size is 100 if the sequence is 2K.
+    let band = (seq.len() / 20).max(20);
+    let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
+    let aln_dist = {
+        let (mut upos, mut spos) = (0, 0);
+        ops.iter()
+            .map(|op| match op {
+                kiley::bialignment::Op::Del => {
+                    upos += 1;
+                    1
+                }
+                kiley::bialignment::Op::Ins => {
+                    spos += 1;
+                    1
+                }
+                kiley::bialignment::Op::Mat => {
+                    spos += 1;
+                    upos += 1;
+                    (unitseq[upos - 1] != seq[spos - 1]) as u32
+                }
+            })
+            .sum::<u32>()
+    };
+    // let ops: Vec<_> = alignment
+    //     .operations
+    //     .unwrap()
+    //     .iter()
+    //     .map(|&op| match op {
+    //         0 | 3 => kiley::bialignment::Op::Mat,
+    //         1 => kiley::bialignment::Op::Del,
+    //         2 => kiley::bialignment::Op::Ins,
+    //         _ => unreachable!(),
+    //     })
+    //     .collect();
+    let ops = super::compress_kiley_ops(&ops);
+    // if dist_thr < alignment.dist {
+    if dist_thr < aln_dist {
+        return None;
+    };
     let position_from_start = if is_forward {
         start + aln_start
     } else {
@@ -189,11 +239,11 @@ fn encode_node(
 
 // Align read skeltons to read, return the pileup sumamries.
 fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
-    let read_nodes: HashSet<_> = read.nodes.iter().map(|n| n.unit).collect();
+    // let read_nodes: HashSet<_> = read.nodes.iter().map(|n| n.unit).collect();
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     for query in reads
         .iter()
-        .filter(|q| q.nodes.iter().any(|n| read_nodes.contains(&n.unit)))
+        .filter(|q| read.nodes.iter().any(|n| q.sets.contains(&n.unit)))
     {
         if let Some((aln, is_forward)) = alignment(read, query) {
             let query = if is_forward {
@@ -242,11 +292,9 @@ const SCORE_THR: i32 = 1;
 // (*false* if needed).
 fn alignment(read: &EncodedRead, query: &ReadSkelton) -> Option<(Vec<Op>, bool)> {
     let read = ReadSkelton::from_rich_nodes(&read.nodes);
-    // let (f_score, f_ops) = pairwise_alignment(&read, query);
     let (f_score, f_ops) = pairwise_alignment_gotoh(&read, query);
     let f_match = get_match_units(&f_ops);
     let query = query.rev();
-    // let (r_score, r_ops) = pairwise_alignment(&read, &query);
     let (r_score, r_ops) = pairwise_alignment_gotoh(&read, &query);
     let r_match = get_match_units(&r_ops);
     let score_thr = if read.nodes.len() == 2 { 1 } else { SCORE_THR };
@@ -577,6 +625,7 @@ impl Pileup {
 #[derive(Clone)]
 pub struct ReadSkelton {
     nodes: Vec<LightNode>,
+    sets: HashSet<u64>,
 }
 
 impl std::fmt::Debug for ReadSkelton {
@@ -614,11 +663,13 @@ impl ReadSkelton {
                 }
             })
             .collect();
-        ReadSkelton { nodes }
+        let sets: HashSet<_> = nodes.iter().map(|n| n.unit).collect();
+        ReadSkelton { nodes, sets }
     }
     fn rev(&self) -> Self {
         let nodes: Vec<_> = self.nodes.iter().rev().map(LightNode::rev).collect();
-        Self { nodes }
+        let sets = self.sets.clone();
+        Self { nodes, sets }
     }
 }
 

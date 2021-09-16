@@ -8,39 +8,41 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    use std::collections::HashMap;
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for read in ds.encoded_reads.iter() {
-        for node in read.nodes.iter().filter(|n| n.unit == 1077) {
-            for mode in read.nodes.iter().filter(|n| n.unit == 1075) {
-                *counts.entry((node.cluster, mode.cluster)).or_default() += 1;
-            }
-        }
-    }
-    println!("{:?}", counts);
-    // let targets = vec![280, 545];
-    // let unit = 1746;
-    // let (ids, seqs): (Vec<_>, Vec<_>) = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .filter_map(|r| {
-    //         r.nodes
-    //             .iter()
-    //             .find(|n| n.unit == unit)
-    //             .map(|n| (r.id, n.seq()))
-    //     })
-    //     .unzip();
-    // let cov = ds.coverage.unwrap();
-    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 2, cov);
-    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
-    // let (asn, _, _) =
-    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
     // use std::collections::HashMap;
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    // for (id, (readid, asn)) in ids.iter().zip(asn.iter()).enumerate() {
-    //     let ans = id2desc[readid].contains("000252v2") as usize;
-    //     log::debug!("ANSWER\t{}\t{}\t{}", id, ans, asn);
+    // let mut counts: HashMap<_, u32> = HashMap::new();
+    // for read in ds.encoded_reads.iter() {
+    //     for node in read.nodes.iter().filter(|n| n.unit == 1077) {
+    //         for mode in read.nodes.iter().filter(|n| n.unit == 1075) {
+    //             *counts.entry((node.cluster, mode.cluster)).or_default() += 1;
+    //         }
+    //     }
     // }
+    // println!("{:?}", counts);
+    let unit = 90;
+    let (ids, seqs): (Vec<_>, Vec<_>) = ds
+        .encoded_reads
+        .iter()
+        .filter_map(|r| {
+            r.nodes
+                .iter()
+                .find(|n| n.unit == unit)
+                .map(|n| (r.id, n.seq()))
+        })
+        .unzip();
+    let cov = 26f64;
+    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 3, cov);
+    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
+    let start = std::time::Instant::now();
+    let (asn, _, score) =
+        haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    let end = std::time::Instant::now();
+    use std::collections::HashMap;
+    log::debug!("SCORE\t{}\t{}", score, (end - start).as_secs());
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    for (id, (readid, asn)) in ids.iter().zip(asn.iter()).enumerate() {
+        let ans = id2desc[readid].contains("000252v2") as usize;
+        log::debug!("ANSWER\t{}\t{}\t{}", id, ans, asn);
+    }
     // use haplotyper::em_correction::Context;
     // let cluster_num = 2;
     // let error_rate = 0.13;

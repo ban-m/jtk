@@ -214,7 +214,6 @@ em.lk.summary <- em.lk.data %>% mutate(diff=lk-null) %>% group_by(span,num) %>%
 
 
 
-
 em.lk.summary.onlysuc <- em.lk.data %>% filter(clusternum==2) %>% group_by(span,num) %>%
     nest() %>%
     mutate(data=map(data,~summarize(.x,  rand_index=mean(rand_index)))) %>%
@@ -229,9 +228,8 @@ var_pos <- read_csv("diffs.csv",col_names=FALSE)
 var_pos %>% ggplot() + geom_point(aes(x=X1,y=X2,size=X3,color=X4))
 
 
-selected.answers <- read_tsv("1744.ans", col_names = FALSE) %>% select(X1,X2) %>% rename(answer=X2)
-selected.vars <- read_tsv("1744.var", col_names = FALSE) %>% 
-    full_join(selected.answers, by="X1")
+selected.answers <- read_tsv("75.out", col_names = FALSE) %>% select(X1,X2) %>% rename(answer=X2)
+selected.vars <- read_tsv("75.out", col_names = FALSE) 
 len <- length(selected.vars$X1)
 
 longer.selected.vars <- selected.vars %>%
@@ -274,3 +272,6 @@ merged.data <- full_join(rand.data %>% select(id,cluster,acc) %>% rename(em=acc)
 
 diplotig.data <- read_tsv("diplotig.unit", col_names = c("id","cluster","hap1","hap2")) %>%
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
+
+
+dbb.25.data <- read_tsv("dbb.units")

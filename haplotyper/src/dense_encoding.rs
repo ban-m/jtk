@@ -346,7 +346,7 @@ fn encode_edge(
     // debug!("Encoding\t{}\t{}\t{:?}", seq.len(), contig.len(), unit_info);
     let band = contig.len() / 20;
     // TODO: These parameters shoule be changed depending on the sequencing tech.
-    let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -2, -4, -2, band);
+    let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, band);
     // Split the alignment into encoded nodes.
     // Current position on the contg and the query.
     let (mut xpos, mut ypos) = (0, 0);
