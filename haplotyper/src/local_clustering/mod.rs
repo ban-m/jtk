@@ -47,7 +47,6 @@ impl LocalClustering for DataSet {
     ) -> Self {
         let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
         local_clustering_selected(&mut self, &selection);
-        // local_clustering_all(&mut self);
         self
     }
 }
@@ -114,11 +113,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     // (Especially, it does not require any "re-encoding.").
     // However, take care that it sometimes there's a unit
     // with very clear clustering, with very clear
-    // -> We do not even cut a encoded unit,
-    // as there's some cases that there is large in/del in a
-    // read just by sequencing errors.
-    // In that case, discarding such node with other "seg-dupped" node
-    // just makes the graph more complicated.
     re_encode_reads(ds, &consensus_and_clusternum);
 }
 
@@ -149,6 +143,7 @@ fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)
     //                 Op::Match(_) => true,
     //                 Op::Del(l) | Op::Ins(l) => l < crate::encode::INDEL_THRESHOLD,
     //             })
+    // // TODO:Here, we also should try some metric about the edit-distance thing.
     //         }
     //     });
     //     if prev_len != read.nodes.len() {

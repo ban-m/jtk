@@ -168,7 +168,7 @@ pub fn correct_deletion_error(
 }
 
 // 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
-pub const ALIGN_LIMIT: f64 = 0.35;
+// pub const ALIGN_LIMIT: f64 = 0.35;
 // Try to Encode Node. Return Some(node) if the alignment is good.
 fn encode_node(
     seq: &[u8],
@@ -189,13 +189,11 @@ fn encode_node(
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
     let unitseq = unit.seq();
     let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
-    //let dist_thr = (unitseq.len() as f64 * ALIGN_LIMIT).floor() as u32;
     let dist_thr = (unitseq.len() as f64 * sim_thr).floor() as u32;
     let locations = alignment.locations.unwrap();
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
     // Let's try to align the read once more.
-    // TODO: Parametrize here. Band size is 200 if the sequence is 2K.
     let band = (seq.len() / 10).max(20);
     let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
     let aln_dist = {

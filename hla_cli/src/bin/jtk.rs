@@ -837,7 +837,7 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     // TODO:Branching by read type.
-    Ok(dataset.encode(threads, haplotyper::encode::CLR_CTG_SIM))
+    Ok(dataset.encode(threads, haplotyper::encode::CLR_CLR_SIM))
 }
 
 fn polish_encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
