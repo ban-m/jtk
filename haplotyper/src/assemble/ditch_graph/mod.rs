@@ -1492,6 +1492,7 @@ impl<'a> DitchGraph<'a> {
         }
     }
     /// Resolve repeats by "foci" algorithm.
+    /// TODO: This code has bug when the graph contains loops.
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         loop {

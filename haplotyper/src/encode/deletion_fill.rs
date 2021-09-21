@@ -3,7 +3,6 @@ use definitions::*;
 use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
-
 // The second argument is the vector of (index,unit_id) of the previous failed trials.
 // for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
 // position of the i-th read, and failed it.
@@ -28,7 +27,7 @@ pub fn correct_unit_deletion(
         .collect();
     let selected_chunks = &ds.selected_chunks;
     assert_eq!(ds.encoded_reads.len(), failed_trials.len());
-    let failed_trials: usize = ds
+    let _failed_trials: usize = ds
         .encoded_reads
         .par_iter_mut()
         .zip(failed_trials.par_iter_mut())
@@ -48,7 +47,6 @@ pub fn correct_unit_deletion(
             )
         })
         .sum();
-    debug!("ENCODE\t{}", failed_trials);
     ds
 }
 
@@ -74,16 +72,12 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>, si
         .par_iter_mut()
         .filter(|r| r.nodes.len() > 1 && reads.contains(&r.id))
         .for_each(|r| {
-            let seq: Vec<_> = raw_seq[&r.id]
-                .iter()
-                .map(|x| x.to_ascii_uppercase())
-                .collect();
             correct_deletion_error(
                 r,
                 &mut Vec::new(),
                 selected_chunks,
                 &read_skeltons,
-                &seq,
+                &raw_seq[&r.id],
                 sim_thr,
             );
         });
@@ -101,7 +95,6 @@ pub fn correct_deletion_error(
 ) -> usize {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
-    // let threshold = get_threshold(&pileups);
     let threshold = 3;
     let nodes = &read.nodes;
     let take_len = nodes.len();
@@ -111,7 +104,10 @@ pub fn correct_deletion_error(
         _ => y - x,
     };
     let mut failed_number = 0;
+    let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
+    let seq = &seq;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
+        // let head_node = pileup.check_insertion_head(nodes, threshold, idx);
         let head_node = pileup
             .check_insertion_head(nodes, threshold, idx)
             .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
@@ -130,6 +126,7 @@ pub fn correct_deletion_error(
                 }
             }
         }
+        // let tail_node = pileup.check_insertion_tail(nodes, threshold, idx);
         let tail_node = pileup
             .check_insertion_tail(nodes, threshold, idx)
             .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
@@ -193,39 +190,32 @@ fn encode_node(
     let locations = alignment.locations.unwrap();
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
-    // Let's try to align the read once more.
     let band = (seq.len() / 10).max(20);
     let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
-    let aln_dist = {
-        let (mut upos, mut spos) = (0, 0);
-        ops.iter()
-            .map(|op| match op {
-                kiley::bialignment::Op::Del => {
-                    upos += 1;
-                    1
-                }
-                kiley::bialignment::Op::Ins => {
-                    spos += 1;
-                    1
-                }
-                kiley::bialignment::Op::Mat => {
-                    spos += 1;
-                    upos += 1;
-                    (unitseq[upos - 1] != seq[spos - 1]) as u32
-                }
-            })
-            .sum::<u32>()
-    };
-    let ops = super::compress_kiley_ops(&ops);
-    // let max_indel = ops
+    // let ops: Vec<_> = alignment
+    //     .operations
+    //     .unwrap()
     //     .iter()
-    //     .map(|&op| match op {
-    //         Op::Ins(l) | Op::Del(l) => l,
-    //         _ => 0,
+    //     .map(|x| match *x {
+    //         0 => kiley::bialignment::Op::Mat,
+    //         1 => kiley::bialignment::Op::Del,
+    //         2 => kiley::bialignment::Op::Ins,
+    //         _ => kiley::bialignment::Op::Mism,
     //     })
-    //     .max()
-    //     .unwrap();
-    // debug!("TRY\t{}\t{}\t{}", dist_thr, aln_dist, max_indel);
+    //     .collect();
+    let aln_dist = ops
+        .iter()
+        .filter(|&&op| op != kiley::bialignment::Op::Mat)
+        .count() as u32;
+    // Mat=>-1, Other->1
+    let indel_mism = ops
+        .iter()
+        .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
+    let max_indel = super::max_region(indel_mism).max(0) as usize;
+    let has_large_indel = match super::INDEL_THRESHOLD.cmp(&max_indel) {
+        std::cmp::Ordering::Greater => false,
+        _ => true,
+    };
     if dist_thr < aln_dist {
         return None;
     };
@@ -235,13 +225,24 @@ fn encode_node(
         start + query.len() - aln_end - 1
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    let has_large_indel = ops.iter().any(|&op| match op {
-        Op::Ins(l) | Op::Del(l) => l > super::INDEL_THRESHOLD,
-        _ => false,
-    });
     if has_large_indel {
+        // if unit.id == 1673 {
+        //     debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
+        //     let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+        //     eprintln!("==================");
+        //     for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+        //         eprintln!("{}", String::from_utf8_lossy(xr));
+        //         eprintln!("{}", String::from_utf8_lossy(ar));
+        //         eprintln!("{}\n", String::from_utf8_lossy(yr));
+        //     }
+        // }
         return None;
     }
+    let ops = super::compress_kiley_ops(&ops);
+    // let has_large_indel = ops.iter().any(|&op| match op {
+    //     Op::Ins(l) | Op::Del(l) => l > super::INDEL_THRESHOLD,
+    //     _ => false,
+    // });
     let node = Node {
         position_from_start,
         unit: unit.id,
@@ -746,7 +747,8 @@ mod deletion_fill {
                 after_offset: None,
             })
             .collect();
-        let read = ReadSkelton { nodes };
+        let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
+        let read = ReadSkelton { nodes, sets };
         let nodes: Vec<_> = vec![69, 221, 286, 148, 318]
             .into_iter()
             .zip(vec![false, true, true, false, true])
@@ -757,7 +759,8 @@ mod deletion_fill {
                 after_offset: None,
             })
             .collect();
-        let query = ReadSkelton { nodes };
+        let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
+        let query = ReadSkelton { nodes, sets };
         let (score, ops) = pairwise_alignment(&read, &query);
         assert_eq!(score, 1, "{:?}", ops);
     }
@@ -773,7 +776,8 @@ mod deletion_fill {
                     after_offset: None,
                 })
                 .collect();
-            ReadSkelton { nodes }
+            let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
+            ReadSkelton { nodes, sets }
         };
         let read = into_reads(vec![69, 148, 318, 0]);
         let query = into_reads(vec![69, 221, 286, 148, 318]);

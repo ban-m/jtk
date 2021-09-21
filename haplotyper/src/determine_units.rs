@@ -1,10 +1,9 @@
 use super::encode::Encode;
-use super::encode::{CLR_CLR_SIM, CLR_CTG_SIM};
+use super::encode::CLR_CLR_SIM;
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
 // use super::Encode;
 use definitions::*;
-// use rayon::prelude::*;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct UnitConfig {
@@ -110,6 +109,7 @@ pub trait DetermineUnit {
 
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
+    // TODO: Parametrize the number of reads used in consensus generation.
     fn select_chunks(mut self, config: &UnitConfig) -> Self {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
@@ -141,11 +141,9 @@ impl DetermineUnit for definitions::DataSet {
                 .filter(|u| !is_repetitive(u, config))
                 .take(clr_config.unit_num)
                 .enumerate()
-                .map(|(idx, seq)| Unit {
-                    id: idx as u64,
-                    seq: String::from_utf8_lossy(seq).to_string(),
-                    cluster_num: config.min_cluster,
-                    score: 0f64,
+                .map(|(idx, seq)| {
+                    let seq = String::from_utf8_lossy(seq).to_string();
+                    Unit::new(idx as u64, seq, config.min_cluster)
                 })
                 .collect();
             debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
@@ -154,29 +152,39 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self = self.encode(config.threads, CLR_CLR_SIM);
             self = remove_frequent_units(self, config.upper_count);
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10, 20);
-            self = self.polish_unit(&polish_config);
+            {
+                let mut counts: HashMap<_, usize> = HashMap::new();
+                for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+                    *counts.entry(node.unit).or_default() += 1;
+                }
+                let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
+                counts.sort_unstable();
+                let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
+                debug!("Histgrapm\n{}", hist.format(40, 20));
+            }
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 5);
+            self = self.consensus_unit(&polish_config);
             // TODO: Rather than calling self.encode many times,
             // use the initial encoding, calling self.deletion_fill many times.
             // It would be much faster.
             // Filling gappy region.
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
             self = self.encode(config.threads, CLR_CLR_SIM);
-            {
-                use std::collections::HashSet;
-                let ids: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
-                assert_eq!(ids.len(), self.selected_chunks.len());
-            }
             self = fill_sparse_region(self, config);
-            {
-                use std::collections::HashSet;
-                let ids: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
-                assert_eq!(ids.len(), self.selected_chunks.len());
-            }
             // 2nd polishing.
             self = self.encode(config.threads, CLR_CLR_SIM);
             self = remove_frequent_units(self, config.upper_count);
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 10, 20);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 8);
+            {
+                let mut counts: HashMap<_, usize> = HashMap::new();
+                for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+                    *counts.entry(node.unit).or_default() += 1;
+                }
+                let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
+                counts.sort_unstable();
+                let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
+                debug!("Histgrapm\n{}", hist.format(40, 20));
+            }
             self = self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
             self.selected_chunks
@@ -186,24 +194,40 @@ impl DetermineUnit for definitions::DataSet {
                 unit.id = idx as u64;
             }
         };
+        let sim_thr = match self.read_type {
+            ReadType::CLR => CLR_CLR_SIM,
+            _ => {
+                warn!("This read type is not supported yet.");
+                CLR_CLR_SIM
+            }
+        };
         debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
         // This encoding is inevitable.
-        self = self.encode(config.threads, CLR_CTG_SIM);
+        self = self.encode(config.threads, sim_thr);
         self = remove_frequent_units(self, config.upper_count);
         self = filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
         // This IS avoidable.
-        self = self.encode(config.threads, CLR_CTG_SIM);
+        self = self.encode(config.threads, sim_thr);
         // Final polishing.
-        let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 25, 24);
+        let polish_config = PolishUnitConfig::new(ReadType::CLR, 13);
+        {
+            let mut counts: HashMap<_, usize> = HashMap::new();
+            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+                *counts.entry(node.unit).or_default() += 1;
+            }
+            let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
+            counts.sort_unstable();
+            let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
+            debug!("Histgrapm\n{}", hist.format(40, 20));
+        }
         self = self.polish_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         for (idx, chunk) in self.selected_chunks.iter_mut().enumerate() {
             chunk.seq.truncate(config.chunk_len);
             chunk.id = idx as u64;
         }
-        self = self.encode(config.threads, CLR_CTG_SIM);
-        self = remove_frequent_units(self, config.upper_count);
+        self = self.encode(config.threads, sim_thr);
         self
     }
 }

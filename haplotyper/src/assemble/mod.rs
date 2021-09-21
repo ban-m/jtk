@@ -1,6 +1,6 @@
 pub mod copy_number;
 pub mod ditch_graph;
-pub mod string_graph;
+// pub mod string_graph;
 use definitions::*;
 use ditch_graph::*;
 use gfa::GFA;
@@ -246,6 +246,7 @@ pub fn assemble(
     }
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    // POINTER: ASSEMBLEIMPL
     graph.remove_lightweight_edges(2);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
@@ -255,10 +256,8 @@ pub fn assemble(
             // graph.remove_tips(0.5, 5);
             graph.remove_zero_copy_elements(cov, &lens, 0.3);
             graph.resolve_repeats(&reads, c, 5f64);
-            graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            graph.resolve_repeats(&reads, c, 2f64);
-            // graph.assign_copy_number(cov, &lens);
-            // graph.resolve_repeats(&reads, c, 3f64);
+            // graph.remove_zero_copy_elements(cov, &lens, 0.3);
+            // graph.resolve_repeats(&reads, c, 2f64);
             // graph.z_edge_selection();
             graph.assign_copy_number(cov, &lens);
         }

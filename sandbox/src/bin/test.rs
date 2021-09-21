@@ -1,37 +1,92 @@
 use definitions::*;
+use haplotyper::DetermineUnit;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoroshiro128PlusPlus;
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
+    // let mut reads: Vec<_> = std::fs::File::open(&args[1])
+    //     .map(BufReader::new)?
+    //     .lines()
+    //     .filter_map(|x| x.ok())
+    //     .collect();
+    // let template = reads.pop().unwrap();
+    // let seqs: Vec<_> = reads.iter().map(|x| x.as_bytes()).collect();
+    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 3, 26f64);
+    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
+    // let start = std::time::Instant::now();
+    // let (asn, _, score) =
+    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    let target = 1257;
-    let repeat_num = 10;
-    let to_regularize = true;
-    let coverage_thr = 3;
-    let ref_unit = ds.selected_chunks.iter().find(|n| n.id == target).unwrap();
-    let unit_id = ref_unit.id;
-    let reads: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
-        .collect();
-    let k = ref_unit.cluster_num;
+    // let mut failed_trials: Vec<_> = vec![vec![]; ds.encoded_reads.len()];
+    // ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, 0.35);
+    // use std::collections::HashMap;
+    // let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
+    // let seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    // let mut count: HashMap<_, u32> = units.keys().map(|&x| (x, 0)).collect();
+    // for read in ds.encoded_reads.iter_mut() {
+    //     read.nodes.retain(|node| {
+    //         let cigar = &node.cigar;
+    //         let indel_iter = cigar.iter().map(|&op| match op {
+    //             Op::Del(l) | Op::Ins(l) => l as i32,
+    //             Op::Match(l) => -(l as i32),
+    //         });
+    //         use haplotyper::encode::max_region;
+    //         let max_indel = max_region(indel_iter);
+    //         if 50 < max_indel {
+    //             // let ref_unit = &units[&node.unit];
+    //             // let (xr, ar, yr) = node.recover(ref_unit);
+    //             // eprintln!("==================");
+    //             // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+    //             //     eprintln!("{}", String::from_utf8_lossy(xr));
+    //             //     eprintln!("{}", String::from_utf8_lossy(ar));
+    //             //     eprintln!("{}\n", String::from_utf8_lossy(yr));
+    //             // }
+    //             let _ = count.entry(node.unit).and_modify(|x| *x += 1);
+    //             false
+    //         } else {
+    //             true
+    //         }
+    //     });
+    //     let mut nodes = vec![];
+    //     nodes.append(&mut read.nodes);
+    //     *read = haplotyper::encode::nodes_to_encoded_read(read.id, nodes, &seq[&read.id]).unwrap();
+    // }
+    // for (key, count) in count.iter().filter(|&(_, &c)| c > 0) {
+    //     eprintln!("REMOVED\t{}\t{}", key, count);
+    // }
+    // print!("{}", serde_json::ser::to_string(&ds).unwrap());
+    // use haplotyper::assemble::*;
+    // let config = AssembleConfig::new(3, 1000, false, false, 4);
+    // ds.squish_small_contig(&config, 30);
+    // println!("{}", ds.assemble(&config));
+    // let target = 1257;
+    // let repeat_num = 10;
+    // let to_regularize = true;
+    // let coverage_thr = 3;
+    // let ref_unit = ds.selected_chunks.iter().find(|n| n.id == target).unwrap();
+    // let unit_id = ref_unit.id;
+    // let reads: Vec<_> = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
+    //     .collect();
+    // let k = ref_unit.cluster_num;
 
-    let (new_clustering, _, _) = (1..=k)
-        .flat_map(|k| std::iter::repeat(k).take(repeat_num))
-        .enumerate()
-        .map(|(i, k)| {
-            use haplotyper::em_correction::*;
-            let seed = unit_id * (i * k) as u64;
-            let config = Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
-            em_clustering(&reads, &config)
-        })
-        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
-        .unwrap();
+    // let (new_clustering, _, _) = (1..=k)
+    //     .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+    //     .enumerate()
+    //     .map(|(i, k)| {
+    //         use haplotyper::em_correction::*;
+    //         let seed = unit_id * (i * k) as u64;
+    //         let config = Config::new(repeat_num, seed, k, unit_id, to_regularize, coverage_thr);
+    //         em_clustering(&reads, &config)
+    //     })
+    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
+    //     .unwrap();
 
     // use std::collections::HashSet;
     // let target = (848, 335);
@@ -72,31 +127,43 @@ fn main() -> std::io::Result<()> {
     //     }
     // }
     // println!("{:?}", counts);
-    // let unit = 90;
-    // let (ids, seqs): (Vec<_>, Vec<_>) = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .filter_map(|r| {
-    //         r.nodes
-    //             .iter()
-    //             .find(|n| n.unit == unit)
-    //             .map(|n| (r.id, n.seq()))
-    //     })
-    //     .unzip();
-    // let cov = 26f64;
-    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 3, cov);
-    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
-    // let start = std::time::Instant::now();
-    // let (asn, _, score) =
-    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-    // let end = std::time::Instant::now();
-    // use std::collections::HashMap;
-    // log::debug!("SCORE\t{}\t{}", score, (end - start).as_secs());
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    // for (id, (readid, asn)) in ids.iter().zip(asn.iter()).enumerate() {
-    //     let ans = id2desc[readid].contains("000252v2") as usize;
-    //     log::debug!("ANSWER\t{}\t{}\t{}", id, ans, asn);
-    // }
+    let unit: u64 = args[2].parse().unwrap();
+    let (ids, nodes): (Vec<_>, Vec<_>) = ds
+        .encoded_reads
+        .iter()
+        .flat_map(|r| {
+            r.nodes
+                .iter()
+                .filter(|n| n.unit == unit)
+                .map(|n| (r.id, n))
+                .collect::<Vec<_>>()
+        })
+        .unzip();
+    let ref_unit = ds.selected_chunks.iter().find(|u| u.id == unit).unwrap();
+    let cl = ref_unit.cluster_num as u8;
+    let cov = 26f64;
+    log::debug!("CLNUM\t{}", cl);
+    // let cov = ds.coverage.unwrap();
+    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
+    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3434290824);
+    let start = std::time::Instant::now();
+    let seqs: Vec<_> = nodes.iter().map(|n| n.seq()).collect();
+    let (asn, _, score) =
+        haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    let end = std::time::Instant::now();
+    use std::collections::HashMap;
+    log::debug!("SCORE\t{}\t{}", score, (end - start).as_secs());
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    for (id, ((readid, asn), node)) in ids.iter().zip(asn).zip(nodes).enumerate() {
+        let ans = id2desc[readid].contains("000252v2") as usize;
+        let indel = node.cigar.iter().map(|&op| match op {
+            Op::Match(l) => -(l as i32),
+            Op::Del(l) | Op::Ins(l) => l as i32,
+        });
+        let max_indel = haplotyper::encode::max_region(indel);
+        let desc = id2desc[readid];
+        log::debug!("ANSWER\t{}\t{}\t{}\t{}\t{}", id, ans, asn, max_indel, desc);
+    }
     // use haplotyper::em_correction::Context;
     // let cluster_num = 2;
     // let error_rate = 0.13;

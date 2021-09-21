@@ -370,7 +370,7 @@ fn encode_edge(
     let mut nodes = vec![];
     for op in ops {
         match op {
-            kiley::bialignment::Op::Mat => {
+            kiley::bialignment::Op::Mat | kiley::bialignment::Op::Mism => {
                 edit_dist += (contig[xpos] != seq[ypos]) as u32;
                 xpos += 1;
                 ypos += 1;

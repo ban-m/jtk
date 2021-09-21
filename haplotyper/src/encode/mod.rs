@@ -25,12 +25,12 @@ pub trait Encode {
 impl Encode for definitions::DataSet {
     fn encode(mut self, threads: usize, sim_thr: f64) -> Self {
         self = encode_by_mm2(self, threads, sim_thr).unwrap();
-        // TODO: maybe we should remove someghin.
         if self.read_type != definitions::ReadType::CCS {
             let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
             // i->vector of failed index and units.
             let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
             for _ in 0..15 {
+                // TODO: Some bugs are in the `failed_trials`?
                 self = deletion_fill::correct_unit_deletion(self, &mut failed_trials, sim_thr);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
                 debug!("Filled:{}\t{}", current, after);
@@ -58,10 +58,17 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
             // Check the max-indel.
             use bio_utils::sam;
             let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
-            let has_large_indel = cigar.iter().any(|op| match *op {
-                sam::Op::Deletion(l) | sam::Op::Insertion(l) => INDEL_THRESHOLD < l,
-                _ => false,
+            let indel_iter = cigar.iter().map(|op| match *op {
+                sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,
+                sam::Op::Align(l) | sam::Op::Match(l) => -(l as i32),
+                _ => 0,
             });
+            let max_indel = max_region(indel_iter).max(0) as usize;
+            let no_large_indel = max_indel < INDEL_THRESHOLD;
+            // let no_large_indel = cigar.iter().all(|op| match *op {
+            //     sam::Op::Deletion(l) | sam::Op::Insertion(l) => l <= INDEL_THRESHOLD,
+            //     _ => true,
+            // });
             let dist: usize = cigar
                 .iter()
                 .map(|op| match *op {
@@ -71,7 +78,7 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
                 .sum();
             let tname = aln.tname.parse::<u64>().unwrap();
             let dist_thr = (chunks.get(&tname)?.seq().len() as f64 * sim_thr).floor() as usize;
-            (!has_large_indel && dist < dist_thr).then(|| aln)
+            (no_large_indel && dist < dist_thr).then(|| aln)
         })
         .collect();
     Ok(encode_by(ds, &alignments))
@@ -240,26 +247,37 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
 }
 
 pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
+    use kiley::bialignment;
+    fn is_the_same(op1: bialignment::Op, op2: bialignment::Op) -> bool {
+        use bialignment::Op::*;
+        match (op1, op2) {
+            (Mat, Mism) | (Mism, Mat) => true,
+            (x, y) if x == y => true,
+            _ => false,
+        }
+    }
     assert!(!k_ops.is_empty());
     let (mut current_op, mut len) = (k_ops[0], 1);
     let mut ops = vec![];
     for &op in k_ops.iter().skip(1) {
-        if op == current_op {
+        if is_the_same(op, current_op) {
             len += 1;
         } else {
             match current_op {
-                kiley::bialignment::Op::Del => ops.push(Op::Del(len)),
-                kiley::bialignment::Op::Ins => ops.push(Op::Ins(len)),
-                kiley::bialignment::Op::Mat => ops.push(Op::Match(len)),
+                bialignment::Op::Del => ops.push(Op::Del(len)),
+                bialignment::Op::Ins => ops.push(Op::Ins(len)),
+                bialignment::Op::Mat => ops.push(Op::Match(len)),
+                bialignment::Op::Mism => ops.push(Op::Match(len)),
             }
             current_op = op;
             len = 1;
         }
     }
     match current_op {
-        kiley::bialignment::Op::Del => ops.push(Op::Del(len)),
-        kiley::bialignment::Op::Ins => ops.push(Op::Ins(len)),
-        kiley::bialignment::Op::Mat => ops.push(Op::Match(len)),
+        bialignment::Op::Del => ops.push(Op::Del(len)),
+        bialignment::Op::Ins => ops.push(Op::Ins(len)),
+        bialignment::Op::Mat => ops.push(Op::Match(len)),
+        bialignment::Op::Mism => ops.push(Op::Match(len)),
     }
     ops
 }
@@ -343,6 +361,23 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
         .iter()
         .all(|edge| edge.label.chars().all(|c| c.is_ascii_uppercase()));
     nodes && edges
+}
+
+// The maximum value of sum of a range in xs,
+// If the sequence is empty, return i32::MIN
+pub fn max_region<T: std::iter::Iterator<Item = i32>>(xs: T) -> i32 {
+    // The max value of the sum of the range ending at i.
+    let mut right = i32::MIN;
+    // The max value of the sum of the range ending before i.
+    let mut left = i32::MIN;
+    for x in xs {
+        left = right.max(left);
+        right = match right.is_negative() {
+            true => x,
+            false => right + x,
+        };
+    }
+    right.max(left)
 }
 
 // pub fn encode(read: &RawRead, alignments: &[&LastTAB], units: &[Unit]) -> Option<EncodedRead> {
@@ -626,39 +661,39 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
 //     query_pop_len
 // }
 
-pub fn recover(query: &[u8], refr: &[u8], ops: &[Op]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
-    let (mut q_pos, mut r_pos) = (0, 0);
-    for op in ops {
-        match *op {
-            Op::Match(l) => {
-                al.extend(
-                    query[q_pos..q_pos + l]
-                        .iter()
-                        .zip(&refr[r_pos..r_pos + l])
-                        .map(|(x, y)| if x == y { b'|' } else { b'X' }),
-                );
-                q.extend(query[q_pos..q_pos + l].iter().copied());
-                r.extend(refr[r_pos..r_pos + l].iter().copied());
-                q_pos += l;
-                r_pos += l;
-            }
-            Op::Del(l) => {
-                al.extend(vec![b' '; l]);
-                q.extend(vec![b' '; l]);
-                r.extend(refr[r_pos..r_pos + l].iter().copied());
-                r_pos += l;
-            }
-            Op::Ins(l) => {
-                al.extend(vec![b' '; l]);
-                q.extend(query[q_pos..q_pos + l].iter().copied());
-                r.extend(vec![b' '; l]);
-                q_pos += l;
-            }
-        }
-    }
-    (q, al, r)
-}
+// pub fn recover(query: &[u8], refr: &[u8], ops: &[Op]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+//     let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
+//     let (mut q_pos, mut r_pos) = (0, 0);
+//     for op in ops {
+//         match *op {
+//             Op::Match(l) => {
+//                 al.extend(
+//                     query[q_pos..q_pos + l]
+//                         .iter()
+//                         .zip(&refr[r_pos..r_pos + l])
+//                         .map(|(x, y)| if x == y { b'|' } else { b'X' }),
+//                 );
+//                 q.extend(query[q_pos..q_pos + l].iter().copied());
+//                 r.extend(refr[r_pos..r_pos + l].iter().copied());
+//                 q_pos += l;
+//                 r_pos += l;
+//             }
+//             Op::Del(l) => {
+//                 al.extend(vec![b' '; l]);
+//                 q.extend(vec![b' '; l]);
+//                 r.extend(refr[r_pos..r_pos + l].iter().copied());
+//                 r_pos += l;
+//             }
+//             Op::Ins(l) => {
+//                 al.extend(vec![b' '; l]);
+//                 q.extend(query[q_pos..q_pos + l].iter().copied());
+//                 r.extend(vec![b' '; l]);
+//                 q_pos += l;
+//             }
+//         }
+//     }
+//     (q, al, r)
+// }
 
 // #[allow(dead_code)]
 // fn get_read_range(alns: &[&LastTAB], unit: &Unit, read: &[u8]) -> Option<(usize, usize)> {
@@ -875,8 +910,55 @@ pub fn recover(query: &[u8], refr: &[u8], ops: &[Op]) -> (Vec<u8>, Vec<u8>, Vec<
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
     fn works() {}
+    #[test]
+    fn max_range_operation_test() {
+        let ops = [
+            Op::Match(10),
+            Op::Del(5),
+            Op::Ins(2),
+            Op::Match(1),
+            Op::Del(5),
+            Op::Match(10),
+        ];
+        let iter = ops.iter().map(|x| match x {
+            Op::Match(l) | Op::Ins(l) => *l as i32 * -1,
+            Op::Del(l) => *l as i32 * 2,
+        });
+        let max_del = max_region(iter);
+        assert_eq!(max_del, 10 + 10 - 3);
+        let ops = [
+            Op::Ins(10),
+            Op::Del(5),
+            Op::Ins(2),
+            Op::Match(1),
+            Op::Del(5),
+            Op::Match(10),
+        ];
+        let iter = ops.iter().map(|x| match x {
+            Op::Match(l) | Op::Del(l) => *l as i32 * -1,
+            Op::Ins(l) => *l as i32 * 2,
+        });
+        let max_in = max_region(iter);
+        assert_eq!(max_in, 20);
+        let ops = [
+            Op::Ins(10),
+            Op::Del(5),
+            Op::Ins(2),    // 19
+            Op::Match(1),  // 18
+            Op::Del(5),    // 13
+            Op::Match(10), // 3
+            Op::Ins(100),  // 203
+        ];
+        let iter = ops.iter().map(|x| match x {
+            Op::Match(l) | Op::Del(l) => *l as i32 * -1,
+            Op::Ins(l) => *l as i32 * 2,
+        });
+        let max_in = max_region(iter);
+        assert_eq!(max_in, 203);
+    }
     // #[test]
     // fn alignment_check() {
     //     let query = b"AAAAA";

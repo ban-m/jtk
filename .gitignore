@@ -13,6 +13,7 @@
 **/png
 **/pics
 script/*.sh
+script/sync_*
 .*
 !.gitignore
 venv

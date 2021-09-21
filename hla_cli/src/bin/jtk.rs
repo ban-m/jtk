@@ -186,15 +186,8 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
             Arg::with_name("consensus_size")
                 .long("consensus_size")
                 .takes_value(true)
-                .default_value("6")
-                .help("The number of string to take consensus"),
-        )
-        .arg(
-            Arg::with_name("iteration")
-                .long("iteration")
-                .takes_value(true)
                 .default_value("10")
-                .help("Iteration number"),
+                .help("The number of string to take consensus"),
         )
 }
 
@@ -383,26 +376,6 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("limit")
-                .short("l")
-                .long("limit")
-                .required(false)
-                .value_name("LIMIT")
-                .help("Maximum Execution time(sec)")
-                .default_value("600")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("cluster_num")
-                .short("c")
-                .long("cluster_num")
-                .required(false)
-                .value_name("CLUSTER_NUM")
-                .help("Minimum cluster number.")
-                .default_value("2")
-                .takes_value(true),
-        )
-        .arg(
             Arg::with_name("subchunk_len")
                 .short("s")
                 .long("subchunk_len")
@@ -411,21 +384,6 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .help("The length of sub-chunks")
                 .default_value("100")
                 .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("retry")
-                .short("r")
-                .long("retry")
-                .required(false)
-                .value_name("RETRY")
-                .help("If clustering fails, retry [RETRY] times.")
-                .default_value("2")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("retain_current_clustering")
-                .long("retain_current_clustering")
-                .help("Use current clusterings as a initial value. Overwrite retry to 0."),
         )
 }
 
@@ -886,18 +844,15 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         .value_of("consensus_size")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
-    let iteration: usize = matches
-        .value_of("iteration")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = PolishUnitConfig::new(dataset.read_type, consensus_size, iteration, 2309);
+    let config = PolishUnitConfig::new(dataset.read_type, consensus_size);
     Ok(dataset.polish_unit(&config))
+    // Ok(dataset.consensus_unit(&config))
 }
 fn multiplicity_estimation(
     matches: &clap::ArgMatches,
@@ -929,36 +884,21 @@ fn multiplicity_estimation(
 
 fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Local Clustering step");
-    let cluster_num: usize = matches
-        .value_of("cluster_num")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
     let threads: usize = matches
         .value_of("threads")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let limit: u64 = matches
-        .value_of("limit")
         .and_then(|num| num.parse().ok())
         .unwrap();
     let length: usize = matches
         .value_of("subchunk_len")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let retry: u64 = matches
-        .value_of("retry")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
-    let retain = matches.is_present("retain_current_clustering");
-    let retry = if retain { 1 } else { retry };
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config =
-        ClusteringConfig::with_default(&dataset, cluster_num, length, limit, retry, retain);
+    let config = ClusteringConfig::with_default(&dataset, 2, length);
     Ok(dataset.local_clustering(&config))
 }
 
@@ -1113,7 +1053,6 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
             .map(|r| Assignment::new(r.id, 0))
             .collect();
     }
-    // dataset.squish_small_contig(&config);
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

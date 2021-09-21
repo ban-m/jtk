@@ -97,7 +97,7 @@ IsTheSameBipart <- function(error.num,length, coverage,cl.error){
 
 selected.vars <- read_tsv("selected.tsv", col_names = FALSE)
 len <- length(selected.vars$X1)
-longer.selected.vars <- selected.vars %>%  arrange(X1) %>% 
+longer.selected.vars <- selected.vars %>%  arrange(X1) %>% select(-X1) %>%  
     mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID ,names_to = "Position", values_to = "LK") %>% 
     mutate(Position = as.integer(str_sub(Position,start=2)))
 g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) +
@@ -110,7 +110,7 @@ longer.selected.vars <- selected.vars %>%
     arrange(X2) %>% 
     mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID & !X1, names_to = "Position", values_to = "LK") %>% 
     mutate(Position = as.integer(str_sub(Position,start=2)))
-g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK))
+g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) + scale_fill_gradient2(low="blue", high="orange")
 
 
 selected.vars %>% group_by(X1) %>%
@@ -275,3 +275,16 @@ diplotig.data <- read_tsv("diplotig.unit", col_names = c("id","cluster","hap1","
 
 
 dbb.25.data <- read_tsv("dbb.units")
+
+
+sampling <- function(coverage,n){
+    coverage <- rpois(lambda = coverage, n = n)
+    sample_one_unit <- function(coverage){
+        hap1 <- rbinom(size=coverage,n=1,prob=0.5)
+        hap2 <- coverage - hap1
+        list(hap1=hap1,hap2=hap2)
+    }
+    coverage %>% lapply(FUN=sample_one_unit)
+}
+
+test.data <- sampling(30,4000) %>% map_dfr(~tibble(hap1=.x$hap1, hap2=.x$hap2))

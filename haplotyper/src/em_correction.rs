@@ -111,7 +111,6 @@ impl ClusteringCorrection for DataSet {
                     debug!("Unit {} does not appear in any read.", unit_id);
                     return vec![];
                 }
-                debug!("SGC\t{}", unit_id);
                 let (new_clustering, _, _) = (1..=k)
                     .flat_map(|k| std::iter::repeat(k).take(repeat_num))
                     .enumerate()
