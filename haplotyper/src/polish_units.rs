@@ -9,14 +9,16 @@ use std::collections::HashMap;
 pub struct PolishUnitConfig {
     filter_size: usize,
     read_type: ReadType,
+    consensus_size: usize,
 }
 
 // TODO: Remove Readtype from the argument.
 impl PolishUnitConfig {
-    pub fn new(read_type: ReadType, filter_size: usize) -> Self {
+    pub fn new(read_type: ReadType, filter_size: usize, consensus_size: usize) -> Self {
         Self {
             read_type,
             filter_size,
+            consensus_size,
         }
     }
     pub fn read_type(&self) -> ReadType {
@@ -51,8 +53,7 @@ impl PolishUnit for DataSet {
             .retain(|n| matches!(pileups.get(&n.id),Some(xs) if c.filter_size <= xs.len()));
         self.selected_chunks.par_iter_mut().for_each(|unit| {
             if let Some(pileup) = pileups.get(&unit.id) {
-                let cons_size = 2 * c.filter_size;
-                let seqs = &pileup[..cons_size.min(pileup.len())];
+                let seqs = &pileup[..c.consensus_size.min(pileup.len())];
                 let cons = kiley::bialignment::polish_until_converge_banded(unit.seq(), &seqs, 100);
                 unit.seq = String::from_utf8(cons).unwrap();
             }
@@ -73,18 +74,17 @@ impl PolishUnit for DataSet {
         for read in self.encoded_reads.iter() {
             for node in read.nodes.iter() {
                 if let Some(res) = pileups.get_mut(&node.unit) {
-                    res.push(node);
+                    res.push(node.seq());
                 }
             }
         }
         let result: HashMap<_, _> = pileups
             .par_iter()
             .filter_map(|(id, pileup)| {
-                let cons_size = 2 * c.filter_size;
                 if pileup.len() > c.filter_size {
-                    let seqs: Vec<_> = pileup.iter().map(|x| x.seq()).take(cons_size).collect();
+                    let seqs = &pileup[..c.consensus_size.min(pileup.len())];
                     let cons = kiley::ternary_consensus_by_chunk(&seqs, 100);
-                    let cons = kiley::bialignment::polish_until_converge_banded(&cons, &seqs, 100);
+                    let cons = kiley::bialignment::polish_until_converge_banded(&cons, seqs, 100);
                     Some((id, String::from_utf8(cons).unwrap()))
                 } else {
                     None

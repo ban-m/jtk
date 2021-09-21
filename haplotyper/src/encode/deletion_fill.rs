@@ -192,17 +192,6 @@ fn encode_node(
     let seq = query[aln_start..=aln_end].to_vec();
     let band = (seq.len() / 10).max(20);
     let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
-    // let ops: Vec<_> = alignment
-    //     .operations
-    //     .unwrap()
-    //     .iter()
-    //     .map(|x| match *x {
-    //         0 => kiley::bialignment::Op::Mat,
-    //         1 => kiley::bialignment::Op::Del,
-    //         2 => kiley::bialignment::Op::Ins,
-    //         _ => kiley::bialignment::Op::Mism,
-    //     })
-    //     .collect();
     let aln_dist = ops
         .iter()
         .filter(|&&op| op != kiley::bialignment::Op::Mat)
@@ -216,26 +205,21 @@ fn encode_node(
         std::cmp::Ordering::Greater => false,
         _ => true,
     };
-    if dist_thr < aln_dist {
-        return None;
-    };
     let position_from_start = if is_forward {
         start + aln_start
     } else {
         start + query.len() - aln_end - 1
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    if has_large_indel {
-        // if unit.id == 1673 {
-        //     debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
-        //     let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
-        //     eprintln!("==================");
-        //     for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-        //         eprintln!("{}", String::from_utf8_lossy(xr));
-        //         eprintln!("{}", String::from_utf8_lossy(ar));
-        //         eprintln!("{}\n", String::from_utf8_lossy(yr));
-        //     }
-        // }
+    if dist_thr < aln_dist || has_large_indel {
+        debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
+        let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+        eprintln!("==================");
+        for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+            eprintln!("{}", String::from_utf8_lossy(xr));
+            eprintln!("{}", String::from_utf8_lossy(ar));
+            eprintln!("{}\n", String::from_utf8_lossy(yr));
+        }
         return None;
     }
     let ops = super::compress_kiley_ops(&ops);

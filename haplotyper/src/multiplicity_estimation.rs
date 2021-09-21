@@ -69,6 +69,28 @@ impl MultiplicityEstimation for DataSet {
     //     self
     // }
     fn estimate_multiplicity_graph(mut self, config: &MultiplicityEstimationConfig) -> Self {
+        // let cov = {
+        //     let mut counts: HashMap<_, u32> = HashMap::new();
+        //     for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        //         *counts.entry(node.unit).or_default() += 1;
+        //     }
+        //     let mut counts: Vec<_> = counts.values().copied().collect();
+        //     counts.sort_unstable();
+        //     counts[counts.len() / 2] as f64 / 2f64
+        // };
+        // debug!("HAPLOID\t{}", cov);
+        // self.coverage = Some(cov);
+        // let reads: Vec<_> = self.encoded_reads.iter().collect();
+        // use crate::assemble::*;
+        // let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 6);
+        // let mut graph =
+        //     ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
+        // graph.remove_lightweight_edges(2);
+        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        // graph.remove_zero_copy_elements(cov, &lens, 0.3);
+        // graph.resolve_repeats(&reads, &assemble_config, 5f64);
+        // graph.assign_copy_number(cov, &lens);
+
         self.assignments = self
             .encoded_reads
             .iter()

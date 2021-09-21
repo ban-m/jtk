@@ -55,11 +55,11 @@ impl LocalClustering for DataSet {
 pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     let mut pileups: HashMap<u64, Vec<&mut Node>> =
         selection.iter().map(|&id| (id, vec![])).collect();
-    let cluster_num: HashMap<u64, u8> = ds
+    let chunks: HashMap<u64, _> = ds
         .selected_chunks
         .iter()
         .filter(|c| selection.contains(&c.id))
-        .map(|c| (c.id, c.cluster_num as u8))
+        .map(|c| (c.id, c))
         .collect();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         if let Some(bucket) = pileups.get_mut(&node.unit) {
@@ -79,9 +79,15 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                     (units.len() / 2) as f64
                 }
             };
-            let config = kmeans::ClusteringConfig::new(100, cluster_num[&unit_id], coverage);
-            let start = std::time::Instant::now();
             let cov = seqs.len();
+            let ref_unit = chunks.get(&unit_id).unwrap();
+            let start = std::time::Instant::now();
+            let config = kmeans::ClusteringConfig::new(100, ref_unit.cluster_num as u8, coverage);
+            // 1
+            // let consensus = take_consensus(ref_unit.seq(), &seqs);
+            // let (asn, score) =
+            //     kmeans::clustering_with_template(&consensus, &seqs, &mut rng, &config).unwrap();
+            // 2
             let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
@@ -99,13 +105,26 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     for unit in ds.selected_chunks.iter_mut() {
         if let Some((consensus, score, _cluster_num)) = consensus_and_clusternum.get(&unit.id) {
             unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
-            // unit.cluster_num = *cluster_num as usize;
             unit.score = *score;
         }
     }
     // NOTE that we do not need to remove the very different reads, as
     // it is already "different" with respect to the clustering information.
     re_encode_reads(ds, &consensus_and_clusternum);
+}
+
+#[allow(dead_code)]
+fn take_consensus<T: std::borrow::Borrow<[u8]>>(draft: &[u8], reads: &[T]) -> Vec<u8> {
+    use kiley::gphmm::*;
+    use kiley::polish_chunk_by_parts;
+    use kiley::PolishConfig;
+    let model = GPHMM::<Cond>::clr();
+    let config = PolishConfig::with_model(100, 0, reads.len(), 0, 0, model);
+    let max_len = reads.iter().map(|x| x.borrow().len()).max().unwrap();
+    match 200 < max_len {
+        true => polish_chunk_by_parts(draft, reads, &config),
+        false => draft.to_vec(),
+    }
 }
 
 fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)>) {
@@ -120,6 +139,8 @@ fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)
             let band_size = (cons.len() / 10).max(5);
             let ops =
                 kiley::bialignment::global_banded(cons, node.seq(), 2, -5, -6, -1, band_size).1;
+            // I think we need not to filtering out weak alignment node,
+            // it is task to the downstream algorithm.
             node.cigar = crate::encode::compress_kiley_ops(&ops);
         });
 }

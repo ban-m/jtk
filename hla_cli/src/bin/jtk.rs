@@ -183,10 +183,17 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
                 .help("number of threads"),
         )
         .arg(
+            Arg::with_name("filter_size")
+                .long("filter_size")
+                .takes_value(true)
+                .default_value("10")
+                .help("Unit with coverage less than this value would be discarded."),
+        )
+        .arg(
             Arg::with_name("consensus_size")
                 .long("consensus_size")
                 .takes_value(true)
-                .default_value("10")
+                .default_value("20")
                 .help("The number of string to take consensus"),
         )
 }
@@ -840,6 +847,10 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
+    let filter_size: usize = matches
+        .value_of("filter_size")
+        .and_then(|e| e.parse::<usize>().ok())
+        .unwrap();
     let consensus_size: usize = matches
         .value_of("consensus_size")
         .and_then(|e| e.parse::<usize>().ok())
@@ -850,9 +861,8 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = PolishUnitConfig::new(dataset.read_type, consensus_size);
+    let config = PolishUnitConfig::new(dataset.read_type, filter_size, consensus_size);
     Ok(dataset.polish_unit(&config))
-    // Ok(dataset.consensus_unit(&config))
 }
 fn multiplicity_estimation(
     matches: &clap::ArgMatches,

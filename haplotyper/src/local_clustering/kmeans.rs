@@ -5,7 +5,14 @@ const DEL_SIZE: usize = 4;
 const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
+// (* 30 1.2)
+// (* 4 (+ (* 96 0.1) 0.35))
 const AVERAGE_LK: f64 = 1.2;
+const DEL_LK: f64 = 4f64;
+// return expected number of variants under the null hypothesis.
+fn expected_mis_num(cov: usize) -> f64 {
+    cov as f64 * 0.1 as f64 + 0.35
+}
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
 use rand::Rng;
@@ -31,18 +38,33 @@ impl ClusteringConfig {
 }
 
 /// Usual "flat(non-recursive)" clustering. Return assignments, template, and LK.
+// TODO:Maybe we need hmm in the configuration.
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
     config: &ClusteringConfig,
 ) -> Option<(Vec<u8>, Vec<u8>, f64)> {
+    let band = config.band_width;
+    let cons_template = kiley::consensus(reads, rng.gen(), 10, band);
+    clustering_with_template(&cons_template, reads, rng, config).map(|(x, y)| (x, cons_template, y))
+}
+
+pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    rng: &mut R,
+    config: &ClusteringConfig,
+) -> Option<(Vec<u8>, f64)> {
     let ClusteringConfig {
         band_width,
         cluster_num,
         coverage,
     } = *config;
-    let cons_template = kiley::consensus(reads, rng.gen(), 10, band_width);
-    let profiles = get_profiles(&cons_template, reads, band_width as isize);
+    let profiles = get_profiles(&template, reads, band_width as isize);
+    // let profiled = std::time::Instant::now();
+    // let cons_time = (consensus - start).as_millis();
+    // let prof_time = (profiled - consensus).as_millis();
+    // debug!("TIME\t{}\t{}\t{}", reads.len(), cons_time, prof_time);
     // debug!("TEMPLATE\t{}", String::from_utf8_lossy(&cons_template));
     // for (i, prof) in profiles.iter().enumerate() {
     //     for (j, x) in prof.iter().enumerate() {
@@ -64,73 +86,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     // }
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
-        let probes = filter_profiles(&profiles, cluster_num, 3, coverage, cons_template.len());
-        for (pos, lk) in probes.iter() {
-            let (idx, t) = (pos / 9, pos % 9);
-            if idx < cons_template.len() {
-                debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
-            } else {
-                let idx = pos - 9 * cons_template.len();
-                if idx < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
-                    let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                    debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
-                } else {
-                    let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
-                    let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-                    debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
-                };
-            }
-        }
-        profiles
-            .iter()
-            .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
-            .collect()
-    };
-    let num = 10;
-    let (mut assignments, mut score) = (0..num)
-        .map(|_| mcmc_clustering(&selected_variants, cluster_num.max(3) - 2, coverage, rng))
-        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    for new_k in cluster_num.max(3) - 1..=cluster_num {
-        let (asn, new_score) = (0..num)
-            .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
-            .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-        // debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
-        if score + AVERAGE_LK * coverage < new_score {
-            assignments = asn;
-            score = new_score;
-        } else {
-            break;
-        }
-    }
-    for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-        let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-        debug!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
-    }
-    Some((assignments, cons_template, score))
-}
-
-/// Usual "flat(non-recursive)" clustering.
-pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
-    template: &[u8],
-    profiles: &[Vec<f64>],
-    _reads: &[T],
-    rng: &mut R,
-    config: &mut ClusteringConfig,
-) -> Option<Vec<u8>> {
-    let ClusteringConfig {
-        // band_width,
-        cluster_num,
-        coverage,
-        ..
-    } = *config;
-    // let profiles = get_profiles(&template, reads, band_width as isize);
-    // for prof in profiles.iter() {
-    //     let seq: Vec<_> = prof.iter().map(|x| format!("{}", x)).collect();
-    //     eprintln!("DUMP\t{}", seq.join(","));
-    // }
-    let cluster_num = cluster_num as usize;
-    let selected_variants: Vec<Vec<_>> = {
-        let probes = filter_profiles(profiles, cluster_num, 3, coverage, template.len());
+        let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
         // for (pos, lk) in probes.iter() {
         //     let (idx, t) = (pos / 9, pos % 9);
         //     if idx < template.len() {
@@ -142,7 +98,7 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
         //         } else {
         //             let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-        //             let (idx, len) = (idx / REP_SIZE, pos % REP_SIZE + 1);
+        //             let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
         //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
         //         };
         //     }
@@ -161,31 +117,34 @@ pub fn clustering_w_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
             .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
         // debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
-        if score + AVERAGE_LK * coverage < new_score {
+        // CAUTION! If the coverage gets larger, the offset should be larger, because we would be more likely to meet
+        // large improvement even thougth there is no actual variations.
+        // But how often?
+        // AVERAGE_LK is the "expected likelihood gain",
+        // whereas what we currently talk is the "expected null gain"
+        // Both of them should be check out....
+        // Suppose that the deletion-error rate is 7%. Then, at each point,
+        // there should be `coverage * 0.07 * DEL_LK` gain.
+        // By simulation, we find that the maximum number of `random hit` in the
+        // dataset would not depends on the length of the template so heveealy,
+        // and the coefficients for the coverage is as large as 0.10 if the error rate is 0.05 at a location, and 0.65 for 0.025
+        // Thus, 0.1 * coverage * DEL_LK would be a good choice.
+        // So, at each time we increment the number of the cluster, we at least observe 0.1 * coverage * DEL_LK gain.
+        let expected_gain = AVERAGE_LK * coverage;
+        let null_gain = expected_mis_num(reads.len()) * DEL_LK;
+        // let null_gain = -100f64;
+        if score + expected_gain.max(null_gain) < new_score {
             assignments = asn;
             score = new_score;
         } else {
             break;
         }
     }
-    // let k_range = cluster_num.max(3) - 2..=cluster_num;
-    // let (assignments, _score, _cluster_num) = k_range
-    //     .filter_map(|k| {
-    //         let num = 10;
-    //         let (asn, score) = (0..num)
-    //             .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
-    //             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    //         let penalty = (k - 1) as f64 * coverage;
-    //         let copy_num_lk = poisson_lk(reads.len(), coverage * k as f64);
-    //         let mod_score = copy_num_lk + score - penalty;
-    //         Some((asn, mod_score, k))
-    //     })
-    //     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())?;
-    // for (i, prf) in assignments.iter().zip(selected_variants.iter()) {
+    // for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
     //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-    //     debug!("ASN\t{}\t{}\t{}", cluster_num, i, prf.join("\t"));
+    //     debug!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
     // }
-    Some(assignments)
+    Some((assignments, score))
 }
 
 #[allow(dead_code)]
@@ -335,6 +294,7 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
         .iter()
         .map(|r| kiley::padseq::PadSeq::new(r.borrow()))
         .collect();
+    // TODO:Move this to outer.
     let (hmm, _) = hmm.fit_banded_inner(&template, &reads, band_width as usize);
     reads
         .iter()

@@ -162,7 +162,7 @@ impl DetermineUnit for definitions::DataSet {
                 let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
                 debug!("Histgrapm\n{}", hist.format(40, 20));
             }
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 5);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10);
             self = self.consensus_unit(&polish_config);
             // TODO: Rather than calling self.encode many times,
             // use the initial encoding, calling self.deletion_fill many times.
@@ -174,7 +174,7 @@ impl DetermineUnit for definitions::DataSet {
             // 2nd polishing.
             self = self.encode(config.threads, CLR_CLR_SIM);
             self = remove_frequent_units(self, config.upper_count);
-            let polish_config = PolishUnitConfig::new(ReadType::CLR, 8);
+            let polish_config = PolishUnitConfig::new(ReadType::CLR, 5, 20);
             {
                 let mut counts: HashMap<_, usize> = HashMap::new();
                 for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
@@ -210,7 +210,7 @@ impl DetermineUnit for definitions::DataSet {
         // This IS avoidable.
         self = self.encode(config.threads, sim_thr);
         // Final polishing.
-        let polish_config = PolishUnitConfig::new(ReadType::CLR, 13);
+        let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 100);
         {
             let mut counts: HashMap<_, usize> = HashMap::new();
             for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {

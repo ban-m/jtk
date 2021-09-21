@@ -288,3 +288,33 @@ sampling <- function(coverage,n){
 }
 
 test.data <- sampling(30,4000) %>% map_dfr(~tibble(hap1=.x$hap1, hap2=.x$hap2))
+
+### Create (n,m)-[0,1]matrix with Pr{x_ij = 1} = p
+sampling <- function(column, row, prob) {
+    matrix(as.integer(rbernoulli(n=column * row, p=prob)),nrow=row)
+}
+
+max_gain <- function(column, row, prob){
+    max(colSums(sampling(column,row,prob)))
+}
+
+parameters <- expand_grid(row=seq(from=20,to=90,by=10), column = seq(from = 1500,to=2000,by=100)) %>%
+    mutate(count=300) %>% uncount(count)
+probability <- 0.05
+sim.result <- parameters %>% mutate(max = mapply(FUN = max_gain, column, row, MoreArgs = list(prob=probability)))
+
+
+parameters <- expand_grid(row=seq(from=20,to=90,by=10), prob = seq(from=0.01,to=0.07,by=0.01), column=2000) %>% 
+    mutate(count=300) %>% uncount(count)
+sim.result <- parameters %>% mutate(max = mapply(FUN = max_gain, column, row, prob))
+
+
+parameters <- expand_grid(row=seq(from=20,to=90,by=10), column = c(2000)) %>%
+    mutate(count=300) %>% uncount(count)
+probability <- 0.025
+sim.result <- parameters %>% mutate(max = mapply(FUN = max_gain, column, row, MoreArgs = list(prob=probability)))
+
+
+
+    
+

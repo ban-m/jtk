@@ -1,48 +1,89 @@
 use definitions::*;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
+    env_logger::init();
     let args: Vec<_> = std::env::args().collect();
+    let start = std::time::Instant::now();
     let ds: DataSet =
-        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
-            .unwrap();
+        serde_json::de::from_reader(std::fs::File::open(&args[1]).map(BufReader::new)?).unwrap();
+    let end = std::time::Instant::now();
+    eprintln!("Open\t{}", (end - start).as_secs());
     use std::collections::HashMap;
-    let id2desc: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|read| (read.id, read.name.to_string()))
-        //.map(|read| (read.id, read.desc.to_string()))
-        .collect();
-    let unit_id: u64 = args[2].parse().expect("input unit id as 2nd argument.");
-    let cluster: u64 = args[3].parse().expect("input cluster as 3rd argument.");
-    let mut units = vec![String::new(); 9];
-    units[4] = format!("{}", unit_id);
-    for read in ds.encoded_reads.iter().filter(|read| {
-        read.nodes
-            .iter()
-            .any(|n| n.unit == unit_id && n.cluster == cluster)
-    }) {
-        let mut context = vec!["-".to_string(); 9];
-        let index = read
-            .nodes
-            .iter()
-            .position(|n| n.unit == unit_id && n.cluster == cluster)
-            .unwrap();
-        context[4] = format!("{}", read.nodes[index].cluster);
-        let is_forward = read.nodes[index].is_forward;
-        for (idx, node) in read.nodes.iter().skip(index + 1).enumerate().take(4) {
-            let position = if is_forward { 5 + idx } else { 3 - idx };
-            context[position] = format!("{}", node.cluster);
-            units[position] = format!("{}", node.unit);
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        let ans = id2desc[&read.id].contains("hapA") as usize;
+        // let ans = id2desc[&read.id].contains("000252v2") as usize;
+        for node in read.nodes.iter() {
+            counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
         }
-        for (idx, node) in read.nodes.iter().take(index).rev().enumerate().take(4) {
-            let position = if is_forward { 3 - idx } else { 5 + idx };
-            context[position] = format!("{}", node.cluster);
-            units[position] = format!("{}", node.unit);
-        }
-        let is_hapa = id2desc[&read.id].starts_with("hapA") as u8;
-        //let is_hapa = id2desc[&read.id].contains("252v2") as u8;
-        println!("{}\t{}\t{}", is_hapa, read.id, context.join("\t"));
     }
-    println!("U\t{}\t{}", 0, units.join("\t"));
+    let score: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.score)).collect();
+    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore");
+    for ((unit, cluster), counts) in counts.iter() {
+        let score = score[&unit];
+        let total = counts[0] + counts[1];
+        let pur = counts[0].max(counts[1]) as f64 / total as f64;
+        println!(
+            "UNIT\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}",
+            unit, cluster, counts[0], counts[1], pur, score
+        );
+    }
+    if args.len() < 3 {
+        eprintln!("Contig information was not supplied. Finish after dumping unit information.");
+        return Ok(());
+    }
+    let tigs = std::fs::File::open(&args[2]).map(BufReader::new)?;
+    use std::io::BufRead;
+    let tigs: Vec<_> = tigs
+        .lines()
+        .filter_map(|x| x.ok())
+        .map(|line| {
+            let mut line = line.split('\t');
+            let id = line.next().unwrap().to_string();
+            let copy_num: usize = line.next().unwrap().parse().unwrap();
+            let clusters: Vec<_> = line
+                .filter_map(|x| {
+                    let mut elm = x.split('-');
+                    let unit: u64 = elm.next()?.parse().unwrap();
+                    let cluster: u64 = elm.next()?.parse().unwrap();
+                    Some((unit, cluster))
+                })
+                .collect();
+            (id, copy_num, clusters)
+        })
+        .collect();
+    let mut max_cluster_id: HashMap<u64, u64> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        let _ = max_cluster_id
+            .entry(node.unit)
+            .and_modify(|x| *x = (*x).max(node.cluster))
+            .or_insert(node.cluster);
+    }
+    let counts: HashMap<String, (usize, [u32; 2])> = tigs
+        .iter()
+        .map(|&(ref id, copy_num, ref clusters)| {
+            let cs = clusters
+                .iter()
+                .filter(|&(u, _)| copy_num != 1 || 0 < max_cluster_id[u])
+                .filter_map(|key| counts.get(key))
+                .fold([0, 0], |mut acc, xs| {
+                    acc[0] += xs[0];
+                    acc[1] += xs[1];
+                    acc
+                });
+            (id.clone(), (copy_num, cs))
+        })
+        .collect();
+    println!("CONTIG\tID\tCopyNum\tLen\tHap1\tHap2\tPurity");
+    for (id, (copy_num, c)) in counts {
+        let length = tigs.iter().find(|x| x.0 == id).map(|x| x.2.len()).unwrap();
+        let total = c[0] + c[1];
+        let pur = c[0].max(c[1]) as f64 / total as f64;
+        println!(
+            "CONTIG\t{}\t{}\t{}\t{}\t{}\t{:.4}",
+            id, copy_num, length, c[0], c[1], pur,
+        );
+    }
     Ok(())
 }
