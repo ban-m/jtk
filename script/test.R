@@ -317,4 +317,6 @@ sim.result <- parameters %>% mutate(max = mapply(FUN = max_gain, column, row, Mo
 
 
     
-
+vars <- read_tsv("26.vars", col_names = c("read","bp","len","edit","lk"))
+vars.summary <- vars %>% group_by(bp,edit,len) %>%
+    summarize(score=sum(lk[lk > 0]), posnum = sum(lk > 0), sum = sum(lk))

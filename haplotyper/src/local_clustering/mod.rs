@@ -67,6 +67,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         }
     }
     let coverage = ds.coverage;
+    // Maybe we can train pair-HMM here.
+    // let hmm = ...
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {

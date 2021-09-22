@@ -704,6 +704,8 @@ impl<'a> DitchGraph<'a> {
         (in_simple_path, between_simple_path)
     }
     /// Estimoate copy number of nodes and edges.
+    /// *This function does not modify the graph content*. If you want
+    /// to assign copy number to each node, call `assign_copy_number` instead.
     pub fn copy_number_estimation(
         &self,
         naive_cov: f64,

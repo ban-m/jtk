@@ -1,3 +1,4 @@
+use crate::assemble::{ditch_graph::DitchGraph, *};
 use definitions::DataSet;
 use serde::*;
 use std::collections::HashMap;
@@ -69,38 +70,6 @@ impl MultiplicityEstimation for DataSet {
     //     self
     // }
     fn estimate_multiplicity_graph(mut self, config: &MultiplicityEstimationConfig) -> Self {
-        // let cov = {
-        //     let mut counts: HashMap<_, u32> = HashMap::new();
-        //     for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        //         *counts.entry(node.unit).or_default() += 1;
-        //     }
-        //     let mut counts: Vec<_> = counts.values().copied().collect();
-        //     counts.sort_unstable();
-        //     counts[counts.len() / 2] as f64 / 2f64
-        // };
-        // debug!("HAPLOID\t{}", cov);
-        // self.coverage = Some(cov);
-        // let reads: Vec<_> = self.encoded_reads.iter().collect();
-        // use crate::assemble::*;
-        // let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 6);
-        // let mut graph =
-        //     ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
-        // graph.remove_lightweight_edges(2);
-        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        // graph.remove_zero_copy_elements(cov, &lens, 0.3);
-        // graph.resolve_repeats(&reads, &assemble_config, 5f64);
-        // graph.assign_copy_number(cov, &lens);
-
-        self.assignments = self
-            .encoded_reads
-            .iter()
-            .map(|r| definitions::Assignment::new(r.id, 0))
-            .collect();
-        self.encoded_reads
-            .iter_mut()
-            .for_each(|read| read.nodes.iter_mut().for_each(|n| n.cluster = 0));
-        debug!("Start assembling {} reads", self.encoded_reads.len());
-        let (mut gfa, tigname) = assemble_with_tigname(&self, config);
         let mut counts: HashMap<_, u32> = HashMap::new();
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             *counts.entry(node.unit).or_default() += 1;
@@ -110,43 +79,33 @@ impl MultiplicityEstimation for DataSet {
             counts.sort_unstable();
             counts[counts.len() / 2] as f64 / 2f64
         };
+        debug!("COVERAGE\t{}\tHAPLOID", cov);
         self.coverage = Some(cov);
-        let (unit_len, unit_num) = self
-            .selected_chunks
-            .iter()
-            .fold((0, 0), |(tot, num), u| (tot + u.seq().len(), num + 1));
-        let unit_len = unit_len / unit_num;
-        let lens: Vec<_> = self
-            .encoded_reads
-            .iter()
-            .map(|r| r.original_length)
-            .collect();
-        debug!("HAPLOID\t{}", cov);
-        debug!("ESTIM\tTIGID\tLEN\tCP\tCOV");
-        crate::assemble::copy_number::estimate_copy_number_on_gfa(&mut gfa, cov, &lens, unit_len);
-        let mut estimated_cluster_num: HashMap<_, _> = HashMap::new();
-        for record in gfa.iter() {
-            if let gfa::Content::Seg(seg) = &record.content {
-                let cp: usize = record
-                    .tags
-                    .iter()
-                    .find(|x| x.inner.starts_with("cp"))
-                    .and_then(|tag| tag.inner.split(':').nth(2))
-                    .and_then(|cp| cp.parse().ok())
-                    .unwrap_or_else(|| panic!("{:?}", record.tags));
-                let units = tigname.get(&seg.sid).unwrap();
-                let cov: u32 = units.iter().map(|u| counts[u]).sum();
-                let cov = cov / units.len() as u32;
-                debug!("ESTIM\t{}\t{}\t{}\t{}", seg.sid, units.len(), cp, cov);
-                for &unit in units.iter() {
-                    estimated_cluster_num.insert(unit, cp.max(1));
-                }
-            }
+        let reads: Vec<_> = self.encoded_reads.iter().collect();
+        let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 6);
+        let mut graph =
+            ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
+        graph.remove_lightweight_edges(2);
+        let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        graph.remove_zero_copy_elements(cov, &lens, 0.3);
+        graph.resolve_repeats(&reads, &assemble_config, 5f64);
+        let (nodes, _) = graph.copy_number_estimation(cov, &lens);
+        for chunk in self.selected_chunks.iter_mut() {
+            chunk.cluster_num = *nodes.get(&(chunk.id, 0)).unwrap_or(&0);
         }
-        for unit in self.selected_chunks.iter_mut() {
-            if let Some(&cl_num) = estimated_cluster_num.get(&unit.id) {
-                unit.cluster_num = cl_num;
-            }
+        let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
+        for ((node, _), cp) in nodes.iter() {
+            let occ = counts.get(node).unwrap_or(&0);
+            counts_group.entry(cp).or_default().push(*occ as usize);
+        }
+        let mut counts_group: Vec<_> = counts_group.into_iter().collect();
+        counts_group.sort_by_key(|x| x.0);
+        for (cp, occs) in counts_group {
+            let sum: usize = occs.iter().sum();
+            let sumsq: usize = occs.iter().map(|x| x * x).sum();
+            let mean = sum as f64 / occs.len() as f64;
+            let sd = (sumsq as f64 / occs.len() as f64 - mean * mean).sqrt();
+            debug!("MULTP\t{}\t{}\t{}", cp, mean, sd);
         }
         if let Some(mut file) = config
             .path
@@ -155,35 +114,142 @@ impl MultiplicityEstimation for DataSet {
             .map(std::io::BufWriter::new)
         {
             use std::io::Write;
+            let gfa = convert_to_gfa(&graph, &assemble_config);
             writeln!(&mut file, "{}", gfa).unwrap();
         }
+
         self
+        // self.assignments = self
+        //     .encoded_reads
+        //     .iter()
+        //     .map(|r| definitions::Assignment::new(r.id, 0))
+        //     .collect();
+        // self.encoded_reads
+        //     .iter_mut()
+        //     .for_each(|read| read.nodes.iter_mut().for_each(|n| n.cluster = 0));
+        // debug!("Start assembling {} reads", self.encoded_reads.len());
+        // let (mut gfa, tigname) = assemble_with_tigname(&self, config);
+        // let mut counts: HashMap<_, u32> = HashMap::new();
+        // for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        //     *counts.entry(node.unit).or_default() += 1;
+        // }
+        // let cov = {
+        //     let mut counts: Vec<_> = counts.values().copied().collect();
+        //     counts.sort_unstable();
+        //     counts[counts.len() / 2] as f64 / 2f64
+        // };
+        // self.coverage = Some(cov);
+        // let (unit_len, unit_num) = self
+        //     .selected_chunks
+        //     .iter()
+        //     .fold((0, 0), |(tot, num), u| (tot + u.seq().len(), num + 1));
+        // let unit_len = unit_len / unit_num;
+        // let lens: Vec<_> = self
+        //     .encoded_reads
+        //     .iter()
+        //     .map(|r| r.original_length)
+        //     .collect();
+        // debug!("HAPLOID\t{}", cov);
+        // debug!("ESTIM\tTIGID\tLEN\tCP\tCOV");
+        // crate::assemble::copy_number::estimate_copy_number_on_gfa(&mut gfa, cov, &lens, unit_len);
+        // let mut estimated_cluster_num: HashMap<_, _> = HashMap::new();
+        // for record in gfa.iter() {
+        //     if let gfa::Content::Seg(seg) = &record.content {
+        //         let cp: usize = record
+        //             .tags
+        //             .iter()
+        //             .find(|x| x.inner.starts_with("cp"))
+        //             .and_then(|tag| tag.inner.split(':').nth(2))
+        //             .and_then(|cp| cp.parse().ok())
+        //             .unwrap_or_else(|| panic!("{:?}", record.tags));
+        //         let units = tigname.get(&seg.sid).unwrap();
+        //         let cov: u32 = units.iter().map(|u| counts[u]).sum();
+        //         let cov = cov / units.len() as u32;
+        //         debug!("ESTIM\t{}\t{}\t{}\t{}", seg.sid, units.len(), cp, cov);
+        //         for &unit in units.iter() {
+        //             estimated_cluster_num.insert(unit, cp.max(1));
+        //         }
+        //     }
+        // }
+        // for unit in self.selected_chunks.iter_mut() {
+        //     if let Some(&cl_num) = estimated_cluster_num.get(&unit.id) {
+        //         unit.cluster_num = cl_num;
+        //     }
+        // }
+        // if let Some(mut file) = config
+        //     .path
+        //     .as_ref()
+        //     .and_then(|path| std::fs::File::create(path).ok())
+        //     .map(std::io::BufWriter::new)
+        // {
+        //     use std::io::Write;
+        //     writeln!(&mut file, "{}", gfa).unwrap();
+        // }
+        // self
     }
 }
 
-fn assemble_with_tigname(
-    ds: &DataSet,
-    config: &MultiplicityEstimationConfig,
-) -> (gfa::GFA, HashMap<String, Vec<u64>>) {
-    let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false, 6);
-    debug!("Start assembly");
-    let header = gfa::Content::Header(gfa::Header::default());
-    let header = gfa::Record::from_contents(header, vec![]);
-    use crate::assemble::assemble;
-    let (records, summaries) = assemble(ds, 0, &assemble_config);
-    let mut header = vec![header];
-    header.extend(records);
-    let tigname: HashMap<_, _> = summaries
+fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
+    let (segments, edge, group, summaries) = graph.spell(c, 0);
+    let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
+    debug!("{} segments({} bp in total).", segments.len(), total_base);
+    // TODO: maybe just zip up segments and summaries would be OK?
+    let nodes = segments.into_iter().map(|node| {
+        let tags = summaries
+            .iter()
+            .find(|x| x.id == node.sid)
+            .map(|contigsummary| {
+                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                let coverage =
+                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                let (cp, cpnum) = contigsummary
+                    .summary
+                    .iter()
+                    .filter_map(|elm| elm.copy_number)
+                    .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                let mut tags = vec![coverage];
+                if cpnum != 0 {
+                    tags.push(gfa::SamTag::new(format!("cp:i:{}", cp / cpnum)));
+                }
+                tags
+            })
+            .unwrap_or_else(Vec::new);
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+    });
+    let edges = edge
         .into_iter()
-        .map(
-            |crate::assemble::ditch_graph::ContigSummary { id, summary }| {
-                let summary: Vec<_> = summary.iter().map(|s| s.unit).collect();
-                (id, summary)
-            },
-        )
-        .collect();
-    (gfa::GFA::from_records(header), tigname)
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+    let group = std::iter::once(group);
+    let header = gfa::Content::Header(gfa::Header::default());
+    let header = std::iter::once(gfa::Record::from_contents(header, vec![]));
+    let records: Vec<_> = header.chain(group).chain(nodes).chain(edges).collect();
+    gfa::GFA::from_records(records)
 }
+
+// fn assemble_with_tigname(
+//     ds: &DataSet,
+//     config: &MultiplicityEstimationConfig,
+// ) -> (gfa::GFA, HashMap<String, Vec<u64>>) {
+//     let assemble_config = super::AssembleConfig::new(config.thread, 100, false, false, 6);
+//     debug!("Start assembly");
+//     let header = gfa::Content::Header(gfa::Header::default());
+//     let header = gfa::Record::from_contents(header, vec![]);
+//     use crate::assemble::assemble;
+//     let (records, summaries) = assemble(ds, 0, &assemble_config);
+//     let mut header = vec![header];
+//     header.extend(records);
+//     let tigname: HashMap<_, _> = summaries
+//         .into_iter()
+//         .map(
+//             |crate::assemble::ditch_graph::ContigSummary { id, summary }| {
+//                 let summary: Vec<_> = summary.iter().map(|s| s.unit).collect();
+//                 (id, summary)
+//             },
+//         )
+//         .collect();
+//     (gfa::GFA::from_records(header), tigname)
+// }
 
 // fn estimate_graph_multiplicity(
 //     ds: &DataSet,

@@ -1,6 +1,17 @@
 use log::debug;
 use poa_hmm::gen_sample;
 use rand::Rng;
+pub fn test() {
+    let xs: Vec<_> = (0..1000).collect();
+    let i = 32948;
+    for x in xs[i..].iter() {
+        println!("{}", x);
+    }
+    for x in xs[..i].iter() {
+        println!("{}", x);
+    }
+}
+
 // pub fn generate_mul_data<T: Rng>(
 //     templates: &[Vec<Vec<u8>>],
 //     test_num: usize,

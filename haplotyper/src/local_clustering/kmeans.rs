@@ -11,7 +11,7 @@ const AVERAGE_LK: f64 = 1.2;
 const DEL_LK: f64 = 4f64;
 // return expected number of variants under the null hypothesis.
 fn expected_mis_num(cov: usize) -> f64 {
-    cov as f64 * 0.1 as f64 + 0.35
+    cov as f64 * 0.1f64 + 0.35
 }
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
@@ -60,7 +60,10 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         cluster_num,
         coverage,
     } = *config;
-    let profiles = get_profiles(&template, reads, band_width as isize);
+    use kiley::gphmm::*;
+    let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+    let hmm = hmm.fit_banded(&template, &reads, band_width as usize);
+    let profiles = get_profiles(template, &hmm, reads, band_width as isize);
     // let profiled = std::time::Instant::now();
     // let cons_time = (consensus - start).as_millis();
     // let prof_time = (profiled - consensus).as_millis();
@@ -69,15 +72,15 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     // for (i, prof) in profiles.iter().enumerate() {
     //     for (j, x) in prof.iter().enumerate() {
     //         let (idx, t) = (j / 9, j % 9);
-    //         if idx < cons_template.len() {
+    //         if idx < template.len() {
     //             debug!("DUMP\t{}\t{}\t{}\tSn\t{:.3}", i, idx, t, x);
     //         } else {
-    //             let idx = j - 9 * cons_template.len();
-    //             if idx < (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE) {
+    //             let idx = j - 9 * template.len();
+    //             if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
     //                 let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
     //                 debug!("DUMP\t{}\t{}\t{}\tDl\t{:.3}", i, idx, len, x);
     //             } else {
-    //                 let idx = idx - (DEL_SIZE - 1) * (cons_template.len() - DEL_SIZE);
+    //                 let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
     //                 let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
     //                 debug!("DUMP\t{}\t{}\t{}\tCp\t{:.3}", i, idx, len, x);
     //             };
@@ -87,22 +90,22 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
-        // for (pos, lk) in probes.iter() {
-        //     let (idx, t) = (pos / 9, pos % 9);
-        //     if idx < template.len() {
-        //         debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
-        //     } else {
-        //         let idx = pos - 9 * template.len();
-        //         if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-        //             let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-        //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
-        //         } else {
-        //             let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-        //             let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-        //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
-        //         };
-        //     }
-        // }
+        for (pos, lk) in probes.iter() {
+            let (idx, t) = (pos / 9, pos % 9);
+            if idx < template.len() {
+                debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
+            } else {
+                let idx = pos - 9 * template.len();
+                if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+                    let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+                    debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
+                } else {
+                    let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+                    let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
+                    debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
+                };
+            }
+        }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
@@ -116,7 +119,7 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         let (asn, new_score) = (0..num)
             .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-        // debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
+        debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
         // CAUTION! If the coverage gets larger, the offset should be larger, because we would be more likely to meet
         // large improvement even thougth there is no actual variations.
         // But how often?
@@ -130,20 +133,21 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         // and the coefficients for the coverage is as large as 0.10 if the error rate is 0.05 at a location, and 0.65 for 0.025
         // Thus, 0.1 * coverage * DEL_LK would be a good choice.
         // So, at each time we increment the number of the cluster, we at least observe 0.1 * coverage * DEL_LK gain.
-        let expected_gain = AVERAGE_LK * coverage;
-        let null_gain = expected_mis_num(reads.len()) * DEL_LK;
+        // let expected_gain = AVERAGE_LK * coverage;
+        // let null_gain = expected_mis_num(reads.len()) * DEL_LK;
         // let null_gain = -100f64;
-        if score + expected_gain.max(null_gain) < new_score {
+        // if score + expected_gain.max(null_gain) < new_score {
+        if score < new_score {
             assignments = asn;
             score = new_score;
         } else {
             break;
         }
     }
-    // for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-    //     debug!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
-    // }
+    for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+        let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+        debug!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
+    }
     Some((assignments, score))
 }
 
@@ -284,18 +288,16 @@ fn retrieve_used_positions<T: std::borrow::Borrow<[f64]>>(
 
 fn get_profiles<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
+    hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
     reads: &[T],
     band_width: isize,
 ) -> Vec<Vec<f64>> {
     use kiley::gphmm::*;
-    let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
     let template = kiley::padseq::PadSeq::new(template);
     let reads: Vec<_> = reads
         .iter()
         .map(|r| kiley::padseq::PadSeq::new(r.borrow()))
         .collect();
-    // TODO:Move this to outer.
-    let (hmm, _) = hmm.fit_banded_inner(&template, &reads, band_width as usize);
     reads
         .iter()
         .map(|read| {
@@ -330,6 +332,7 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
 }
 
 // Select round * (cluster_num-1) variants
+// TODO: FIXME
 fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
     cluster_num: usize,
@@ -350,7 +353,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         0 => pos / 9,
         _ => {
             let pos = pos - 9 * template_len;
-            match pos / (DEL_SIZE - 1) * (template_len - DEL_SIZE) {
+            match pos / ((DEL_SIZE - 1) * (template_len - DEL_SIZE)) {
                 0 => pos / (DEL_SIZE - 1),
                 _ => (pos - (DEL_SIZE - 1) * (template_len - DEL_SIZE)) / REP_SIZE,
             }
@@ -373,15 +376,18 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         })
         .collect();
     // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
+    // Currently, find and sweep. So, to select one variant,
+    // It takes O(L) time to find a variant, and O(L) time to sweep linked variant.
+    // So, in total, O(ML) time to select M variants. It is OK I think, because
+    // usually L is 2K, M is around 3-20.
     let mut is_selected = vec![0; probes.len()];
     'outer: for _ in 0..round {
         let mut weights: Vec<_> = vec![1f64; probes.len()];
-        for _ in 0..(cluster_num).max(2) - 1 {
+        for _ in 0..cluster_num.max(2) - 1 {
             let next_var_idx = probes
                 .iter()
                 .map(|x| x.1)
                 .zip(weights.iter())
-                // .map(|(x, w)| x * w)
                 .zip(is_selected.iter())
                 .enumerate()
                 .max_by(|(_, ((lk1, w1), picked1)), (_, ((lk2, w2), picked2))| {
@@ -391,8 +397,9 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                         _ => (lk1 * *w1).partial_cmp(&(lk2 * *w2)).unwrap(),
                     }
                 });
-            if let Some((next_var_idx, ((_lk, _w), _))) = next_var_idx {
+            if let Some((next_var_idx, _)) = next_var_idx {
                 let picked_pos = probes[next_var_idx].0;
+                let picked_pos_in_bp = base_position(picked_pos);
                 is_selected[next_var_idx] = 1;
                 for ((&(pos, _), weight), selected) in probes
                     .iter()
@@ -400,9 +407,14 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                     .zip(is_selected.iter_mut())
                     .filter(|&(_, &mut selected)| selected == 0)
                 {
+                    let pos_in_bp = base_position(pos);
+                    let diff_in_bp =
+                        pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
                     let sim = sokal_michener(profiles, picked_pos, pos);
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    if 0.99 < sim || (1f64 - cos_sim.abs()).abs() < 0.0001 {
+                    // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
+                    // the sokal michener's similarity would be 0.975.
+                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
                         *selected = 2;
                     }
                     if 0.75 < sim {
@@ -419,48 +431,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         .zip(is_selected)
         .filter_map(|(x, y)| (y == 1).then(|| x))
         .collect();
-    // for (i, &(pos, _)) in selected_variants.iter().enumerate() {
-    //     for &(posj, _) in selected_variants.iter().skip(i + 1) {
-    //         let sim = sokal_michener(profiles, pos, posj);
-    //         let cos = cosine_similarity(profiles, pos, posj);
-    //         debug!("SIM\t{}\t{}\t{:.3}\t{:.3}", pos, posj, sim, cos);
-    //     }
-    // }
     selected_variants
-    // let mut probes = probes;
-    // probes.sort_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap());
-    // probes.reverse();
-    // let mut selected_variants = vec![];
-    // 'outer: for _ in 0..round {
-    //     let mut buffer = vec![];
-    //     for _ in 0..(cluster_num).max(2) - 1 {
-    //         let next_var_idx = probes.iter().position(|&(pos, _)| {
-    //             for &(p, _) in buffer.iter() {
-    //                 if is_the_same_bipart(profiles, p, pos, coverage) {
-    //                     return false;
-    //                 }
-    //                 let cosine = cosine_similarity(profiles, p, pos);
-    //                 if (1f64 - cosine.abs()).abs() < 0.001 {
-    //                     return false;
-    //                 }
-    //             }
-    //             for &(p, _) in selected_variants.iter() {
-    //                 let cosine = cosine_similarity(profiles, p, pos);
-    //                 if (1f64 - cosine.abs()).abs() < 0.001 {
-    //                     return false;
-    //                 }
-    //             }
-    //             true
-    //         });
-    //         if let Some(next_var_idx) = next_var_idx {
-    //             buffer.push(probes.remove(next_var_idx));
-    //         } else {
-    //             break 'outer;
-    //         }
-    //     }
-    //     selected_variants.extend(buffer)
-    // }
-    // selected_variants
 }
 
 fn cosine_similarity<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
@@ -516,9 +487,10 @@ fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: us
             true => (mat + 1, mism),
             false => (mat, mism + 1),
         });
-    let sokal_norml = mismatches as f64 / (matches + mismatches) as f64;
-    let sokal_flip = matches as f64 / (mismatches + matches) as f64;
-    sokal_norml.max(sokal_flip)
+    mismatches.max(matches) as f64 / profiles.len() as f64
+    // let sokal_norml = mismatches as f64 / (matches + mismatches) as f64;
+    // let sokal_flip = matches as f64 / (mismatches + matches) as f64;
+    // sokal_norml.max(sokal_flip)
 }
 
 // Return true if i correlate with j.
@@ -833,6 +805,12 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
     let binom_lks: Vec<_> = (0..=data.len())
         .map(|x| max_binom_lk(x, data.len(), cov / data.len() as f64))
         .collect();
+    let xlogx: Vec<_> = (0..=data.len())
+        .map(|x| match x {
+            0 => 0f64,
+            x => x as f64 * (x as f64).ln(),
+        })
+        .collect();
     // how many instance in a cluster.
     let mut clusters = vec![0; k];
     for &asn in assign.iter() {
@@ -862,11 +840,14 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
             continue;
         }
         let old = old as usize;
-        let binom_diff = (binom_lks[clusters[old] - 1] + binom_lks[clusters[new] + 1])
-            - (binom_lks[clusters[old]] + binom_lks[clusters[new]]);
+        let frac_diff = xlogx[clusters[old] - 1] + xlogx[clusters[new] + 1]
+            - (xlogx[clusters[old]] + xlogx[clusters[new]]);
+        // let frac_diff = (binom_lks[clusters[old] - 1] + binom_lks[clusters[new] + 1])
+        //     - (binom_lks[clusters[old]] + binom_lks[clusters[new]]);
         let old_diff: f64 = xs.iter().zip(lks[old].iter()).map(diff_old).sum();
         let new_diff: f64 = xs.iter().zip(lks[new].iter()).map(diff_new).sum();
-        let total_diff = binom_diff + old_diff + new_diff;
+        //let total_diff = binom_diff + old_diff + new_diff;
+        let total_diff = frac_diff + old_diff + new_diff;
         if rng.gen_bool(total_diff.exp().min(1f64)) {
             assign[idx] = new as u8;
             clusters[old] -= 1;
@@ -880,7 +861,11 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
             }
             lk_sums[new] = lks[new].iter().map(|x| x.max(0f64)).sum();
         }
-        let lk = lk_sums.iter().sum::<f64>() + clusters.iter().map(|&x| binom_lks[x]).sum::<f64>();
+        let lk_edit = lk_sums.iter().sum::<f64>();
+        let lk_frac = clusters.iter().map(|&x| xlogx[x]).sum::<f64>() - xlogx[data.len()];
+        // let lk_frac = clusters.iter().map(|&x| binom_lks[x]).sum::<f64>();
+        debug!("{:.3}\t{:.3}", lk_edit, lk_frac);
+        let lk = lk_edit + lk_frac;
         if max < lk {
             max = lk;
             argmax = assign.to_vec();

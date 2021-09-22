@@ -71,7 +71,7 @@ impl ReClustering for DataSet {
             .map(|(key, nodes)| {
                 use rand::SeedableRng;
                 use rand_xoshiro::Xoshiro256StarStar;
-                let (copy_num, offset) = re_cluster[&key];
+                let (copy_num, offset) = re_cluster[key];
                 let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(key.0 * 2312);
                 let seqs: Vec<_> = nodes.iter().map(|node| node.seq()).collect();
                 use crate::local_clustering::kmeans;
@@ -79,7 +79,7 @@ impl ReClustering for DataSet {
                 let start = std::time::Instant::now();
                 let cov = seqs.len();
                 let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
-                for (mut node, asn) in nodes.into_iter().zip(asn) {
+                for (node, asn) in nodes.iter_mut().zip(asn) {
                     node.cluster = asn as u64 + offset;
                 }
                 let end = std::time::Instant::now();
@@ -109,7 +109,7 @@ impl ReClustering for DataSet {
         for (_, buckets) in updated_nodes {
             let mut new_cluster_id: HashMap<u64, u64> = HashMap::new();
             for node in buckets.iter() {
-                if let None = new_cluster_id.get(&node.cluster) {
+                if !new_cluster_id.contains_key(&node.cluster) {
                     let new_id = new_cluster_id.len() as u64;
                     new_cluster_id.insert(node.cluster, new_id);
                 }

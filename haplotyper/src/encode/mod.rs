@@ -57,7 +57,7 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
         .filter_map(|aln| {
             // Check the max-indel.
             use bio_utils::sam;
-            let cigar = sam::parse_cigar_string(&aln.tags.get("cg")?);
+            let cigar = sam::parse_cigar_string(aln.tags.get("cg")?);
             let indel_iter = cigar.iter().map(|op| match *op {
                 sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,
                 sam::Op::Align(l) | sam::Op::Match(l) => -(l as i32),

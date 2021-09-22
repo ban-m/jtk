@@ -77,7 +77,7 @@ pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>, si
                 &mut Vec::new(),
                 selected_chunks,
                 &read_skeltons,
-                &raw_seq[&r.id],
+                raw_seq[&r.id],
                 sim_thr,
             );
         });
@@ -201,10 +201,7 @@ fn encode_node(
         .iter()
         .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
     let max_indel = super::max_region(indel_mism).max(0) as usize;
-    let has_large_indel = match super::INDEL_THRESHOLD.cmp(&max_indel) {
-        std::cmp::Ordering::Greater => false,
-        _ => true,
-    };
+    let has_large_indel = max_indel < super::INDEL_THRESHOLD;
     let position_from_start = if is_forward {
         start + aln_start
     } else {
@@ -212,14 +209,14 @@ fn encode_node(
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     if dist_thr < aln_dist || has_large_indel {
-        debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
-        let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
-        eprintln!("==================");
-        for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-            eprintln!("{}", String::from_utf8_lossy(xr));
-            eprintln!("{}", String::from_utf8_lossy(ar));
-            eprintln!("{}\n", String::from_utf8_lossy(yr));
-        }
+        // debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
+        // let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+        // eprintln!("==================");
+        // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+        //     eprintln!("{}", String::from_utf8_lossy(xr));
+        //     eprintln!("{}", String::from_utf8_lossy(ar));
+        //     eprintln!("{}\n", String::from_utf8_lossy(yr));
+        // }
         return None;
     }
     let ops = super::compress_kiley_ops(&ops);

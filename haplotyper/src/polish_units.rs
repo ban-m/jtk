@@ -54,7 +54,7 @@ impl PolishUnit for DataSet {
         self.selected_chunks.par_iter_mut().for_each(|unit| {
             if let Some(pileup) = pileups.get(&unit.id) {
                 let seqs = &pileup[..c.consensus_size.min(pileup.len())];
-                let cons = kiley::bialignment::polish_until_converge_banded(unit.seq(), &seqs, 100);
+                let cons = kiley::bialignment::polish_until_converge_banded(unit.seq(), seqs, 100);
                 unit.seq = String::from_utf8(cons).unwrap();
             }
         });
@@ -83,7 +83,7 @@ impl PolishUnit for DataSet {
             .filter_map(|(id, pileup)| {
                 if pileup.len() > c.filter_size {
                     let seqs = &pileup[..c.consensus_size.min(pileup.len())];
-                    let cons = kiley::ternary_consensus_by_chunk(&seqs, 100);
+                    let cons = kiley::ternary_consensus_by_chunk(seqs, 100);
                     let cons = kiley::bialignment::polish_until_converge_banded(&cons, seqs, 100);
                     Some((id, String::from_utf8(cons).unwrap()))
                 } else {
