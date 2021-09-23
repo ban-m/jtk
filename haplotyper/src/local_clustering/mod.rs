@@ -51,8 +51,25 @@ impl LocalClustering for DataSet {
     }
 }
 
+fn set_coverage(ds: &mut DataSet) {
+    let mut counts: HashMap<_, u32> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        *counts.entry(node.unit).or_default() += 1;
+    }
+    let cov = {
+        let mut counts: Vec<_> = counts.values().copied().collect();
+        counts.sort_unstable();
+        counts[counts.len() / 2] as f64 / 2f64
+    };
+    debug!("COVERAGE\t{}\tHAPLOID", cov);
+    ds.coverage = Some(cov);
+}
+
 /// Selection: HashSet of the chunk ID to be clustered on.
 pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
+    if ds.coverage.is_none() {
+        set_coverage(ds);
+    }
     let mut pileups: HashMap<u64, Vec<&mut Node>> =
         selection.iter().map(|&id| (id, vec![])).collect();
     let chunks: HashMap<u64, _> = ds
@@ -66,31 +83,40 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             bucket.push(node);
         }
     }
-    let coverage = ds.coverage;
+    let coverage = ds.coverage.unwrap();
     // Maybe we can train pair-HMM here.
-    // let hmm = ...
+    let hmm = {
+        // TODO:Find an appropriate instance. Maybe not so good.
+        let range = (coverage - 5f64).floor() as usize..(coverage + 5f64).ceil() as usize;
+        let (unit_id, units) = pileups
+            .iter()
+            .find(|(_, us)| range.contains(&us.len()))
+            .unwrap();
+        let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
+        let ref_unit = chunks.get(&unit_id).unwrap();
+        let mut hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+        let band_width = 200;
+        use kiley::gphmm::*;
+        for _ in 0..2 {
+            let consensus = take_consensus(ref_unit.seq(), &seqs, &hmm);
+            hmm = hmm.fit_banded(&consensus, &seqs, band_width);
+        }
+        hmm
+    };
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .map(|(&unit_id, units)| {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
             let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-            let coverage = match coverage {
-                Some(res) => res,
-                None => {
-                    debug!("No coverage estimation. Use adhoc coverage");
-                    (units.len() / 2) as f64
-                }
-            };
             let cov = seqs.len();
             let ref_unit = chunks.get(&unit_id).unwrap();
             let start = std::time::Instant::now();
             let config = kmeans::ClusteringConfig::new(100, ref_unit.cluster_num as u8, coverage);
-            // 1
-            // let consensus = take_consensus(ref_unit.seq(), &seqs);
-            // let (asn, score) =
-            //     kmeans::clustering_with_template(&consensus, &seqs, &mut rng, &config).unwrap();
-            // 2
-            let (asn, consensus, score) = kmeans::clustering(&seqs, &mut rng, &config).unwrap();
+            // 1 This is 35% faster.
+            let consensus = take_consensus(ref_unit.seq(), &seqs, &hmm);
+            let (asn, score) =
+                kmeans::clustering_with_template(&consensus, &seqs, &mut rng, &hmm, &config)
+                    .unwrap();
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
@@ -116,12 +142,14 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
 }
 
 #[allow(dead_code)]
-fn take_consensus<T: std::borrow::Borrow<[u8]>>(draft: &[u8], reads: &[T]) -> Vec<u8> {
-    use kiley::gphmm::*;
+fn take_consensus<T: std::borrow::Borrow<[u8]>>(
+    draft: &[u8],
+    reads: &[T],
+    hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
+) -> Vec<u8> {
     use kiley::polish_chunk_by_parts;
     use kiley::PolishConfig;
-    let model = GPHMM::<Cond>::clr();
-    let config = PolishConfig::with_model(100, 0, reads.len(), 0, 0, model);
+    let config = PolishConfig::with_model(100, 0, reads.len(), 0, 0, hmm.clone());
     let max_len = reads.iter().map(|x| x.borrow().len()).max().unwrap();
     match 200 < max_len {
         true => polish_chunk_by_parts(draft, reads, &config),

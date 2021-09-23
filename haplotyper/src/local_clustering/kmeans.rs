@@ -46,13 +46,19 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
 ) -> Option<(Vec<u8>, Vec<u8>, f64)> {
     let band = config.band_width;
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band);
-    clustering_with_template(&cons_template, reads, rng, config).map(|(x, y)| (x, cons_template, y))
+    let band_width = 100;
+    use kiley::gphmm::*;
+    let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+    let hmm = hmm.fit_banded(&cons_template, &reads, band_width);
+    clustering_with_template(&cons_template, reads, rng, &hmm, config)
+        .map(|(x, y)| (x, cons_template, y))
 }
 
 pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
     rng: &mut R,
+    hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
     config: &ClusteringConfig,
 ) -> Option<(Vec<u8>, f64)> {
     let ClusteringConfig {
@@ -60,10 +66,7 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         cluster_num,
         coverage,
     } = *config;
-    use kiley::gphmm::*;
-    let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    let hmm = hmm.fit_banded(&template, &reads, band_width as usize);
-    let profiles = get_profiles(template, &hmm, reads, band_width as isize);
+    let profiles = get_profiles(template, hmm, reads, band_width as isize);
     // let profiled = std::time::Instant::now();
     // let cons_time = (consensus - start).as_millis();
     // let prof_time = (profiled - consensus).as_millis();
@@ -292,18 +295,15 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
 ) -> Vec<Vec<f64>> {
     use kiley::gphmm::*;
     let template = kiley::padseq::PadSeq::new(template);
-    let reads: Vec<_> = reads
-        .iter()
-        .map(|r| kiley::padseq::PadSeq::new(r.borrow()))
-        .collect();
     reads
         .iter()
         .map(|read| {
-            let prof = match banded::ProfileBanded::new(&hmm, &template, read, band_width) {
+            let read = kiley::padseq::PadSeq::new(read.borrow());
+            let prof = match banded::ProfileBanded::new(&hmm, &template, &read, band_width) {
                 Some(res) => res,
                 None => {
                     for read in reads.iter() {
-                        let read = String::from_utf8(read.clone().into()).unwrap();
+                        let read = String::from_utf8(read.borrow().to_vec()).unwrap();
                         error!("READ\tKMEANS\t{}", read);
                     }
                     let template = String::from_utf8(template.clone().into()).unwrap();
