@@ -247,7 +247,8 @@ pub fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     // POINTER: ASSEMBLEIMPL
-    graph.remove_lightweight_edges(2);
+    // TODO: Tune this.
+    graph.remove_lightweight_edges(3);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
@@ -256,9 +257,9 @@ pub fn assemble(
             // graph.remove_tips(0.5, 5);
             graph.remove_zero_copy_elements(cov, &lens, 0.3);
             graph.resolve_repeats(&reads, c, 5f64);
-            // graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            // graph.resolve_repeats(&reads, c, 2f64);
-            // graph.z_edge_selection();
+            graph.remove_zero_copy_elements(cov, &lens, 0.3);
+            graph.resolve_repeats(&reads, c, 2f64);
+            graph.z_edge_selection();
             graph.assign_copy_number(cov, &lens);
         }
     }

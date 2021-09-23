@@ -533,7 +533,6 @@ impl<'a> DitchGraph<'a> {
             })
         })
     }
-    // TODO: to T:std::Borrow<EncodedRead>
     pub fn new(reads: &[&'a EncodedRead], units: Option<&[Unit]>, c: &AssembleConfig) -> Self {
         // Take a consensus of nodes and edges.
         let (nodes_seq, edge_seq) = take_consensus(reads, units, c);
@@ -1294,7 +1293,6 @@ impl<'a> DitchGraph<'a> {
                 .map(|e| (e.to, e.to_position))
                 .collect();
             for (parent, par_pos) in parents {
-                // debug!("Parent :{:?},{}", parent, par_pos);
                 if self
                     .get_edges(parent, par_pos)
                     .any(|e| !(e.to == node && e.to_position == pos))
@@ -1504,6 +1502,7 @@ impl<'a> DitchGraph<'a> {
             if foci.is_empty() {
                 break;
             }
+            debug!("FOCI\tNUM\t{}\tFiltered out weak foci.", foci.len());
             foci.sort_by(|x, y| y.llr().partial_cmp(&x.llr()).unwrap());
             self.survey_foci(&foci);
         }
@@ -1714,30 +1713,33 @@ impl<'a> DitchGraph<'a> {
         }
     }
     /// Remove lightweight edges with occurence less than `thr`.
-    /// Note that this function would never broke a connected component into two.
     pub fn remove_lightweight_edges(&mut self, thr: usize) {
         let mut removed_edges: HashMap<_, Vec<_>> =
             self.nodes.keys().map(|&k| (k, vec![])).collect();
         for (from, node) in self.nodes.iter() {
             for &pos in &[Position::Head, Position::Tail] {
-                let to_cands = node.edges.iter().filter(|e| e.from_position == pos).count();
-                if to_cands > 1 {
-                    let max_occ = node.edges.iter().map(|x| x.occ).max().unwrap();
-                    for e in node
-                        .edges
-                        .iter()
-                        .filter(|e| e.from_position == pos && e.occ <= thr && e.occ < max_occ)
-                    {
-                        let to = e.to;
-                        let t_pos = e.to_position;
-                        removed_edges
-                            .entry(*from)
-                            .or_default()
-                            .push((pos, to, t_pos));
-                        removed_edges
-                            .entry(to)
-                            .or_default()
-                            .push((t_pos, *from, pos));
+                let edges = node.edges.iter().filter(|e| e.from_position == pos);
+                let to_cands = edges.clone().count();
+                if 1 < to_cands {
+                    let max_occ = edges.clone().map(|x| x.occ).max().unwrap();
+                    let thr = thr.min(max_occ - 1);
+                    for e in edges.clone().filter(|e| e.occ <= thr) {
+                        // Ensure that there is at least one edge with occ greater than this edge
+                        // in the opposite side.
+                        let has_another_branch =
+                            self.get_edges(e.to, e.to_position).any(|f| e.occ < f.occ);
+                        if has_another_branch {
+                            let to = e.to;
+                            let t_pos = e.to_position;
+                            removed_edges
+                                .entry(*from)
+                                .or_default()
+                                .push((pos, to, t_pos));
+                            removed_edges
+                                .entry(to)
+                                .or_default()
+                                .push((t_pos, *from, pos));
+                        }
                     }
                 }
             }
