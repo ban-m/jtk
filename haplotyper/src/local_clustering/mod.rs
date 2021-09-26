@@ -98,7 +98,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         let band_width = 200;
         use kiley::gphmm::*;
         for _ in 0..2 {
-            let consensus = take_consensus(ref_unit.seq(), &seqs, &hmm);
+            let consensus = take_consensus(ref_unit, &seqs, &hmm);
             hmm = hmm.fit_banded(&consensus, &seqs, band_width);
         }
         hmm
@@ -113,10 +113,11 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let start = std::time::Instant::now();
             let config = kmeans::ClusteringConfig::new(100, ref_unit.cluster_num as u8, coverage);
             // 1 This is 35% faster.
-            let consensus = take_consensus(ref_unit.seq(), &seqs, &hmm);
+            // Maybe it is better to use the original alignment, right?
+            let consensus = take_consensus(ref_unit, &seqs, &hmm);
             let (asn, score) =
                 kmeans::clustering_with_template(&consensus, &seqs, &mut rng, &hmm, &config)
-                    .unwrap();
+                    .unwrap_or_else(|| panic!("RECORD\t{}", unit_id));
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
@@ -143,17 +144,17 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
 
 #[allow(dead_code)]
 fn take_consensus<T: std::borrow::Borrow<[u8]>>(
-    draft: &[u8],
+    unit: &Unit,
     reads: &[T],
     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
 ) -> Vec<u8> {
     use kiley::polish_chunk_by_parts;
     use kiley::PolishConfig;
-    let config = PolishConfig::with_model(100, 0, reads.len(), 0, 0, hmm.clone());
+    let config = PolishConfig::with_model(100, 0, reads.len(), unit.id, 0, hmm.clone());
     let max_len = reads.iter().map(|x| x.borrow().len()).max().unwrap();
     match 200 < max_len {
-        true => polish_chunk_by_parts(draft, reads, &config),
-        false => draft.to_vec(),
+        true => polish_chunk_by_parts(unit.seq(), reads, &config),
+        false => unit.seq().to_vec(),
     }
 }
 

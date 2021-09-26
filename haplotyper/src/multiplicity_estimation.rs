@@ -79,19 +79,25 @@ impl MultiplicityEstimation for DataSet {
             counts.sort_unstable();
             counts[counts.len() / 2] as f64 / 2f64
         };
-        debug!("COVERAGE\t{}\tHAPLOID", cov);
+        debug!("MULTP\tCOVERAGE\t{}\tHAPLOID", cov);
         self.coverage = Some(cov);
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 6);
         let mut graph =
             ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
-        graph.remove_lightweight_edges(2);
+        graph.remove_lightweight_edges(3);
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         graph.remove_zero_copy_elements(cov, &lens, 0.3);
-        graph.resolve_repeats(&reads, &assemble_config, 5f64);
+        //graph.resolve_repeats(&reads, &assemble_config, 5f64);
         let (nodes, _) = graph.copy_number_estimation(cov, &lens);
         for chunk in self.selected_chunks.iter_mut() {
-            chunk.cluster_num = *nodes.get(&(chunk.id, 0)).unwrap_or(&0);
+            chunk.cluster_num = match nodes.get(&(chunk.id, 0)) {
+                Some(res) => *res,
+                None => {
+                    warn!("MULTP\tCHUNK_ID\t{}\tMissing\tFilled with 1", chunk.id);
+                    1
+                }
+            };
         }
         let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
         for ((node, _), cp) in nodes.iter() {
@@ -105,7 +111,7 @@ impl MultiplicityEstimation for DataSet {
             let sumsq: usize = occs.iter().map(|x| x * x).sum();
             let mean = sum as f64 / occs.len() as f64;
             let sd = (sumsq as f64 / occs.len() as f64 - mean * mean).sqrt();
-            debug!("MULTP\t{}\t{}\t{}", cp, mean, sd);
+            debug!("MULTP\t{}\t{}\t{}\t{}", cp, occs.len(), mean, sd);
         }
         if let Some(mut file) = config
             .path
@@ -117,7 +123,6 @@ impl MultiplicityEstimation for DataSet {
             let gfa = convert_to_gfa(&graph, &assemble_config);
             writeln!(&mut file, "{}", gfa).unwrap();
         }
-
         self
         // self.assignments = self
         //     .encoded_reads

@@ -48,14 +48,13 @@ fn main() -> std::io::Result<()> {
                 }
             }
             let desc = id2desc[&read.id];
-            println!("{},{},{},{},{}", hap, node.cluster, max_indel, mism, desc);
-            // println!("======={},{},{}========", hap, node.cluster, max_indel);
-            // let (xr, ar, yr) = node.recover(ref_unit);
-            // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-            //     println!("{}", String::from_utf8_lossy(xr));
-            //     println!("{}", String::from_utf8_lossy(ar));
-            //     println!("{}\n", String::from_utf8_lossy(yr));
-            // }
+            println!("={},{},{},{},{}=", hap, node.cluster, max_indel, mism, desc);
+            let (xr, ar, yr) = node.recover(ref_unit);
+            for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+                println!("{}", String::from_utf8_lossy(xr));
+                println!("{}", String::from_utf8_lossy(ar));
+                println!("{}\n", String::from_utf8_lossy(yr));
+            }
             // println!("===========POLISH============");
             // let (_, ops) =
             //     kiley::bialignment::global_banded(node.seq(), ref_unit.seq(), 2, -7, -4, -1, 100);

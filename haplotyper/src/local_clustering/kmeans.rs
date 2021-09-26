@@ -66,12 +66,7 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         cluster_num,
         coverage,
     } = *config;
-    let profiles = get_profiles(template, hmm, reads, band_width as isize);
-    // let profiled = std::time::Instant::now();
-    // let cons_time = (consensus - start).as_millis();
-    // let prof_time = (profiled - consensus).as_millis();
-    // debug!("TIME\t{}\t{}\t{}", reads.len(), cons_time, prof_time);
-    // debug!("TEMPLATE\t{}", String::from_utf8_lossy(&cons_template));
+    let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
     // for (i, prof) in profiles.iter().enumerate() {
     //     for (j, x) in prof.iter().enumerate() {
     //         let (idx, t) = (j / 9, j % 9);
@@ -93,22 +88,24 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
-        // for (pos, lk) in probes.iter() {
-        //     let (idx, t) = (pos / 9, pos % 9);
-        //     if idx < template.len() {
-        //         debug!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
-        //     } else {
-        //         let idx = pos - 9 * template.len();
-        //         if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-        //             let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-        //             debug!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
-        //         } else {
-        //             let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-        //             let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-        //             debug!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
-        //         };
-        //     }
-        // }
+        if log_enabled!(log::Level::Trace) {
+            for (pos, lk) in probes.iter() {
+                let (idx, t) = (pos / 9, pos % 9);
+                if idx < template.len() {
+                    trace!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
+                } else {
+                    let idx = pos - 9 * template.len();
+                    if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+                        let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+                        trace!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
+                    } else {
+                        let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+                        let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
+                        trace!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
+                    };
+                }
+            }
+        }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
@@ -145,10 +142,12 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
             break;
         }
     }
-    // for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-    //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-    //     debug!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
-    // }
+    if log_enabled!(log::Level::Trace) {
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+            trace!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
+        }
+    }
     Some((assignments, score))
 }
 
@@ -292,41 +291,41 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
     reads: &[T],
     band_width: isize,
-) -> Vec<Vec<f64>> {
+) -> Option<Vec<Vec<f64>>> {
     use kiley::gphmm::*;
     let template = kiley::padseq::PadSeq::new(template);
-    reads
-        .iter()
-        .map(|read| {
-            let read = kiley::padseq::PadSeq::new(read.borrow());
-            let prof = match banded::ProfileBanded::new(&hmm, &template, &read, band_width) {
-                Some(res) => res,
-                None => {
-                    for read in reads.iter() {
-                        let read = String::from_utf8(read.borrow().to_vec()).unwrap();
-                        error!("READ\tKMEANS\t{}", read);
-                    }
-                    let template = String::from_utf8(template.clone().into()).unwrap();
-                    error!("TEMPLATE\tKMEANS\t{}", template);
-                    panic!("{}", hmm);
+    let mut profiles = vec![];
+    for read in reads.iter() {
+        let read = kiley::padseq::PadSeq::new(read.borrow());
+        let prof = match banded::ProfileBanded::new(&hmm, &template, &read, band_width) {
+            Some(res) => res,
+            None => {
+                for read in reads.iter() {
+                    let read = String::from_utf8(read.borrow().to_vec()).unwrap();
+                    error!("READ\tKMEANS\t{}", read);
                 }
-            };
-            let lk = prof.lk();
-            let mut modif_table = prof.to_modification_table();
-            modif_table.truncate(9 * template.len());
-            let del_table = prof.to_deletion_table(DEL_SIZE);
-            assert_eq!(
-                del_table.len(),
-                (DEL_SIZE - 1) * (template.len() - DEL_SIZE)
-            );
-            modif_table.extend(del_table);
-            let copy_table = prof.to_copy_table(REP_SIZE);
-            assert_eq!(copy_table.len(), REP_SIZE * (template.len() - REP_SIZE));
-            modif_table.extend(copy_table);
-            modif_table.iter_mut().for_each(|x| *x -= lk);
-            modif_table
-        })
-        .collect()
+                let template = String::from_utf8(template.clone().into()).unwrap();
+                error!("TEMPLATE\tKMEANS\t{}", template);
+                error!("{}", hmm);
+                return None;
+            }
+        };
+        let lk = prof.lk();
+        let mut modif_table = prof.to_modification_table();
+        modif_table.truncate(9 * template.len());
+        let del_table = prof.to_deletion_table(DEL_SIZE);
+        assert_eq!(
+            del_table.len(),
+            (DEL_SIZE - 1) * (template.len() - DEL_SIZE)
+        );
+        modif_table.extend(del_table);
+        let copy_table = prof.to_copy_table(REP_SIZE);
+        assert_eq!(copy_table.len(), REP_SIZE * (template.len() - REP_SIZE));
+        modif_table.extend(copy_table);
+        modif_table.iter_mut().for_each(|x| *x -= lk);
+        profiles.push(modif_table);
+    }
+    Some(profiles)
 }
 
 // Select round * (cluster_num-1) variants

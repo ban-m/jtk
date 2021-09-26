@@ -1306,6 +1306,10 @@ impl<'a> DitchGraph<'a> {
     // Fron (start,pos) position to the focus target(start=focus.node, position=focus.position).
     // Note that, the path would contain the (target,target pos) at the end of the path and
     // not contain the (start,pos) position itself.
+    // TODO: Maybe this function failed to find the target focus,
+    // because of the removed nodes.
+    // If it happened, eigther this focus or previous
+    // branching is false. Maybe just dropping this focus would be better?
     fn bfs_to_the_target(
         &self,
         focus: &Focus,
@@ -1352,9 +1356,7 @@ impl<'a> DitchGraph<'a> {
         {
             Some(idx) => idx,
             None => {
-                debug!("Something happened");
-                debug!("While searching a focus:{}", focus);
-                debug!("Please be careful about this node.");
+                debug!("FOCUS\t{}\tFailed To Find Target\tWrongFocus?", focus);
                 return None;
             }
         };
@@ -1499,10 +1501,10 @@ impl<'a> DitchGraph<'a> {
             let mut foci = self.get_foci(reads, config);
             debug!("FOCI\tNUM\t{}\tBefore removing weak foci.", foci.len());
             foci.retain(|val| thr < val.llr());
+            debug!("FOCI\tNUM\t{}\tFiltered out weak foci.", foci.len());
             if foci.is_empty() {
                 break;
             }
-            debug!("FOCI\tNUM\t{}\tFiltered out weak foci.", foci.len());
             foci.sort_by(|x, y| y.llr().partial_cmp(&x.llr()).unwrap());
             self.survey_foci(&foci);
         }
@@ -1560,17 +1562,10 @@ impl<'a> DitchGraph<'a> {
             .copied()
             .collect();
         let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
-        debug!("FOCUS\t{:?}\t{}\t{}", node.node, pos, covered.len());
         let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
-        debug!("FOCUS\t{}\tTraversed", dist_nodes.len());
         let mut focus: Option<Focus> = None;
-        // TODO: Currnetly do not assume 1-distance focus. Is it OK?
-        for (dist, nodes) in dist_nodes
-            .iter()
-            .enumerate()
-            // .skip(1)
-            .filter(|(_, ns)| 1 < ns.len())
-        {
+        for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
+            assert!(1 < nodes.len());
             let dist = dist + 1;
             let mut occs: Vec<_> = vec![0; nodes.len()];
             for read in reads.iter() {
@@ -1602,20 +1597,25 @@ impl<'a> DitchGraph<'a> {
             let null_prob: f64 = occs
                 .iter()
                 .zip(ith_ln.iter())
-                .map(|(&occ, ln)| occ as f64 * ln)
+                .map(|(&occ, ln)| match occ {
+                    0 => 0f64,
+                    _ => occ as f64 * ln,
+                })
                 .sum();
+            assert!(!null_prob.is_nan(), "{:?}\t{:?}", ith_ln, occs);
             // TODO: Parametrize here.
             let err_prob = 0.1;
             let choice_num = nodes.len() as f64;
             let correct_lk = ((1f64 - err_prob).powi(2) + err_prob / choice_num).ln();
-            let error_lk = match nodes.len() == 1 {
-                true => ((1f64 - err_prob) * err_prob + err_prob / choice_num).ln(),
-                _ => {
-                    let correct_to_error = (1.0 - err_prob) * err_prob * (choice_num - 1.0).recip();
-                    let error_to_error = err_prob / choice_num;
-                    (correct_to_error + error_to_error).ln()
-                }
+            // 1 => ((1f64 - err_prob) * err_prob + err_prob / choice_num).ln(),
+            // There are at least two nodes.
+            let error_lk = {
+                let correct_to_error = (1.0 - err_prob) * err_prob * (choice_num - 1.0).recip();
+                let error_to_error = err_prob / choice_num;
+                (correct_to_error + error_to_error).ln()
             };
+            assert!(!correct_lk.is_nan());
+            assert!(!error_lk.is_nan());
             if let Some((lk_ratio, (to, to_pos))) = nodes
                 .iter()
                 .enumerate()
@@ -1627,6 +1627,7 @@ impl<'a> DitchGraph<'a> {
                         .enumerate()
                         .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
                         .sum();
+                    assert!(!lk.is_nan());
                     (lk - null_prob, n)
                 })
                 .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
