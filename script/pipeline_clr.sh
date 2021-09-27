@@ -33,10 +33,7 @@ else
     jtk entry --input ${TARGET} --read_type CLR |\
         jtk mask_repeats -k 15 -t ${THREADS} -vv |\
         jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
-        ##  jtk encode -vv --threads ${THREADS} |\
-        jtk pick_components -vv -c1 -t${THREADS} > ${2}.entry.json # |\
-        ## jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
-        ## jtk encode -vv --threads ${THREADS} >  ${2}.entry.json
+        jtk pick_components -vv -c1 -t${THREADS} > ${2}.entry.json
 fi
 
 if [ -f ${CLUSTERED} ]
@@ -55,6 +52,7 @@ then
     echo "Tangle resolved. Skip resolving proc".
 else
     cat ${CLUSTERED} |\
+        jtk correct_deletion -vv --threads ${THREADS} |\
         jtk resolve_tangle -vv --threads ${THREADS} |\
         jtk encode_densely -vv --threads ${THREADS} >${RESOLVED}
 fi

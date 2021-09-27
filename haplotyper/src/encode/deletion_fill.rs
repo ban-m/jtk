@@ -34,7 +34,6 @@ pub fn correct_unit_deletion(
     debug!("DELFIL\tTakingCons");
     let representative = take_consensus_sequence(&ds);
     debug!("DELFIL\tConsGenerated");
-    // let selected_chunks = &ds.selected_chunks;
     assert_eq!(ds.encoded_reads.len(), failed_trials.len());
     let _failed_trials: usize = ds
         .encoded_reads
@@ -94,6 +93,7 @@ pub fn correct_unit_deletion(
 
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
+#[allow(dead_code)]
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
     fn polish(xs: &[&[u8]], unit: &Unit) -> Vec<u8> {
         // use kiley::gphmm::*;
@@ -112,7 +112,7 @@ fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
             .push((node.cluster, node.seq()));
     }
     bucket
-        .iter()
+        .par_iter()
         .filter(|&(_, xs)| !xs.is_empty())
         .map(|(&unit, bucket)| {
             let ref_unit = &ref_units[&unit];
@@ -138,6 +138,11 @@ fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
         .collect()
 }
 
+#[inline]
+fn abs(x: usize, y: usize) -> usize {
+    x.max(y) - x.min(y)
+}
+
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
 const OFFSET: usize = 300;
 pub fn correct_deletion_error(
@@ -150,14 +155,11 @@ pub fn correct_deletion_error(
 ) -> usize {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
+    // TODO:Parametrize here.
     let threshold = 3;
     let nodes = &read.nodes;
     let take_len = nodes.len();
     let mut inserts = vec![];
-    let abs = |x: usize, y: usize| match x.cmp(&y) {
-        std::cmp::Ordering::Greater => x - y,
-        _ => y - x,
-    };
     let mut failed_number = 0;
     let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
     let seq = &seq;
@@ -171,7 +173,7 @@ pub fn correct_deletion_error(
                 .unwrap()
                 .iter()
                 .filter_map(|&(cluster, ref unit)| {
-                    let end_position = (start_position + unit.len() + 2 * OFFSET).min(unit.len());
+                    let end_position = (start_position + unit.len() + 2 * OFFSET).min(seq.len());
                     let is_the_same_encode = nodes[idx].unit == uid
                         && abs(nodes[idx].position_from_start, start_position) < unit.len();
                     if start_position < end_position && !is_the_same_encode {
@@ -276,7 +278,7 @@ fn encode_node(
         .iter()
         .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
     let max_indel = super::max_region(indel_mism).max(0) as usize;
-    let has_large_indel = max_indel < super::INDEL_THRESHOLD;
+    let has_large_indel = max_indel > super::INDEL_THRESHOLD;
     let position_from_start = if is_forward {
         start + aln_start
     } else {
@@ -284,15 +286,18 @@ fn encode_node(
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     if dist_thr < aln_dist || has_large_indel {
-        debug!("{}\t{}\t{}", uid, max_indel, aln_dist);
-        let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
-        for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-            eprintln!("{}", String::from_utf8_lossy(xr));
-            eprintln!("{}", String::from_utf8_lossy(ar));
-            eprintln!("{}\n", String::from_utf8_lossy(yr));
+        if log_enabled!(log::Level::Trace) {
+            trace!("{}\t{}\t{}\t{}\tNG", uid, max_indel, aln_dist, dist_thr,);
+            let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+            for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+                eprintln!("{}", String::from_utf8_lossy(xr));
+                eprintln!("{}", String::from_utf8_lossy(ar));
+                eprintln!("{}\n", String::from_utf8_lossy(yr));
+            }
         }
         return None;
     }
+    trace!("{}\t{}\t{}\t{}\tOK", uid, max_indel, aln_dist, dist_thr,);
     let ops = super::compress_kiley_ops(&ops);
     let node = Node {
         position_from_start,
