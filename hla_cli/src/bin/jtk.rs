@@ -394,6 +394,39 @@ fn subcommand_partition_local() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_correct_deletion() -> App<'static, 'static> {
+    SubCommand::with_name("correct_deletion")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Correct unit deletion")
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .multiple(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value("1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("dissim")
+                .short("d")
+                .long("dis_similarity")
+                .required(false)
+                .value_name("DISSIM")
+                .help("Acceptable Dissimilarity threshold.")
+                .default_value("0.35")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_partition_global() -> App<'static, 'static> {
     SubCommand::with_name("partition_global")
         .version("0.1")
@@ -912,6 +945,38 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Re
     Ok(dataset.local_clustering(&config))
 }
 
+fn correct_deletion(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("Start Local Clustering step");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let sim_thr: f64 = matches
+        .value_of("dissim")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    use haplotyper::encode::deletion_fill;
+    let mut failed_trials = vec![vec![]; dataset.encoded_reads.len()];
+    let mut current: usize = dataset.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+    for _ in 0..15 {
+        dataset = deletion_fill::correct_unit_deletion(dataset, &mut failed_trials, sim_thr);
+        let after: usize = dataset.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+        log::debug!("Filled:{}\t{}", current, after);
+        if after <= current {
+            break;
+        } else {
+            current = after;
+        }
+    }
+    Ok(dataset)
+}
+
 fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("Start Global Clustering step");
     let threads: usize = matches
@@ -1110,6 +1175,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_estimate_multiplicity())
         .subcommand(subcommand_resolve_tangle())
         .subcommand(subcommand_partition_local())
+        .subcommand(subcommand_correct_deletion())
         .subcommand(subcommand_partition_global())
         .subcommand(subcommand_correct_clustering())
         .subcommand(subcommand_encode_densely())
@@ -1131,21 +1197,22 @@ fn main() -> std::io::Result<()> {
     }
     let ds = get_input_file()?;
     let result = match matches.subcommand() {
-        ("extract", Some(sub_m)) => extract(sub_m, ds),
-        ("stats", Some(sub_m)) => stats(sub_m, ds),
         ("select_unit", Some(sub_m)) => select_unit(sub_m, ds),
-        ("polish_unit", Some(sub_m)) => polish_unit(sub_m, ds),
+        ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
         ("encode", Some(sub_m)) => encode(sub_m, ds),
+        ("polish_unit", Some(sub_m)) => polish_unit(sub_m, ds),
+        ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),
         ("polish_encoding", Some(sub_m)) => polish_encode(sub_m, ds),
         ("partition_local", Some(sub_m)) => local_clustering(sub_m, ds),
+        ("correct_deletion", Some(sub_m)) => correct_deletion(sub_m, ds),
         ("resolve_tangle", Some(sub_m)) => resolve_tangle(sub_m, ds),
         ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
         ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
         ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),
         ("encode_densely", Some(sub_m)) => encode_densely(sub_m, ds),
         ("assemble", Some(sub_m)) => assembly(sub_m, ds),
-        ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
-        ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),
+        ("extract", Some(sub_m)) => extract(sub_m, ds),
+        ("stats", Some(sub_m)) => stats(sub_m, ds),
         _ => unreachable!(),
     };
     result.and_then(|x| flush_file(&x))

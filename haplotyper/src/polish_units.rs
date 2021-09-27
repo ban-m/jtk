@@ -1,8 +1,5 @@
 use definitions::ReadType;
 use definitions::*;
-// use poa_hmm::POA;
-// use rand::{seq::SliceRandom, SeedableRng};
-// use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
 #[derive(Debug, Clone, Copy)]

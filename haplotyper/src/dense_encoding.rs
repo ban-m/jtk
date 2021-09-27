@@ -84,17 +84,21 @@ impl DenseEncoding for DataSet {
                 // Formatting.
                 re_encode_read(read, seq);
             }
-            let filled_reads: HashSet<_> = reads.iter().map(|r| r.id).collect();
-            crate::encode::deletion_fill::correct_unit_deletion_selected(
-                &mut self,
-                &filled_reads,
-                CLR_CTG_SIM,
-            );
+            // let filled_reads: HashSet<_> = reads.iter().map(|r| r.id).collect();
+            // crate::encode::deletion_fill::correct_unit_deletion_selected(
+            //     &mut self,
+            //     &filled_reads,
+            //     CLR_CTG_SIM,
+            // );
             to_clustering_nodes.extend(nodes.iter().map(|x| x.0));
             edge_encoding_patterns.values().for_each(|new_units| {
                 to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
             });
         }
+        // TODO: Is this OK?
+        let mut mock_vector = vec![vec![]; self.encoded_reads.len()];
+        use crate::encode::deletion_fill::correct_unit_deletion;
+        self = correct_unit_deletion(self, &mut mock_vector, CLR_CTG_SIM);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);

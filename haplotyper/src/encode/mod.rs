@@ -30,7 +30,6 @@ impl Encode for definitions::DataSet {
             // i->vector of failed index and units.
             let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
             for _ in 0..15 {
-                // TODO: Some bugs are in the `failed_trials`?
                 self = deletion_fill::correct_unit_deletion(self, &mut failed_trials, sim_thr);
                 let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
                 debug!("Filled:{}\t{}", current, after);
