@@ -3,12 +3,18 @@ use definitions::*;
 use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
-// The second argument is the vector of (index,unit_id) of the previous failed trials.
-// for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
-// position of the i-th read, and failed it.
-// If we can encode some position in the i-th read, the failed trials would be erased, as it change the
-// condition of the read, making it possible to encode an unit previously failed to encode.
-// sim_thr is the similarity threshold.
+/// The second argument is the vector of (index,unit_id) of the previous failed trials.
+/// for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
+/// position of the i-th read, and failed it.
+/// If we can encode some position in the i-th read, the failed trials would be erased, as it change the
+/// condition of the read, making it possible to encode an unit previously failed to encode.
+/// sim_thr is the similarity threshold.
+/// This function corrects "unit-deletions". To do that,
+/// it first align other reads onto a read to be corrected in unit resolution, detecting putative insertions.
+/// Then, it tries to encode these putative insertions in base-pair resolution.
+/// Note that, in the first - unit resolution - alignment, there's no distinction between clusters.
+/// However, in the second alignment, it tries to encode the putative region by each cluster's representative.
+/// Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
 pub fn correct_unit_deletion(
     mut ds: DataSet,
     failed_trials: &mut [Vec<(usize, u64)>],
@@ -25,7 +31,10 @@ pub fn correct_unit_deletion(
         .iter()
         .map(|read| (read.id, read.seq()))
         .collect();
-    let selected_chunks = &ds.selected_chunks;
+    debug!("DELFIL\tTakingCons");
+    let representative = take_consensus_sequence(&ds);
+    debug!("DELFIL\tConsGenerated");
+    // let selected_chunks = &ds.selected_chunks;
     assert_eq!(ds.encoded_reads.len(), failed_trials.len());
     let _failed_trials: usize = ds
         .encoded_reads
@@ -40,7 +49,7 @@ pub fn correct_unit_deletion(
             correct_deletion_error(
                 r,
                 failed_trial,
-                selected_chunks,
+                &representative,
                 &read_skeltons,
                 &seq,
                 sim_thr,
@@ -50,37 +59,83 @@ pub fn correct_unit_deletion(
     ds
 }
 
-/// Same as `correct unit deletion selected`. The only difference is that this function controls which read
-/// would be corrected. Maybe boost the efficiency.
-pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>, sim_thr: f64) {
-    // This skeltons contain all reads, as some of the unfocal reads
-    // would be help to correct focal reads.
-    let read_skeltons: Vec<_> = ds
-        .encoded_reads
+// /// Same as `correct unit deletion selected`. The only difference is that this function controls which read
+// /// would be corrected. Maybe boost the efficiency.
+// pub fn correct_unit_deletion_selected(ds: &mut DataSet, reads: &HashSet<u64>, sim_thr: f64) {
+//     // This skeltons contain all reads, as some of the unfocal reads
+//     // would be help to correct focal reads.
+//     let read_skeltons: Vec<_> = ds
+//         .encoded_reads
+//         .iter()
+//         .filter(|read| read.nodes.len() > 1)
+//         .map(|read| ReadSkelton::from_rich_nodes(&read.nodes))
+//         .collect();
+//     let raw_seq: HashMap<_, _> = ds
+//         .raw_reads
+//         .iter()
+//         .filter(|r| reads.contains(&r.id))
+//         .map(|read| (read.id, read.seq()))
+//         .collect();
+//     let selected_chunks = &ds.selected_chunks;
+//     ds.encoded_reads
+//         .par_iter_mut()
+//         .filter(|r| r.nodes.len() > 1 && reads.contains(&r.id))
+//         .for_each(|r| {
+//             correct_deletion_error(
+//                 r,
+//                 &mut Vec::new(),
+//                 selected_chunks,
+//                 &read_skeltons,
+//                 raw_seq[&r.id],
+//                 sim_thr,
+//             );
+//         });
+// }
+
+// Take consensus of each cluster of each unit, return the consensus seuqneces.
+// UnitID->(clsuterID, its consensus).
+fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
+    fn polish(xs: &[&[u8]], unit: &Unit) -> Vec<u8> {
+        // use kiley::gphmm::*;
+        // let mut hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+        // let band_width = 100;
+        // TODO:Maybe we need to polish the unit with GPHMM, why not?
+        // Maybe the computational cost matters....?
+        kiley::bialignment::polish_until_converge_banded(unit.seq(), xs, 100)
+    }
+    let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
+    let mut bucket: HashMap<u64, Vec<_>> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        bucket
+            .entry(node.unit)
+            .or_default()
+            .push((node.cluster, node.seq()));
+    }
+    bucket
         .iter()
-        .filter(|read| read.nodes.len() > 1)
-        .map(|read| ReadSkelton::from_rich_nodes(&read.nodes))
-        .collect();
-    let raw_seq: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .filter(|r| reads.contains(&r.id))
-        .map(|read| (read.id, read.seq()))
-        .collect();
-    let selected_chunks = &ds.selected_chunks;
-    ds.encoded_reads
-        .par_iter_mut()
-        .filter(|r| r.nodes.len() > 1 && reads.contains(&r.id))
-        .for_each(|r| {
-            correct_deletion_error(
-                r,
-                &mut Vec::new(),
-                selected_chunks,
-                &read_skeltons,
-                raw_seq[&r.id],
-                sim_thr,
-            );
-        });
+        .filter(|&(_, xs)| !xs.is_empty())
+        .map(|(&unit, bucket)| {
+            let ref_unit = &ref_units[&unit];
+            let mut clusters: HashMap<_, Vec<&[u8]>> = HashMap::new();
+            for (cl, seq) in bucket {
+                clusters.entry(*cl).or_default().push(seq);
+            }
+            assert!(!clusters.is_empty());
+            let representative: Vec<_> = if clusters.len() == 1 {
+                clusters
+                    .iter()
+                    .map(|(&cl, _)| (cl, ref_unit.seq().to_vec()))
+                    .collect()
+            } else {
+                clusters
+                    .iter()
+                    .filter(|(_, xs)| !xs.is_empty())
+                    .map(|(&cl, xs)| (cl, polish(xs, ref_unit)))
+                    .collect()
+            };
+            (unit, representative)
+        })
+        .collect()
 }
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
@@ -88,7 +143,7 @@ const OFFSET: usize = 300;
 pub fn correct_deletion_error(
     read: &mut EncodedRead,
     failed_trials: &mut Vec<(usize, u64)>,
-    units: &[Unit],
+    units: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
     reads: &[ReadSkelton],
     seq: &[u8],
     sim_thr: f64,
@@ -111,17 +166,29 @@ pub fn correct_deletion_error(
             .check_insertion_head(nodes, threshold, idx)
             .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
         if let Some((start_position, direction, uid)) = head_node {
-            let unit = units.iter().find(|u| u.id == uid).unwrap();
-            let end_position = (start_position + unit.seq().len() + 2 * OFFSET).min(seq.len());
-            let is_the_same_encode = nodes[idx].unit == uid
-                && abs(nodes[idx].position_from_start, start_position) < unit.seq().len();
-            if start_position < end_position && !is_the_same_encode {
-                match encode_node(seq, start_position, end_position, direction, unit, sim_thr) {
-                    Some(head_node) => inserts.push((idx, head_node)),
-                    None => {
-                        failed_number += 1;
-                        failed_trials.push((idx, uid));
+            let best_encoding = units
+                .get(&uid)
+                .unwrap()
+                .iter()
+                .filter_map(|&(cluster, ref unit)| {
+                    let end_position = (start_position + unit.len() + 2 * OFFSET).min(unit.len());
+                    let is_the_same_encode = nodes[idx].unit == uid
+                        && abs(nodes[idx].position_from_start, start_position) < unit.len();
+                    if start_position < end_position && !is_the_same_encode {
+                        let position = (start_position, end_position, direction);
+                        let unit_info = (unit.as_slice(), uid, cluster);
+                        encode_node(seq, position, unit_info, sim_thr)
+                    } else {
+                        None
                     }
+                })
+                .max_by_key(|x| x.1)
+                .map(|x| x.0);
+            match best_encoding {
+                Some(head_node) => inserts.push((idx, head_node)),
+                None => {
+                    failed_number += 1;
+                    failed_trials.push((idx, uid));
                 }
             }
         }
@@ -129,16 +196,28 @@ pub fn correct_deletion_error(
             .check_insertion_tail(nodes, threshold, idx)
             .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
         if let Some((end_position, direction, uid)) = tail_node {
-            let unit = units.iter().find(|u| u.id == uid).unwrap();
-            let end_position = end_position.min(seq.len());
-            let start_position = end_position.saturating_sub(unit.seq().len() + 2 * OFFSET);
-            if start_position < end_position {
-                match encode_node(seq, start_position, end_position, direction, unit, sim_thr) {
-                    Some(tail_node) => inserts.push((idx, tail_node)),
-                    None => {
-                        failed_number += 1;
-                        failed_trials.push((idx, uid));
+            let best_encoding = units
+                .get(&uid)
+                .unwrap()
+                .iter()
+                .filter_map(|&(cluster, ref unit)| {
+                    let end_position = end_position.min(seq.len());
+                    let start_position = end_position.saturating_sub(unit.len() + 2 * OFFSET);
+                    if start_position < end_position {
+                        let positions = (start_position, end_position, direction);
+                        let unit_info = (unit.as_slice(), uid, cluster);
+                        encode_node(seq, positions, unit_info, sim_thr)
+                    } else {
+                        None
                     }
+                })
+                .max_by_key(|x| x.1)
+                .map(|x| x.0);
+            match best_encoding {
+                Some(tail_node) => inserts.push((idx, tail_node)),
+                None => {
+                    failed_number += 1;
+                    failed_trials.push((idx, uid));
                 }
             }
         }
@@ -163,14 +242,14 @@ pub fn correct_deletion_error(
 }
 
 // Try to Encode Node. Return Some(node) if the alignment is good.
+// Return also the alignment score of the encoding.
+// The match score is 2, mism is -6, gap open is -5, and gap ext is -1.
 fn encode_node(
     seq: &[u8],
-    start: usize,
-    end: usize,
-    is_forward: bool,
-    unit: &Unit,
+    (start, end, is_forward): (usize, usize, bool),
+    (unitseq, uid, cluster): (&[u8], u64, u64),
     sim_thr: f64,
-) -> Option<Node> {
+) -> Option<(Node, i32)> {
     let mut query = if is_forward {
         seq[start..end].to_vec()
     } else {
@@ -180,14 +259,14 @@ fn encode_node(
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
-    let unitseq = unit.seq();
+    // let unitseq = unit.seq();
     let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
     let dist_thr = (unitseq.len() as f64 * sim_thr).floor() as u32;
     let locations = alignment.locations.unwrap();
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
     let band = (seq.len() / 10).max(20);
-    let (_, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
+    let (score, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
     let aln_dist = ops
         .iter()
         .filter(|&&op| op != kiley::bialignment::Op::Mat)
@@ -205,7 +284,7 @@ fn encode_node(
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     if dist_thr < aln_dist || has_large_indel {
-        debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
+        debug!("{}\t{}\t{}", uid, max_indel, aln_dist);
         let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
         for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
             eprintln!("{}", String::from_utf8_lossy(xr));
@@ -217,13 +296,13 @@ fn encode_node(
     let ops = super::compress_kiley_ops(&ops);
     let node = Node {
         position_from_start,
-        unit: unit.id,
-        cluster: 0,
+        unit: uid,
+        cluster,
         is_forward,
         seq: String::from_utf8(seq).unwrap(),
         cigar: ops,
     };
-    Some(node)
+    Some((node, score))
 }
 
 // Align read skeltons to read, return the pileup sumamries.

@@ -4,15 +4,7 @@ use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 mod config;
-// mod var_clustering;
 pub use config::*;
-// pub mod clustering_by_assemble;
-// pub mod create_model;
-// pub mod eread;
-// pub mod pca;
-// pub mod variant_calling;
-// use eread::*;
-// use variant_calling::*;
 pub mod kmeans;
 
 /// Return rand index.
@@ -142,8 +134,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     re_encode_reads(ds, &consensus_and_clusternum);
 }
 
-#[allow(dead_code)]
-fn take_consensus<T: std::borrow::Borrow<[u8]>>(
+pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(
     unit: &Unit,
     reads: &[T],
     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
