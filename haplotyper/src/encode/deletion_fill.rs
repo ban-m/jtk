@@ -107,7 +107,6 @@ pub fn correct_deletion_error(
     let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
     let seq = &seq;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        // let head_node = pileup.check_insertion_head(nodes, threshold, idx);
         let head_node = pileup
             .check_insertion_head(nodes, threshold, idx)
             .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
@@ -126,7 +125,6 @@ pub fn correct_deletion_error(
                 }
             }
         }
-        // let tail_node = pileup.check_insertion_tail(nodes, threshold, idx);
         let tail_node = pileup
             .check_insertion_tail(nodes, threshold, idx)
             .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
@@ -164,8 +162,6 @@ pub fn correct_deletion_error(
     failed_number
 }
 
-// 0.35 * unit.seq() distance is regarded as too far: corresponding 30% errors.
-// pub const ALIGN_LIMIT: f64 = 0.35;
 // Try to Encode Node. Return Some(node) if the alignment is good.
 fn encode_node(
     seq: &[u8],
@@ -209,21 +205,16 @@ fn encode_node(
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     if dist_thr < aln_dist || has_large_indel {
-        // debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
-        // let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
-        // eprintln!("==================");
-        // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-        //     eprintln!("{}", String::from_utf8_lossy(xr));
-        //     eprintln!("{}", String::from_utf8_lossy(ar));
-        //     eprintln!("{}\n", String::from_utf8_lossy(yr));
-        // }
+        debug!("{}\t{}\t{}", unit.id, max_indel, aln_dist);
+        let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+        for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+            eprintln!("{}", String::from_utf8_lossy(xr));
+            eprintln!("{}", String::from_utf8_lossy(ar));
+            eprintln!("{}\n", String::from_utf8_lossy(yr));
+        }
         return None;
     }
     let ops = super::compress_kiley_ops(&ops);
-    // let has_large_indel = ops.iter().any(|&op| match op {
-    //     Op::Ins(l) | Op::Del(l) => l > super::INDEL_THRESHOLD,
-    //     _ => false,
-    // });
     let node = Node {
         position_from_start,
         unit: unit.id,

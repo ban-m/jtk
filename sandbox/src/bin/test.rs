@@ -1,6 +1,5 @@
 use definitions::*;
-use haplotyper::DetermineUnit;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 use std::collections::HashMap;
 use std::io::*;

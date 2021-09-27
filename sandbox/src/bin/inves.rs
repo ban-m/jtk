@@ -48,7 +48,7 @@ fn main() -> std::io::Result<()> {
                 }
             }
             let desc = id2desc[&read.id];
-            println!("={},{},{},{},{}=", hap, node.cluster, max_indel, mism, desc);
+            println!("{},{},{},{},{}", hap, node.cluster, max_indel, mism, desc);
             let (xr, ar, yr) = node.recover(ref_unit);
             for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                 println!("{}", String::from_utf8_lossy(xr));
