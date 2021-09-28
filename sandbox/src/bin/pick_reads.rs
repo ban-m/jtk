@@ -37,22 +37,8 @@ fn main() -> std::io::Result<()> {
                 }
             }
             let is_hap1 = id2desc[&read.id].contains("252v2");
-            println!("{}\t{}", dumps.join("\t"), is_hap1);
+            println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
         }
-        // let pos: Vec<_> = id2desc[&read.id]
-        //     .split(' ')
-        //     .nth(0)
-        //     .unwrap()
-        //     .split(',')
-        //     .collect();
-        // let range: Vec<usize> = pos[2].split('-').map(|x| x.parse().unwrap()).collect();
-        // let (start, end) = if pos[1] == "-strand" {
-        //     (4_200_000 - range[1], 4_200_000 - range[0])
-        // } else {
-        //     (range[0], range[1])
-        // };
-        // if read.nodes.iter().any(|n| units.contains(&n.unit)) {
-        // }
     }
     Ok(())
 }

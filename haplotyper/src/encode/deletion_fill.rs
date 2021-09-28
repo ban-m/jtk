@@ -31,9 +31,9 @@ pub fn correct_unit_deletion(
         .iter()
         .map(|read| (read.id, read.seq()))
         .collect();
-    debug!("DELFIL\tTakingCons");
+    // debug!("DELFIL\tTakingCons");
     let representative = take_consensus_sequence(&ds);
-    debug!("DELFIL\tConsGenerated");
+    // debug!("DELFIL\tConsGenerated");
     assert_eq!(ds.encoded_reads.len(), failed_trials.len());
     let _failed_trials: usize = ds
         .encoded_reads

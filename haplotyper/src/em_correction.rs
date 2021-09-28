@@ -317,11 +317,7 @@ pub fn em_clustering_inner<R: Rng>(
         .iter()
         .zip(weights.iter())
         .map(|(ctx, ws)| {
-            let (cluster, &max_w): (usize, &f64) = ws
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .unwrap();
+            let (cluster, max_w) = max_and_position(ws);
             let cluster = if max_w < 0.9 {
                 cluster as u64
             } else {
@@ -337,11 +333,7 @@ pub fn em_clustering_inner<R: Rng>(
         .map(|c| (c.forward.len(), c.backward.len()))
         .fold((0, 0), |(f, b), (x, y)| (f.max(x), b.max(y)));
     for (weight, context) in weights.iter().zip(contexts.iter()) {
-        let (cluster, _) = weight
-            .iter()
-            .enumerate()
-            .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
-            .unwrap();
+        let (cluster, _) = max_and_position(weight);
         let unit = context.unit;
         trace!(
             "DUMP\t{}\t{}\t{}\t{}",
@@ -626,7 +618,8 @@ impl EMModel {
     }
 }
 
-const DEL_PROB: f64 = 0.02;
+//const DEL_PROB: f64 = 0.02;
+const DEL_PROB: f64 = 0.1;
 const MISM_PROB: f64 = 0.02;
 const MATCH_PROB: f64 = 1f64 - DEL_PROB - MISM_PROB;
 const SMALL: f64 = 0.00001;
@@ -792,5 +785,136 @@ impl RawModel {
     }
 }
 
+fn max_and_position(ws: &[f64]) -> (usize, f64) {
+    ws.iter()
+        .copied()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .unwrap()
+}
+
 #[cfg(test)]
 mod test {}
+
+// // Very simple bug-of-units model.
+// #[derive(Debug, Clone)]
+// struct SimpleModel {
+//     fractions: Vec<f64>,
+//     bugs: Vec<UnitBug>,
+// }
+
+// impl SimpleModel {
+//     fn new(contexts: &[(u64, usize, Vec<(u64, u64)>)], weights: &[Vec<f64>], k: usize) -> Self {
+//         let mut fractions = vec![0f64; k];
+//         let mut bugs = vec![UnitBug::new(); k];
+//         for ((_, _, nodes), ws) in contexts.iter().zip(weights.iter()) {
+//             for (f, w) in fractions.iter_mut().zip(ws) {
+//                 *f += w;
+//             }
+//             for (bug, w) in bugs.iter_mut().zip(ws) {
+//                 bug.push(nodes, w);
+//             }
+//         }
+//     }
+//     fn lk() -> Self {}
+//     fn update() {}
+// }
+
+// #[derive(Debug, Clone)]
+// struct UnitBug {}
+
+// impl UnitBug {
+//     fn new() -> Self {
+//         unimplemented!()
+//     }
+// }
+
+// /// Return the id of the read, the position at that read, and the clusters predicted.
+// pub fn em_clustering_simple(
+//     reads: &[&EncodedRead],
+//     config: &Config,
+// ) -> (Vec<(u64, usize, u64)>, f64, usize) {
+//     let mut unit_counts: HashMap<_, usize> = HashMap::new();
+//     for read in reads.iter() {
+//         for node in read.nodes.iter() {
+//             *unit_counts.entry(node.unit).or_default() += 1;
+//         }
+//     }
+//     let use_units: HashSet<_> = unit_counts
+//         .iter()
+//         .filter(|&(_, &c)| c > config.coverage_thr)
+//         .map(|(&x, _)| x)
+//         .collect();
+//     let contexts: Vec<_> = {
+//         let mut buffer = vec![];
+//         for read in reads.iter() {
+//             for index in 0..read.nodes.len() {
+//                 if read.nodes[index].unit == config.focal {
+//                     let read: Vec<(u64, u64)> = read
+//                         .nodes
+//                         .iter()
+//                         .map(|n| (n.unit, n.cluster))
+//                         .filter(|(unit, _)| use_units.contains(unit))
+//                         .collect();
+//                     buffer.push((read, index));
+//                 }
+//             }
+//         }
+//         buffer
+//     };
+//     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
+//     let cluster_num = config.cluster_num;
+//     let (asn, lk, offset) = em_clustering_simple_inner(&contexts, cluster_num, &mut rng);
+//     let lk = if config.to_use_offset {
+//         lk - offset
+//     } else {
+//         lk
+//     };
+//     (asn, lk, cluster_num)
+// }
+
+// fn random_weight<R: Rng>(k: usize, rng: &mut R) -> Vec<f64> {
+//     let mut ws = vec![0f64; k];
+//     for _ in 0..100 {
+//         ws[rng.gen_range(0..k)] += 1f64;
+//     }
+//     ws.iter_mut().for_each(|x| *x /= 100f64);
+//     ws
+// }
+
+// fn em_clustering_simple_inner<R: Rng>(
+//     contexts: &[(u64, usize, Vec<(u64, u64)>)],
+//     k: usize,
+//     rng: &mut R,
+// ) -> (Vec<(u64, usize, u64)>, f64, f64) {
+//     let mut weights: Vec<_> = contexts.iter().map(|_| random_weight(k, rng)).collect();
+//     let mut model = SimpleModel::new(contexts, &weights, k);
+//     let mut lk: f64 = contexts.iter().map(|ctx| model.lk(ctx)).sum();
+//     trace!("LK:{}", lk);
+//     loop {
+//         model.update(&mut weights, contexts);
+//         let next_lk = contexts.iter().map(|ctx| model.lk(ctx)).sum();
+//         trace!("LK:{}", next_lk);
+//         if (next_lk - lk) < 0.001 {
+//             break;
+//         }
+//         lk = next_lk;
+//     }
+//     trace!("FinalLK\t{:.4}", lk);
+//     let choises: Vec<_> = (0..k).collect();
+//     let predictions: Vec<_> = contexts
+//         .iter()
+//         .zip(weights.iter())
+//         .map(|(&(id, index, _), ws)| {
+//             let (cluster, max_w) = max_and_position(ws);
+//             let cluster = if max_w < 0.9 {
+//                 cluster as u64
+//             } else {
+//                 use rand::seq::SliceRandom;
+//                 *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
+//             };
+//             (id, index, cluster as u64)
+//         })
+//         .collect();
+//     (predictions, lk, model.num_params())
+// }

@@ -248,11 +248,10 @@ pub fn assemble(
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     // POINTER: ASSEMBLEIMPL
     // TODO: Tune this.
-    graph.remove_lightweight_edges(3);
+    graph.remove_lightweight_edges(2);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            // graph.transitive_edge_reduction();
             // graph.zip_up_overclustering();
             // graph.remove_tips(0.5, 5);
             graph.remove_zero_copy_elements(cov, &lens, 0.3);

@@ -693,7 +693,7 @@ fn subcommand_assemble() -> App<'static, 'static> {
 }
 
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
-    debug!("Entry");
+    debug!("START\tEntry");
     let file = matches.value_of("input").unwrap();
     let reader = std::fs::File::open(file).map(BufReader::new)?;
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
@@ -703,7 +703,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Extract");
+    debug!("START\tExtract");
     debug!("Target is {}", matches.value_of("target").unwrap());
     let file = std::fs::File::create(matches.value_of("output").unwrap())?;
     match matches.value_of("target").unwrap() {
@@ -738,14 +738,14 @@ fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Data
 }
 
 fn stats(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Stats step");
+    debug!("START\tStats step");
     let wtr = std::io::BufWriter::new(std::fs::File::create(matches.value_of("file").unwrap())?);
     dataset.stats(wtr)?;
     Ok(dataset)
 }
 
 fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Selecting Units");
+    debug!("START\tSelecting Units");
     let chunk_len: usize = matches
         .value_of("chunk_len")
         .and_then(|e| e.parse().ok())
@@ -795,7 +795,7 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
 }
 
 fn repeat_masking(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start masking repeat.");
+    debug!("START\tmasking repeat.");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
@@ -823,7 +823,7 @@ fn repeat_masking(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
 }
 
 fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Encoding step");
+    debug!("START\tEncoding step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
@@ -839,7 +839,7 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
 }
 
 fn polish_encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Polish encoding.");
+    debug!("START\tPolish encoding.");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
@@ -855,7 +855,7 @@ fn polish_encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resul
 }
 
 fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start picking components.");
+    debug!("START\tpicking components.");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
@@ -875,7 +875,7 @@ fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Res
 }
 
 fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start polishing units");
+    debug!("START\tpolishing units");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
@@ -901,7 +901,7 @@ fn multiplicity_estimation(
     matches: &clap::ArgMatches,
     dataset: DataSet,
 ) -> std::io::Result<DataSet> {
-    debug!("Start multiplicity estimation");
+    debug!("START\tmultiplicity estimation");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|e| e.parse().ok())
@@ -926,7 +926,7 @@ fn multiplicity_estimation(
 }
 
 fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Local Clustering step");
+    debug!("START\tLocal Clustering step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
@@ -946,7 +946,7 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Re
 }
 
 fn correct_deletion(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Local Clustering step");
+    debug!("START\tCorrectDeletion");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
@@ -978,7 +978,7 @@ fn correct_deletion(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io
 }
 
 fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Global Clustering step");
+    debug!("START\tGlobal Clustering step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
@@ -1025,7 +1025,7 @@ fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::R
 }
 
 fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Clustering Correction step");
+    debug!("START\tClustering Correction step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
@@ -1048,7 +1048,7 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Clustering Correction step");
+    debug!("START\tClustering Correction step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
@@ -1073,6 +1073,7 @@ fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
 }
 
 fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+    debug!("START\tEncode densely");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
@@ -1097,7 +1098,7 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
 }
 
 fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
-    debug!("Start Assembly step");
+    debug!("START\tAssembly step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())

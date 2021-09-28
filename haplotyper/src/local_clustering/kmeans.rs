@@ -112,36 +112,49 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
             .collect()
     };
     let num = 10;
-    let (mut assignments, mut score) = (0..num)
-        .map(|_| mcmc_clustering(&selected_variants, cluster_num.max(3) - 2, coverage, rng))
+    // let (mut assignments, mut score) = (0..num)
+    //     .map(|_| mcmc_clustering(&selected_variants, cluster_num.max(3) - 2, coverage, rng))
+    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let init_cluster_num = cluster_num.max(4) - 3;
+    let (assignments, score) = (init_cluster_num..=cluster_num)
+        .filter_map(|k| {
+            let (asn, score) = (0..num)
+                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+            trace!("LK\t{}\t{:.3}", k, score);
+            let expected_gain = AVERAGE_LK * coverage;
+            let null_gain = expected_mis_num(reads.len()) * DEL_LK;
+            Some((asn, score - expected_gain.max(null_gain)))
+        })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    for new_k in cluster_num.max(3) - 1..=cluster_num {
-        let (asn, new_score) = (0..num)
-            .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
-            .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-        // debug!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
-        // CAUTION! If the coverage gets larger, the offset should be larger, because we would be more likely to meet
-        // large improvement even thougth there is no actual variations.
-        // But how often?
-        // AVERAGE_LK is the "expected likelihood gain",
-        // whereas what we currently talk is the "expected null gain"
-        // Both of them should be check out....
-        // Suppose that the deletion-error rate is 7%. Then, at each point,
-        // there should be `coverage * 0.07 * DEL_LK` gain.
-        // By simulation, we find that the maximum number of `random hit` in the
-        // dataset would not depends on the length of the template so heveealy,
-        // and the coefficients for the coverage is as large as 0.10 if the error rate is 0.05 at a location, and 0.65 for 0.025
-        // Thus, 0.1 * coverage * DEL_LK would be a good choice.
-        // So, at each time we increment the number of the cluster, we at least observe 0.1 * coverage * DEL_LK gain.
-        let expected_gain = AVERAGE_LK * coverage;
-        let null_gain = expected_mis_num(reads.len()) * DEL_LK;
-        if score + expected_gain.max(null_gain) < new_score {
-            assignments = asn;
-            score = new_score;
-        } else {
-            break;
-        }
-    }
+    trace!("MAXLK\t{:.3}", score);
+    // for new_k in cluster_num.max(3) - 1..=cluster_num {
+    //     let (asn, new_score) = (0..num)
+    //         .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
+    //         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    //     trace!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
+    //     // CAUTION! If the coverage gets larger, the offset should be larger, because we would be more likely to meet
+    //     // large improvement even thougth there is no actual variations.
+    //     // But how often?
+    //     // AVERAGE_LK is the "expected likelihood gain",
+    //     // whereas what we currently talk is the "expected null gain"
+    //     // Both of them should be check out....
+    //     // Suppose that the deletion-error rate is 7%. Then, at each point,
+    //     // there should be `coverage * 0.07 * DEL_LK` gain.
+    //     // By simulation, we find that the maximum number of `random hit` in the
+    //     // dataset would not depends on the length of the template so heveealy,
+    //     // and the coefficients for the coverage is as large as 0.10 if the error rate is 0.05 at a location, and 0.65 for 0.025
+    //     // Thus, 0.1 * coverage * DEL_LK would be a good choice.
+    //     // So, at each time we increment the number of the cluster, we at least observe 0.1 * coverage * DEL_LK gain.
+    //     let expected_gain = AVERAGE_LK * coverage;
+    //     let null_gain = expected_mis_num(reads.len()) * DEL_LK;
+    //     if score + expected_gain.max(null_gain) < new_score {
+    //         assignments = asn;
+    //         score = new_score;
+    //     } else {
+    //         break;
+    //     }
+    // }
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();

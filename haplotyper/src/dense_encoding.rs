@@ -97,8 +97,11 @@ impl DenseEncoding for DataSet {
         }
         // TODO: Is this OK?
         let mut mock_vector = vec![vec![]; self.encoded_reads.len()];
+        let prev: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
         use crate::encode::deletion_fill::correct_unit_deletion;
         self = correct_unit_deletion(self, &mut mock_vector, CLR_CTG_SIM);
+        let after: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
+        debug!("DE\t{}\t{}", prev, after);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
@@ -298,6 +301,7 @@ fn enumerate_diplotigs(
     let (_, summaries) = assemble(ds, 0, &config);
     let mut multi_tig: Vec<_> = summaries
         .iter()
+        .filter(|summary| !summary.summary.is_empty())
         .filter_map(|summary| {
             let (total_cp, num) = summary
                 .summary

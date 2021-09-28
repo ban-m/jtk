@@ -20,13 +20,13 @@ fn main() -> std::io::Result<()> {
     // let mut failed_trials: Vec<_> = vec![vec![]; ds.encoded_reads.len()];
     // ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, 0.35);
     let cov = ds.coverage.unwrap();
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
     let target: u64 = args[2].parse().unwrap();
     let (seqs, ids): (Vec<_>, Vec<_>) = ds
         .encoded_reads
         .iter()
         .flat_map(|r| {
-            let is_hapa = id2desc[&r.id].contains("hapA");
+            let is_hapa = id2desc[&r.id].contains("255v2");
             r.nodes
                 .iter()
                 .filter(|n| n.unit == target)
