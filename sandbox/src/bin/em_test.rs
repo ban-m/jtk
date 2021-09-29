@@ -25,7 +25,6 @@ fn main() -> std::io::Result<()> {
     for read in ds.encoded_reads.iter() {
         let is_hap1 = id2desc[&read.id].contains("255v2") as usize;
         for node in read.nodes.iter().filter(|n| target.contains(&n.unit)) {
-            let cl = node.cluster as usize;
             result.entry((node.unit, node.cluster)).or_default()[is_hap1] += 1;
         }
     }

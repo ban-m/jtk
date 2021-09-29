@@ -111,8 +111,11 @@ impl ClusteringCorrection for DataSet {
                     debug!("Unit {} does not appear in any read.", unit_id);
                     return vec![];
                 }
-                let (new_clustering, _, _) = (1..=k)
-                    .flat_map(|k| std::iter::repeat(k).take(repeat_num))
+                let (new_clustering, score, new_k) = (1..=k)
+                    .flat_map(|k| match k {
+                        1 => std::iter::repeat(k).take(1),
+                        _ => std::iter::repeat(k).take(repeat_num),
+                    })
                     .enumerate()
                     .map(|(i, k)| {
                         let seed = unit_id * (i * k) as u64;
@@ -122,6 +125,7 @@ impl ClusteringCorrection for DataSet {
                     })
                     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
                     .unwrap();
+                trace!("CLUSTERED\t{}\t{}\t{:.3}", unit_id, new_k, score);
                 new_clustering
             })
             .collect();
@@ -185,7 +189,8 @@ pub fn em_clustering(
     };
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let cluster_num = config.cluster_num;
-    let (asn, lk, offset) = em_clustering_inner(&contexts, cluster_num, &mut rng);
+    //let (asn, lk, offset) = em_clustering_inner(&contexts, cluster_num, &mut rng);
+    let (asn, lk, offset) = simple_clustering_inner(&contexts, cluster_num, &mut rng);
     let lk = if config.to_use_offset {
         lk - offset
     } else {
@@ -307,26 +312,7 @@ pub fn em_clustering_inner<R: Rng>(
             lk = next_lk;
         }
     }
-    trace!("FinalLK\t{:.4}", lk);
-    // Sometimes un-informative reads would be clustered into the largest
-    // cluster. It is indeed a ML-predictor, but not good (Consider that
-    // all such reads are into the largest cluster. Then, the relative fraction of the
-    // largest cluster is no longer proportional to the EM-estimator!).
-    let choises: Vec<_> = (0..k).collect();
-    let predictions: Vec<_> = contexts
-        .iter()
-        .zip(weights.iter())
-        .map(|(ctx, ws)| {
-            let (cluster, max_w) = max_and_position(ws);
-            let cluster = if max_w < 0.9 {
-                cluster as u64
-            } else {
-                use rand::seq::SliceRandom;
-                *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
-            };
-            (ctx.id, ctx.index, cluster as u64)
-        })
-        .collect();
+    let predictions = predict_from_weights(&contexts, &weights, k, rng);
     trace!("MODEL:{}", model);
     let (flen, blen) = contexts
         .iter()
@@ -355,10 +341,10 @@ pub fn em_clustering_inner<R: Rng>(
         let model_param: usize = units.values().map(|x| x.len() - 1).sum();
         (model_param * k + k - 1) as f64
     };
+    trace!("FinalLK\t{:.4}", lk);
     (predictions, lk, offset)
 }
 
-// TODO: Add direction.
 #[derive(Debug, Clone)]
 pub struct Context {
     // The ID of the original encoded read.
@@ -618,8 +604,8 @@ impl EMModel {
     }
 }
 
-//const DEL_PROB: f64 = 0.02;
-const DEL_PROB: f64 = 0.1;
+const DEL_PROB: f64 = 0.02;
+// const DEL_PROB: f64 = 0.1;
 const MISM_PROB: f64 = 0.02;
 const MATCH_PROB: f64 = 1f64 - DEL_PROB - MISM_PROB;
 const SMALL: f64 = 0.00001;
@@ -793,128 +779,331 @@ fn max_and_position(ws: &[f64]) -> (usize, f64) {
         .unwrap()
 }
 
-#[cfg(test)]
-mod test {}
+// Sometimes un-informative reads would be clustered into the largest
+// cluster. It is indeed a ML-predictor, but not good (Consider that
+// all such reads are into the largest cluster. Then, the relative fraction of the
+// largest cluster is no longer proportional to the EM-estimator!).
+fn predict_from_weights<R: Rng>(
+    contexts: &[Context],
+    weights: &[Vec<f64>],
+    k: usize,
+    rng: &mut R,
+) -> Vec<(u64, usize, u64)> {
+    let choises: Vec<_> = (0..k).collect();
+    contexts
+        .iter()
+        .zip(weights.iter())
+        .map(|(ctx, ws)| {
+            let (cluster, max_w) = max_and_position(ws);
+            let cluster = if max_w < 0.9 {
+                cluster as u64
+            } else {
+                use rand::seq::SliceRandom;
+                *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
+            };
+            (ctx.id, ctx.index, cluster as u64)
+        })
+        .collect()
+}
 
-// // Very simple bug-of-units model.
-// #[derive(Debug, Clone)]
-// struct SimpleModel {
-//     fractions: Vec<f64>,
-//     bugs: Vec<UnitBug>,
-// }
+pub fn simple_clustering_inner<R: Rng>(
+    contexts: &[Context],
+    k: usize,
+    rng: &mut R,
+) -> (Vec<(u64, usize, u64)>, f64, f64) {
+    let mut weights: Vec<_> = match rng.gen_bool(0.5) {
+        true => contexts
+            .iter()
+            .map(|_| {
+                let mut ws = vec![0f64; k];
+                for _ in 0..100 {
+                    ws[rng.gen_range(0..k)] += 1f64;
+                }
+                ws.iter_mut().for_each(|x| *x /= 100f64);
+                ws
+            })
+            .collect(),
+        false => initialize_weights(contexts, k, rng),
+    };
+    let mut model = SimpleModel::new(contexts, &weights, k);
+    let mut lk: f64 = contexts.iter().map(|ctx| model.lk(ctx)).sum();
+    trace!("LK:{}", lk);
+    for _ in 0..20 {
+        // loop {
+        model.update(&mut weights, contexts);
+        model = SimpleModel::new(contexts, &weights, k);
+        let next_lk = contexts.iter().map(|ctx| model.lk(ctx)).sum();
+        trace!("LK:{}", next_lk);
+        if (next_lk - lk) < 0.001 {
+            break;
+        } else {
+            lk = next_lk;
+        }
+    }
+    trace!("MODEL\n{}", model);
+    let (flen, blen) = contexts
+        .iter()
+        .map(|c| (c.forward.len(), c.backward.len()))
+        .fold((0, 0), |(f, b), (x, y)| (f.max(x), b.max(y)));
+    for (weight, context) in weights.iter().zip(contexts.iter()) {
+        let (cluster, _) = max_and_position(weight);
+        let unit = context.unit;
+        trace!(
+            "DUMP\t{}\t{}\t{}\t{}",
+            unit,
+            context.id,
+            cluster,
+            context.dump_with(flen, blen)
+        );
+    }
+    let predictions = predict_from_weights(&contexts, &weights, k, rng);
+    trace!("FinalLK\t{}\t{:.4}\t{}", k, lk, model.num_parameters());
+    (predictions, lk, model.num_parameters() as f64)
+}
 
-// impl SimpleModel {
-//     fn new(contexts: &[(u64, usize, Vec<(u64, u64)>)], weights: &[Vec<f64>], k: usize) -> Self {
-//         let mut fractions = vec![0f64; k];
-//         let mut bugs = vec![UnitBug::new(); k];
-//         for ((_, _, nodes), ws) in contexts.iter().zip(weights.iter()) {
-//             for (f, w) in fractions.iter_mut().zip(ws) {
-//                 *f += w;
-//             }
-//             for (bug, w) in bugs.iter_mut().zip(ws) {
-//                 bug.push(nodes, w);
-//             }
-//         }
-//     }
-//     fn lk() -> Self {}
-//     fn update() {}
-// }
+#[derive(Debug, Clone)]
+struct SimpleModel {
+    fraction: Vec<f64>,
+    consensus: Vec<Consensus>,
+}
 
-// #[derive(Debug, Clone)]
-// struct UnitBug {}
+impl std::fmt::Display for SimpleModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let dump: Vec<_> = self
+            .fraction
+            .iter()
+            .zip(self.consensus.iter())
+            .map(|(frac, m)| format!("{:.3}\t{}", frac, m))
+            .collect();
+        write!(f, "{}", dump.join("\n"))
+    }
+}
 
-// impl UnitBug {
-//     fn new() -> Self {
-//         unimplemented!()
-//     }
-// }
+impl SimpleModel {
+    // Create new model.
+    fn new(contexts: &[Context], weights: &[Vec<f64>], cluster_num: usize) -> Self {
+        let mut fraction = vec![0f64; cluster_num];
+        for weight in weights.iter() {
+            fraction.iter_mut().zip(weight).for_each(|(x, y)| *x += y);
+        }
+        let sum: f64 = fraction.iter().sum();
+        fraction.iter_mut().for_each(|x| *x /= sum);
+        let flen = contexts
+            .iter()
+            .map(|x| x.forward.len())
+            .max()
+            .unwrap_or_default();
+        let blen = contexts
+            .iter()
+            .map(|x| x.forward.len())
+            .max()
+            .unwrap_or_default();
+        let consensus: Vec<_> = (0..cluster_num)
+            .map(|cl| {
+                let ws: Vec<_> = weights.iter().map(|ws| ws[cl]).collect();
+                Consensus::new(contexts, &ws, (flen, blen))
+            })
+            .collect();
+        // let center_unit = contexts[0].unit;
+        Self {
+            fraction,
+            consensus,
+        }
+    }
+    fn num_parameters(&self) -> usize {
+        let model_param = self.consensus.iter().map(|x| x.num_parameters()).max();
+        let model_param = self.consensus.len() * model_param.unwrap_or_default();
+        model_param + self.fraction.len() - 1
+    }
+    // Update weights.
+    fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context]) {
+        //let mut total_lk = 0f64;
+        // Calculate the next weights, mapping position, and likelihood.
+        for (weight, context) in weights.iter_mut().zip(contexts.iter()) {
+            // let (mapping_positions, lk) = self.get_weight(context, weight);
+            let _ = self.get_weight(context, weight);
+        }
+    }
+    #[allow(clippy::type_complexity)]
+    fn get_weight(&self, context: &Context, weight: &mut [f64]) -> (Vec<(Vec<u8>, Vec<u8>)>, f64) {
+        let (scores, mapping_positions) = self.scores_and_mappings(context);
+        let score = logsumexp(&scores);
+        weight
+            .iter_mut()
+            .zip(scores.iter())
+            .for_each(|(w, s)| *w = (s - score).exp());
+        // let scores: Vec<_> = scores.iter().map(|x| format!("{:.3}", x)).collect();
+        // let ws: Vec<_> = weight.iter().map(|x| format!("{:.3}", x)).collect();
+        // trace!("W\t{}\t{}", scores.join(","), ws.join(","));
+        (mapping_positions, score)
+    }
+    fn scores_and_mappings(&self, context: &Context) -> (Vec<f64>, Vec<(Vec<u8>, Vec<u8>)>) {
+        self.consensus
+            .iter()
+            .zip(self.fraction.iter())
+            .map(|(m, &f)| {
+                // TODO: change here.
+                let (forward_map, backward_map, score) = m.map(context);
+                let score = score as f64 + f.ln();
+                (score, (forward_map, backward_map))
+            })
+            .unzip()
+    }
+    fn lk(&self, context: &Context) -> f64 {
+        let (scores, _) = self.scores_and_mappings(context);
+        logsumexp(&scores)
+        // let score = logsumexp(&scores);
+        // let scores: Vec<_> = scores.iter().map(|x| format!("{:.3}", x)).collect();
+        // trace!("SCORE\t{}\t{}", scores.join(","), score);
+        // score
+    }
+}
+#[derive(Debug, Clone)]
+struct Consensus {
+    center: (u64, u64),
+    forward: Vec<(u64, u64)>,
+    backward: Vec<(u64, u64)>,
+}
 
-// /// Return the id of the read, the position at that read, and the clusters predicted.
-// pub fn em_clustering_simple(
-//     reads: &[&EncodedRead],
-//     config: &Config,
-// ) -> (Vec<(u64, usize, u64)>, f64, usize) {
-//     let mut unit_counts: HashMap<_, usize> = HashMap::new();
-//     for read in reads.iter() {
-//         for node in read.nodes.iter() {
-//             *unit_counts.entry(node.unit).or_default() += 1;
-//         }
-//     }
-//     let use_units: HashSet<_> = unit_counts
-//         .iter()
-//         .filter(|&(_, &c)| c > config.coverage_thr)
-//         .map(|(&x, _)| x)
-//         .collect();
-//     let contexts: Vec<_> = {
-//         let mut buffer = vec![];
-//         for read in reads.iter() {
-//             for index in 0..read.nodes.len() {
-//                 if read.nodes[index].unit == config.focal {
-//                     let read: Vec<(u64, u64)> = read
-//                         .nodes
-//                         .iter()
-//                         .map(|n| (n.unit, n.cluster))
-//                         .filter(|(unit, _)| use_units.contains(unit))
-//                         .collect();
-//                     buffer.push((read, index));
-//                 }
-//             }
-//         }
-//         buffer
-//     };
-//     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
-//     let cluster_num = config.cluster_num;
-//     let (asn, lk, offset) = em_clustering_simple_inner(&contexts, cluster_num, &mut rng);
-//     let lk = if config.to_use_offset {
-//         lk - offset
-//     } else {
-//         lk
-//     };
-//     (asn, lk, cluster_num)
-// }
+impl std::fmt::Display for Consensus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let backward = self
+            .backward
+            .iter()
+            .map(|(u, c)| format!("{}-{}", u, c))
+            .rev();
+        let forward = self.forward.iter().map(|(u, c)| format!("{}-{}", u, c));
+        let center = std::iter::once(format!("{}-{}", self.center.0, self.center.1));
+        let dump: Vec<_> = backward.chain(center).chain(forward).collect();
+        write!(f, "{}", dump.join("\t"))
+    }
+}
 
-// fn random_weight<R: Rng>(k: usize, rng: &mut R) -> Vec<f64> {
-//     let mut ws = vec![0f64; k];
-//     for _ in 0..100 {
-//         ws[rng.gen_range(0..k)] += 1f64;
-//     }
-//     ws.iter_mut().for_each(|x| *x /= 100f64);
-//     ws
-// }
+// Alignment parameters.
+const MAT: i32 = 1;
+const MIS_CL: i32 = -1;
+const MIS_UN: i32 = -1000;
+const INS: i32 = -10;
+const DEL: i32 = -5;
 
-// fn em_clustering_simple_inner<R: Rng>(
-//     contexts: &[(u64, usize, Vec<(u64, u64)>)],
-//     k: usize,
-//     rng: &mut R,
-// ) -> (Vec<(u64, usize, u64)>, f64, f64) {
-//     let mut weights: Vec<_> = contexts.iter().map(|_| random_weight(k, rng)).collect();
-//     let mut model = SimpleModel::new(contexts, &weights, k);
-//     let mut lk: f64 = contexts.iter().map(|ctx| model.lk(ctx)).sum();
-//     trace!("LK:{}", lk);
-//     loop {
-//         model.update(&mut weights, contexts);
-//         let next_lk = contexts.iter().map(|ctx| model.lk(ctx)).sum();
-//         trace!("LK:{}", next_lk);
-//         if (next_lk - lk) < 0.001 {
-//             break;
-//         }
-//         lk = next_lk;
-//     }
-//     trace!("FinalLK\t{:.4}", lk);
-//     let choises: Vec<_> = (0..k).collect();
-//     let predictions: Vec<_> = contexts
-//         .iter()
-//         .zip(weights.iter())
-//         .map(|(&(id, index, _), ws)| {
-//             let (cluster, max_w) = max_and_position(ws);
-//             let cluster = if max_w < 0.9 {
-//                 cluster as u64
-//             } else {
-//                 use rand::seq::SliceRandom;
-//                 *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
-//             };
-//             (id, index, cluster as u64)
-//         })
-//         .collect();
-//     (predictions, lk, model.num_params())
-// }
+impl Consensus {
+    fn num_parameters(&self) -> usize {
+        // 1 for the center unit.
+        1 + self.forward.len() + self.backward.len()
+    }
+    // flen = max length of the forward, ble = max length of the minimum.
+    // TODO: Maybe we should align reads onto the consensus to update...?
+    fn new(xs: &[Context], ws: &[f64], (flen, blen): (usize, usize)) -> Self {
+        // Column sum, take the max value.
+        let mut center: HashMap<_, f64> = HashMap::new();
+        let mut forward: Vec<HashMap<(u64, u64), f64>> = vec![HashMap::new(); flen];
+        let mut backward: Vec<HashMap<(u64, u64), f64>> = vec![HashMap::new(); blen];
+        for (w, ctx) in ws.iter().zip(xs).filter(|&(&w, _)| SMALL < w) {
+            *center.entry(ctx.cluster).or_default() += w;
+            for (fslot, &f) in forward.iter_mut().zip(ctx.forward.iter()) {
+                *fslot.entry(f).or_default() += w;
+            }
+            for (bslot, &b) in backward.iter_mut().zip(ctx.backward.iter()) {
+                *bslot.entry(b).or_default() += w;
+            }
+        }
+        let center: u64 = center
+            .iter()
+            .max_by(|x, y| (x.1).partial_cmp(y.1).unwrap())
+            .map(|x| *(x.0))
+            .unwrap_or_default();
+        let center = (xs[0].unit, center);
+        let forward: Vec<_> = forward
+            .iter()
+            .filter_map(|slots| slots.iter().max_by(|x, y| (x.1).partial_cmp(y.1).unwrap()))
+            .map(|x| x.0)
+            .copied()
+            .collect();
+        let backward: Vec<(u64, u64)> = backward
+            .iter()
+            .filter_map(|slots| slots.iter().max_by(|x, y| (x.1).partial_cmp(y.1).unwrap()))
+            .map(|x| x.0)
+            .copied()
+            .collect();
+        Self {
+            center,
+            forward,
+            backward,
+        }
+    }
+    // Align query to context, return the alignment positions of the query.
+    // The match score is 1, mismatch score for different cluster is -1, different unit is -1000, and the
+    // insertion score is -10, deletion score is -5.
+    // TODO: Justify these alignment scores.
+    // 0->mat, 1->Del to consensus 2-> Ins to consensus, 3-> Mismatch
+    fn map(&self, context: &Context) -> (Vec<u8>, Vec<u8>, i32) {
+        let (fm, fscore) = Self::align(&self.forward, &context.forward);
+        let (bm, bscore) = Self::align(&self.backward, &context.backward);
+        let center = match self.center.0 == context.cluster {
+            true => MAT,
+            false => MIS_CL,
+        };
+        (fm, bm, fscore + bscore + center)
+    }
+    // Align query to cons.
+    // It is "tail-free" alignment. In other words,
+    // the un-aligned reigon in the end of the `cons` would not be penalized.
+    fn align(cons: &[(u64, u64)], query: &[(u64, u64)]) -> (Vec<u8>, i32) {
+        let minimum = MIS_UN * (cons.len() + query.len()) as i32;
+        let mut dp = vec![vec![minimum; cons.len() + 1]; query.len() + 1];
+        for (i, row) in dp.iter_mut().enumerate() {
+            row[0] = i as i32 * INS;
+        }
+        for j in 0..cons.len() {
+            dp[0][j] = j as i32 * DEL;
+        }
+        for (i, q) in query.iter().enumerate().map(|(i, q)| (i + 1, q)) {
+            // Because the last deletion would not be penalized.
+            let del = if i == query.len() { 0 } else { DEL };
+            for (j, c) in cons.iter().enumerate().map(|(j, c)| (j + 1, c)) {
+                let mat_score = match (q, c) {
+                    (x, y) if x == y => MAT,
+                    ((qu, _), (cu, _)) if qu == cu => MIS_CL,
+                    _ => MIS_UN,
+                };
+                dp[i][j] = (dp[i - 1][j - 1] + mat_score)
+                    .max(dp[i - 1][j] + INS)
+                    .max(dp[i][j - 1] + del);
+            }
+        }
+        // Start from the corner.
+        let mut i = query.len();
+        let (mut j, score) = dp[i]
+            .iter()
+            .enumerate()
+            .max_by(|x, y| (x.1).partial_cmp(y.1).unwrap())
+            .unwrap();
+        let mut ops = vec![1; cons.len() - j];
+        while 0 < i && 0 < j {
+            let (q, c) = (query[i - 1], cons[j - 1]);
+            let mat_score = match (q, c) {
+                (x, y) if x == y => MAT,
+                ((qu, _), (cu, _)) if qu == cu => MIS_CL,
+                _ => MIS_UN,
+            };
+            let current = dp[i][j];
+            let del = if i == query.len() { 0 } else { DEL };
+            if current == dp[i - 1][j - 1] + mat_score {
+                i -= 1;
+                j -= 1;
+                let op = if mat_score == MAT { 0 } else { 3 };
+                ops.push(op);
+            } else if current == dp[i][j - 1] + del {
+                j -= 1;
+                ops.push(1);
+            } else {
+                assert_eq!(current, dp[i - 1][j] + INS);
+                i -= 1;
+                ops.push(2);
+            }
+        }
+        ops.extend(std::iter::repeat(1).take(j));
+        ops.extend(std::iter::repeat(2).take(i));
+        (ops, *score)
+    }
+}

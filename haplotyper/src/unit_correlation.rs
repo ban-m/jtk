@@ -104,7 +104,7 @@ pub fn calc_p_value(clusters: &[(u64, u64)], seed: u64) -> f64 {
         *cluster2.entry(cl.1).or_default() += 1;
     }
     let (k1, k2) = (cluster1.len(), cluster2.len());
-    trace!("DUMP\t{:?}", dump);
+    // trace!("DUMP\t{:?}", dump);
     let degree_of_freedom = (k1 - 1) * (k2 - 1);
     if degree_of_freedom == 0 {
         return 1f64;
@@ -147,6 +147,8 @@ pub fn calc_p_value(clusters: &[(u64, u64)], seed: u64) -> f64 {
         .take(sample_num)
         .filter(|&x| x > chi_squared)
         .count();
-    trace!("CHI\t{}\t{:.2}", hit, chi_squared);
+    // trace!("CHI\t{}\t{:.2}", hit, chi_squared);
     hit as f64 / sample_num as f64
 }
+
+// 149,
