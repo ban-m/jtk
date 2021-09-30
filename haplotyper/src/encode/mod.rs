@@ -25,20 +25,21 @@ pub trait Encode {
 impl Encode for definitions::DataSet {
     fn encode(mut self, threads: usize, sim_thr: f64) -> Self {
         self = encode_by_mm2(self, threads, sim_thr).unwrap();
-        let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+        self = deletion_fill::correct_unit_deletion(self, sim_thr);
+        //let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
         // i->vector of failed index and units.
-        let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
-        for _ in 0..15 {
-            self = deletion_fill::correct_unit_deletion(self, &mut failed_trials, sim_thr);
-            let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-            debug!("Filled:{}\t{}", current, after);
-            if after <= current {
-                debug!("Filled\tBREAK");
-                break;
-            } else {
-                current = after;
-            }
-        }
+        // let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
+        // for _ in 0..15 {
+        // self = deletion_fill::correct_unit_deletion(self, &mut failed_trials, sim_thr);
+        //     let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+        //     debug!("Filled:{}\t{}", current, after);
+        //     if after <= current {
+        //         debug!("Filled\tBREAK");
+        //         break;
+        //     } else {
+        //         current = after;
+        //     }
+        // }
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
         self

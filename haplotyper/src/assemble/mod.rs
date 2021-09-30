@@ -257,8 +257,8 @@ pub fn assemble(
             graph.remove_zero_copy_elements(cov, &lens, 0.3);
             graph.resolve_repeats(&reads, c, 5f64);
             graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            graph.resolve_repeats(&reads, c, 2f64);
-            graph.z_edge_selection();
+            // graph.resolve_repeats(&reads, c, 2f64);
+            // graph.z_edge_selection();
             graph.assign_copy_number(cov, &lens);
         }
     }

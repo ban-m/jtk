@@ -1197,18 +1197,9 @@ impl<'a> DitchGraph<'a> {
     }
     /// Check the dynamic of foci.
     pub fn survey_foci(&mut self, foci: &[Focus]) {
-        let mut foci: Vec<&Focus> = foci.iter().collect();
-        while !foci.is_empty() {
-            debug!("FOCI\tNUM\t{}", foci.len());
-            let mut foci_information: HashMap<_, _> = HashMap::new();
-            for focus in foci.iter() {
-                let llr = foci_information.entry(focus.from).or_insert(0f64);
-                *llr = (*llr).max(focus.llr());
-                let llr = foci_information.entry(focus.to).or_insert(0f64);
-                *llr = (*llr).max(focus.llr());
-            }
-            // Retain foci met stronger one during resolving.
-            foci.retain(|focus| {
+        let success: usize = foci
+            .iter()
+            .filter(|focus| {
                 let (key, pos) = (focus.from, focus.from_position);
                 // Check if the targets are present in the graph.
                 let from_copy_num = self.nodes.get(&focus.from).and_then(|n| n.copy_number);
@@ -1227,14 +1218,50 @@ impl<'a> DitchGraph<'a> {
                     return false;
                 }
                 debug!("FOCUS\tTRY\t{}", focus);
-                self.survey_focus(focus, &foci_information).is_none()
-            });
-        }
+                self.survey_focus(focus).is_some()
+            })
+            .count();
+        debug!("FOCI\t{}\t{}", foci.len(), success);
+        // let mut foci: Vec<&Focus> = foci.iter().collect();
+        // while !foci.is_empty() {
+        //     debug!("FOCI\tNUM\t{}", foci.len());
+        // let mut foci_information: HashMap<_, _> = HashMap::new();
+        // for focus in foci.iter() {
+        //     let llr = foci_information.entry(focus.from).or_insert(0f64);
+        //     *llr = (*llr).max(focus.llr());
+        //     let llr = foci_information.entry(focus.to).or_insert(0f64);
+        //     *llr = (*llr).max(focus.llr());
+        // }
+        // Retain foci met stronger one during resolving.
+        //     foci.retain(|focus| {
+        //         let (key, pos) = (focus.from, focus.from_position);
+        //         // Check if the targets are present in the graph.
+        //         let from_copy_num = self.nodes.get(&focus.from).and_then(|n| n.copy_number);
+        //         let to_copy_num = self.nodes.get(&focus.to).and_then(|node| node.copy_number);
+        //         if !matches!(from_copy_num, Some(1)) || !matches!(to_copy_num, Some(1)) {
+        //             return false;
+        //         }
+        //         // Check if this is branching.
+        //         let num_edges = self.get_edges(key, pos).count();
+        //         if num_edges != 1 {
+        //             return false;
+        //         }
+        //         let edge = self.get_edges(key, pos).next().unwrap();
+        //         let sibs = self.get_edges(edge.to, edge.to_position).count();
+        //         if sibs <= 1 {
+        //             return false;
+        //         }
+        //         debug!("FOCUS\tTRY\t{}", focus);
+        //         //self.survey_focus(focus, &foci_information).is_some()
+        //     });
+        // }
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
-    fn survey_focus(&mut self, focus: &Focus, info: &HashMap<Node, f64>) -> Option<()> {
-        let path_to_focus = self.bfs_to_the_target(focus, info)?;
+    // fn survey_focus(&mut self, focus: &Focus, info: &HashMap<Node, f64>) -> Option<()> {
+    fn survey_focus(&mut self, focus: &Focus) -> Option<()> {
+        // let path_to_focus = self.bfs_to_the_target(focus, info)?;
+        let path_to_focus = self.bfs_to_the_target(focus)?;
         // Get the label along the edge.
         let (label, proxying) = self.spell_along_path(&path_to_focus, focus);
         debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
@@ -1313,7 +1340,7 @@ impl<'a> DitchGraph<'a> {
     fn bfs_to_the_target(
         &self,
         focus: &Focus,
-        info: &HashMap<Node, f64>,
+        //info: &HashMap<Node, f64>,
     ) -> Option<Vec<(Node, Position)>> {
         // Breadth first search until get to the target.
         // Just !pos to make code tidy.
@@ -1330,14 +1357,14 @@ impl<'a> DitchGraph<'a> {
                 }
                 // Move to the end of the node.
                 let pos = !pos;
-                if info
-                    .get(&node)
-                    .map(|&llr| focus.llr() < llr)
-                    .unwrap_or(false)
-                {
-                    debug!("Met stronger focus.");
-                    return None;
-                }
+                // if info
+                //     .get(&node)
+                //     .map(|&llr| focus.llr() < llr)
+                //     .unwrap_or(false)
+                // {
+                //     debug!("Met stronger focus.");
+                //     return None;
+                // }
                 for edge in self.get_edges(node, pos) {
                     next_nodes.push((edge.to, edge.to_position));
                     parent.push(idx);

@@ -15,46 +15,51 @@ use std::collections::{HashMap, HashSet};
 /// Note that, in the first - unit resolution - alignment, there's no distinction between clusters.
 /// However, in the second alignment, it tries to encode the putative region by each cluster's representative.
 /// Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
-pub fn correct_unit_deletion(
-    mut ds: DataSet,
-    failed_trials: &mut [Vec<(usize, u64)>],
-    sim_thr: f64,
-) -> DataSet {
-    let read_skeltons: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .filter(|read| read.nodes.len() > 1)
-        .map(|read| ReadSkelton::from_rich_nodes(&read.nodes))
-        .collect();
+pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
     let raw_seq: HashMap<_, _> = ds
         .raw_reads
         .iter()
         .map(|read| (read.id, read.seq()))
         .collect();
-    // debug!("DELFIL\tTakingCons");
     let representative = take_consensus_sequence(&ds);
-    // debug!("DELFIL\tConsGenerated");
-    assert_eq!(ds.encoded_reads.len(), failed_trials.len());
-    let _failed_trials: usize = ds
-        .encoded_reads
-        .par_iter_mut()
-        .zip(failed_trials.par_iter_mut())
-        .filter(|(r, _)| r.nodes.len() > 1)
-        .map(|(r, failed_trial)| {
-            let seq: Vec<_> = raw_seq[&r.id]
-                .iter()
-                .map(|x| x.to_ascii_uppercase())
-                .collect();
-            correct_deletion_error(
-                r,
-                failed_trial,
-                &representative,
-                &read_skeltons,
-                &seq,
-                sim_thr,
-            )
-        })
-        .sum();
+    let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+    // i->vector of failed index and units.
+    let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
+    for _ in 0..15 {
+        let read_skeltons: Vec<_> = ds
+            .encoded_reads
+            .iter()
+            .filter(|read| read.nodes.len() > 1)
+            .map(|read| ReadSkelton::from_rich_nodes(&read.nodes))
+            .collect();
+        assert_eq!(ds.encoded_reads.len(), failed_trials.len());
+        let _failed_trials: usize = ds
+            .encoded_reads
+            .par_iter_mut()
+            .zip(failed_trials.par_iter_mut())
+            .filter(|(r, _)| r.nodes.len() > 1)
+            .map(|(r, failed_trial)| {
+                let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
+                seq.iter_mut().for_each(u8::make_ascii_uppercase);
+                correct_deletion_error(
+                    r,
+                    failed_trial,
+                    &representative,
+                    &read_skeltons,
+                    &seq,
+                    sim_thr,
+                )
+            })
+            .sum();
+        let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+        debug!("Filled:{}\t{}", current, after);
+        if after <= current {
+            debug!("Filled\tBREAK");
+            break;
+        } else {
+            current = after;
+        }
+    }
     ds
 }
 
@@ -164,63 +169,64 @@ pub fn correct_deletion_error(
     let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
     let seq = &seq;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        let head_node = pileup
-            .check_insertion_head(nodes, threshold, idx)
-            .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
-        if let Some((start_position, direction, uid)) = head_node {
-            let best_encoding = units
-                .get(&uid)
-                .unwrap()
-                .iter()
-                .filter_map(|&(cluster, ref unit)| {
-                    let end_position = (start_position + unit.len() + 2 * OFFSET).min(seq.len());
-                    let is_the_same_encode = nodes[idx].unit == uid
-                        && abs(nodes[idx].position_from_start, start_position) < unit.len();
-                    if start_position < end_position && !is_the_same_encode {
-                        let position = (start_position, end_position, direction);
-                        let unit_info = (unit.as_slice(), uid, cluster);
-                        encode_node(seq, position, unit_info, sim_thr)
-                    } else {
-                        None
-                    }
-                })
-                .max_by_key(|x| x.1)
-                .map(|x| x.0);
-            match best_encoding {
-                Some(head_node) => inserts.push((idx, head_node)),
-                None => {
-                    failed_number += 1;
-                    failed_trials.push((idx, uid));
-                }
+        let head_cand = pileup.check_insertion_head(nodes, threshold, idx);
+        let head_best = head_cand
+            .iter()
+            .filter(|&&(_, _, id)| !failed_trials.contains(&(idx, id)))
+            .filter_map(|&(start_position, direction, uid)| {
+                units
+                    .get(&uid)?
+                    .iter()
+                    .filter_map(|&(cluster, ref unit)| {
+                        let end_position =
+                            (start_position + unit.len() + 2 * OFFSET).min(seq.len());
+                        let is_the_same_encode = nodes[idx].unit == uid
+                            && abs(nodes[idx].position_from_start, start_position) < unit.len();
+                        if start_position < end_position && !is_the_same_encode {
+                            let position = (start_position, end_position, direction);
+                            let unit_info = (unit.as_slice(), uid, cluster);
+                            encode_node(seq, position, unit_info, sim_thr)
+                        } else {
+                            None
+                        }
+                    })
+                    .max_by_key(|x| x.1)
+            })
+            .max_by_key(|x| x.1);
+        match head_best {
+            Some((head_node, _)) => inserts.push((idx, head_node)),
+            None => {
+                failed_number += 1;
+                failed_trials.extend(head_cand.iter().map(|&(_, _, uid)| (idx, uid)));
             }
         }
-        let tail_node = pileup
-            .check_insertion_tail(nodes, threshold, idx)
-            .filter(|&(_, _, id)| !failed_trials.contains(&(idx, id)));
-        if let Some((end_position, direction, uid)) = tail_node {
-            let best_encoding = units
-                .get(&uid)
-                .unwrap()
-                .iter()
-                .filter_map(|&(cluster, ref unit)| {
-                    let end_position = end_position.min(seq.len());
-                    let start_position = end_position.saturating_sub(unit.len() + 2 * OFFSET);
-                    if start_position < end_position {
-                        let positions = (start_position, end_position, direction);
-                        let unit_info = (unit.as_slice(), uid, cluster);
-                        encode_node(seq, positions, unit_info, sim_thr)
-                    } else {
-                        None
-                    }
-                })
-                .max_by_key(|x| x.1)
-                .map(|x| x.0);
-            match best_encoding {
-                Some(tail_node) => inserts.push((idx, tail_node)),
-                None => {
-                    failed_number += 1;
-                    failed_trials.push((idx, uid));
-                }
+        let tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
+        let tail_best = tail_cand
+            .iter()
+            .filter(|&&(_, _, id)| !failed_trials.contains(&(idx, id)))
+            .filter_map(|&(end_position, direction, uid)| {
+                units
+                    .get(&uid)?
+                    .iter()
+                    .filter_map(|&(cluster, ref unit)| {
+                        let end_position = end_position.min(seq.len());
+                        let start_position = end_position.saturating_sub(unit.len() + 2 * OFFSET);
+                        if start_position < end_position {
+                            let positions = (start_position, end_position, direction);
+                            let unit_info = (unit.as_slice(), uid, cluster);
+                            encode_node(seq, positions, unit_info, sim_thr)
+                        } else {
+                            None
+                        }
+                    })
+                    .max_by_key(|x| x.1)
+            })
+            .max_by_key(|x| x.1);
+        match tail_best {
+            Some((tail_node, _)) => inserts.push((idx, tail_node)),
+            None => {
+                failed_number += 1;
+                failed_trials.extend(tail_cand.iter().map(|&(_, _, uid)| (idx, uid)));
             }
         }
     }
@@ -590,25 +596,19 @@ pub struct Pileup {
 
 impl Pileup {
     // Return the maximum insertion from the same unit, the same direction.
-    fn max_insertion_head(&self) -> Option<(usize, u64, bool)> {
+    fn insertion_head(&self) -> impl std::iter::Iterator<Item = (usize, u64, bool)> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.head_inserted.iter() {
             *count.entry((node.unit, node.is_forward)).or_default() += 1;
         }
-        count
-            .iter()
-            .max_by_key(|x| x.1)
-            .map(|(&(a, b), &y)| (y, a, b))
+        count.into_iter().map(|((a, b), y)| (y, a, b))
     }
-    fn max_insertion_tail(&self) -> Option<(usize, u64, bool)> {
+    fn insertion_tail(&self) -> impl std::iter::Iterator<Item = (usize, u64, bool)> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.tail_inserted.iter() {
             *count.entry((node.unit, node.is_forward)).or_default() += 1;
         }
-        count
-            .iter()
-            .max_by_key(|x| x.1)
-            .map(|(&(a, b), &y)| (y, a, b))
+        count.into_iter().map(|((a, b), y)| (y, a, b))
     }
     fn new() -> Self {
         Self {
@@ -665,33 +665,50 @@ impl Pileup {
         nodes: &[Node],
         threshold: usize,
         idx: usize,
-    ) -> Option<(usize, bool, u64)> {
-        let (max_num, max_unit, max_dir) = self.max_insertion_head()?;
-        (threshold <= max_num).then(|| {
-            let (uid, direction) = (max_unit, max_dir);
-            let (prev_offset, _) = self.information_head(max_unit, max_dir);
-            let start_position =
-                (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
-            let start_position = start_position + prev_offset;
-            let start_position = (start_position as usize).saturating_sub(OFFSET);
-            (start_position, direction, uid)
-        })
+    ) -> Vec<(usize, bool, u64)> {
+        //Option<(usize, bool, u64)> {
+        //let (max_num, max_unit, max_dir) = self.max_insertion_head()?;
+        self.insertion_head()
+            .filter(|&(num, _, _)| threshold <= num)
+            .map(|(_, uid, direction)| {
+                let (prev_offset, _) = self.information_head(uid, direction);
+                let start_position =
+                    (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
+                let start_position = start_position + prev_offset;
+                let start_position = (start_position as usize).saturating_sub(OFFSET);
+                (start_position, direction, uid)
+            })
+            .collect()
+
+        // (threshold <= max_num).then(|| {
+        //     let (uid, direction) = (max_unit, max_dir);
+        //     let (prev_offset, _) = self.information_head(max_unit, max_dir);
+        //     let start_position =
+        //         (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
+        //     let start_position = start_position + prev_offset;
+        //     let start_position = (start_position as usize).saturating_sub(OFFSET);
+        //     (start_position, direction, uid)
+        // })
     }
     fn check_insertion_tail(
         &self,
         nodes: &[Node],
         threshold: usize,
         idx: usize,
-    ) -> Option<(usize, bool, u64)> {
-        let end_position = nodes.get(idx)?.position_from_start as isize;
-        let (max_num, max_unit, max_dir) = self.max_insertion_tail()?;
-        (threshold <= max_num).then(|| {
-            let (uid, direction) = (max_unit, max_dir);
-            let (_, after_offset) = self.information_tail(max_unit, max_dir);
-            let end_position = (end_position + after_offset) as usize + OFFSET;
-            // TODO: Validate end position.
-            (end_position, direction, uid)
-        })
+    ) -> Vec<(usize, bool, u64)> {
+        let end_position = match nodes.get(idx) {
+            Some(res) => res.position_from_start as isize,
+            None => return Vec::new(),
+        };
+        self.insertion_tail()
+            .filter(|&(num, _, _)| threshold <= num)
+            .map(|(_, uid, direction)| {
+                let (_, after_offset) = self.information_tail(uid, direction);
+                let end_position = (end_position + after_offset) as usize + OFFSET;
+                // TODO: Validate end position.
+                (end_position, direction, uid)
+            })
+            .collect()
     }
 }
 

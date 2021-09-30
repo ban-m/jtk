@@ -95,11 +95,9 @@ impl DenseEncoding for DataSet {
                 to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
             });
         }
-        // TODO: Is this OK?
-        let mut mock_vector = vec![vec![]; self.encoded_reads.len()];
         let prev: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
         use crate::encode::deletion_fill::correct_unit_deletion;
-        self = correct_unit_deletion(self, &mut mock_vector, CLR_CTG_SIM);
+        self = correct_unit_deletion(self, CLR_CTG_SIM);
         let after: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
         debug!("DE\t{}\t{}", prev, after);
         for read in self.encoded_reads.iter_mut() {

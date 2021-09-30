@@ -317,6 +317,17 @@ sim.result <- parameters %>% mutate(max = mapply(FUN = max_gain, column, row, Mo
 
 
     
-vars <- read_tsv("26.vars", col_names = c("read","bp","len","edit","lk"))
-vars.summary <- vars %>% group_by(bp,edit,len) %>%
-    summarize(score=sum(lk[lk > 0]), posnum = sum(lk > 0), sum = sum(lk))
+
+
+before.data <- read_tsv("before.tsv")
+after.data <- read_tsv("after.tsv")
+em.data <- read_tsv("em.tsv")
+
+
+bind_rows(after.data %>% select(purity) %>% mutate(type="after"),
+          before.data %>% select(purity) %>% mutate(type="before")) %>%
+    ggplot() + geom_histogram(aes(x=purity),bins=100) + facet_grid(type~.)
+
+pvalues <- read_tsv("pvalues.tsv")
+
+pval.unit <- full_join(pvalues, before.data, by="unit")

@@ -34,7 +34,7 @@ else
         jtk mask_repeats -k 15 -t ${THREADS} -vv |\
         jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
         jtk pick_components -vv -c1 -t${THREADS}|\
-        jtk correct_deletion -vv --threads ${THREADS} |\> ${2}.entry.json
+        jtk correct_deletion -vv --threads ${THREADS} > ${2}.entry.json
 fi
 
 if [ -f ${CLUSTERED} ]

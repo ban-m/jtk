@@ -945,7 +945,7 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Re
     Ok(dataset.local_clustering(&config))
 }
 
-fn correct_deletion(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
+fn correct_deletion(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("START\tCorrectDeletion");
     let threads: usize = matches
         .value_of("threads")
@@ -962,19 +962,20 @@ fn correct_deletion(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     use haplotyper::encode::deletion_fill;
-    let mut failed_trials = vec![vec![]; dataset.encoded_reads.len()];
-    let mut current: usize = dataset.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-    for _ in 0..15 {
-        dataset = deletion_fill::correct_unit_deletion(dataset, &mut failed_trials, sim_thr);
-        let after: usize = dataset.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        log::debug!("Filled:{}\t{}", current, after);
-        if after <= current {
-            break;
-        } else {
-            current = after;
-        }
-    }
-    Ok(dataset)
+    Ok(deletion_fill::correct_unit_deletion(dataset, sim_thr))
+    // let mut failed_trials = vec![vec![]; dataset.encoded_reads.len()];
+    // let mut current: usize = dataset.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+    // for _ in 0..15 {
+    //dataset = deletion_fill::correct_unit_deletion(dataset, &mut failed_trials, sim_thr);
+    //     let after: usize = dataset.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+    //     log::debug!("Filled:{}\t{}", current, after);
+    //     if after <= current {
+    //         break;
+    //     } else {
+    //         current = after;
+    //     }
+    // }
+    // Ok(dataset)
 }
 
 fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
