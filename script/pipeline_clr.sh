@@ -55,7 +55,8 @@ else
     cat ${CLUSTERED} |\
         jtk correct_deletion -vv --threads ${THREADS} |\
         jtk resolve_tangle -vv --threads ${THREADS} |\
-        jtk encode_densely -vv --threads ${THREADS} >${RESOLVED}
+        jtk encode_densely -vv --threads ${THREADS}|\
+        jtk correct_deletion -vv --threads ${THREADS}  >${RESOLVED}
 fi
 
 if [ -f ${RESULT} ]

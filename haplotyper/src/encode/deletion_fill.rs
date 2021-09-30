@@ -280,12 +280,12 @@ fn encode_node(
     if dist_thr < aln_dist || has_large_indel {
         if log_enabled!(log::Level::Trace) {
             trace!("{}\t{}\t{}\t{}\tNG", uid, cluster, max_indel, aln_dist);
-            // let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
-            // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-            //     eprintln!("{}", String::from_utf8_lossy(xr));
-            //     eprintln!("{}", String::from_utf8_lossy(ar));
-            //     eprintln!("{}\n", String::from_utf8_lossy(yr));
-            // }
+            let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+            for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+                eprintln!("{}", String::from_utf8_lossy(xr));
+                eprintln!("{}", String::from_utf8_lossy(ar));
+                eprintln!("{}\n", String::from_utf8_lossy(yr));
+            }
         }
         return None;
     }

@@ -9,9 +9,14 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    // ds.encoded_reads
+    //     .iter_mut()
+    //     .flat_map(|r| r.nodes.iter_mut())
+    //     .for_each(|n| n.cluster = 0);
+    ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, 0.35);
     use haplotyper::assemble::*;
-    let config = AssembleConfig::new(3, 100, false, true, 6);
-    ds.squish_small_contig(&config, 25);
+    let config = AssembleConfig::new(3, 100, false, false, 6);
+    // ds.squish_small_contig(&config, 25);
     println!("{}", ds.assemble(&config));
     // let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
     // let sim_thr = 0.35;

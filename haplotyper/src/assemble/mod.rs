@@ -256,9 +256,11 @@ pub fn assemble(
             graph.resolve_repeats(&reads, c, 10f64);
             graph.assign_copy_number(cov, &lens);
             graph.resolve_repeats(&reads, c, 4f64);
+
             // graph.zip_up_overclustering();
             // graph.remove_tips(0.5, 5);
             // graph.z_edge_selection();
+
             graph.assign_copy_number(cov, &lens);
         }
     }
