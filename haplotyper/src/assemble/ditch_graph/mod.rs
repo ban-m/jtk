@@ -1222,39 +1222,6 @@ impl<'a> DitchGraph<'a> {
             })
             .count();
         debug!("FOCI\t{}\t{}", foci.len(), success);
-        // let mut foci: Vec<&Focus> = foci.iter().collect();
-        // while !foci.is_empty() {
-        //     debug!("FOCI\tNUM\t{}", foci.len());
-        // let mut foci_information: HashMap<_, _> = HashMap::new();
-        // for focus in foci.iter() {
-        //     let llr = foci_information.entry(focus.from).or_insert(0f64);
-        //     *llr = (*llr).max(focus.llr());
-        //     let llr = foci_information.entry(focus.to).or_insert(0f64);
-        //     *llr = (*llr).max(focus.llr());
-        // }
-        // Retain foci met stronger one during resolving.
-        //     foci.retain(|focus| {
-        //         let (key, pos) = (focus.from, focus.from_position);
-        //         // Check if the targets are present in the graph.
-        //         let from_copy_num = self.nodes.get(&focus.from).and_then(|n| n.copy_number);
-        //         let to_copy_num = self.nodes.get(&focus.to).and_then(|node| node.copy_number);
-        //         if !matches!(from_copy_num, Some(1)) || !matches!(to_copy_num, Some(1)) {
-        //             return false;
-        //         }
-        //         // Check if this is branching.
-        //         let num_edges = self.get_edges(key, pos).count();
-        //         if num_edges != 1 {
-        //             return false;
-        //         }
-        //         let edge = self.get_edges(key, pos).next().unwrap();
-        //         let sibs = self.get_edges(edge.to, edge.to_position).count();
-        //         if sibs <= 1 {
-        //             return false;
-        //         }
-        //         debug!("FOCUS\tTRY\t{}", focus);
-        //         //self.survey_focus(focus, &foci_information).is_some()
-        //     });
-        // }
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
@@ -1532,7 +1499,8 @@ impl<'a> DitchGraph<'a> {
             if foci.is_empty() {
                 break;
             }
-            foci.sort_by(|x, y| y.llr().partial_cmp(&x.llr()).unwrap());
+            // foci.sort_by(|x, y| y.llr().partial_cmp(&x.llr()).unwrap());
+            foci.sort_by_key(|x| x.dist);
             self.survey_foci(&foci);
         }
     }
@@ -1963,11 +1931,6 @@ impl<'a> DitchGraph<'a> {
                 let path_and_dest: Vec<_> = edges
                     .map(|e| self.simple_path_and_dest(e.to, e.to_position))
                     .collect();
-                // TODO: By unncomment this comment, the function would be 'bubble collapsing'.
-                // let is_bubble = path_and_dest.iter().skip(1).all(|(path, _dest)| {
-                // path.len() == path_and_dest[0].0.len() && path.len() <= len
-                // && dest == &(path_and_dest[0].1)
-                // });
                 let is_bubble = {
                     let paths: Vec<_> = path_and_dest
                         .iter()

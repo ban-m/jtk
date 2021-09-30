@@ -21,42 +21,39 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
         .iter()
         .map(|read| (read.id, read.seq()))
         .collect();
-    let representative = take_consensus_sequence(&ds);
     let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-    // i->vector of failed index and units.
-    let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
-    for _ in 0..15 {
-        let read_skeltons: Vec<_> = ds
-            .encoded_reads
-            .iter()
-            .filter(|read| read.nodes.len() > 1)
-            .map(|read| ReadSkelton::from_rich_nodes(&read.nodes))
-            .collect();
-        assert_eq!(ds.encoded_reads.len(), failed_trials.len());
-        let _failed_trials: usize = ds
-            .encoded_reads
-            .par_iter_mut()
-            .zip(failed_trials.par_iter_mut())
-            .filter(|(r, _)| r.nodes.len() > 1)
-            .map(|(r, failed_trial)| {
-                let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
-                seq.iter_mut().for_each(u8::make_ascii_uppercase);
-                correct_deletion_error(
-                    r,
-                    failed_trial,
-                    &representative,
-                    &read_skeltons,
-                    &seq,
-                    sim_thr,
-                )
-            })
-            .sum();
-        let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        debug!("Filled:{}\t{}", current, after);
-        if after <= current {
-            debug!("Filled\tBREAK");
-            break;
-        } else {
+    'outer: for _ in 0..3 {
+        let representative = take_consensus_sequence(&ds);
+        // i->vector of failed index and units.
+        let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
+        for i in 0..15 {
+            let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
+            ds.encoded_reads
+                .par_iter_mut()
+                .zip(failed_trials.par_iter_mut())
+                .filter(|(r, _)| r.nodes.len() > 1)
+                .for_each(|(r, fails)| {
+                    let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
+                    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+                    correct_deletion_error(
+                        (r, &seq),
+                        fails,
+                        &representative,
+                        &read_skeltons,
+                        sim_thr,
+                    );
+                });
+            let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+            debug!("Filled:{}\t{}", current, after);
+            if after <= current {
+                if i == 0 {
+                    debug!("Filled\tBREAK\tOuter");
+                    break 'outer;
+                } else {
+                    debug!("Filled\tBREAK\tInner");
+                    break;
+                }
+            }
             current = after;
         }
     }
@@ -151,13 +148,12 @@ fn abs(x: usize, y: usize) -> usize {
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
 const OFFSET: usize = 300;
 pub fn correct_deletion_error(
-    read: &mut EncodedRead,
+    (read, seq): (&mut EncodedRead, &[u8]),
     failed_trials: &mut Vec<(usize, u64)>,
     units: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
     reads: &[ReadSkelton],
-    seq: &[u8],
     sim_thr: f64,
-) -> usize {
+) {
     // Inserption counts.
     let pileups = get_pileup(read, reads);
     // TODO:Parametrize here.
@@ -165,7 +161,6 @@ pub fn correct_deletion_error(
     let nodes = &read.nodes;
     let take_len = nodes.len();
     let mut inserts = vec![];
-    let mut failed_number = 0;
     let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
     let seq = &seq;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
@@ -195,10 +190,7 @@ pub fn correct_deletion_error(
             .max_by_key(|x| x.1);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
-            None => {
-                failed_number += 1;
-                failed_trials.extend(head_cand.iter().map(|&(_, _, uid)| (idx, uid)));
-            }
+            None => failed_trials.extend(head_cand.iter().map(|&(_, _, uid)| (idx, uid))),
         }
         let tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
         let tail_best = tail_cand
@@ -224,29 +216,23 @@ pub fn correct_deletion_error(
             .max_by_key(|x| x.1);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
-            None => {
-                failed_number += 1;
-                failed_trials.extend(tail_cand.iter().map(|&(_, _, uid)| (idx, uid)));
-            }
+            None => failed_trials.extend(tail_cand.iter().map(|&(_, _, uid)| (idx, uid))),
         }
     }
     if !inserts.is_empty() {
         failed_trials.clear();
-    }
-    for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
-        read.nodes.insert(idx + accum_inserts, node);
-    }
-    if !read.nodes.is_empty() {
+        for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+            read.nodes.insert(idx + accum_inserts, node);
+        }
         let mut nodes = vec![];
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_slippy_alignment};
-        nodes.sort_by_key(|n| n.unit);
+        nodes.sort_by_key(|n| (n.unit, n.position_from_start));
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
-    failed_number
 }
 
 // Try to Encode Node. Return Some(node) if the alignment is good.
@@ -293,17 +279,17 @@ fn encode_node(
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     if dist_thr < aln_dist || has_large_indel {
         if log_enabled!(log::Level::Trace) {
-            trace!("{}\t{}\t{}\t{}\tNG", uid, max_indel, aln_dist, dist_thr,);
-            let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
-            for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-                eprintln!("{}", String::from_utf8_lossy(xr));
-                eprintln!("{}", String::from_utf8_lossy(ar));
-                eprintln!("{}\n", String::from_utf8_lossy(yr));
-            }
+            trace!("{}\t{}\t{}\t{}\tNG", uid, cluster, max_indel, aln_dist);
+            // let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
+            // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+            //     eprintln!("{}", String::from_utf8_lossy(xr));
+            //     eprintln!("{}", String::from_utf8_lossy(ar));
+            //     eprintln!("{}\n", String::from_utf8_lossy(yr));
+            // }
         }
         return None;
     }
-    trace!("{}\t{}\t{}\t{}\tOK", uid, max_indel, aln_dist, dist_thr,);
+    trace!("{}\t{}\t{}\t{}\tOK", uid, cluster, max_indel, aln_dist);
     let ops = super::compress_kiley_ops(&ops);
     let node = Node {
         position_from_start,
@@ -324,35 +310,37 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
         .iter()
         .filter(|q| read.nodes.iter().any(|n| q.sets.contains(&n.unit)))
     {
-        if let Some((aln, is_forward)) = alignment(read, query) {
-            let query = if is_forward {
-                query.clone()
-            } else {
-                query.rev()
-            };
-            let (mut r_ptr, mut q_ptr) = (0, 0);
-            for op in aln {
-                match op {
-                    Op::Ins(l) => {
-                        if r_ptr < read.nodes.len() && 0 < r_ptr {
-                            pileups[r_ptr].add_head(query.nodes[q_ptr].clone());
-                            if 1 < l {
-                                let last_insertion = q_ptr + l - 1;
-                                pileups[r_ptr].add_tail(query.nodes[last_insertion].clone());
-                            }
+        let (aln, is_forward) = match alignment(read, query) {
+            Some(res) => res,
+            None => continue,
+        };
+        let query = if is_forward {
+            query.clone()
+        } else {
+            query.rev()
+        };
+        let (mut r_ptr, mut q_ptr) = (0, 0);
+        for op in aln {
+            match op {
+                Op::Ins(l) => {
+                    if r_ptr < read.nodes.len() && 0 < r_ptr {
+                        pileups[r_ptr].add_head(query.nodes[q_ptr].clone());
+                        if 1 < l {
+                            let last_insertion = q_ptr + l - 1;
+                            pileups[r_ptr].add_tail(query.nodes[last_insertion].clone());
                         }
-                        q_ptr += l;
                     }
-                    Op::Del(l) => {
-                        r_ptr += l;
+                    q_ptr += l;
+                }
+                Op::Del(l) => {
+                    r_ptr += l;
+                }
+                Op::Match(l) => {
+                    for pileup in pileups.iter_mut().skip(r_ptr).take(l) {
+                        pileup.coverage += 1;
                     }
-                    Op::Match(l) => {
-                        for pileup in pileups.iter_mut().skip(r_ptr).take(l) {
-                            pileup.coverage += 1;
-                        }
-                        r_ptr += l;
-                        q_ptr += l;
-                    }
+                    r_ptr += l;
+                    q_ptr += l;
                 }
             }
         }
@@ -728,6 +716,9 @@ impl std::fmt::Debug for ReadSkelton {
 }
 
 impl ReadSkelton {
+    pub fn new(read: &EncodedRead) -> Self {
+        Self::from_rich_nodes(&read.nodes)
+    }
     pub fn from_rich_nodes(nodes: &[Node]) -> Self {
         // Convert the nodes into (start_position, end_position)s
         let summaries: Vec<_> = nodes

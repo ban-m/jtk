@@ -281,7 +281,7 @@ pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
     ops
 }
 
-pub fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
+pub fn remove_slippy_alignment(nodes: Vec<Node>) -> Vec<Node> {
     fn score(n: &Node) -> i32 {
         n.cigar
             .iter()
@@ -293,15 +293,23 @@ pub fn remove_slippy_alignment(mut nodes: Vec<Node>) -> Vec<Node> {
     }
     // Remove overlapping same units.
     let mut deduped_nodes = vec![];
-    let mut prev = nodes.remove(0);
+    let mut nodes = nodes.into_iter();
+    let mut prev = nodes.next().unwrap();
     for node in nodes {
         let is_disjoint = prev.position_from_start + prev.query_length() < node.position_from_start;
         if prev.unit != node.unit || prev.is_forward != node.is_forward || is_disjoint {
             deduped_nodes.push(prev);
             prev = node;
-        } else if score(&prev) < score(&node) {
-            // Previous node is inferior to the current.
-            prev = node;
+        } else {
+            debug!(
+                "{}\t{}\t{}",
+                prev.position_from_start,
+                prev.query_length(),
+                node.position_from_start
+            );
+            if score(&prev) < score(&node) {
+                prev = node;
+            }
         }
     }
     deduped_nodes.push(prev);

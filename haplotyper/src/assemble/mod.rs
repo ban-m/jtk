@@ -125,9 +125,9 @@ impl Assemble for DataSet {
             let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
             graph.remove_lightweight_edges(2);
             graph.remove_zero_copy_elements(cov, &lens, 0.5);
-            graph.resolve_repeats(&reads, c, 5f64);
+            graph.resolve_repeats(&reads, c, 10f64);
             graph.assign_copy_number(cov, &lens);
-            graph.resolve_repeats(&reads, c, 2f64);
+            graph.resolve_repeats(&reads, c, 4f64);
             let squish = graph.squish_bubbles(len);
             self.encoded_reads
                 .iter_mut()
@@ -252,12 +252,12 @@ pub fn assemble(
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+            graph.remove_zero_copy_elements(cov, &lens, 0.5);
+            graph.resolve_repeats(&reads, c, 10f64);
+            graph.assign_copy_number(cov, &lens);
+            graph.resolve_repeats(&reads, c, 4f64);
             // graph.zip_up_overclustering();
             // graph.remove_tips(0.5, 5);
-            graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            graph.resolve_repeats(&reads, c, 5f64);
-            graph.remove_zero_copy_elements(cov, &lens, 0.3);
-            // graph.resolve_repeats(&reads, c, 2f64);
             // graph.z_edge_selection();
             graph.assign_copy_number(cov, &lens);
         }

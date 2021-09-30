@@ -274,7 +274,7 @@ diplotig.data <- read_tsv("diplotig.unit", col_names = c("id","cluster","hap1","
     mutate(total=hap1+hap2, acc=pmax(hap1/total,hap2/total))
 
 
-dbb.25.data <- read_tsv("dbb.units")
+dbb.25.data <- read_tsv("dbb.tsv")
 
 
 sampling <- function(coverage,n){
