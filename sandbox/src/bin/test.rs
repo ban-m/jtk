@@ -13,10 +13,10 @@ fn main() -> std::io::Result<()> {
     //     .iter_mut()
     //     .flat_map(|r| r.nodes.iter_mut())
     //     .for_each(|n| n.cluster = 0);
-    ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, 0.35);
     use haplotyper::assemble::*;
-    let config = AssembleConfig::new(3, 100, false, false, 6);
-    // ds.squish_small_contig(&config, 25);
+    let config = AssembleConfig::new(4, 1000, false, true, 6);
+    // ds.squish_small_contig(&config, 15);
+    ds.zip_up_suspicious_haplotig(&config, 6, 25);
     println!("{}", ds.assemble(&config));
     // let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
     // let sim_thr = 0.35;

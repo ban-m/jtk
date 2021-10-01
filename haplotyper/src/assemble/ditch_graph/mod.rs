@@ -827,9 +827,8 @@ impl<'a> DitchGraph<'a> {
     /// 3. If it is a node, and the bounding constraint does not hold.
     ///    In other words, it connected to the non-ZCP edge.
     /// 4. If it is an edge, and the occ is more than `thr * max_out_dgree`
-    pub fn remove_zero_copy_elements(&mut self, naive_cov: f64, lens: &[usize], thr: f64) {
+    pub fn remove_zero_copy_elements(&mut self, lens: &[usize], thr: f64) {
         // Check the node violating for right-left condition.
-        self.assign_copy_number(naive_cov, lens);
         let unsound_nodes: HashSet<_> = self
             .nodes
             .iter()
@@ -910,6 +909,80 @@ impl<'a> DitchGraph<'a> {
         self.nodes.retain(|_, node| {
             node.copy_number.map(|cp| cp != 0).unwrap_or(true) || !node.edges.is_empty()
         });
+    }
+    /// Remove zero-copy path.
+    /// 1. Find a zero-copy path.
+    /// 2. Check whether the destination of the zero-copy path are reachable from other paths.
+    /// 3. If so, remove that path.
+    pub fn remove_zero_copy_path(&mut self, thr: f64) {
+        // enumerate parent nodes of the single-copy-path.
+        let mut parents_of_zc = vec![];
+        for (&key, node) in self.nodes.iter() {
+            // Parents should have non-zero-copy.
+            if !matches!(node.copy_number,Some(x) if 0 < x ) {
+                continue;
+            }
+            for pos in [Position::Head, Position::Tail] {
+                let eds = node.edges.iter().filter(|e| e.from_position == pos);
+                if 2 <= eds.clone().count() {
+                    let has_zc = eds
+                        .filter_map(|e| self.nodes.get(&e.to))
+                        .any(|n| matches!(n.copy_number, Some(0)));
+                    if has_zc {
+                        parents_of_zc.push((key, pos));
+                    }
+                }
+            }
+        }
+        // Check reachability.
+        for (parent, par_pos) in parents_of_zc {
+            if !self.nodes.contains_key(&parent) {
+                continue;
+            }
+            if self.get_edges(parent, par_pos).count() <= 1 {
+                continue;
+            }
+            let has_zc = self
+                .get_edges(parent, par_pos)
+                .filter_map(|e| self.nodes.get(&e.to).and_then(|n| n.copy_number))
+                .any(|cp| cp == 0);
+            if has_zc {
+                // Check the destination of the zero-copy path and non-zero-copy paths.
+                let (zc_edges, nzc_edges): (Vec<_>, Vec<_>) =
+                    self.get_edges(parent, par_pos).partition(|e| {
+                        matches!(self.nodes.get(&e.to).and_then(|n| n.copy_number), Some(0))
+                    });
+                let zc_dests: HashSet<_> = zc_edges
+                    .iter()
+                    .flat_map(|e| self.simple_path_and_dest(e.to, e.to_position).1)
+                    .collect();
+                let zc_max = zc_edges.iter().map(|e| self.nodes[&e.to].occ).max();
+                let nzc_dests: HashSet<_> = nzc_edges
+                    .iter()
+                    .flat_map(|e| self.simple_path_and_dest(e.to, e.to_position).1)
+                    .collect();
+                let nzc_max = nzc_edges.iter().map(|e| self.nodes[&e.to].occ).max();
+                // zc_max is Some(_), because there's at least one zc_edge.
+                let zc_nzc_ratio = match (zc_max, nzc_max) {
+                    (Some(x), Some(y)) => x as f64 / y as f64,
+                    (Some(_), _) => 1f64,
+                    _ => panic!(),
+                };
+                if zc_dests.is_subset(&nzc_dests) && zc_nzc_ratio < thr {
+                    debug!(
+                        "RZCP\t{:?}\t{}\t{}\t{:.3}",
+                        parent,
+                        par_pos,
+                        zc_dests.is_subset(&nzc_dests),
+                        zc_nzc_ratio
+                    );
+                    let targets: Vec<_> = zc_edges.iter().map(|e| (e.to, e.to_position)).collect();
+                    for (node, pos) in targets {
+                        self.remove_edge_and_pruning(parent, par_pos, node, pos);
+                    }
+                }
+            }
+        }
     }
     /// Remove transitive edge.
     #[allow(dead_code)]
@@ -1024,12 +1097,13 @@ impl<'a> DitchGraph<'a> {
                 if edges.clone().count() != 2 {
                     continue;
                 }
+                debug!("ZIP\t{:?}\t{}", node.node, pos);
                 // This is a "fork" branch.
                 let mut dests = edges.clone().map(|edge| self.destination(edge));
                 let first_dest = dests.next().unwrap();
                 let second_dest = dests.next().unwrap();
                 if first_dest == second_dest {
-                    // this fork can be zipped up. Selecting an arbitrary path.
+                    debug!("ZIPPINGUP");
                     let simple_path = self.simple_path_from(edges.clone().next().unwrap());
                     to_remove.extend(simple_path);
                 }
@@ -1122,11 +1196,13 @@ impl<'a> DitchGraph<'a> {
                 Some(res) => res,
                 None => break,
             };
-            // If the dgree is more than 1, break.
+            // If the out-dgree is more than 1, return.
+            // The destination nodes connected to (node,position).
             if edges.next().is_some() {
                 break;
             }
             // Check the in-deg of the destination.
+            // The destination nodes connected to (node,position).
             let indeg = self.get_edges(edge.to, edge.to_position).count();
             assert!(1 <= indeg);
             if 1 < indeg {
@@ -1137,10 +1213,8 @@ impl<'a> DitchGraph<'a> {
             position = edge.to_position;
             nodes.extend(edge.proxying.iter().map(|(n, _, _)| n));
         }
-        // Collect the destination.
         let mut dests: Vec<_> = self.get_edges(node, position).map(|e| e.to).collect();
         dests.sort_unstable();
-        // Check if there's more than two indegree/outdegree.
         (nodes, dests)
     }
 
@@ -1273,6 +1347,7 @@ impl<'a> DitchGraph<'a> {
         for (node, pos) in remove_to {
             self.remove_edge_and_pruning(to, to_pos, node, pos);
         }
+        // Removing nodes along path, if nessesarry.
         for (node, pos) in path_to_focus {
             // Sometimes, this node is already removed from the graph.
             if !self.nodes.contains_key(&node) {
@@ -1324,14 +1399,6 @@ impl<'a> DitchGraph<'a> {
                 }
                 // Move to the end of the node.
                 let pos = !pos;
-                // if info
-                //     .get(&node)
-                //     .map(|&llr| focus.llr() < llr)
-                //     .unwrap_or(false)
-                // {
-                //     debug!("Met stronger focus.");
-                //     return None;
-                // }
                 for edge in self.get_edges(node, pos) {
                     next_nodes.push((edge.to, edge.to_position));
                     parent.push(idx);
@@ -1488,7 +1555,14 @@ impl<'a> DitchGraph<'a> {
         }
     }
     /// Resolve repeats by "foci" algorithm.
-    /// TODO: This code has bug when the graph contains loops.
+    /// The algorithm consists three step.
+    /// 1. For each branching node u, find another node v where reads outgoing from u are
+    /// "gathering". In other words, we check the likelihood ratio between "gathering"-model
+    /// and null-model and check whether or not the likelihood ration is larger than `thr`.
+    /// 2. Select an arbitrary path u -> v, make an new edge connecting u and v,
+    /// and remove all other edges from u and to v. By doing this, u and v would be in the same simple path(repeat resolved).
+    /// 3. Recursively remove nodes and their edges, whose in-degree are zero.
+    /// TODO: This code has bug when the graph contains loops?
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         loop {
@@ -1499,7 +1573,6 @@ impl<'a> DitchGraph<'a> {
             if foci.is_empty() {
                 break;
             }
-            // foci.sort_by(|x, y| y.llr().partial_cmp(&x.llr()).unwrap());
             foci.sort_by_key(|x| x.dist);
             self.survey_foci(&foci);
         }
@@ -1603,6 +1676,8 @@ impl<'a> DitchGraph<'a> {
             let choice_num = nodes.len() as f64;
             let correct_lk = ((1f64 - err_prob).powi(2) + err_prob / choice_num).ln();
             // 1 => ((1f64 - err_prob) * err_prob + err_prob / choice_num).ln(),
+            // (+ (expt (- 1 0.1) 2) (/ 0.1 2))
+            // (* 23 (log 0.5)) (+ (* 14 (log 0.86)) (* 9 (log 0.14)))
             // There are at least two nodes.
             let error_lk = {
                 let correct_to_error = (1.0 - err_prob) * err_prob * (choice_num - 1.0).recip();

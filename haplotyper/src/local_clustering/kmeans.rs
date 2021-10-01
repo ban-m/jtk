@@ -381,7 +381,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
             let max_lk = (1..cluster_num + 1)
                 .map(|k| poisson_lk(count, profiles.len() as f64 / k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
-                .unwrap();
+                .unwrap_or_else(|| panic!("{},{}", line!(), cluster_num));
             (pos, maxgain + max_lk)
         })
         .collect();

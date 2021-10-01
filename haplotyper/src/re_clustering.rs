@@ -168,7 +168,8 @@ fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<(u64, u
     graph.remove_lightweight_edges(2);
     let coverage = ds.coverage.unwrap_or(30f64);
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-    graph.remove_zero_copy_elements(coverage, &lens, 0.3);
+    graph.assign_copy_number(coverage, &lens);
+    graph.remove_zero_copy_elements(&lens, 0.3);
     let (node_copy_num, _) = graph.copy_number_estimation(coverage, &lens);
     // If the original copy number is 2 and the re-estimated copy number is 2,
     // then, that region is "strong" diplotig, i.e., we already tried and failed the clustering.

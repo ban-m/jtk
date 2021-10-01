@@ -1130,6 +1130,10 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
             .map(|r| Assignment::new(r.id, 0))
             .collect();
     }
+    // TODO:Parametrize here.
+    let min_count = 6;
+    let max_tig_length = 20;
+    dataset.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

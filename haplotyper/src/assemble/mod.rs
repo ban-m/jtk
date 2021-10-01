@@ -114,36 +114,96 @@ pub trait Assemble {
     fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
     /// Detecting and squishing clusters with small confidence.
     fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize);
+    /// Zip up suspicious haplotig. In other words,
+    /// after usual assembly workflow, if two haplotig shares reads more than `count`,
+    /// it indicates that these contigs can not be phased because of something. We squish such haplotigs with length less than `len`.
+    fn zip_up_suspicious_haplotig(&mut self, c: &AssembleConfig, count: u32, len: usize);
 }
 
 impl Assemble for DataSet {
-    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
+    fn zip_up_suspicious_haplotig(&mut self, c: &AssembleConfig, count: u32, len: usize) {
+        let (_, summaries) = assemble(self, 0, c);
+        // Select unique units.
+        // let unique_units = filter_non_unique_units(&summaries);
+        let copy_numbers = get_contig_copy_numbers(&summaries);
+        let shared_read_counts = count_contig_connection(self, &summaries);
+        // Squishing. Unit -> Vec<Cluster>
+        let mut squishing_node: HashMap<u64, Vec<u64>> = HashMap::new();
+        for (i, (cs, &i_copy_number)) in shared_read_counts
+            .iter()
+            .zip(copy_numbers.iter())
+            .enumerate()
         {
-            let reads: Vec<_> = self.encoded_reads.iter().collect();
-            let cov = self.coverage.unwrap();
-            let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-            let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
-            graph.remove_lightweight_edges(2);
-            graph.remove_zero_copy_elements(cov, &lens, 0.5);
-            graph.resolve_repeats(&reads, c, 10f64);
-            graph.assign_copy_number(cov, &lens);
-            graph.resolve_repeats(&reads, c, 4f64);
-            let squish = graph.squish_bubbles(len);
-            self.encoded_reads
-                .iter_mut()
-                .flat_map(|r| r.nodes.iter_mut())
-                .for_each(|n| {
-                    if let Some(res) = squish.get(&(n.unit, n.cluster)) {
-                        n.cluster = *res;
+            for (&c, &j_copy_number) in cs.iter().zip(copy_numbers.iter()) {
+                if c < count || 2 <= j_copy_number || 2 <= i_copy_number {
+                    continue;
+                }
+                if summaries[i].summary.len() < len {
+                    let dump: Vec<_> = summaries[i]
+                        .summary
+                        .iter()
+                        .map(|n| (n.unit, n.cluster))
+                        .collect();
+                    trace!("ZIPUP\t{:?}", dump);
+                    for (u, c) in summaries[i].summary.iter().map(|n| (n.unit, n.cluster)) {
+                        squishing_node.entry(u).or_default().push(c);
                     }
-                });
+                    break;
+                }
+            }
         }
+        // Squishing (unit,cluster)->cluster.
+        let mut converting_map: HashMap<(u64, u64), u64> = HashMap::new();
+        for (&unit, sqs) in squishing_node.iter() {
+            let target: u64 = *sqs.iter().min().unwrap();
+            debug!("ZIPUP\t({},{:?})\t{}", unit, sqs, target);
+            converting_map.extend(sqs.iter().map(|&cluster| ((unit, cluster), target)));
+        }
+        for read in self.encoded_reads.iter_mut() {
+            for node in read.nodes.iter_mut() {
+                if let Some(&to) = converting_map.get(&(node.unit, node.cluster)) {
+                    node.cluster = to;
+                }
+            }
+        }
+    }
+    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
+        let reads: Vec<_> = self.encoded_reads.iter().collect();
+        let cov = self.coverage.unwrap();
+        let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+        graph.remove_lightweight_edges(2);
+        graph.assign_copy_number(cov, &lens);
+        graph.remove_zero_copy_elements(&lens, 0.5);
+        // graph.resolve_repeats(&reads, c, 10f64);
+        // graph.assign_copy_number(cov, &lens);
+        // graph.resolve_repeats(&reads, c, 4f64);
+        let squish = graph.squish_bubbles(len);
+        self.encoded_reads
+            .iter_mut()
+            .flat_map(|r| r.nodes.iter_mut())
+            .for_each(|n| {
+                if let Some(res) = squish.get(&(n.unit, n.cluster)) {
+                    n.cluster = *res;
+                }
+            });
     }
     fn assemble(&self, c: &AssembleConfig) -> GFA {
         debug!("Start assembly");
-        let header = gfa::Content::Header(gfa::Header::default());
-        let header = gfa::Record::from_contents(header, vec![]);
         let (records, summaries) = assemble(self, 0, c);
+        let copy_numbers = get_contig_copy_numbers(&summaries);
+        let shared_read_counts = count_contig_connection(self, &summaries);
+        debug!("ContigConnection\tid1\tid2\tcp1\tcp2\tcount");
+        for (i, cs) in shared_read_counts.iter().enumerate() {
+            for (j, c) in cs.iter().enumerate() {
+                let (iname, jname) = (&summaries[i].id, &summaries[j].id);
+                let (icp, jcp) = (copy_numbers[i], copy_numbers[j]);
+                debug!(
+                    "ContigConnection\t{}\t{}\t{}\t{}\t{}",
+                    iname, jname, icp, jcp, c
+                );
+            }
+        }
         for summary in summaries {
             let (copy_num, tig_num) = summary
                 .summary
@@ -159,8 +219,10 @@ impl Assemble for DataSet {
                 .iter()
                 .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
                 .collect();
-            debug!("{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
+            debug!("CONUNIT\t{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
         }
+        let header = gfa::Content::Header(gfa::Header::default());
+        let header = gfa::Record::from_contents(header, vec![]);
         let mut header = vec![header];
         header.extend(records);
         GFA::from_records(header)
@@ -252,16 +314,24 @@ pub fn assemble(
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            graph.remove_zero_copy_elements(cov, &lens, 0.5);
-            graph.resolve_repeats(&reads, c, 10f64);
             graph.assign_copy_number(cov, &lens);
-            graph.resolve_repeats(&reads, c, 4f64);
-
-            // graph.zip_up_overclustering();
+            graph.remove_zero_copy_elements(&lens, 0.2);
+            graph.assign_copy_number(cov, &lens);
+            graph.remove_zero_copy_elements(&lens, 0.5);
+            graph.assign_copy_number(cov, &lens);
+            graph.zip_up_overclustering();
+            // From good Likelihood ratio focus, to weaker ones.
+            for llr in (4..16).filter(|x| x % 4 == 0).rev() {
+                graph.resolve_repeats(&reads, c, llr as f64);
+            }
+            // graph.resolve_repeats(&reads, c, 1f64);
+            graph.zip_up_overclustering();
+            // graph.assign_copy_number(cov, &lens);
+            // graph.resolve_repeats(&reads, c, 4f64);
             // graph.remove_tips(0.5, 5);
             // graph.z_edge_selection();
-
             graph.assign_copy_number(cov, &lens);
+            graph.remove_zero_copy_path(0.5);
         }
     }
     let (segments, edge, group, summaries) = graph.spell(c, cl);
@@ -465,43 +535,96 @@ pub fn copy_number_estimation(
     (node_cp, edge_cp)
 }
 
-// let (_, edge_copy) = haplotyper::assemble::copy_number_estimation(&ds, &config);
-// log::debug!("{} ZCE", edge_copy.values().filter(|&&x| x == 0).count());
-// for read in ds.encoded_reads.iter_mut() {
-//     let edge_to_cp = |w: &[Node]| {
-//         let edge = if w[0].unit <= w[1].unit {
-//             ((w[0].unit, w[0].cluster), (w[1].unit, w[1].cluster))
-//         } else {
-//             ((w[1].unit, w[1].cluster), (w[0].unit, w[0].cluster))
-//         };
-//         edge_copy[&edge]
-//     };
-//     let mut current = 0;
-//     while let Some((start, _)) = read
-//         .nodes
-//         .windows(2)
-//         .enumerate()
-//         .skip(current)
-//         .find(|(_, w)| edge_to_cp(w) == 0)
-//     {
-//         let (end, _) = read
-//             .nodes
-//             .windows(2)
-//             .enumerate()
-//             .skip(start)
-//             .take_while(|(_, w)| edge_to_cp(w) == 0)
-//             .last()
-//             .unwrap();
-//         if start < end {
-//             let removed: Vec<_> = read.nodes[start..=end]
-//                 .iter()
-//                 .map(|x| format!("{}", x.unit))
-//                 .collect();
-//             log::debug!("Removing {:?}", removed);
-//             for _ in start..=end {
-//                 read.remove(start);
-//             }
+// pub fn filter_non_unique_units(summaries: &[ContigSummary]) -> Vec<Vec<(u64, u64)>> {
+//     let mut unit_counts: HashMap<_, u32> = HashMap::new();
+//     for summary in summaries.iter() {
+//         for node in summary.summary.iter() {
+//             *unit_counts.entry((node.unit, node.cluster)).or_default() += 1;
 //         }
-//         current = start + 1;
 //     }
+//     // Retain only unique units.
+//     unit_counts.retain(|_, val| *val == 1);
+//     summaries
+//         .iter()
+//         .map(|summary| {
+//             summary
+//                 .summary
+//                 .iter()
+//                 .map(|n| (n.unit, n.cluster))
+//                 .filter(|key| unit_counts.contains_key(&key))
+//                 .collect()
+//         })
+//         .collect()
 // }
+
+pub fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {
+    summaries
+        .iter()
+        .map(|summary| {
+            let (cp, num) = summary
+                .summary
+                .iter()
+                .filter_map(|n| n.copy_number)
+                .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+            (cp as f64 / num as f64).round() as usize
+        })
+        .collect()
+}
+
+/// Return the co-occurence of the reads.
+/// [i][j] -> # of reads shared by summaries[i] and summaries[j].
+pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<u32>> {
+    // (unit,cluster) -> indices of the summary whose either terminal is (unit,cluster), if there is any.
+    let mut contig_terminals: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
+    for (i, summary) in summaries.iter().enumerate() {
+        let mut summary = summary.summary.iter();
+        let first = summary.next().unwrap();
+        contig_terminals
+            .entry((first.unit, first.cluster))
+            .or_default()
+            .push(i);
+        if let Some(last) = summary.last() {
+            contig_terminals
+                .entry((last.unit, last.cluster))
+                .or_default()
+                .push(i);
+        }
+    }
+    // for ((u, c), xs) in contig_terminals.iter() {
+    //     for &i in xs.iter() {
+    //         trace!("TERMINALS\t{}\t{}\t{}", summaries[i].id, u, c);
+    //     }
+    // }
+    let mut shared_reads = vec![vec![0; summaries.len()]; summaries.len()];
+    for read in ds.encoded_reads.iter() {
+        let mut read_through = vec![];
+        for (i, w) in read.nodes.windows(2).enumerate() {
+            // If this (n,c) - (n',c') is connecting
+            // two contigs, we record the both contigs.
+            let (from, to) = match w {
+                [f, t] => ((f.unit, f.cluster), (t.unit, t.cluster)),
+                _ => unreachable!(),
+            };
+            if let (Some(f), Some(t)) = (contig_terminals.get(&from), contig_terminals.get(&to)) {
+                // We record the leaving contig only at the first contig.
+                // This is because, what we want to get is the list of arrived contig,
+                // not the changelog of the contig.
+                if i == 0 {
+                    read_through.push(f);
+                }
+                read_through.push(t);
+            }
+        }
+        // If it is empty, it is NO-op, so it's ok.
+        for (skip, &p1) in read_through.iter().enumerate() {
+            for &p2 in read_through.iter().skip(skip + 1) {
+                for &i in p1 {
+                    for &j in p2 {
+                        shared_reads[i][j] += 1;
+                    }
+                }
+            }
+        }
+    }
+    shared_reads
+}

@@ -46,6 +46,13 @@ impl DataSet {
             "ONT" => ReadType::ONT,
             _ => ReadType::None,
         };
+        let assignments: Vec<_> = raw_reads
+            .iter()
+            .map(|r| Assignment {
+                id: r.id,
+                cluster: 0,
+            })
+            .collect();
         Self {
             input_file: input_file.to_string(),
             coverage: None,
@@ -54,34 +61,34 @@ impl DataSet {
             selected_chunks: vec![],
             encoded_reads: vec![],
             hic_edges: vec![],
-            assignments: vec![],
-            read_type,
-        }
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_param(
-        input_file: String,
-        coverage: Option<f64>,
-        raw_reads: Vec<RawRead>,
-        hic_pairs: Vec<HiCPair>,
-        selected_chunks: Vec<Unit>,
-        encoded_reads: Vec<EncodedRead>,
-        hic_edges: Vec<HiCEdge>,
-        assignments: Vec<Assignment>,
-        read_type: ReadType,
-    ) -> Self {
-        Self {
-            input_file,
-            coverage,
-            raw_reads,
-            hic_pairs,
-            selected_chunks,
-            encoded_reads,
-            hic_edges,
             assignments,
             read_type,
         }
     }
+    // #[allow(clippy::too_many_arguments)]
+    // pub fn with_param(
+    //     input_file: String,
+    //     coverage: Option<f64>,
+    //     raw_reads: Vec<RawRead>,
+    //     hic_pairs: Vec<HiCPair>,
+    //     selected_chunks: Vec<Unit>,
+    //     encoded_reads: Vec<EncodedRead>,
+    //     hic_edges: Vec<HiCEdge>,
+    //     assignments: Vec<Assignment>,
+    //     read_type: ReadType,
+    // ) -> Self {
+    //     Self {
+    //         input_file,
+    //         coverage,
+    //         raw_reads,
+    //         hic_pairs,
+    //         selected_chunks,
+    //         encoded_reads,
+    //         hic_edges,
+    //         assignments,
+    //         read_type,
+    //     }
+    // }
     /// Sanity check function. Call it to ensure that some properties indeed holds.
     /// Currently, the following properties are checked.
     /// 1: The input file exists.

@@ -26,20 +26,6 @@ impl Encode for definitions::DataSet {
     fn encode(mut self, threads: usize, sim_thr: f64) -> Self {
         self = encode_by_mm2(self, threads, sim_thr).unwrap();
         self = deletion_fill::correct_unit_deletion(self, sim_thr);
-        //let mut current: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        // i->vector of failed index and units.
-        // let mut failed_trials = vec![vec![]; self.encoded_reads.len()];
-        // for _ in 0..15 {
-        // self = deletion_fill::correct_unit_deletion(self, &mut failed_trials, sim_thr);
-        //     let after: usize = self.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        //     debug!("Filled:{}\t{}", current, after);
-        //     if after <= current {
-        //         debug!("Filled\tBREAK");
-        //         break;
-        //     } else {
-        //         current = after;
-        //     }
-        // }
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
         self
@@ -301,12 +287,6 @@ pub fn remove_slippy_alignment(nodes: Vec<Node>) -> Vec<Node> {
             deduped_nodes.push(prev);
             prev = node;
         } else {
-            debug!(
-                "{}\t{}\t{}",
-                prev.position_from_start,
-                prev.query_length(),
-                node.position_from_start
-            );
             if score(&prev) < score(&node) {
                 prev = node;
             }

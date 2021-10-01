@@ -108,9 +108,12 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             // 1 This is 35% faster.
             // Maybe it is better to use the original alignment, right?
             let consensus = take_consensus(ref_unit, &seqs, &hmm);
-            let (asn, score) =
+            let (asn, score) = if 1 < ref_unit.cluster_num {
                 kmeans::clustering_with_template(&consensus, &seqs, &mut rng, &hmm, &config)
-                    .unwrap_or_else(|| panic!("RECORD\t{}", unit_id));
+                    .unwrap_or_else(|| panic!("RECORD\t{}", unit_id))
+            } else {
+                (vec![0; units.len()], 0f64)
+            };
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }

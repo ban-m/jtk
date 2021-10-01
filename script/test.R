@@ -331,3 +331,10 @@ bind_rows(after.data %>% select(purity) %>% mutate(type="after"),
 pvalues <- read_tsv("pvalues.tsv")
 
 pval.unit <- full_join(pvalues, before.data, by="unit")
+
+
+tig.data <- read_tsv("dbb.contig")
+unit.data <- read_tsv("dbb.unit")
+
+tig.data <- read_tsv("test.contig")
+

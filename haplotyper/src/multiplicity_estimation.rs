@@ -87,7 +87,8 @@ impl MultiplicityEstimation for DataSet {
             ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
         graph.remove_lightweight_edges(3);
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        graph.remove_zero_copy_elements(cov, &lens, 0.3);
+        graph.assign_copy_number(cov, &lens);
+        graph.remove_zero_copy_elements(&lens, 0.3);
         //graph.resolve_repeats(&reads, &assemble_config, 5f64);
         let (nodes, _) = graph.copy_number_estimation(cov, &lens);
         for chunk in self.selected_chunks.iter_mut() {
