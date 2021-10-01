@@ -105,7 +105,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let ref_unit = chunks.get(&unit_id).unwrap();
             let start = std::time::Instant::now();
             let config = kmeans::ClusteringConfig::new(100, ref_unit.cluster_num as u8, coverage);
-            // 1 This is 35% faster.
             // Maybe it is better to use the original alignment, right?
             let consensus = take_consensus(ref_unit, &seqs, &hmm);
             let (asn, score) = if 1 < ref_unit.cluster_num {
@@ -146,7 +145,11 @@ pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(
     use kiley::polish_chunk_by_parts;
     use kiley::PolishConfig;
     let config = PolishConfig::with_model(100, 0, reads.len(), unit.id, 0, hmm.clone());
-    let max_len = reads.iter().map(|x| x.borrow().len()).max().unwrap();
+    let max_len = reads
+        .iter()
+        .map(|x| x.borrow().len())
+        .max()
+        .unwrap_or_else(|| panic!("{},{}", line!(), unit.id));
     match 200 < max_len {
         true => polish_chunk_by_parts(unit.seq(), reads, &config),
         false => unit.seq().to_vec(),

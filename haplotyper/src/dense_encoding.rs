@@ -84,12 +84,6 @@ impl DenseEncoding for DataSet {
                 // Formatting.
                 re_encode_read(read, seq);
             }
-            // let filled_reads: HashSet<_> = reads.iter().map(|r| r.id).collect();
-            // crate::encode::deletion_fill::correct_unit_deletion_selected(
-            //     &mut self,
-            //     &filled_reads,
-            //     CLR_CTG_SIM,
-            // );
             to_clustering_nodes.extend(nodes.iter().map(|x| x.0));
             edge_encoding_patterns.values().for_each(|new_units| {
                 to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
@@ -174,12 +168,7 @@ fn fill_edges_by_new_units(
             Some(contig) => contig,
             None => continue,
         };
-        // debug!(
-        //     "DUMP\t{}\t{}\t{}",
-        //     window[0].unit, window[1].unit, direction
-        // );
         let unit_info = &edge_encoding_patterns[&edge];
-        // log::debug!("TRY\t{:?}\t{}...{}bp({})", edge, start, end, end - start);
         for node in encode_edge(seq, start, end, direction, contig, unit_info) {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
