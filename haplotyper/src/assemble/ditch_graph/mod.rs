@@ -612,6 +612,16 @@ impl<'a> DitchGraph<'a> {
 }
 
 impl<'a> DitchGraph<'a> {
+    pub fn dump(&self) {
+        if log::log_enabled!(log::Level::Trace) {
+            for edge in self.edges() {
+                trace!("{}", edge.occ);
+            }
+        }
+    }
+    pub fn edges(&self) -> impl std::iter::Iterator<Item = &DitchEdge> {
+        self.nodes.values().flat_map(|n| n.edges.iter())
+    }
     // Return iterator yeilding the edge from a specified node and position.
     fn get_edges(&self, node: Node, pos: Position) -> impl std::iter::Iterator<Item = &DitchEdge> {
         match self.nodes.get(&node) {
@@ -984,7 +994,7 @@ impl<'a> DitchGraph<'a> {
             }
         }
     }
-    /// Remove transitive edge.
+    /// Remove transitive edge if the copy_number of that edge is zero.
     #[allow(dead_code)]
     pub fn transitive_edge_reduction(&mut self) {
         let mut removed_edges: HashMap<_, Vec<_>> =
@@ -1005,7 +1015,7 @@ impl<'a> DitchGraph<'a> {
                                     .any(|gc| gc.to == e.to && gc.to_position == e.to_position),
                                 None => false,
                             });
-                        if is_transitive {
+                        if is_transitive && matches!(e.copy_number, Some(0)) {
                             let (to, t_pos) = (e.to, e.to_position);
                             removed_edges
                                 .entry(*from)
@@ -1784,33 +1794,40 @@ impl<'a> DitchGraph<'a> {
         }
     }
     /// Remove lightweight edges with occurence less than `thr`.
-    pub fn remove_lightweight_edges(&mut self, thr: usize) {
+    /// To retain that edge if the edge is the only edge from its terminal,
+    /// set `retain_single_edge` to `true`.
+    pub fn remove_lightweight_edges(&mut self, thr: usize, retain_single_edge: bool) {
         let mut removed_edges: HashMap<_, Vec<_>> =
             self.nodes.keys().map(|&k| (k, vec![])).collect();
         for (from, node) in self.nodes.iter() {
             for &pos in &[Position::Head, Position::Tail] {
                 let edges = node.edges.iter().filter(|e| e.from_position == pos);
-                let to_cands = edges.clone().count();
-                if 1 < to_cands {
+                if edges.clone().count() <= 1 {
+                    continue;
+                };
+                let thr = {
                     let max_occ = edges.clone().map(|x| x.occ).max().unwrap();
-                    let thr = thr.min(max_occ - 1);
-                    for e in edges.clone().filter(|e| e.occ <= thr) {
-                        // Ensure that there is at least one edge with occ greater than this edge
-                        // in the opposite side.
-                        let has_another_branch =
-                            self.get_edges(e.to, e.to_position).any(|f| e.occ < f.occ);
-                        if has_another_branch {
-                            let to = e.to;
-                            let t_pos = e.to_position;
-                            removed_edges
-                                .entry(*from)
-                                .or_default()
-                                .push((pos, to, t_pos));
-                            removed_edges
-                                .entry(to)
-                                .or_default()
-                                .push((t_pos, *from, pos));
-                        }
+                    if retain_single_edge {
+                        thr.min(max_occ - 1)
+                    } else {
+                        thr
+                    }
+                };
+                for e in edges.clone().filter(|e| e.occ <= thr) {
+                    // If retain mode, check this is not the only edge
+                    let removable = !retain_single_edge
+                        || self.get_edges(e.to, e.to_position).any(|f| e.occ < f.occ);
+                    if removable {
+                        let to = e.to;
+                        let t_pos = e.to_position;
+                        removed_edges
+                            .entry(*from)
+                            .or_default()
+                            .push((pos, to, t_pos));
+                        removed_edges
+                            .entry(to)
+                            .or_default()
+                            .push((t_pos, *from, pos));
                     }
                 }
             }

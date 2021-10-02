@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 const CONS_MIN_LENGTH: usize = 100;
 const COV_THR_FACTOR: usize = 4;
-use crate::encode::CLR_CTG_SIM;
+use crate::encode::CLR_CLR_SIM;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 #[derive(Debug, Clone, Copy)]
@@ -39,12 +39,14 @@ impl DenseEncoding for DataSet {
         debug!("DE\t{:?}\tEnumDiplotig", config);
         // The maximum value of the previous unit.
         // If the unit id is greater than this, it is newly added one.
-        let multi_tig = enumerate_diplotigs(&mut self, config);
+        let multi_tig = enumerate_multitigs(&mut self, config);
         // Nodes to be clustered, or node newly added by filling edge.
         let mut to_clustering_nodes = HashSet::new();
         let cov = self
             .coverage
             .unwrap_or_else(|| panic!("do not have coverage"));
+        let read_seq: HashMap<u64, &[u8]> =
+            self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
         for (cluster_num, nodes) in multi_tig {
             log::debug!("CONTIG\t{:?}", nodes);
             let mut reads: Vec<_> = self
@@ -70,8 +72,6 @@ impl DenseEncoding for DataSet {
                     prev_bp = break_point;
                 }
             }
-            let read_seq: HashMap<u64, &[u8]> =
-                self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
             // Encoding.
             for read in reads.iter_mut() {
                 let seq = &read_seq[&read.id];
@@ -89,19 +89,16 @@ impl DenseEncoding for DataSet {
                 to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
             });
         }
-        let prev: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
         use crate::encode::deletion_fill::correct_unit_deletion;
-        self = correct_unit_deletion(self, CLR_CTG_SIM);
-        let after: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
-        debug!("DE\t{}\t{}", prev, after);
+        self = correct_unit_deletion(self, CLR_CLR_SIM);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
         }
         // Local clustering.
-        debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
-        crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
-        squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
+        // debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
+        // crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
+        // squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
         self
     }
 }
@@ -274,8 +271,8 @@ fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gai
     }
 }
 
-// Squish short contig, return the generated diplotigs.
-fn enumerate_diplotigs(
+// Squish short contig, return the generated multi-tigs.
+fn enumerate_multitigs(
     ds: &mut DataSet,
     &DenseEncodingConfig {
         len,
@@ -356,8 +353,6 @@ fn encode_edge(
     // Split the alignment into encoded nodes.
     // Current position on the contg and the query.
     let (mut xpos, mut ypos) = (0, 0);
-    // Current edit distance inside the focal unit.
-    let mut edit_dist = 0;
     // Current edit operations inside the focal unit.
     let mut alignments = vec![];
     let mut target_idx = 0;
@@ -366,16 +361,13 @@ fn encode_edge(
     for op in ops {
         match op {
             kiley::bialignment::Op::Mat | kiley::bialignment::Op::Mism => {
-                edit_dist += (contig[xpos] != seq[ypos]) as u32;
                 xpos += 1;
                 ypos += 1;
             }
             kiley::bialignment::Op::Del => {
-                edit_dist += 1;
                 xpos += 1;
             }
             kiley::bialignment::Op::Ins => {
-                edit_dist += 1;
                 ypos += 1;
             }
         }
@@ -391,14 +383,18 @@ fn encode_edge(
                 .iter()
                 .filter(|&&x| x != kiley::bialignment::Op::Del)
                 .count();
+            let edit_dist = alignments
+                .iter()
+                .filter(|&&x| x != kiley::bialignment::Op::Mat)
+                .count();
             let cigar = crate::encode::compress_kiley_ops(&alignments);
-            let has_large_indel = cigar.iter().any(|op| match *op {
-                Op::Ins(l) | Op::Del(l) => l > crate::encode::INDEL_THRESHOLD,
-                _ => false,
-            });
-            // TODO: Parametrize here.
-            let dist_thr = (unitlen as f64 * CLR_CTG_SIM).floor() as u32;
-            if !has_large_indel && edit_dist < dist_thr {
+            let indel_mism = alignments
+                .iter()
+                .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
+            let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
+            let dist_thr = (unitlen as f64 * CLR_CLR_SIM).floor() as usize;
+            let gap_thr = (unitlen as f64 * crate::encode::INDEL_FRACTION).round() as usize;
+            if max_indel < gap_thr && edit_dist < dist_thr {
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,
                     false => end - ypos,
@@ -415,7 +411,6 @@ fn encode_edge(
             // Refresh.
             target_idx += 1;
             alignments.clear();
-            edit_dist = 0;
         }
         if target_idx == unit_info.len() {
             // This is needed, as sometimes only insertions would be remain.

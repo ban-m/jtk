@@ -22,11 +22,13 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
         .map(|read| (read.id, read.seq()))
         .collect();
     let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-    'outer: for _ in 0..3 {
+    const OUTER_LOOP: usize = 3;
+    const INNER_LOOP: usize = 15;
+    'outer: for t in 0..OUTER_LOOP {
         let representative = take_consensus_sequence(&ds);
         // i->vector of failed index and units.
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
-        for i in 0..15 {
+        for i in 0..INNER_LOOP {
             let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
             ds.encoded_reads
                 .par_iter_mut()
@@ -47,7 +49,7 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
             debug!("Filled:{}\t{}", current, after);
             if after <= current {
                 if i == 0 {
-                    debug!("Filled\tBREAK\tOuter");
+                    debug!("Filled\tBREAK\tOuter\t{}", t);
                     break 'outer;
                 } else {
                     debug!("Filled\tBREAK\tInner");
@@ -55,6 +57,14 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
                 }
             }
             current = after;
+            if i == INNER_LOOP - 1 && t == OUTER_LOOP - 1 {
+                debug!("DELFIL\tSAVE\t{}\t{}", i, t);
+                if let Ok(wtr) = std::fs::File::create("temp.json") {
+                    use std::io::Write;
+                    let mut wtr = std::io::BufWriter::new(wtr);
+                    writeln!(&mut wtr, "{}", serde_json::ser::to_string(&ds).unwrap()).unwrap();
+                }
+            }
         }
     }
     ds
@@ -270,14 +280,15 @@ fn encode_node(
         .iter()
         .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
     let max_indel = super::max_region(indel_mism).max(0) as usize;
-    let has_large_indel = max_indel > super::INDEL_THRESHOLD;
+    let indel_thr = (unitseq.len() as f64 * super::INDEL_FRACTION).round() as usize;
+    // let has_large_indel = max_indel > super::INDEL_THRESHOLD;
     let position_from_start = if is_forward {
         start + aln_start
     } else {
         start + query.len() - aln_end - 1
     };
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    if dist_thr < aln_dist || has_large_indel {
+    if dist_thr < aln_dist || indel_thr < max_indel {
         if log_enabled!(log::Level::Trace) {
             trace!("{}\t{}\t{}\t{}\tNG", uid, cluster, max_indel, aln_dist);
             let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);

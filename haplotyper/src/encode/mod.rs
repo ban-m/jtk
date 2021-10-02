@@ -16,8 +16,11 @@ pub const MARGIN: usize = 50;
 // but it would be problem in local clustering, which requiring almost all the
 // unit is correctly globally aligned.
 const ALLOWED_END_GAP: usize = 50;
-/// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
-pub const INDEL_THRESHOLD: usize = 50;
+// /// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
+// pub const INDEL_THRESHOLD: usize = 50;
+/// Any alignment having Insertion/Deletion longer than unit.seq() * INDEL_FRACTION would be discarded.
+/// for 2Kbp length, the threshold is 50bp.
+pub const INDEL_FRACTION: f64 = 1f64 / 40f64;
 pub trait Encode {
     fn encode(self, threads: usize, sim_thr: f64) -> Self;
 }
@@ -42,6 +45,10 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
         .filter_map(|aln| {
             // Check the max-indel.
             use bio_utils::sam;
+            let tname = aln.tname.parse::<u64>().unwrap();
+            let chunk_len = chunks.get(&tname)?.seq().len();
+            let dist_thr = (chunk_len as f64 * sim_thr).floor() as usize;
+            let gap_thr = (chunk_len as f64 * INDEL_FRACTION).round() as usize;
             let cigar = sam::parse_cigar_string(aln.tags.get("cg")?);
             let indel_iter = cigar.iter().map(|op| match *op {
                 sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,
@@ -49,11 +56,8 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
                 _ => 0,
             });
             let max_indel = max_region(indel_iter).max(0) as usize;
-            let no_large_indel = max_indel < INDEL_THRESHOLD;
-            // let no_large_indel = cigar.iter().all(|op| match *op {
-            //     sam::Op::Deletion(l) | sam::Op::Insertion(l) => l <= INDEL_THRESHOLD,
-            //     _ => true,
-            // });
+            // let no_large_indel = max_indel < INDEL_THRESHOLD;
+            let no_large_indel = max_indel < gap_thr;
             let dist: usize = cigar
                 .iter()
                 .map(|op| match *op {
@@ -61,8 +65,6 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
                     _ => 0,
                 })
                 .sum();
-            let tname = aln.tname.parse::<u64>().unwrap();
-            let dist_thr = (chunks.get(&tname)?.seq().len() as f64 * sim_thr).floor() as usize;
             (no_large_indel && dist < dist_thr).then(|| aln)
         })
         .collect();

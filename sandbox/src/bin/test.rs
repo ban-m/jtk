@@ -1,23 +1,40 @@
 use definitions::*;
-// use rand::SeedableRng;
-// use rand_xoshiro::Xoroshiro128PlusPlus;
+use rand::SeedableRng;
+use rand_xoshiro::Xoroshiro128PlusPlus;
 // use std::collections::HashMap;
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
-        .map(BufReader::new)
-        .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(340928);
+    for _ in 0..10 {
+        let xs = kiley::gen_seq::generate_seq(&mut rng, 2000);
+        let ys = kiley::gen_seq::generate_seq(&mut rng, 2000);
+        let (score, ops) = kiley::bialignment::global_banded(&xs, &ys, 2, -6, -5, -1, 20);
+        let indel_mism = ops
+            .iter()
+            .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
+        let max_indel = haplotyper::encode::max_region(indel_mism).max(0) as usize;
+        println!("{}\t{}", score, max_indel);
+    }
+    // let (xr, ar, yr) = kiley::bialignment::recover(&xs, &ys, &ops);
+    // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+    //     eprintln!("{}", String::from_utf8_lossy(xr));
+    //     eprintln!("{}", String::from_utf8_lossy(ar));
+    //     eprintln!("{}\n", String::from_utf8_lossy(yr));
+    // }
+    // let args: Vec<_> = std::env::args().collect();
+    // let mut ds: DataSet = std::fs::File::open(&args[1])
+    //     .map(BufReader::new)
+    //     .map(|x| serde_json::de::from_reader(x).unwrap())?;
     // ds.encoded_reads
     //     .iter_mut()
     //     .flat_map(|r| r.nodes.iter_mut())
     //     .for_each(|n| n.cluster = 0);
-    use haplotyper::assemble::*;
-    let config = AssembleConfig::new(4, 1000, false, true, 6);
+    // use haplotyper::assemble::*;
+    // let config = AssembleConfig::new(4, 1000, false, true, 6);
     // ds.squish_small_contig(&config, 15);
-    ds.zip_up_suspicious_haplotig(&config, 6, 25);
-    println!("{}", ds.assemble(&config));
+    // ds.zip_up_suspicious_haplotig(&config, 6, 25);
+    // println!("{}", ds.assemble(&config));
     // let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
     // let sim_thr = 0.35;
     // rayon::ThreadPoolBuilder::new()

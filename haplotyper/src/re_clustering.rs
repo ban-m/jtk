@@ -165,7 +165,7 @@ fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<(u64, u
     let config = crate::assemble::AssembleConfig::new(c.threads, 200, false, false, 6);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
     // TODO: Parametrize here.
-    graph.remove_lightweight_edges(2);
+    graph.remove_lightweight_edges(2, true);
     let coverage = ds.coverage.unwrap_or(30f64);
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
     graph.assign_copy_number(coverage, &lens);

@@ -172,7 +172,7 @@ impl Assemble for DataSet {
         let cov = self.coverage.unwrap();
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
-        graph.remove_lightweight_edges(2);
+        graph.remove_lightweight_edges(2, true);
         graph.assign_copy_number(cov, &lens);
         graph.remove_zero_copy_elements(&lens, 0.5);
         // graph.resolve_repeats(&reads, c, 10f64);
@@ -195,7 +195,10 @@ impl Assemble for DataSet {
         let shared_read_counts = count_contig_connection(self, &summaries);
         debug!("ContigConnection\tid1\tid2\tcp1\tcp2\tcount");
         for (i, cs) in shared_read_counts.iter().enumerate() {
-            for (j, c) in cs.iter().enumerate() {
+            for (j, &c) in cs.iter().enumerate() {
+                if c == 0 {
+                    continue;
+                }
                 let (iname, jname) = (&summaries[i].id, &summaries[j].id);
                 let (icp, jcp) = (copy_numbers[i], copy_numbers[j]);
                 debug!(
@@ -310,7 +313,7 @@ pub fn assemble(
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     // POINTER: ASSEMBLEIMPL
     // TODO: Tune this.
-    graph.remove_lightweight_edges(2);
+    graph.remove_lightweight_edges(2, true);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
@@ -324,16 +327,15 @@ pub fn assemble(
             for llr in (4..16).filter(|x| x % 4 == 0).rev() {
                 graph.resolve_repeats(&reads, c, llr as f64);
             }
-            // graph.resolve_repeats(&reads, c, 1f64);
             graph.zip_up_overclustering();
-            // graph.assign_copy_number(cov, &lens);
-            // graph.resolve_repeats(&reads, c, 4f64);
             // graph.remove_tips(0.5, 5);
             // graph.z_edge_selection();
             graph.assign_copy_number(cov, &lens);
             graph.remove_zero_copy_path(0.5);
+            // graph.transitive_edge_reduction();
         }
     }
+    graph.remove_lightweight_edges(1, false);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
@@ -498,42 +500,42 @@ pub fn polish_by_chunking(
     polished.pop().unwrap().1
 }
 
-type CpEdge = ((u64, u64), (u64, u64));
-/// Estimate the copy number on each edge and each node.
-pub fn copy_number_estimation(
-    ds: &DataSet,
-    c: &AssembleConfig,
-) -> (HashMap<(u64, u64), usize>, HashMap<CpEdge, usize>) {
-    let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
-    for asn in ds.assignments.iter() {
-        *cluster_and_num.entry(asn.cluster).or_default() += 1;
-    }
-    let (mut node_cp, mut edge_cp) = (HashMap::new(), HashMap::new());
-    for (cl, _) in cluster_and_num.into_iter() {
-        let clusters: HashSet<_> = ds
-            .assignments
-            .iter()
-            .filter(|asn| asn.cluster == cl)
-            .map(|asn| asn.id)
-            .collect();
-        let reads: Vec<_> = ds
-            .encoded_reads
-            .iter()
-            .filter(|r| clusters.contains(&r.id))
-            .collect();
-        let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-        graph.remove_lightweight_edges(1);
-        let cov = match ds.coverage {
-            Some(res) => res,
-            None => panic!(".coverage was checked before estimate coverage."),
-        };
-        let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let (node, edge) = graph.copy_number_estimation(cov, &lens);
-        node_cp.extend(node);
-        edge_cp.extend(edge.into_iter().map(|(((f, _), (t, _)), cp)| ((f, t), cp)));
-    }
-    (node_cp, edge_cp)
-}
+// type CpEdge = ((u64, u64), (u64, u64));
+// /// Estimate the copy number on each edge and each node.
+// pub fn copy_number_estimation(
+//     ds: &DataSet,
+//     c: &AssembleConfig,
+// ) -> (HashMap<(u64, u64), usize>, HashMap<CpEdge, usize>) {
+//     let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
+//     for asn in ds.assignments.iter() {
+//         *cluster_and_num.entry(asn.cluster).or_default() += 1;
+//     }
+//     let (mut node_cp, mut edge_cp) = (HashMap::new(), HashMap::new());
+//     for (cl, _) in cluster_and_num.into_iter() {
+//         let clusters: HashSet<_> = ds
+//             .assignments
+//             .iter()
+//             .filter(|asn| asn.cluster == cl)
+//             .map(|asn| asn.id)
+//             .collect();
+//         let reads: Vec<_> = ds
+//             .encoded_reads
+//             .iter()
+//             .filter(|r| clusters.contains(&r.id))
+//             .collect();
+//         let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+//         graph.remove_lightweight_edges(2, true);
+//         let cov = match ds.coverage {
+//             Some(res) => res,
+//             None => panic!("coverage was checked before estimate coverage."),
+//         };
+//         let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+//         let (node, edge) = graph.copy_number_estimation(cov, &lens);
+//         node_cp.extend(node);
+//         edge_cp.extend(edge.into_iter().map(|(((f, _), (t, _)), cp)| ((f, t), cp)));
+//     }
+//     (node_cp, edge_cp)
+// }
 
 // pub fn filter_non_unique_units(summaries: &[ContigSummary]) -> Vec<Vec<(u64, u64)>> {
 //     let mut unit_counts: HashMap<_, u32> = HashMap::new();
@@ -590,11 +592,11 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
                 .push(i);
         }
     }
-    // for ((u, c), xs) in contig_terminals.iter() {
-    //     for &i in xs.iter() {
-    //         trace!("TERMINALS\t{}\t{}\t{}", summaries[i].id, u, c);
-    //     }
-    // }
+    for ((u, c), xs) in contig_terminals.iter() {
+        for &i in xs.iter() {
+            trace!("TERMINALS\t{}\t{}\t{}", summaries[i].id, u, c);
+        }
+    }
     let mut shared_reads = vec![vec![0; summaries.len()]; summaries.len()];
     for read in ds.encoded_reads.iter() {
         let mut read_through = vec![];
@@ -616,8 +618,8 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
             }
         }
         // If it is empty, it is NO-op, so it's ok.
-        for (skip, &p1) in read_through.iter().enumerate() {
-            for &p2 in read_through.iter().skip(skip + 1) {
+        for &p1 in read_through.iter() {
+            for &p2 in read_through.iter() {
                 for &i in p1 {
                     for &j in p2 {
                         shared_reads[i][j] += 1;
