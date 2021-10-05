@@ -713,31 +713,37 @@ impl<'a> DitchGraph<'a> {
         }
         primary_candidates
     }
+    // Partition edges whether or not it is in simple path/not.
     // Only (from, _, to, _) with from <= to edges would be in these vectors.
-    // TODO: This function has bugs.
     fn partition_edges_by_simple_path(&self) -> (Vec<&DitchEdge>, Vec<&DitchEdge>) {
-        let (mut in_simple_path, mut between_simple_path) = (vec![], vec![]);
-        for node in self.nodes.values() {
-            for pos in [Position::Head, Position::Tail] {
-                let count = node.edges.iter().filter(|e| e.from_position == pos).count();
-                // if this is bidirectionaly unique, it is a edge in a simple path.
-                let is_bi_unique = (count == 1) && {
-                    let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
-                    let mut to_edge = self.nodes[&edge.to].edges.iter();
-                    to_edge.all(|e| e.from_position != edge.to_position || e.to == edge.from)
+        let degrees: HashMap<_, (u32, u32)> =
+            self.nodes
+                .iter()
+                .map(|(&key, node)| {
+                    let (head, tail) = node.edges.iter().fold((0, 0), |(head, tail), edge| {
+                        match edge.from_position {
+                            Position::Head => (head + 1, tail),
+                            Position::Tail => (head, tail + 1),
+                        }
+                    });
+                    (key, (head, tail))
+                })
+                .collect();
+        self.nodes
+            .values()
+            .flat_map(|node| node.edges.iter())
+            .filter(|edge| edge.from <= edge.to)
+            .partition(|edge| {
+                let from_deg = match edge.from_position {
+                    Position::Head => degrees[&edge.from].0,
+                    Position::Tail => degrees[&edge.from].1,
                 };
-                let edges = node.edges.iter().filter(|e| e.from_position == pos);
-                let edges = edges.filter(|e| e.from <= e.to);
-                for edge in edges {
-                    if is_bi_unique {
-                        in_simple_path.push(edge);
-                    } else {
-                        between_simple_path.push(edge);
-                    }
-                }
-            }
-        }
-        (in_simple_path, between_simple_path)
+                let to_deg = match edge.to_position {
+                    Position::Head => degrees[&edge.to].0,
+                    Position::Tail => degrees[&edge.to].1,
+                };
+                from_deg == 1 && to_deg == 1
+            })
     }
     /// Estimoate copy number of nodes and edges.
     /// *This function does not modify the graph content*. If you want
@@ -771,7 +777,7 @@ impl<'a> DitchGraph<'a> {
                 plug_num[to_index].insert((edge.to, edge.to_position));
             }
             for plugs in plug_num {
-                assert!(plugs.len() <= 2, "{}", plugs.len());
+                assert!(plugs.len() <= 2, "{:?}", plugs);
             }
         }
         use super::copy_number::CoverageCalibrator;
@@ -796,7 +802,7 @@ impl<'a> DitchGraph<'a> {
                         plugs[from_index].len() == 2
                     }
                 };
-                assert!(plugs[from_index].len() <= 2);
+                assert!(plugs[from_index].len() <= 2, "{:?}", plugs[from_index]);
                 let to_node = (edge.to, edge.to_position);
                 let tp = match plugs[to_index].iter().position(|n| n == &to_node) {
                     Some(idx) => idx == 1,

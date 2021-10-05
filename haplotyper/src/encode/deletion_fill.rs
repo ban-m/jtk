@@ -29,15 +29,6 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
         // i->vector of failed index and units.
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
         for i in 0..INNER_LOOP {
-            // if i == 10 {
-            //     debug!("DELFIL\tSAVE\t{}\t{}", i, t);
-            //     if let Ok(wtr) = std::fs::File::create("temp.json") {
-            //         use std::io::Write;
-            //         let mut wtr = std::io::BufWriter::new(wtr);
-            //         writeln!(&mut wtr, "{}", serde_json::ser::to_string(&ds).unwrap()).unwrap();
-            //     }
-            //     panic!();
-            // }
             let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
             ds.encoded_reads
                 .par_iter_mut()
@@ -261,19 +252,26 @@ fn encode_node(
         bio_utils::revcmp(&seq[start..end])
     };
     query.iter_mut().for_each(|x| x.make_ascii_uppercase());
-    let mode = edlib_sys::AlignMode::Infix;
-    let task = edlib_sys::AlignTask::Alignment;
-    // Note that unit.seq would be smaller than query! So the operations should be reversed.
-    // let unitseq = unit.seq();
-    let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
     let unitlen = unitseq.len() as f64;
     let dist_thr = (unitlen * sim_thr).floor() as u32;
     let indel_thr = ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
-    let locations = alignment.locations.unwrap();
-    let (aln_start, aln_end) = locations[0];
-    let seq = query[aln_start..=aln_end].to_vec();
-    let band = (seq.len() / 10).max(20);
-    let (score, ops) = kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
+    let (seq, aln_start, aln_end, ops, score) = {
+        let mode = edlib_sys::AlignMode::Infix;
+        let task = edlib_sys::AlignTask::Alignment;
+        // Note that unit.seq would be smaller than query! So the operations should be reversed.
+        // let unitseq = unit.seq();
+        let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
+        let locations = alignment.locations.unwrap();
+        let (aln_start, aln_end) = locations[0];
+        let seq = &query[aln_start..=aln_end];
+        let band = (seq.len() / 10).max(20);
+        // TODO: Infix alignment would be better, but it is still OK.
+        let (score, mut ops) =
+            kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
+        let (aln_start, aln_end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
+        let query = query[aln_start..=aln_end].to_vec();
+        (query, aln_start, aln_end, ops, score)
+    };
     let aln_dist = ops
         .iter()
         .filter(|&&op| op != kiley::bialignment::Op::Mat)
@@ -313,6 +311,28 @@ fn encode_node(
         cigar: ops,
     };
     Some((node, score))
+}
+
+// Triming the head/tail insertion, re-calculate the start and end position.
+fn trim_head_tail_insertion(
+    ops: &mut Vec<kiley::bialignment::Op>,
+    start: usize,
+    end: usize,
+) -> (usize, usize) {
+    // Triming head.
+    let mut head_ins = 0;
+    ops.reverse();
+    while ops.last() == Some(&kiley::bialignment::Op::Ins) {
+        ops.pop();
+        head_ins += 1;
+    }
+    ops.reverse();
+    let mut tail_ins = 0;
+    while ops.last() == Some(&kiley::bialignment::Op::Ins) {
+        ops.pop();
+        tail_ins += 1;
+    }
+    (start + head_ins, end - tail_ins)
 }
 
 // Align read skeltons to read, return the pileup sumamries.
@@ -680,16 +700,6 @@ impl Pileup {
                 (start_position, direction, uid)
             })
             .collect()
-
-        // (threshold <= max_num).then(|| {
-        //     let (uid, direction) = (max_unit, max_dir);
-        //     let (prev_offset, _) = self.information_head(max_unit, max_dir);
-        //     let start_position =
-        //         (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
-        //     let start_position = start_position + prev_offset;
-        //     let start_position = (start_position as usize).saturating_sub(OFFSET);
-        //     (start_position, direction, uid)
-        // })
     }
     fn check_insertion_tail(
         &self,

@@ -10,8 +10,10 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    // let target = (1713, 3151);
     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
-        if (edge.from == 1333 && edge.to == 2439) || (edge.to == 1333 && edge.from == 2439) {
+        // if (edge.from, edge.to) == target || (edge.to, edge.from) == target {
+        if (edge.from == 1713 && edge.to == 3151) || (edge.from == 1713 && edge.to == 1713) {
             println!("{},{}", edge.label, edge.label.len());
         }
     }

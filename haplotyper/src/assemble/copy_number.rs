@@ -341,15 +341,73 @@ pub fn estimate_copy_number(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<u
     for (i, _) in is_isolated.iter().enumerate().filter(|(_, &x)| x) {
         node_cp[i] = nodes[i];
     }
-    // for (i, cp) in copy_num.iter().enumerate() {
-    //     debug!("ROUND\t{}\t{:.2}\t{}\tEDGE", edges[i].4, cp, cp.round());
-    // }
-    // for (i, cp) in node_cp.iter().enumerate() {
-    //     debug!("ROUND\t{}\t{:.2}\t{}\tNODE", nodes[i], cp, cp.round());
-    // }
     let copy_num: Vec<_> = copy_num.iter().map(|&x| x.round() as usize).collect();
     let node_cp: Vec<_> = node_cp.iter().map(|&x| x.round() as usize).collect();
     (node_cp, copy_num)
+}
+
+pub fn polish_copy_number(
+    nodes: &[f64],
+    node_cp: &mut [usize],
+    edges: &[Edge],
+    edge_cp: &mut [usize],
+) {
+    // Copy number for [i][bool as usize]. True -> 1.
+    let mut adj_copy_num = vec![[0; 2]; nodes.len()];
+    for (&cp, &(from, fp, to, tp, _)) in edge_cp.iter().zip(edges.iter()) {
+        adj_copy_num[from][fp as usize] += cp;
+        adj_copy_num[to][tp as usize] += cp;
+    }
+    // (node index, true/false, target copy number);
+    let mut diffs = vec![];
+    for (idx, (node, adj_cp)) in node_cp.iter_mut().zip(adj_copy_num.iter()).enumerate() {
+        let (plus, minus) = (adj_cp[0], adj_cp[1]);
+        if plus == minus && plus != *node {
+            // Node should be modified.
+            *node = plus;
+        } else if plus != minus && plus == *node {
+            // minus should be modified.
+            diffs.push((idx, true, plus));
+        } else if plus != minus && minus == *node {
+            // plus shoulud be modified.
+            diffs.push((idx, false, minus));
+        }
+    }
+    // Changing edge copy numbers...
+    // TODO: More effient algorithm exists.
+    // for (idx, direction, target) in diffs {
+    //     let mut edges_to_change: Vec<(&mut usize, f64)> = edge_cp
+    //         .iter_mut()
+    //         .zip(edges.iter())
+    //         .filter(|&(_, &(from, fp, to, tp, _))| {
+    //             (from, fp) == (idx, direction) || (to, tp) == (idx, direction)
+    //         })
+    //         .map(|(cp, edge)| (cp, edge.4))
+    //         .collect();
+    //     let current_cp = edges_to_change.iter().map(|x| *x.0).sum::<usize>();
+    //     if current_cp < target {
+    //         // Increase.
+    //         for _ in current_cp..target {
+    //             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
+    //                 .iter_mut()
+    //                 .map(|(cp, cov)| ((*cov - (**cp + 1) as f64).powi(2), cp))
+    //                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
+    //             if let Some((_, cp)) = to_change {
+    //                 **cp += 1;
+    //             }
+    //         }
+    //     } else {
+    //         for _ in target..current_cp {
+    //             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
+    //                 .iter_mut()
+    //                 .map(|(cp, cov)| ((*cov - (**cp - 1) as f64).powi(2), cp))
+    //                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
+    //             if let Some((_, cp)) = to_change {
+    //                 **cp -= 1;
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 // /// Optimization by using OpEn.
