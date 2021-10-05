@@ -533,6 +533,32 @@ impl<'a> DitchGraph<'a> {
             })
         })
     }
+    // POINTER: ASSEMBLEIMPL
+    // TODO: Tune this.
+    pub fn clean_up_graph_for_assemble(
+        &mut self,
+        cov: f64,
+        lens: &[usize],
+        reads: &[&EncodedRead],
+        c: &super::AssembleConfig,
+    ) {
+        self.assign_copy_number(cov, &lens);
+        self.remove_zero_copy_elements(&lens, 0.2);
+        self.assign_copy_number(cov, &lens);
+        self.remove_zero_copy_elements(&lens, 0.5);
+        self.assign_copy_number(cov, &lens);
+        self.zip_up_overclustering();
+        // From good Likelihood ratio focus, to weaker ones.
+        for llr in (4..16).filter(|x| x % 4 == 0).rev() {
+            self.resolve_repeats(&reads, c, llr as f64);
+        }
+        self.zip_up_overclustering();
+        // self.remove_tips(0.5, 5);
+        // self.z_edge_selection();
+        self.assign_copy_number(cov, &lens);
+        self.remove_zero_copy_path(0.3);
+        // graph.transitive_edge_reduction();
+    }
     pub fn new(reads: &[&'a EncodedRead], units: Option<&[Unit]>, c: &AssembleConfig) -> Self {
         // Take a consensus of nodes and edges.
         let (nodes_seq, edge_seq) = take_consensus(reads, units, c);
@@ -688,6 +714,7 @@ impl<'a> DitchGraph<'a> {
         primary_candidates
     }
     // Only (from, _, to, _) with from <= to edges would be in these vectors.
+    // TODO: This function has bugs.
     fn partition_edges_by_simple_path(&self) -> (Vec<&DitchEdge>, Vec<&DitchEdge>) {
         let (mut in_simple_path, mut between_simple_path) = (vec![], vec![]);
         for node in self.nodes.values() {
@@ -735,6 +762,18 @@ impl<'a> DitchGraph<'a> {
             .enumerate()
             .map(|(idx, key)| (key, idx))
             .collect();
+        {
+            let mut plug_num = vec![HashSet::new(); cluster_index.len()];
+            for edge in edges_between_simple_path.iter() {
+                let from_index = cluster_index[&fu.find(node_index[&edge.from]).unwrap()];
+                plug_num[from_index].insert((edge.from, edge.from_position));
+                let to_index = cluster_index[&fu.find(node_index[&edge.to]).unwrap()];
+                plug_num[to_index].insert((edge.to, edge.to_position));
+            }
+            for plugs in plug_num {
+                assert!(plugs.len() <= 2, "{}", plugs.len());
+            }
+        }
         use super::copy_number::CoverageCalibrator;
         let calibrator = CoverageCalibrator::new(lens);
         let unit_len_sum: usize = self.nodes.values().map(|n| n.seq().len()).sum();

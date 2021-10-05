@@ -230,7 +230,7 @@ fn subcommand_mask_repeats() -> App<'static, 'static> {
                 .long("freq")
                 .help("Mask top [freq] k-mer")
                 .takes_value(true)
-                .default_value("0.0002"),
+                .default_value("0.0008"),
         )
         .arg(
             Arg::with_name("min")
@@ -1121,6 +1121,9 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
     let min_count = 6;
     let max_tig_length = 20;
     dataset.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
+    // let squish_limit = 1;
+    // dataset.squish_small_contig(&config, squish_limit);
+    debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
     Ok(dataset)

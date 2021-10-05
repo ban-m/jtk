@@ -29,6 +29,15 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
         // i->vector of failed index and units.
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
         for i in 0..INNER_LOOP {
+            // if i == 10 {
+            //     debug!("DELFIL\tSAVE\t{}\t{}", i, t);
+            //     if let Ok(wtr) = std::fs::File::create("temp.json") {
+            //         use std::io::Write;
+            //         let mut wtr = std::io::BufWriter::new(wtr);
+            //         writeln!(&mut wtr, "{}", serde_json::ser::to_string(&ds).unwrap()).unwrap();
+            //     }
+            //     panic!();
+            // }
             let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
             ds.encoded_reads
                 .par_iter_mut()
@@ -57,14 +66,6 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
                 }
             }
             current = after;
-            if i == INNER_LOOP - 1 && t == OUTER_LOOP - 1 {
-                debug!("DELFIL\tSAVE\t{}\t{}", i, t);
-                if let Ok(wtr) = std::fs::File::create("temp.json") {
-                    use std::io::Write;
-                    let mut wtr = std::io::BufWriter::new(wtr);
-                    writeln!(&mut wtr, "{}", serde_json::ser::to_string(&ds).unwrap()).unwrap();
-                }
-            }
         }
     }
     ds
@@ -265,7 +266,9 @@ fn encode_node(
     // Note that unit.seq would be smaller than query! So the operations should be reversed.
     // let unitseq = unit.seq();
     let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
-    let dist_thr = (unitseq.len() as f64 * sim_thr).floor() as u32;
+    let unitlen = unitseq.len() as f64;
+    let dist_thr = (unitlen * sim_thr).floor() as u32;
+    let indel_thr = ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
     let locations = alignment.locations.unwrap();
     let (aln_start, aln_end) = locations[0];
     let seq = query[aln_start..=aln_end].to_vec();
@@ -280,7 +283,6 @@ fn encode_node(
         .iter()
         .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
     let max_indel = super::max_region(indel_mism).max(0) as usize;
-    let indel_thr = (unitseq.len() as f64 * super::INDEL_FRACTION).round() as usize;
     // let has_large_indel = max_indel > super::INDEL_THRESHOLD;
     let position_from_start = if is_forward {
         start + aln_start

@@ -1,37 +1,46 @@
 use definitions::*;
-use rand::SeedableRng;
-use rand_xoshiro::Xoroshiro128PlusPlus;
-// use std::collections::HashMap;
+use haplotyper::DetermineUnit;
+// use rand::SeedableRng;
+// use rand_xoshiro::Xoroshiro128PlusPlus;
+use std::collections::HashMap;
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(340928);
-    for _ in 0..10 {
-        let xs = kiley::gen_seq::generate_seq(&mut rng, 2000);
-        let ys = kiley::gen_seq::generate_seq(&mut rng, 2000);
-        let (score, ops) = kiley::bialignment::global_banded(&xs, &ys, 2, -6, -5, -1, 20);
-        let indel_mism = ops
-            .iter()
-            .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
-        let max_indel = haplotyper::encode::max_region(indel_mism).max(0) as usize;
-        println!("{}\t{}", score, max_indel);
+    let args: Vec<_> = std::env::args().collect();
+    let ds: DataSet = std::fs::File::open(&args[1])
+        .map(BufReader::new)
+        .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
+        if (edge.from == 1333 && edge.to == 2439) || (edge.to == 1333 && edge.from == 2439) {
+            println!("{},{}", edge.label, edge.label.len());
+        }
     }
-    // let (xr, ar, yr) = kiley::bialignment::recover(&xs, &ys, &ops);
-    // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-    //     eprintln!("{}", String::from_utf8_lossy(xr));
-    //     eprintln!("{}", String::from_utf8_lossy(ar));
-    //     eprintln!("{}\n", String::from_utf8_lossy(yr));
+    // let id2seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    // let mut edge_encoding_patterns: HashMap<_, _> = HashMap::new();
+    // edge_encoding_patterns.insert(((1005, 0, false), (2362, 0, false)), vec![(433, 3471)]);
+    // let seq = ds
+    //     .selected_chunks
+    //     .iter()
+    //     .find(|u| u.id == 3417)
+    //     .unwrap()
+    //     .seq();
+    // let mut edge_consensus = HashMap::new();
+    // edge_consensus.insert(((1005, 0, false), (2362, 0, false)), seq.to_vec());
+    // for read in ds.encoded_reads.iter() {
+    //     let seq = &id2seq[&read.id];
+    //     haplotyper::dense_encoding::fill_edges_by_new_units(
+    //         read,
+    //         seq,
+    //         &edge_encoding_patterns,
+    //         &edge_consensus,
+    //     );
     // }
-    // let args: Vec<_> = std::env::args().collect();
-    // let mut ds: DataSet = std::fs::File::open(&args[1])
-    //     .map(BufReader::new)
-    //     .map(|x| serde_json::de::from_reader(x).unwrap())?;
     // ds.encoded_reads
     //     .iter_mut()
     //     .flat_map(|r| r.nodes.iter_mut())
     //     .for_each(|n| n.cluster = 0);
     // use haplotyper::assemble::*;
-    // let config = AssembleConfig::new(4, 1000, false, true, 6);
+    // let config = AssembleConfig::new(4, 1000, false, false, 6);
     // ds.squish_small_contig(&config, 15);
     // ds.zip_up_suspicious_haplotig(&config, 6, 25);
     // println!("{}", ds.assemble(&config));
@@ -141,10 +150,12 @@ fn main() -> std::io::Result<()> {
     // let config = AssembleConfig::new(3, 1000, false, false, 4);
     // ds.squish_small_contig(&config, 30);
     // println!("{}", ds.assemble(&config));
-    // let target = 1257;
+    // em algorithm.
+    // let target: u64 = args[2].parse().unwrap();
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
     // let repeat_num = 10;
     // let to_regularize = true;
-    // let coverage_thr = 3;
+    // let coverage_thr = 5;
     // let ref_unit = ds.selected_chunks.iter().find(|n| n.id == target).unwrap();
     // let unit_id = ref_unit.id;
     // let reads: Vec<_> = ds
@@ -153,8 +164,7 @@ fn main() -> std::io::Result<()> {
     //     .filter(|r| r.nodes.iter().any(|n| n.unit == unit_id))
     //     .collect();
     // let k = ref_unit.cluster_num;
-
-    // let (new_clustering, _, _) = (1..=k)
+    // let (new_clustering, score, _) = (1..=k)
     //     .flat_map(|k| std::iter::repeat(k).take(repeat_num))
     //     .enumerate()
     //     .map(|(i, k)| {
@@ -165,7 +175,14 @@ fn main() -> std::io::Result<()> {
     //     })
     //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
     //     .unwrap();
-
+    // log::debug!("SCORE\t{:.3}", score);
+    // for &(id, position, cl) in new_clustering.iter() {
+    //     let answer = id2desc[&id].contains("252v");
+    //     let read = reads.iter().find(|r| r.id == id).unwrap();
+    //     let prev = read.nodes[position].cluster;
+    //     assert_eq!(read.nodes[position].unit, target);
+    //     eprintln!("RESULT\t{}\t{}\t{}", answer, prev, cl);
+    // }
     // use std::collections::HashSet;
     // let target = (848, 335);
     // let reads: HashSet<_> = ds
@@ -195,7 +212,6 @@ fn main() -> std::io::Result<()> {
     // println!("{:?}", (end - start));
     // let nodes: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
     // println!("{}", (end - start).as_millis() * nodes as u128 / 1_000_000);
-    //(/ (/ (/ (* 450 3000) 4) 30) 3600.0)
     // let mut counts: HashMap<_, u32> = HashMap::new();
     // for read in ds.encoded_reads.iter() {
     //     for node in read.nodes.iter().filter(|n| n.unit == 1077) {
@@ -241,64 +257,6 @@ fn main() -> std::io::Result<()> {
     //     let max_indel = haplotyper::encode::max_region(indel);
     //     let desc = id2desc[readid];
     //     log::debug!("ANSWER\t{}\t{}\t{}\t{}\t{}", id, ans, asn, max_indel, desc);
-    // }
-    // use haplotyper::em_correction::Context;
-    // let cluster_num = 2;
-    // let error_rate = 0.13;
-    // let num = 20;
-    // let span_prob = 0.1;
-    // let seed = 2343909;
-    // println!("lk\tnull\tspan\tseed\tnum\trand_index\tclusternum");
-    // for num in 15..40 {
-    //     for span_prob in (0..)
-    //         .map(|i| 0.05 + 0.02 * i as f64)
-    //         .take_while(|&x| x < 0.5)
-    //     {
-    //         for seed in 0..20 {
-    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
-    // let contexts: Vec<_> = (0..cluster_num)
-    //     .flat_map(|i| {
-    //         (0..num)
-    //             .map(|id| {
-    //                 let id = i * num + id;
-    //                 let index = 0;
-    //                 let unit = 1;
-    //                 let cluster = 0; //gen_cluster(&mut rng, error_rate, i, cluster_num);
-    //                 let mut forward = vec![(4, 0)];
-    //                 if rng.gen_bool(span_prob) {
-    //                     let elm = gen_cluster(&mut rng, error_rate, i, cluster_num);
-    //                     forward.push((0, elm));
-    //                 };
-    //                 let mut backward = vec![(3, 0)];
-    //                 if rng.gen_bool(span_prob) {
-    //                     let elm = gen_cluster(&mut rng, error_rate, i, cluster_num);
-    //                     backward.push((2, elm));
-    //                 };
-    //                 Context::with_attrs(id, index, unit, cluster, forward, backward)
-    //             })
-    //             .collect::<Vec<_>>()
-    //     })
-    //     .collect();
-    // let (null_asn, null_lk, null_ofs) =
-    //     haplotyper::em_correction::em_clustering_inner(&contexts, 1, &mut rng);
-    // let (asns, lk, ofs) = haplotyper::em_correction::em_clustering_inner(&contexts, 2, &mut rng);
-    // let answer: Vec<_> = (0..cluster_num)
-    //     .flat_map(|i| vec![i as u8; num as usize])
-    //     .collect();
-    // let (pred, k) = if null_lk - null_ofs < lk - ofs {
-    //     (asns, 2)
-    // } else {
-    //     (null_asn, 1)
-    // };
-    // let pred: Vec<_> = pred.iter().map(|x| x.2 as u8).collect();
-    // let randindex = haplotyper::local_clustering::rand_index(&answer, &pred);
-    // println!("NULL:{},k=2:{}", null_ofs, ofs);
-    // println!(
-    //     "{}\t{}\t{:.3}\t{}\t{}\t{}\t{}",
-    //     lk, null_lk, span_prob, seed, num, randindex, k
-    // );
-    //         }
-    //     }
     // }
     Ok(())
 }

@@ -162,6 +162,12 @@ impl DetermineUnit for definitions::DataSet {
                 let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
                 debug!("Histgrapm\n{}", hist.format(40, 20));
             }
+            // debug!("DELFIL\tSAVE");
+            // if let Ok(wtr) = std::fs::File::create("temp.json") {
+            //     use std::io::Write;
+            //     let mut wtr = std::io::BufWriter::new(wtr);
+            //     writeln!(&mut wtr, "{}", serde_json::ser::to_string(&self).unwrap()).unwrap();
+            // }
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10);
             self = self.consensus_unit(&polish_config);
             // TODO: Rather than calling self.encode many times,

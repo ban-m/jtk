@@ -2,7 +2,7 @@ use definitions::*;
 use log::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
-const CONS_MIN_LENGTH: usize = 100;
+const CONS_MIN_LENGTH: usize = 200;
 const COV_THR_FACTOR: usize = 4;
 use crate::encode::CLR_CLR_SIM;
 // Directed edge between nodes.
@@ -96,9 +96,9 @@ impl DenseEncoding for DataSet {
             recover_original_assignments(read, orig);
         }
         // Local clustering.
-        // debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
-        // crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
-        // squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
+        debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
+        crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
+        squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
         self
     }
 }
@@ -147,7 +147,7 @@ fn get_average_unit_length(ds: &DataSet) -> usize {
     total / ds.selected_chunks.len()
 }
 
-fn fill_edges_by_new_units(
+pub fn fill_edges_by_new_units(
     read: &EncodedRead,
     seq: &[u8],
     edge_encoding_patterns: &HashMap<DEdge, Vec<(usize, u64)>>,
@@ -219,19 +219,23 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
             edges.entry(edge_entry).or_insert_with(Vec::new).push(label);
         }
     }
-    debug!("EDGE\tDump edges. Contains empty edges.");
+    edges.retain(|_, val| discard_thr < val.len());
+    debug!("EDGE\tDump edges.");
     for (edge, ls) in edges.iter() {
         log::debug!("EDGE\t{:?}\t{}", edge, ls.len());
     }
-    edges.retain(|_, val| discard_thr < val.len());
     // Create new units.
     edges
         .into_par_iter()
         .filter_map(|(key, labels)| {
             let cov_thr = labels.len() / COV_THR_FACTOR;
+            let mut lengths: Vec<_> = labels.iter().map(|x| x.len()).collect();
+            let (_, median, _) = lengths.select_nth_unstable(labels.len() / 2);
+            let (upper, lower) = (2 * *median, (*median / 2).max(CONS_MIN_LENGTH));
             let labels: Vec<&[u8]> = labels
                 .iter()
-                .filter(|ls| ls.len() > CONS_MIN_LENGTH)
+                // .filter(|ls| CONS_MIN_LENGTH < ls.len())
+                .filter(|ls| lower < ls.len() && ls.len() < upper)
                 .map(|x| x.as_slice())
                 .collect();
             if labels.len() < cov_thr {
@@ -392,8 +396,10 @@ fn encode_edge(
                 .iter()
                 .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
             let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
-            let dist_thr = (unitlen as f64 * CLR_CLR_SIM).floor() as usize;
-            let gap_thr = (unitlen as f64 * crate::encode::INDEL_FRACTION).round() as usize;
+            let unitlen = unitlen as f64;
+            let dist_thr = (unitlen * CLR_CLR_SIM).floor() as usize;
+            let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
+                .max(crate::encode::MIN_INDEL_SIZE);
             if max_indel < gap_thr && edit_dist < dist_thr {
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,

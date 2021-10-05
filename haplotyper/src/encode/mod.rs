@@ -21,6 +21,7 @@ const ALLOWED_END_GAP: usize = 50;
 /// Any alignment having Insertion/Deletion longer than unit.seq() * INDEL_FRACTION would be discarded.
 /// for 2Kbp length, the threshold is 50bp.
 pub const INDEL_FRACTION: f64 = 1f64 / 40f64;
+pub const MIN_INDEL_SIZE: usize = 10;
 pub trait Encode {
     fn encode(self, threads: usize, sim_thr: f64) -> Self;
 }
@@ -48,7 +49,8 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
             let tname = aln.tname.parse::<u64>().unwrap();
             let chunk_len = chunks.get(&tname)?.seq().len();
             let dist_thr = (chunk_len as f64 * sim_thr).floor() as usize;
-            let gap_thr = (chunk_len as f64 * INDEL_FRACTION).round() as usize;
+            let gap_thr =
+                ((chunk_len as f64 * INDEL_FRACTION).round() as usize).max(MIN_INDEL_SIZE);
             let cigar = sam::parse_cigar_string(aln.tags.get("cg")?);
             let indel_iter = cigar.iter().map(|op| match *op {
                 sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,

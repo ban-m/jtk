@@ -1,4 +1,5 @@
 library(tidyverse)
+loadNamespace("cowplot")
 xlogx <- function(x) ifelse(abs(x)<0.0001, 0, x*log(x))
 
 corel_model_aic <- function(xs,ys){
@@ -338,3 +339,5 @@ unit.data <- read_tsv("dbb.unit")
 
 tig.data <- read_tsv("test.contig")
 
+aln.tig006 <- read_csv("tig_006.tsv")
+dbb25.contact <- read_tsv("dbb.25.contact.tsv")

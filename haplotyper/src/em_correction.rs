@@ -65,7 +65,7 @@ impl ClusteringCorrection for DataSet {
         // First, try to "squish" all the units with no variants.
         let to_squish = {
             let mut pvalues = crate::unit_correlation::calc_p_values(&self, coverage_thr as u32);
-            pvalues.retain(|_, pvalue| 0.01 < *pvalue);
+            pvalues.retain(|_, pvalue| 0.05 < *pvalue);
             pvalues
         };
         self.encoded_reads
@@ -786,21 +786,21 @@ fn max_and_position(ws: &[f64]) -> (usize, f64) {
 fn predict_from_weights<R: Rng>(
     contexts: &[Context],
     weights: &[Vec<f64>],
-    k: usize,
-    rng: &mut R,
+    _k: usize,
+    _rng: &mut R,
 ) -> Vec<(u64, usize, u64)> {
-    let choises: Vec<_> = (0..k).collect();
+    // let choises: Vec<_> = (0..k).collect();
     contexts
         .iter()
         .zip(weights.iter())
         .map(|(ctx, ws)| {
-            let (cluster, max_w) = max_and_position(ws);
-            let cluster = if max_w < 0.9 {
-                cluster as u64
-            } else {
-                use rand::seq::SliceRandom;
-                *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
-            };
+            let (cluster, _max_w) = max_and_position(ws);
+            // let cluster = if max_w < 0.9 {
+            //     cluster as u64
+            // } else {
+            //     use rand::seq::SliceRandom;
+            //     *choises.choose_weighted(rng, |&k| ws[k]).unwrap_or(&0) as u64
+            // };
             (ctx.id, ctx.index, cluster as u64)
         })
         .collect()
@@ -811,6 +811,8 @@ pub fn simple_clustering_inner<R: Rng>(
     k: usize,
     rng: &mut R,
 ) -> (Vec<(u64, usize, u64)>, f64, f64) {
+    // ID of this trial.
+    let id: u64 = rng.gen::<u64>() % 1_000_000;
     let mut weights: Vec<_> = match rng.gen_bool(0.5) {
         true => contexts
             .iter()
@@ -827,38 +829,43 @@ pub fn simple_clustering_inner<R: Rng>(
     };
     let mut model = SimpleModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts.iter().map(|ctx| model.lk(ctx)).sum();
-    trace!("LK:{}", lk);
+    trace!("LK\t{}\t{}", id, lk);
     for _ in 0..20 {
         // loop {
         model.update(&mut weights, contexts);
         model = SimpleModel::new(contexts, &weights, k);
         let next_lk = contexts.iter().map(|ctx| model.lk(ctx)).sum();
-        trace!("LK:{}", next_lk);
+        trace!("LK\t{}\t{}", id, next_lk);
         if (next_lk - lk) < 0.001 {
             break;
         } else {
             lk = next_lk;
         }
     }
-    trace!("MODEL\n{}", model);
+    trace!("MODEL\t{}\n{}", id, model);
     let (flen, blen) = contexts
         .iter()
         .map(|c| (c.forward.len(), c.backward.len()))
         .fold((0, 0), |(f, b), (x, y)| (f.max(x), b.max(y)));
-    for (weight, context) in weights.iter().zip(contexts.iter()) {
-        let (cluster, _) = max_and_position(weight);
+    for ws in weights.iter() {
+        trace!("WEIGHTS\t{}\t{:?}", id, ws);
+    }
+    let predictions = predict_from_weights(&contexts, &weights, k, rng);
+    for ((_, _, cluster), context) in predictions.iter().zip(contexts.iter()) {
         let unit = context.unit;
+        let dump = context.dump_with(flen, blen);
         trace!(
-            "DUMP\t{}\t{}\t{}\t{}",
+            "DUMP\t{}\t{}\t{}\t{}\t{}",
+            id,
             unit,
             context.id,
             cluster,
-            context.dump_with(flen, blen)
+            dump,
         );
     }
-    let predictions = predict_from_weights(&contexts, &weights, k, rng);
-    trace!("FinalLK\t{}\t{:.4}\t{}", k, lk, model.num_parameters());
-    (predictions, lk, model.num_parameters() as f64)
+    let num_param = model.num_parameters() as f64;
+    trace!("Final\t{}\t{}\t{:.4}\t{}", id, k, lk - num_param, num_param);
+    (predictions, lk, num_param)
 }
 
 #[derive(Debug, Clone)]
@@ -904,23 +911,26 @@ impl SimpleModel {
                 Consensus::new(contexts, &ws, (flen, blen))
             })
             .collect();
-        // let center_unit = contexts[0].unit;
         Self {
             fraction,
             consensus,
         }
     }
     fn num_parameters(&self) -> usize {
-        let model_param = self.consensus.iter().map(|x| x.num_parameters()).max();
-        let model_param = self.consensus.len() * model_param.unwrap_or_default();
+        let mut used_units: HashSet<_> = HashSet::new();
+        for cons in self.consensus.iter() {
+            used_units.insert(cons.center);
+            used_units.extend(cons.forward.iter().copied());
+            used_units.extend(cons.backward.iter().copied());
+        }
+        let model_param = used_units.len();
+        // let model_param = self.consensus.iter().map(|x| x.num_parameters()).max();
+        // let model_param = self.consensus.len() * model_param.unwrap_or_default();
         model_param + self.fraction.len() - 1
     }
     // Update weights.
     fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context]) {
-        //let mut total_lk = 0f64;
-        // Calculate the next weights, mapping position, and likelihood.
         for (weight, context) in weights.iter_mut().zip(contexts.iter()) {
-            // let (mapping_positions, lk) = self.get_weight(context, weight);
             let _ = self.get_weight(context, weight);
         }
     }
@@ -932,9 +942,6 @@ impl SimpleModel {
             .iter_mut()
             .zip(scores.iter())
             .for_each(|(w, s)| *w = (s - score).exp());
-        // let scores: Vec<_> = scores.iter().map(|x| format!("{:.3}", x)).collect();
-        // let ws: Vec<_> = weight.iter().map(|x| format!("{:.3}", x)).collect();
-        // trace!("W\t{}\t{}", scores.join(","), ws.join(","));
         (mapping_positions, score)
     }
     fn scores_and_mappings(&self, context: &Context) -> (Vec<f64>, Vec<(Vec<u8>, Vec<u8>)>) {
@@ -942,7 +949,6 @@ impl SimpleModel {
             .iter()
             .zip(self.fraction.iter())
             .map(|(m, &f)| {
-                // TODO: change here.
                 let (forward_map, backward_map, score) = m.map(context);
                 let score = score as f64 + f.ln();
                 (score, (forward_map, backward_map))
@@ -987,11 +993,12 @@ const INS: i32 = -10;
 const DEL: i32 = -5;
 
 impl Consensus {
-    fn num_parameters(&self) -> usize {
-        // 1 for the center unit.
-        1 + self.forward.len() + self.backward.len()
-    }
+    // fn num_parameters(&self) -> usize {
+    //     // 1 for the center unit.
+    //     1 + self.forward.len() + self.backward.len()
+    // }
     // flen = max length of the forward, ble = max length of the minimum.
+    // Cut consensus if the `coverage` is dropped below 1.
     // TODO: Maybe we should align reads onto the consensus to update...?
     fn new(xs: &[Context], ws: &[f64], (flen, blen): (usize, usize)) -> Self {
         // Column sum, take the max value.
@@ -1039,7 +1046,7 @@ impl Consensus {
     fn map(&self, context: &Context) -> (Vec<u8>, Vec<u8>, i32) {
         let (fm, fscore) = Self::align(&self.forward, &context.forward);
         let (bm, bscore) = Self::align(&self.backward, &context.backward);
-        let center = match self.center.0 == context.cluster {
+        let center = match self.center.1 == context.cluster {
             true => MAT,
             false => MIS_CL,
         };

@@ -156,8 +156,10 @@ impl Assemble for DataSet {
         let mut converting_map: HashMap<(u64, u64), u64> = HashMap::new();
         for (&unit, sqs) in squishing_node.iter() {
             let target: u64 = *sqs.iter().min().unwrap();
-            debug!("ZIPUP\t({},{:?})\t{}", unit, sqs, target);
-            converting_map.extend(sqs.iter().map(|&cluster| ((unit, cluster), target)));
+            if sqs.len() <= 2 {
+                debug!("ZIPUP\t({},{:?})\t{}", unit, sqs, target);
+                converting_map.extend(sqs.iter().map(|&cluster| ((unit, cluster), target)));
+            }
         }
         for read in self.encoded_reads.iter_mut() {
             for node in read.nodes.iter_mut() {
@@ -166,6 +168,22 @@ impl Assemble for DataSet {
                 }
             }
         }
+        let reads: Vec<_> = self.encoded_reads.iter().collect();
+        let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        let cov = self.coverage.unwrap();
+        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+        graph.remove_lightweight_edges(2, true);
+        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
+        // TODO: Parametrize here.
+        let squish = graph.squish_bubbles(2);
+        self.encoded_reads
+            .iter_mut()
+            .flat_map(|r| r.nodes.iter_mut())
+            .for_each(|n| {
+                if let Some(res) = squish.get(&(n.unit, n.cluster)) {
+                    n.cluster = *res;
+                }
+            });
     }
     fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
         let reads: Vec<_> = self.encoded_reads.iter().collect();
@@ -175,9 +193,6 @@ impl Assemble for DataSet {
         graph.remove_lightweight_edges(2, true);
         graph.assign_copy_number(cov, &lens);
         graph.remove_zero_copy_elements(&lens, 0.5);
-        // graph.resolve_repeats(&reads, c, 10f64);
-        // graph.assign_copy_number(cov, &lens);
-        // graph.resolve_repeats(&reads, c, 4f64);
         let squish = graph.squish_bubbles(len);
         self.encoded_reads
             .iter_mut()
@@ -311,28 +326,11 @@ pub fn assemble(
     }
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    // POINTER: ASSEMBLEIMPL
-    // TODO: Tune this.
     graph.remove_lightweight_edges(2, true);
     if let Some(cov) = ds.coverage {
         if c.to_resolve {
             let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-            graph.assign_copy_number(cov, &lens);
-            graph.remove_zero_copy_elements(&lens, 0.2);
-            graph.assign_copy_number(cov, &lens);
-            graph.remove_zero_copy_elements(&lens, 0.5);
-            graph.assign_copy_number(cov, &lens);
-            graph.zip_up_overclustering();
-            // From good Likelihood ratio focus, to weaker ones.
-            for llr in (4..16).filter(|x| x % 4 == 0).rev() {
-                graph.resolve_repeats(&reads, c, llr as f64);
-            }
-            graph.zip_up_overclustering();
-            // graph.remove_tips(0.5, 5);
-            // graph.z_edge_selection();
-            graph.assign_copy_number(cov, &lens);
-            graph.remove_zero_copy_path(0.5);
-            // graph.transitive_edge_reduction();
+            graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
         }
     }
     graph.remove_lightweight_edges(1, false);
