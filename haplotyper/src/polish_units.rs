@@ -76,9 +76,12 @@ impl PolishUnit for DataSet {
             }
         }
         let result: HashMap<_, _> = pileups
-            .par_iter()
+            .par_iter_mut()
             .filter_map(|(id, pileup)| {
                 if pileup.len() > c.filter_size {
+                    let med_idx = pileup.len() / 2;
+                    pileup.select_nth_unstable_by_key(med_idx, |x| x.len());
+                    pileup.swap(0, med_idx);
                     let seqs = &pileup[..c.consensus_size.min(pileup.len())];
                     let cons = kiley::ternary_consensus_by_chunk(seqs, 100);
                     let cons = kiley::bialignment::polish_until_converge_banded(&cons, seqs, 100);

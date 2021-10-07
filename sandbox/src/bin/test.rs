@@ -1,22 +1,101 @@
 use definitions::*;
-use haplotyper::DetermineUnit;
+// use haplotyper::DetermineUnit;
 // use rand::SeedableRng;
 // use rand_xoshiro::Xoroshiro128PlusPlus;
-use std::collections::HashMap;
+// use std::collections::HashMap;
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
+    let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    // let target = (1713, 3151);
-    for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
-        // if (edge.from, edge.to) == target || (edge.to, edge.from) == target {
-        if (edge.from == 1713 && edge.to == 3151) || (edge.from == 1713 && edge.to == 1713) {
-            println!("{},{}", edge.label, edge.label.len());
-        }
+    use haplotyper::assemble::*;
+    let config = AssembleConfig::new(4, 1000, false, true, 6);
+    let target: u64 = args[2].parse().unwrap();
+    let reads: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .filter(|r| r.nodes.iter().any(|n| n.unit == target))
+        .collect();
+    let graph = ditch_graph::DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
+    for node in graph.nodes().filter(|n| n.node.0 == target) {
+        println!("{}", node);
     }
+    // let min_count = 6;
+    // let max_tig_length = 20;
+    // ds.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
+    // let config = AssembleConfig::new(4, 1000, false, false, 6);
+    // println!("{}", ds.assemble(&config));
+
+    // for read in ds.encoded_reads.iter() {
+    //     for (node, edge) in read.nodes.iter().zip(read.edges.iter()) {
+    //         assert_eq!(node.unit, edge.from);
+    //     }
+    // }
+    // let is_ler: HashMap<_, _> = ds
+    //     .raw_reads
+    //     .iter()
+    //     .map(|r| (r.id, r.name.contains("ler")))
+    //     .collect();
+    // let target = (1713, 3151);
+    // let ref_unit = ds.selected_chunks.iter().find(|n| n.id == 3302).unwrap();
+    // let mut labels: Vec<_> = vec![];
+    // for read in ds.encoded_reads.iter() {
+    //     let is_ler = is_ler[&read.id];
+    //     for edge in read.edges.iter() {
+    //         let mut label = if (edge.from, edge.to) == target {
+    //             edge.label.as_bytes().to_vec()
+    //         } else if (edge.to, edge.from) == target {
+    //             bio_utils::revcmp(edge.label.as_bytes())
+    //         } else {
+    //             continue;
+    //         };
+    //         label.iter_mut().for_each(u8::make_ascii_uppercase);
+    //         let (_, ops) =
+    //             kiley::bialignment::global_banded(&label, ref_unit.seq(), 2, -7, -4, -1, 100);
+    //         let indel_iter = ops.iter().map(|op| match op {
+    //             kiley::bialignment::Op::Mat => -1,
+    //             _ => 1,
+    //         });
+    //         let dist = ops
+    //             .iter()
+    //             .filter(|&&op| !matches!(op, kiley::bialignment::Op::Mat))
+    //             .count();
+    //         use haplotyper::encode::max_region;
+    //         let max_indel = max_region(indel_iter);
+    //         println!("======={},{},{}========", is_ler, max_indel, dist);
+    //         let (xr, ar, yr) = kiley::bialignment::recover(&label, ref_unit.seq(), &ops);
+    //         for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+    //             println!("{}", String::from_utf8_lossy(xr));
+    //             println!("{}", String::from_utf8_lossy(ar));
+    //             println!("{}\n", String::from_utf8_lossy(yr));
+    //         }
+    //         labels.push(label);
+    //     }
+    // }
+    // let med_idx = labels.len() / 2;
+    // labels.select_nth_unstable_by_key(med_idx, |x| x.len());
+    // labels.swap(0, med_idx);
+    // let mut lengths: Vec<_> = labels.iter().map(|x| x.len()).collect();
+    // let (_, median, _) = lengths.select_nth_unstable(labels.len() / 2);
+    // let (upper, lower) = (2 * *median, (*median / 2).max(200));
+    // let labels: Vec<&[u8]> = labels
+    //     .iter()
+    //     .filter(|ls| lower < ls.len() && ls.len() < upper)
+    //     .map(|x| x.as_slice())
+    //     .collect();
+    // let rough_contig = kiley::ternary_consensus_by_chunk(&labels, 100);
+    // let rough_contig =
+    //     kiley::bialignment::polish_until_converge_banded(&rough_contig, &labels, 100);
+    // let (_, ops) =
+    //     kiley::bialignment::global_banded(&rough_contig, ref_unit.seq(), 2, -7, -4, -1, 100);
+    // let (xr, ar, yr) = kiley::bialignment::recover(&rough_contig, ref_unit.seq(), &ops);
+    // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+    //     println!("{}", String::from_utf8_lossy(xr));
+    //     println!("{}", String::from_utf8_lossy(ar));
+    //     println!("{}\n", String::from_utf8_lossy(yr));
+    // }
     // let id2seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     // let mut edge_encoding_patterns: HashMap<_, _> = HashMap::new();
     // edge_encoding_patterns.insert(((1005, 0, false), (2362, 0, false)), vec![(433, 3471)]);
@@ -56,14 +135,18 @@ fn main() -> std::io::Result<()> {
     //     haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, sim_thr);
     // let mut failed_trials: Vec<_> = vec![vec![]; ds.encoded_reads.len()];
     // ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, 0.35);
+
+    // Local clustering.
     // let cov = ds.coverage.unwrap();
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    //let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    // let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     // let target: u64 = args[2].parse().unwrap();
     // let (seqs, ids): (Vec<_>, Vec<_>) = ds
     //     .encoded_reads
     //     .iter()
     //     .flat_map(|r| {
-    //         let is_hapa = id2desc[&r.id].contains("255v2");
+    //         //let is_hapa = id2desc[&r.id].contains("255v2");
+    //         let is_hapa = id2name[&r.id].contains("ler");
     //         r.nodes
     //             .iter()
     //             .filter(|n| n.unit == target)
@@ -83,6 +166,7 @@ fn main() -> std::io::Result<()> {
     //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
     // eprintln!("{}", score);
     // eprintln!("{:?}\n{:?}", ids, asn);
+
     // let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     // for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
     //     let ref_unit = units[&node.unit];

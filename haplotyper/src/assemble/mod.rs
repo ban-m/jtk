@@ -327,11 +327,11 @@ pub fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     graph.remove_lightweight_edges(2, true);
-    // let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
-    //     if c.to_resolve {
-    //         let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-    //         graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
-    //     }
+    if c.to_resolve {
+        let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
+        let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
+    }
     graph.remove_lightweight_edges(1, true);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();

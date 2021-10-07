@@ -164,16 +164,16 @@ impl<'a> std::fmt::Debug for DitchGraph<'a> {
 /// head or tail.
 #[derive(Debug, Clone)]
 pub struct DitchNode<'a> {
-    node: Node,
-    occ: usize,
-    seq: Vec<u8>,
-    edges: Vec<DitchEdge>,
+    pub node: Node,
+    pub occ: usize,
+    pub seq: Vec<u8>,
+    pub edges: Vec<DitchEdge>,
     // "Tip" of reads. In other words, as we tiling a read by units,
     // there is un-encoded regions at the both end of a read,
     // and we allocate memories for them.
-    tips: Vec<DitchTip<'a>>,
+    pub tips: Vec<DitchTip<'a>>,
     // Estimated copy number. If not able, None.
-    copy_number: Option<usize>,
+    pub copy_number: Option<usize>,
 }
 
 impl<'a> std::fmt::Display for DitchNode<'a> {
@@ -447,7 +447,7 @@ fn take_consensus(
             let from_pos = if from_node.is_forward { Tail } else { Head };
             let to = (to_node.unit, to_node.cluster);
             let to_pos = if to_node.is_forward { Head } else { Tail };
-            let (tuple, value) = if from.0 < to.0 {
+            let (tuple, value) = if (from, from_pos) <= (to, to_pos) {
                 (((from, from_pos), (to, to_pos)), (edge, true))
             } else {
                 (((to, to_pos), (from, from_pos)), (edge, false))
@@ -495,9 +495,6 @@ fn take_consensus(
                         })
                         .filter(|e| !e.is_empty())
                         .collect();
-                    // let lens: Vec<_> = value.iter().map(|(ed, _)| ed.label().len()).collect();
-                    // debug!("{:?}", lens);
-                    // TODO:Maybe this is not so good...
                     let consensus = if seqs.len() > 3 {
                         kiley::consensus(&seqs, 0, 0, 100)
                     } else {
@@ -644,6 +641,9 @@ impl<'a> DitchGraph<'a> {
                 trace!("{}", edge.occ);
             }
         }
+    }
+    pub fn nodes(&self) -> impl std::iter::Iterator<Item = &DitchNode> {
+        self.nodes.values()
     }
     pub fn edges(&self) -> impl std::iter::Iterator<Item = &DitchEdge> {
         self.nodes.values().flat_map(|n| n.edges.iter())
@@ -2221,3 +2221,14 @@ fn get_bridge(nodes: usize, edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
     }
     bridges
 }
+
+// #[cfg(test)]
+// mod tests{
+//     use super::*;
+//     use definitions::EncodedRead;
+
+//     #[test]
+//     fn repeats(){
+//         let nodes = vec![];
+//     }
+// }

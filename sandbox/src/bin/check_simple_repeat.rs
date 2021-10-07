@@ -29,13 +29,11 @@ fn main() -> std::io::Result<()> {
     let len = 1000;
     let former_half = gen_sample::generate_seq(&mut rng, len);
     let latter_half = gen_sample::generate_seq(&mut rng, len);
-    let rep = b"AT";
-    // let rep = b"A";
+    let rep: &[u8] = if rng.gen_bool(0.5) { b"AT" } else { b"A" };
     let mut templates = vec![];
     for i in 0..clusters {
         let rep_range = 10..20;
         let rep_num = rng.gen_range(rep_range.clone());
-        // let rep_num = 5 + 2 * i;
         debug!("{}\t{}", i, rep_num);
         let mut template = former_half.clone();
         for _ in 0..rep_num {

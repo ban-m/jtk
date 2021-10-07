@@ -63,12 +63,14 @@ impl ComponentPicking for DataSet {
                 .iter()
                 .all(|node| picked_units.contains(&node.unit))
         });
-        for node in self
-            .encoded_reads
-            .iter_mut()
-            .flat_map(|r| r.nodes.iter_mut())
-        {
-            node.unit = unit_id_convert_table[&node.unit];
+        for read in self.encoded_reads.iter_mut() {
+            for node in read.nodes.iter_mut() {
+                node.unit = unit_id_convert_table[&node.unit];
+            }
+            for edge in read.edges.iter_mut() {
+                edge.from = unit_id_convert_table[&edge.from];
+                edge.to = unit_id_convert_table[&edge.to];
+            }
         }
         let retained_reads: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
         self.raw_reads

@@ -227,14 +227,16 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
     // Create new units.
     edges
         .into_par_iter()
-        .filter_map(|(key, labels)| {
+        .filter_map(|(key, mut labels)| {
             let cov_thr = labels.len() / COV_THR_FACTOR;
             let mut lengths: Vec<_> = labels.iter().map(|x| x.len()).collect();
             let (_, median, _) = lengths.select_nth_unstable(labels.len() / 2);
             let (upper, lower) = (2 * *median, (*median / 2).max(CONS_MIN_LENGTH));
+            let med_idx = labels.len() / 2;
+            labels.select_nth_unstable_by_key(med_idx, |x| x.len());
+            labels.swap(0, med_idx);
             let labels: Vec<&[u8]> = labels
                 .iter()
-                // .filter(|ls| CONS_MIN_LENGTH < ls.len())
                 .filter(|ls| lower < ls.len() && ls.len() < upper)
                 .map(|x| x.as_slice())
                 .collect();
@@ -242,6 +244,8 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
                 return None;
             }
             let rough_contig = kiley::ternary_consensus_by_chunk(&labels, 100);
+            let rough_contig =
+                kiley::bialignment::polish_until_converge_banded(&rough_contig, &labels, 100);
             match rough_contig.len() {
                 0..=CONS_MIN_LENGTH => None,
                 _ => Some((key, rough_contig)),

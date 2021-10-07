@@ -5,10 +5,10 @@ const DEL_SIZE: usize = 4;
 const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
-// (* 30 1.2)
-// (* 4 (+ (* 96 0.1) 0.35))
-const AVERAGE_LK: f64 = 1.2;
-const DEL_LK: f64 = 4f64;
+// (* 47 1.2)
+// (* 3 (* 3 (+ (* 47 0.1) 0.35)))
+const AVERAGE_LK: f64 = 1.1;
+const DEL_LK: f64 = 3f64;
 // return expected number of variants under the null hypothesis.
 fn expected_mis_num(cov: usize) -> f64 {
     cov as f64 * 0.1f64 + 0.35
@@ -67,41 +67,44 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         coverage,
     } = *config;
     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
-    // for (i, prof) in profiles.iter().enumerate() {
-    //     for (j, x) in prof.iter().enumerate() {
-    //         let (idx, t) = (j / 9, j % 9);
-    //         if idx < template.len() {
-    //             debug!("DUMP\t{}\t{}\t{}\tSn\t{:.3}", i, idx, t, x);
-    //         } else {
-    //             let idx = j - 9 * template.len();
-    //             if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-    //                 let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-    //                 debug!("DUMP\t{}\t{}\t{}\tDl\t{:.3}", i, idx, len, x);
-    //             } else {
-    //                 let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-    //                 let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-    //                 debug!("DUMP\t{}\t{}\t{}\tCp\t{:.3}", i, idx, len, x);
-    //             };
-    //         }
-    //     }
-    // }
     let cluster_num = cluster_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
         if log_enabled!(log::Level::Trace) {
+            // DUMP Entire purturbation matrix.
+            // debug!("DUMP\tread\tbp\tedit\ttype\tlkdiff");
+            // for (i, prof) in profiles.iter().enumerate() {
+            //     for (j, x) in prof.iter().enumerate() {
+            //         let (idx, t) = (j / 9, j % 9);
+            //         if idx < template.len() {
+            //             debug!("DUMP\t{}\t{}\t{}\tSn\t{:.3}", i, idx, t, x);
+            //         } else {
+            //             let idx = j - 9 * template.len();
+            //             if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+            //                 let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+            //                 debug!("DUMP\t{}\t{}\t{}\tDl\t{:.3}", i, idx, len, x);
+            //             } else {
+            //                 let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+            //                 let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
+            //                 debug!("DUMP\t{}\t{}\t{}\tCp\t{:.3}", i, idx, len, x);
+            //             };
+            //         }
+            //     }
+            // }
+            // DUMP Hot columns.
             for (pos, lk) in probes.iter() {
                 let (idx, t) = (pos / 9, pos % 9);
                 if idx < template.len() {
-                    trace!("POS\t{}\t{}\t{}\t{:.3}", pos, idx, t, lk);
+                    trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
                 } else {
                     let idx = pos - 9 * template.len();
                     if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
                         let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                        trace!("POS\t{}\t{}\t{}\t0\t{:.3}", pos, idx, len, lk);
+                        trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
                     } else {
                         let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
                         let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-                        trace!("POS\t{}\t{}\t{}\t1\t{:.3}", pos, idx, len, lk);
+                        trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
                     };
                 }
             }
@@ -112,9 +115,6 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
             .collect()
     };
     let num = 10;
-    // let (mut assignments, mut score) = (0..num)
-    //     .map(|_| mcmc_clustering(&selected_variants, cluster_num.max(3) - 2, coverage, rng))
-    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
     let init_cluster_num = cluster_num.max(4) - 3;
     let (assignments, score) = (init_cluster_num..=cluster_num)
         .filter_map(|k| {
@@ -122,39 +122,12 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
-            let expected_gain = AVERAGE_LK * coverage;
-            let null_gain = expected_mis_num(reads.len()) * DEL_LK;
+            let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
+            let null_gain = (k - 1) as f64 * expected_mis_num(reads.len()) * DEL_LK;
             Some((asn, score - expected_gain.max(null_gain)))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
     trace!("MAXLK\t{:.3}", score);
-    // for new_k in cluster_num.max(3) - 1..=cluster_num {
-    //     let (asn, new_score) = (0..num)
-    //         .map(|_| mcmc_clustering(&selected_variants, new_k, coverage, rng))
-    //         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    //     trace!("LK\t{}\t{:.3}\t{:.3}", new_k, score, new_score);
-    //     // CAUTION! If the coverage gets larger, the offset should be larger, because we would be more likely to meet
-    //     // large improvement even thougth there is no actual variations.
-    //     // But how often?
-    //     // AVERAGE_LK is the "expected likelihood gain",
-    //     // whereas what we currently talk is the "expected null gain"
-    //     // Both of them should be check out....
-    //     // Suppose that the deletion-error rate is 7%. Then, at each point,
-    //     // there should be `coverage * 0.07 * DEL_LK` gain.
-    //     // By simulation, we find that the maximum number of `random hit` in the
-    //     // dataset would not depends on the length of the template so heveealy,
-    //     // and the coefficients for the coverage is as large as 0.10 if the error rate is 0.05 at a location, and 0.65 for 0.025
-    //     // Thus, 0.1 * coverage * DEL_LK would be a good choice.
-    //     // So, at each time we increment the number of the cluster, we at least observe 0.1 * coverage * DEL_LK gain.
-    //     let expected_gain = AVERAGE_LK * coverage;
-    //     let null_gain = expected_mis_num(reads.len()) * DEL_LK;
-    //     if score + expected_gain.max(null_gain) < new_score {
-    //         assignments = asn;
-    //         score = new_score;
-    //     } else {
-    //         break;
-    //     }
-    // }
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
@@ -324,18 +297,35 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
             }
         };
         let lk = prof.lk();
+        // Modif.
         let mut modif_table = prof.to_modification_table();
         modif_table.truncate(9 * template.len());
-        let del_table = prof.to_deletion_table(DEL_SIZE);
+        modif_table.iter_mut().for_each(|x| *x -= lk);
+        // Del table
+        let mut del_table = prof.to_deletion_table(DEL_SIZE);
         assert_eq!(
             del_table.len(),
             (DEL_SIZE - 1) * (template.len() - DEL_SIZE)
         );
+        del_table.iter_mut().for_each(|x| *x -= lk);
+        // Convert this to 1-bp edit operation.
+        // for row in del_table.chunks_exact_mut(DEL_SIZE - 1) {
+        //     for (i, x) in row.iter_mut().enumerate() {
+        //         *x /= (i + 2) as f64;
+        //     }
+        // }
         modif_table.extend(del_table);
-        let copy_table = prof.to_copy_table(REP_SIZE);
+        // Copy Table.
+        let mut copy_table = prof.to_copy_table(REP_SIZE);
         assert_eq!(copy_table.len(), REP_SIZE * (template.len() - REP_SIZE));
+        copy_table.iter_mut().for_each(|x| *x -= lk);
+        // Convert this to 1-bp edit operation.
+        // for row in copy_table.chunks_exact_mut(REP_SIZE) {
+        //     for (i, x) in row.iter_mut().enumerate() {
+        //         *x /= (i + 1) as f64;
+        //     }
+        // }
         modif_table.extend(copy_table);
-        modif_table.iter_mut().for_each(|x| *x -= lk);
         profiles.push(modif_table);
     }
     Some(profiles)
@@ -347,7 +337,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
     cluster_num: usize,
     round: usize,
-    _coverage: f64,
+    coverage: f64,
     template_len: usize,
 ) -> Vec<(usize, f64)> {
     // (sum, maximum gain, number of positive element)
@@ -379,9 +369,10 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         .filter(|&(pos, _)| !in_mask(pos))
         .map(|(pos, (_, maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
-                .map(|k| poisson_lk(count, profiles.len() as f64 / k as f64))
+                // .map(|k| poisson_lk(count, profiles.len() as f64 / k as f64))
+                .map(|k| poisson_lk(count, coverage * k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
-                .unwrap_or_else(|| panic!("{},{}", line!(), cluster_num));
+                .unwrap_or_else(|| panic!("{}", cluster_num));
             (pos, maxgain + max_lk)
         })
         .collect();
@@ -569,7 +560,6 @@ fn binom_lk(x: usize, size: usize, prob: f64) -> f64 {
     combin + x as f64 * prob.ln() + (size - x) as f64 * (1.0 - prob).ln()
 }
 
-//
 fn max_binom_lk(x: usize, size: usize, prob: f64) -> f64 {
     (1..)
         .take_while(|&c| (prob * c as f64) < 1f64)
@@ -902,15 +892,6 @@ fn log_partition(clusters: &[usize], theta: f64) -> f64 {
 // We can flip Z->Z' by comparing P(Z'|X)/P(Z|X).
 // Finally, the retuned value would be P(Z,X) = P(Z) P(X|Z).
 fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &mut R) -> f64 {
-    // let xlogx: Vec<_> = (0..=data.len())
-    //     .map(|x| match x {
-    //         0 => 0f64,
-    //         _ => x as f64 * (x as f64).ln(),
-    //     })
-    //     .collect();
-    // let get_partition_lk = |clusters: &[usize]| -> f64 {
-    //     clusters.iter().map(|&x| xlogx[x]).sum::<f64>() - xlogx[data.len()]
-    // };
     let binom_lks: Vec<_> = (0..=data.len())
         .map(|x| max_binom_lk(x, data.len(), cov / data.len() as f64))
         .collect();

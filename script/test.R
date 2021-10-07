@@ -98,7 +98,7 @@ IsTheSameBipart <- function(error.num,length, coverage,cl.error){
 
 selected.vars <- read_tsv("selected.tsv", col_names = FALSE)
 len <- length(selected.vars$X1)
-longer.selected.vars <- selected.vars %>%  arrange(X1) %>% select(-X1) %>%  
+longer.selected.vars <- selected.vars %>%  arrange(X1) %>% 
     mutate(ReadID=1:len) %>% pivot_longer(cols = !ReadID ,names_to = "Position", values_to = "LK") %>% 
     mutate(Position = as.integer(str_sub(Position,start=2)))
 g<- longer.selected.vars %>% ggplot() + geom_raster(aes(x=Position, y = ReadID, fill=LK)) +
@@ -341,3 +341,4 @@ tig.data <- read_tsv("test.contig")
 
 aln.tig006 <- read_csv("tig_006.tsv")
 dbb25.contact <- read_tsv("dbb.25.contact.tsv")
+

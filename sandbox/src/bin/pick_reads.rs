@@ -37,7 +37,14 @@ fn main() -> std::io::Result<()> {
                 }
             }
             let is_hap1 = id2desc[&read.id].contains("252v2");
-            println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
+            // println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
+            println!(
+                "{}\t{}\t{}\t{}",
+                read.id,
+                is_hap1,
+                node.cluster,
+                dumps.join("\t")
+            );
         }
     }
     Ok(())
