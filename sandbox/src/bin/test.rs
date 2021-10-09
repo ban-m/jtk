@@ -12,13 +12,36 @@ fn main() -> std::io::Result<()> {
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
     use haplotyper::assemble::*;
     let config = AssembleConfig::new(4, 1000, false, true, 6);
+    let min_count = 6;
+    let max_tig_length = 20;
+    ds.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
     let target: u64 = args[2].parse().unwrap();
     let reads: Vec<_> = ds
         .encoded_reads
         .iter()
-        .filter(|r| r.nodes.iter().any(|n| n.unit == target))
+        //     .filter(|r| r.nodes.iter().any(|n| n.unit == target))
         .collect();
-    let graph = ditch_graph::DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
+    let mut graph = ditch_graph::DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
+    graph.remove_lightweight_edges(2, true);
+    let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
+    let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    graph.clean_up_graph_for_assemble(cov, &lens, &reads, &config);
+    // {
+    //     graph.assign_copy_number(cov, &lens);
+    //     graph.remove_zero_copy_elements(&lens, 0.2);
+    //     graph.assign_copy_number(cov, &lens);
+    //     graph.remove_zero_copy_elements(&lens, 0.5);
+    //     graph.assign_copy_number(cov, &lens);
+    //     graph.zip_up_overclustering();
+    //     // From good Likelihood ratio focus, to weaker ones.
+    //     for llr in (4..16).filter(|x| x % 4 == 0).rev() {
+    //         graph.resolve_repeats(&reads, &config, llr as f64);
+    //     }
+    //     graph.zip_up_overclustering();
+    //     graph.assign_copy_number(cov, &lens);
+    //     graph.remove_zero_copy_path(0.3);
+    // }
+    // graph.remove_lightweight_edges(1, true);
     for node in graph.nodes().filter(|n| n.node.0 == target) {
         println!("{}", node);
     }

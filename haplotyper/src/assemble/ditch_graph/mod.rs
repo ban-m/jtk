@@ -883,6 +883,14 @@ impl<'a> DitchGraph<'a> {
     ///    In other words, it connected to the non-ZCP edge.
     /// 4. If it is an edge, and the occ is more than `thr * max_out_dgree`
     pub fn remove_zero_copy_elements(&mut self, lens: &[usize], thr: f64) {
+        // (from,from_position,to,to_position) and from.0 <= to.0.
+        fn format_edge(e: &DitchEdge) -> (Node, Position, Node, Position) {
+            if (e.from, e.from_position) <= (e.to, e.to_position) {
+                (e.from, e.from_position, e.to, e.to_position)
+            } else {
+                (e.to, e.to_position, e.from, e.from_position)
+            }
+        }
         // Check the node violating for right-left condition.
         let unsound_nodes: HashSet<_> = self
             .nodes
@@ -898,27 +906,21 @@ impl<'a> DitchGraph<'a> {
                         Position::Tail => (plus, minus + copy_num),
                     }
                 });
-                match (plus == 0, minus == 0) {
-                    (true, true) => Some(key),
-                    (true, false) | (false, true) => None,
-                    _ if plus != minus => Some(key),
+                match (plus, minus) {
+                    (0, 0) => Some(key),
+                    (0, _) | (_, 0) => None,
+                    (x, y) if x != y => Some(key),
                     _ => None,
                 }
             })
             .collect();
         debug!("UNSOUND\t{}\t{}", unsound_nodes.len(), self.nodes.len());
-        // (from,from_position,to,to_position) and from.0 <= to.0.
-        let format_edge = |e: &DitchEdge| {
-            if e.from.0 <= e.to.0 {
-                (e.from, e.from_position, e.to, e.to_position)
-            } else {
-                (e.to, e.to_position, e.from, e.from_position)
-            }
-        };
         use super::copy_number::CoverageCalibrator;
         let calibrator = CoverageCalibrator::new(lens);
-        let sum_unit_len: usize = self.nodes.values().map(|node| node.seq().len()).sum();
-        let ave_unit_len = sum_unit_len / self.nodes.len();
+        let ave_unit_len = {
+            let sum_unit_len: usize = self.nodes.values().map(|node| node.seq().len()).sum();
+            sum_unit_len / self.nodes.len()
+        };
         let calib_occ = |edge: &DitchEdge| {
             let len = (edge.seq.len() + 2 * ave_unit_len as i64) as usize;
             calibrator.calib(edge.occ, len)
@@ -926,19 +928,18 @@ impl<'a> DitchGraph<'a> {
         let mut is_ok_to_remove = HashSet::new();
         let mut retain_edges = HashSet::new();
         for (key, node) in self.nodes.iter() {
+            // If the estimation of the copy number is is poor, do not remove edges.
             if unsound_nodes.contains(key) {
                 retain_edges.extend(node.edges.iter().map(format_edge));
                 continue;
             }
             for position in [Position::Head, Position::Tail] {
                 let edges = node.edges.iter().filter(|e| e.from_position == position);
-                // It is ok to take max by this way, as if the max is 0 there's no edge.
+                // It is ok to take max by this way because if the max is 0, there's no edge.
                 let max = edges.clone().map(calib_occ).fold(0f64, |x, y| x.max(y));
                 // It automatically drop the heviest edge from the selection.
                 for edge in edges {
-                    if edge.copy_number.map(|cp| cp == 0).unwrap_or(false)
-                        && edge.occ as f64 / max < thr
-                    {
+                    if matches!(edge.copy_number, Some(0)) && calib_occ(edge) / max < thr {
                         is_ok_to_remove.insert(format_edge(edge));
                     } else {
                         retain_edges.insert(format_edge(edge));

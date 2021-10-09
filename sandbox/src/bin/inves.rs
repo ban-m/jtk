@@ -9,12 +9,14 @@ fn main() -> std::io::Result<()> {
     let target: u64 = args[2].parse().unwrap();
     let ref_unit = ds.selected_chunks.iter().find(|u| u.id == target).unwrap();
     use std::collections::HashMap;
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    //let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let (hap1, hap2): (Vec<_>, Vec<_>) = ds
         .encoded_reads
         .iter()
         .filter(|read| read.nodes.iter().any(|n| n.unit == target))
-        .partition(|read| id2desc[&read.id].contains("000252v2"));
+        .partition(|read| id2name[&read.id].contains("ler"));
+    // .partition(|read| id2desc[&read.id].contains("000252v2"));
     let reads = hap1
         .iter()
         .map(|r| (0, r))
@@ -47,7 +49,8 @@ fn main() -> std::io::Result<()> {
                     Op::Ins(l) => npos += l,
                 }
             }
-            let desc = id2desc[&read.id];
+            //let desc = id2desc[&read.id];
+            let desc = id2name[&read.id];
             let id = read.id;
             let pos = node.position_from_start;
             println!(

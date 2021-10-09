@@ -87,5 +87,14 @@ fn main() -> std::io::Result<()> {
         println!("RESULT\t{}\tNEW\t{}\t{}\t{}", seed, score, time, acc);
         log::debug!("\n{:?}\n{:?}", preds, answer);
     }
+    for (i, (ans, read)) in answer.iter().zip(dataset.iter()).enumerate() {
+        let dist = kiley::bialignment::edit_dist(&templates[0], read) as i32;
+        let others: Vec<_> = templates
+            .iter()
+            .map(|x| kiley::bialignment::edit_dist(x, read) as i32 - dist)
+            .collect();
+        let others: Vec<_> = others.iter().map(|x| format!("{}", x)).collect();
+        log::trace!("OPTIMAL\t{}\t{}\t{}", i, ans, others.join("\t"));
+    }
     Ok(())
 }

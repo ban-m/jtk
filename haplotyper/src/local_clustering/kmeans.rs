@@ -178,7 +178,6 @@ fn recursive_clustering<T: std::borrow::Borrow<[f64]>, R: Rng>(
     // let var_num = 2 * (cluster_num - 1).max(1) as usize;
     let cluster_num = 2;
     let selected_variants: Vec<Vec<_>> = {
-        // let probes = filter_profiles(&profiles, cluster_num, 3, coverage);
         let probes = filter_profiles(profiles, cluster_num, 3, coverage, template_len);
         let profiles: Vec<Vec<_>> = profiles
             .iter()
@@ -369,7 +368,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         .filter(|&(pos, _)| !in_mask(pos))
         .map(|(pos, (_, maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
-                // .map(|k| poisson_lk(count, profiles.len() as f64 / k as f64))
                 .map(|k| poisson_lk(count, coverage * k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
                 .unwrap_or_else(|| panic!("{}", cluster_num));

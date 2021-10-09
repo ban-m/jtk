@@ -342,3 +342,5 @@ tig.data <- read_tsv("test.contig")
 aln.tig006 <- read_csv("tig_006.tsv")
 dbb25.contact <- read_tsv("dbb.25.contact.tsv")
 
+lc.data <- read_tsv("./check.tsv", col_names = c("RESULT","seed","TYPE","rand","time","acc"))
+lc.data <- read_tsv("./check_sr.tsv", col_names = c("RESULT","seed","TYPE","rand","time","acc"))
