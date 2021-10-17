@@ -344,3 +344,15 @@ dbb25.contact <- read_tsv("dbb.25.contact.tsv")
 
 lc.data <- read_tsv("./check.tsv", col_names = c("RESULT","seed","TYPE","rand","time","acc"))
 lc.data <- read_tsv("./check_sr.tsv", col_names = c("RESULT","seed","TYPE","rand","time","acc"))
+
+homopolymer_count <- read_tsv("dbb.tsv")
+homopolymer_count %>% filter(Len > 10) %>%
+    ggplot() + geom_point(aes(x=Len,y=Count,color=Base))
+
+homopolymer_count <- bind_rows(read_tsv("dbb.tsv") %>% mutate(ds = "dbb"),
+                               read_tsv("hg002.tsv") %>% mutate(ds = "hg002"),
+                               read_tsv("lerkyo.tsv") %>% mutate(ds="lerkyo"))
+
+homopolymer_count %>% filter(Len > 50) %>%
+    ggplot() + geom_line(aes(x=Len,y=Count,color=Base)) + facet_grid(ds~.)
+

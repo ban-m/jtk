@@ -39,13 +39,11 @@ pub enum ReadType {
 }
 
 impl DataSet {
-    pub fn with_minimum_data(input_file: &str, raw_reads: Vec<RawRead>, rt: &str) -> Self {
-        let read_type = match rt {
-            "CLR" => ReadType::CLR,
-            "CCS" => ReadType::CCS,
-            "ONT" => ReadType::ONT,
-            _ => ReadType::None,
-        };
+    pub fn with_minimum_data(
+        input_file: &str,
+        raw_reads: Vec<RawRead>,
+        read_type: ReadType,
+    ) -> Self {
         let assignments: Vec<_> = raw_reads
             .iter()
             .map(|r| Assignment {
