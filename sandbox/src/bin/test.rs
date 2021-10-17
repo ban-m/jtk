@@ -1,31 +1,31 @@
 use definitions::*;
 // use haplotyper::DetermineUnit;
-// use rand::SeedableRng;
-// use rand_xoshiro::Xoroshiro128PlusPlus;
-// use std::collections::HashMap;
+use rand::SeedableRng;
+use rand_xoshiro::Xoroshiro128PlusPlus;
+use std::collections::HashMap;
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    use haplotyper::assemble::*;
-    let config = AssembleConfig::new(4, 1000, false, true, 6);
-    let min_count = 6;
-    let max_tig_length = 20;
-    ds.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
-    let target: u64 = args[2].parse().unwrap();
-    let reads: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        //     .filter(|r| r.nodes.iter().any(|n| n.unit == target))
-        .collect();
-    let mut graph = ditch_graph::DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
-    graph.remove_lightweight_edges(2, true);
-    let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
-    let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-    graph.clean_up_graph_for_assemble(cov, &lens, &reads, &config);
+    // use haplotyper::assemble::*;
+    // let config = AssembleConfig::new(4, 1000, false, true, 6);
+    // let min_count = 6;
+    // let max_tig_length = 20;
+    // ds.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
+    // let target: u64 = args[2].parse().unwrap();
+    // let reads: Vec<_> = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .filter(|r| r.nodes.iter().any(|n| n.unit == target))
+    // .collect();
+    // let mut graph = ditch_graph::DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
+    // graph.remove_lightweight_edges(2, true);
+    // let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
+    // let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    // graph.clean_up_graph_for_assemble(cov, &lens, &reads, &config);
     // {
     //     graph.assign_copy_number(cov, &lens);
     //     graph.remove_zero_copy_elements(&lens, 0.2);
@@ -42,9 +42,9 @@ fn main() -> std::io::Result<()> {
     //     graph.remove_zero_copy_path(0.3);
     // }
     // graph.remove_lightweight_edges(1, true);
-    for node in graph.nodes().filter(|n| n.node.0 == target) {
-        println!("{}", node);
-    }
+    // for node in graph.nodes().filter(|n| n.node.0 == target) {
+    //     println!("{}", node);
+    // }
     // let min_count = 6;
     // let max_tig_length = 20;
     // ds.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
@@ -160,35 +160,35 @@ fn main() -> std::io::Result<()> {
     // ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, 0.35);
 
     // Local clustering.
-    // let cov = ds.coverage.unwrap();
-    //let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    // let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    // let target: u64 = args[2].parse().unwrap();
-    // let (seqs, ids): (Vec<_>, Vec<_>) = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .flat_map(|r| {
-    //         //let is_hapa = id2desc[&r.id].contains("255v2");
-    //         let is_hapa = id2name[&r.id].contains("ler");
-    //         r.nodes
-    //             .iter()
-    //             .filter(|n| n.unit == target)
-    //             .map(|n| (n.seq(), is_hapa as u8))
-    //             .collect::<Vec<_>>()
-    //     })
-    //     .unzip();
-    // let cl = ds
-    //     .selected_chunks
-    //     .iter()
-    //     .find(|n| n.id == target)
-    //     .unwrap()
-    //     .cluster_num as u8;
-    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
-    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
-    // let (asn, _, score) =
-    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-    // eprintln!("{}", score);
-    // eprintln!("{:?}\n{:?}", ids, asn);
+    let cov = ds.coverage.unwrap();
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let target: u64 = args[2].parse().unwrap();
+    let (seqs, ids): (Vec<_>, Vec<_>) = ds
+        .encoded_reads
+        .iter()
+        .flat_map(|r| {
+            //let is_hapa = id2desc[&r.id].contains("255v2");
+            let is_hapa = id2name[&r.id].contains("ler");
+            r.nodes
+                .iter()
+                .filter(|n| n.unit == target)
+                .map(|n| (n.seq(), is_hapa as u8))
+                .collect::<Vec<_>>()
+        })
+        .unzip();
+    let cl = ds
+        .selected_chunks
+        .iter()
+        .find(|n| n.id == target)
+        .unwrap()
+        .cluster_num as u8;
+    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
+    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
+    let (asn, _, score) =
+        haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    eprintln!("{}", score);
+    eprintln!("{:?}\n{:?}", ids, asn);
 
     // let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     // for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {

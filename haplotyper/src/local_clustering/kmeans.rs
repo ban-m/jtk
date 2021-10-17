@@ -340,10 +340,9 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     template_len: usize,
 ) -> Vec<(usize, f64)> {
     // (sum, maximum gain, number of positive element)
-    let mut total_improvement = vec![(0f64, 0f64, 0); profiles[0].borrow().len()];
+    let mut total_improvement = vec![(0f64, 0); profiles[0].borrow().len()];
     for prof in profiles.iter().map(|x| x.borrow()) {
-        for ((sum, maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
-            *sum += p;
+        for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
             *maxgain += p.max(0f64);
             *count += (0.00001 < *p) as usize;
         }
@@ -362,17 +361,38 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         let pos = base_position(pos);
         pos < MASK_LENGTH || (template_len - MASK_LENGTH) < pos
     };
+    trace!("LKSUM\tpos\tbp\tlen\ttype\tlkdelta");
     let probes: Vec<(usize, f64)> = total_improvement
         .into_iter()
         .enumerate()
-        .filter(|&(pos, _)| !in_mask(pos))
-        .map(|(pos, (_, maxgain, count))| {
+        .map(|(pos, (maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
                 .map(|k| poisson_lk(count, coverage * k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
                 .unwrap_or_else(|| panic!("{}", cluster_num));
+            let (idx, len, ed_type) = if pos / 9 < template_len {
+                (pos / 9, pos % 9, "Sn")
+            } else {
+                let ofs_pos = pos - 9 * template_len;
+                if ofs_pos < (DEL_SIZE - 1) * (template_len - DEL_SIZE) {
+                    (ofs_pos / (DEL_SIZE - 1), ofs_pos % (DEL_SIZE - 1) + 2, "Dl")
+                } else {
+                    let ofs_pos = ofs_pos - (DEL_SIZE - 1) * (template_len - DEL_SIZE);
+                    (ofs_pos / REP_SIZE, ofs_pos % REP_SIZE + 1, "Cp")
+                }
+            };
+            let total_lk = max_lk + maxgain;
+            trace!(
+                "LKSUM\t{}\t{}\t{}\t{}\t{}",
+                pos,
+                idx,
+                len,
+                ed_type,
+                total_lk / profiles.len() as f64,
+            );
             (pos, maxgain + max_lk)
         })
+        .filter(|&(pos, _)| !in_mask(pos))
         .collect();
     // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
     // Currently, find and sweep. So, to select one variant,
