@@ -5,14 +5,12 @@ const DEL_SIZE: usize = 4;
 const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
-// (* 47 1.2)
-// (* 3 (* 3 (+ (* 47 0.1) 0.35)))
 const AVERAGE_LK: f64 = 1.1;
-const DEL_LK: f64 = 3f64;
+// const DEL_LK: f64 = 3f64;
 // return expected number of variants under the null hypothesis.
-fn expected_mis_num(cov: usize) -> f64 {
-    cov as f64 * 0.1f64 + 0.35
-}
+// fn expected_mis_num(cov: usize) -> f64 {
+//     cov as f64 * 0.1f64 + 0.35
+// }
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
 use rand::Rng;
@@ -123,8 +121,8 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
             let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
-            let null_gain = (k - 1) as f64 * expected_mis_num(reads.len()) * DEL_LK;
-            Some((asn, score - expected_gain.max(null_gain)))
+            // let null_gain = (k - 1) as f64 * expected_mis_num(reads.len()) * DEL_LK;
+            Some((asn, score - expected_gain))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
     trace!("MAXLK\t{:.3}", score);
@@ -299,32 +297,19 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
         // Modif.
         let mut modif_table = prof.to_modification_table();
         modif_table.truncate(9 * template.len());
-        modif_table.iter_mut().for_each(|x| *x -= lk);
         // Del table
-        let mut del_table = prof.to_deletion_table(DEL_SIZE);
+        let del_table = prof.to_deletion_table(DEL_SIZE);
         assert_eq!(
             del_table.len(),
             (DEL_SIZE - 1) * (template.len() - DEL_SIZE)
         );
-        del_table.iter_mut().for_each(|x| *x -= lk);
-        // Convert this to 1-bp edit operation.
-        // for row in del_table.chunks_exact_mut(DEL_SIZE - 1) {
-        //     for (i, x) in row.iter_mut().enumerate() {
-        //         *x /= (i + 2) as f64;
-        //     }
-        // }
         modif_table.extend(del_table);
         // Copy Table.
-        let mut copy_table = prof.to_copy_table(REP_SIZE);
+        let copy_table = prof.to_copy_table(REP_SIZE);
         assert_eq!(copy_table.len(), REP_SIZE * (template.len() - REP_SIZE));
-        copy_table.iter_mut().for_each(|x| *x -= lk);
-        // Convert this to 1-bp edit operation.
-        // for row in copy_table.chunks_exact_mut(REP_SIZE) {
-        //     for (i, x) in row.iter_mut().enumerate() {
-        //         *x /= (i + 1) as f64;
-        //     }
-        // }
         modif_table.extend(copy_table);
+        // Normalize.
+        modif_table.iter_mut().for_each(|x| *x -= lk);
         profiles.push(modif_table);
     }
     Some(profiles)

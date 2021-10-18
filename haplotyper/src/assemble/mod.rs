@@ -570,12 +570,14 @@ pub fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {
         .collect()
 }
 
+// TODO:there are some bugs.
 /// Return the co-occurence of the reads.
 /// [i][j] -> # of reads shared by summaries[i] and summaries[j].
 pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<u32>> {
     // (unit,cluster) -> indices of the summary whose either terminal is (unit,cluster), if there is any.
     let mut contig_terminals: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
     for (i, summary) in summaries.iter().enumerate() {
+        // trace!("{}->{}", i, summary);
         let mut summary = summary.summary.iter();
         let first = summary.next().unwrap();
         contig_terminals
@@ -597,7 +599,8 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
     let mut shared_reads = vec![vec![0; summaries.len()]; summaries.len()];
     for read in ds.encoded_reads.iter() {
         let mut read_through = vec![];
-        for (i, w) in read.nodes.windows(2).enumerate() {
+        let mut is_first = true;
+        for w in read.nodes.windows(2) {
             // If this (n,c) - (n',c') is connecting
             // two contigs, we record the both contigs.
             let (from, to) = match w {
@@ -608,8 +611,9 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
                 // We record the leaving contig only at the first contig.
                 // This is because, what we want to get is the list of arrived contig,
                 // not the changelog of the contig.
-                if i == 0 {
+                if is_first {
                     read_through.push(f);
+                    is_first = false;
                 }
                 read_through.push(t);
             }

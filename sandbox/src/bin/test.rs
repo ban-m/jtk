@@ -10,40 +10,41 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    let mut homo_polymers: Vec<Vec<u32>> = vec![vec![]; 4];
-    for seq in ds
-        .raw_reads
-        .iter()
-        .map(|r| r.seq())
-        .filter(|x| !x.is_empty())
-    {
-        let mut seq = seq.iter().map(|x| x.to_ascii_uppercase()).peekable();
-        while let Some(current_base) = seq.next() {
-            let mut length = 0;
-            while Some(current_base) == seq.peek().cloned() {
-                seq.next();
-                length += 1;
-            }
-            let index = match current_base {
-                b'A' => 0,
-                b'C' => 1,
-                b'G' => 2,
-                b'T' => 3,
-                _ => panic!(),
-            };
-            if homo_polymers[index].len() <= length {
-                let diff = length - homo_polymers[index].len() + 1;
-                homo_polymers[index].extend(std::iter::repeat(0).take(diff));
-            }
-            homo_polymers[index][length] += 1;
-        }
-    }
-    println!("Base\tLen\tCount");
-    for (base, counts) in homo_polymers.iter().enumerate() {
-        for (len, count) in counts.iter().enumerate() {
-            println!("{}\t{}\t{}", b"ACGT"[base] as char, len, count);
-        }
-    }
+    // Length of homopolymers.
+    // let mut homo_polymers: Vec<Vec<u32>> = vec![vec![]; 4];
+    // for seq in ds
+    //     .raw_reads
+    //     .iter()
+    //     .map(|r| r.seq())
+    //     .filter(|x| !x.is_empty())
+    // {
+    //     let mut seq = seq.iter().map(|x| x.to_ascii_uppercase()).peekable();
+    //     while let Some(current_base) = seq.next() {
+    //         let mut length = 0;
+    //         while Some(current_base) == seq.peek().cloned() {
+    //             seq.next();
+    //             length += 1;
+    //         }
+    //         let index = match current_base {
+    //             b'A' => 0,
+    //             b'C' => 1,
+    //             b'G' => 2,
+    //             b'T' => 3,
+    //             _ => panic!(),
+    //         };
+    //         if homo_polymers[index].len() <= length {
+    //             let diff = length - homo_polymers[index].len() + 1;
+    //             homo_polymers[index].extend(std::iter::repeat(0).take(diff));
+    //         }
+    //         homo_polymers[index][length] += 1;
+    //     }
+    // }
+    // println!("Base\tLen\tCount");
+    // for (base, counts) in homo_polymers.iter().enumerate() {
+    //     for (len, count) in counts.iter().enumerate() {
+    //         println!("{}\t{}\t{}", b"ACGT"[base] as char, len, count);
+    //     }
+    // }
     // use haplotyper::assemble::*;
     // let config = AssembleConfig::new(4, 1000, false, true, 6);
     // let min_count = 6;
@@ -194,36 +195,36 @@ fn main() -> std::io::Result<()> {
     // ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, 0.35);
 
     // Local clustering.
-    // let cov = ds.coverage.unwrap();
+    let cov = ds.coverage.unwrap();
     // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    // let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    // let target: u64 = args[2].parse().unwrap();
-    // let (seqs, ids): (Vec<_>, Vec<_>) = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .flat_map(|r| {
-    //         //let is_hapa = id2desc[&r.id].contains("255v2");
-    //         let is_hapa = id2name[&r.id].contains("ler");
-    //         r.nodes
-    //             .iter()
-    //             .filter(|n| n.unit == target)
-    //             .map(|n| (n.seq(), is_hapa as u8))
-    //             .collect::<Vec<_>>()
-    //     })
-    //     .unzip();
-    // let cl = ds
-    //     .selected_chunks
-    //     .iter()
-    //     .find(|n| n.id == target)
-    //     .unwrap()
-    //     .cluster_num as u8;
-    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
-    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
-    // let (asn, _, score) =
-    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-    // eprintln!("{}", score);
-    // eprintln!("{:?}\n{:?}", ids, asn);
-
+    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let target: u64 = args[2].parse().unwrap();
+    let (seqs, ids): (Vec<_>, Vec<_>) = ds
+        .encoded_reads
+        .iter()
+        .flat_map(|r| {
+            //let is_hapa = id2desc[&r.id].contains("255v2");
+            // let is_hapa = id2name[&r.id].contains("ler");
+            let is_hapa = id2name[&r.id].contains("hapA");
+            r.nodes
+                .iter()
+                .filter(|n| n.unit == target)
+                .map(|n| (n.seq(), is_hapa as u8))
+                .collect::<Vec<_>>()
+        })
+        .unzip();
+    let cl = ds
+        .selected_chunks
+        .iter()
+        .find(|n| n.id == target)
+        .unwrap()
+        .cluster_num as u8;
+    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
+    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
+    let (asn, _, score) =
+        haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    eprintln!("{}", score);
+    eprintln!("{:?}\n{:?}", ids, asn);
     // let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     // for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
     //     let ref_unit = units[&node.unit];

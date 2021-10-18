@@ -80,6 +80,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     }
     let coverage = ds.coverage.unwrap();
     // Maybe we can train pair-HMM here.
+    // Also, calculate the threshold.
     let hmm = {
         let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
         let (_, cov, _) = covs.select_nth_unstable(pileups.len() / 2);

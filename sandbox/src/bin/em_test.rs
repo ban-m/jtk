@@ -11,7 +11,7 @@ fn main() -> std::io::Result<()> {
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
     let mut pvalues = haplotyper::unit_correlation::calc_p_values(&ds, 5);
-    pvalues.retain(|_, pvalue| 0.01 < *pvalue);
+    pvalues.retain(|_, pvalue| 0.05 < *pvalue);
     let to_squish = pvalues;
     ds.encoded_reads
         .iter_mut()
@@ -19,11 +19,13 @@ fn main() -> std::io::Result<()> {
         .filter(|n| to_squish.contains_key(&n.unit))
         .for_each(|n| n.cluster = 0);
     let target: HashSet<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
-    ds = ds.correct_clustering_em_on_selected(10, 5, true, &target);
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    ds = ds.correct_clustering_em_on_selected(20, 5, true, &target);
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let mut result: HashMap<_, [usize; 2]> = HashMap::new();
     for read in ds.encoded_reads.iter() {
-        let is_hap1 = id2desc[&read.id].contains("255v2") as usize;
+        // let is_hap1 = id2desc[&read.id].contains("255v2") as usize;
+        let is_hap1 = id2desc[&read.id].contains("hapA") as usize;
         for node in read.nodes.iter().filter(|n| target.contains(&n.unit)) {
             result.entry((node.unit, node.cluster)).or_default()[is_hap1] += 1;
         }

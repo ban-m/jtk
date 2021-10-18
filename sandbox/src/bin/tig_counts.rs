@@ -9,12 +9,12 @@ fn main() -> std::io::Result<()> {
     let end = std::time::Instant::now();
     eprintln!("Open\t{}", (end - start).as_secs());
     use std::collections::HashMap;
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
     let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
     for read in ds.encoded_reads.iter() {
-        // let ans = id2desc[&read.id].contains("hapA") as usize;
-        let ans = id2desc[&read.id].contains("000252v2") as usize;
+        let ans = id2desc[&read.id].contains("hapA") as usize;
+        // let ans = id2desc[&read.id].contains("000252v2") as usize;
         for node in read.nodes.iter() {
             counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
         }

@@ -546,7 +546,7 @@ impl<'a> DitchGraph<'a> {
         self.assign_copy_number(cov, &lens);
         self.zip_up_overclustering();
         // From good Likelihood ratio focus, to weaker ones.
-        for llr in (4..16).filter(|x| x % 4 == 0).rev() {
+        for llr in (3..15).filter(|x| x % 3 == 0).rev() {
             self.resolve_repeats(&reads, c, llr as f64);
         }
         self.zip_up_overclustering();
@@ -1624,6 +1624,11 @@ impl<'a> DitchGraph<'a> {
         loop {
             let mut foci = self.get_foci(reads, config);
             debug!("FOCI\tNUM\t{}\tBefore removing weak foci.", foci.len());
+            if log_enabled!(log::Level::Trace) {
+                for focus in foci.iter() {
+                    trace!("FOC_DETAIL\t{}", focus);
+                }
+            }
             foci.retain(|val| thr < val.llr());
             debug!("FOCI\tNUM\t{}\tFiltered out weak foci.", foci.len());
             if foci.is_empty() {

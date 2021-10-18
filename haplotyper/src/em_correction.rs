@@ -74,10 +74,12 @@ impl ClusteringCorrection for DataSet {
             .filter(|n| to_squish.contains_key(&n.unit))
             .for_each(|n| n.cluster = 0);
         // Then, usual correction.
+        // Maybe we can cluster with compressed .. no.
+        // This is because the consensus would be very dirty.
         let targets: HashSet<_> = self
             .selected_chunks
             .iter()
-            .filter_map(|c| (1f64 < c.score).then(|| c.id))
+            .filter_map(|c| (0.1 < c.score).then(|| c.id))
             .collect();
         debug!("EM\tSquish\tTarget\tTotal");
         debug!(

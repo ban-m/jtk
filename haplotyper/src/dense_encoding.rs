@@ -98,7 +98,7 @@ impl DenseEncoding for DataSet {
         // Local clustering.
         debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
         crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
-        squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
+        // squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
         self
     }
 }
@@ -254,6 +254,8 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
         .collect()
 }
 
+// Why I did this? The clustering is already squished if the LK gain is not sufficient.
+#[allow(dead_code)]
 fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gain: f64) {
     let mut new_clustered: HashMap<_, Vec<&mut _>> = nodes.iter().map(|&n| (n, vec![])).collect();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
@@ -263,7 +265,6 @@ fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gai
     }
     for unit in ds.selected_chunks.iter_mut() {
         if let Some(assignments) = new_clustered.get_mut(&unit.id) {
-            // At least 1 LK for each element(CLRmode)
             let threshold = assignments.len() as f64 * per_read_lk_gain;
             if unit.score <= threshold {
                 log::debug!(
