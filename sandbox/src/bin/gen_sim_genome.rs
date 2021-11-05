@@ -1,8 +1,9 @@
 // Synopsis:
-// `cargo run --release --bin gen_sim_genome -- ${hap1} ${hap2} ${seed}
-// The output sequences have header like `>hapA/B`.
-// HapA is exactly 1Mbp sequence, and hapB is constructed by introducing 0.1% mutation (indel,subs in total with equal probability) after concatinating the following sequence one after another:
-// 1. hapA[..200Kbp]
+// `cargo run --release --bin gen_sim_genome -- ${reference} ${hap1} ${hap2} ${seed}
+// The output sequences have header like `>reference/hapA/hapB`
+// `reference` is exactly 1Mbp sequence, and hapA and hapB are constructed by introducing 0.05% mutation (indel,subs in total with equal probability) after concatinating the following sequence one after another:
+// For hapA
+// 1. ref[..200Kbp]
 // 2. hapA[220Kbp..420Kbp] (introducing L-bp deletion)
 // 3. random 30Kbp sequence (introducing L-bp insertion)
 // 4. hapA[420Kbp..620Kbp]
@@ -11,6 +12,8 @@
 // 7. hapA[820Kbp..830Kbp]
 // 8. hapA[820Kbp..830Kbp] (introducing L/3bp seg-dup x 3)
 // 9. hapA[830Kbp..1Mbp].
+// For hapB.
+// 1.
 // It would be very hard case for usual assembler or VariantCall+Phasing procedures.
 use kiley::gen_seq;
 use rand::SeedableRng;

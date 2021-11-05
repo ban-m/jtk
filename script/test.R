@@ -356,3 +356,6 @@ homopolymer_count <- bind_rows(read_tsv("dbb.tsv") %>% mutate(ds = "dbb"),
 homopolymer_count %>% filter(Len > 50) %>%
     ggplot() + geom_line(aes(x=Len,y=Count,color=Base)) + facet_grid(ds~.)
 
+
+graph.features <- read_tsv("dip-A-CS.dump.tsv")
+graph.features <- graph.features %>% mutate(skewness = hap1/(hap1+hap2)-1/2)
