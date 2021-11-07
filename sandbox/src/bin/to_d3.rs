@@ -149,20 +149,20 @@ fn main() -> std::io::Result<()> {
             )?;
         }
     }
-    let mut graph = HaploGraph { nodes, edges };
-    spectral_clustering(&mut graph);
+    let graph = HaploGraph { nodes, edges };
+    // spectral_clustering(&mut graph);
     println!("{}", serde_json::ser::to_string_pretty(&graph).unwrap());
     Ok(())
 }
 
-fn spectral_clustering(HaploGraph { nodes, edges }: &mut HaploGraph) {
-    let num_nodes = nodes.len();
-    let edges: Vec<_> = edges
-        .iter()
-        .map(|e| (e.source, e.target, e.weight))
-        .collect();
-    let assignments = vec![];
-    for (&asn, node) in assignments.iter().zip(nodes.iter_mut()) {
-        node.phase = asn;
-    }
-}
+// fn spectral_clustering(HaploGraph { nodes, edges }: &mut HaploGraph) {
+//     let num_nodes = nodes.len();
+//     let edges: Vec<_> = edges
+//         .iter()
+//         .map(|e| (e.source, e.target, e.weight))
+//         .collect();
+//     let assignments = vec![];
+//     for (&asn, node) in assignments.iter().zip(nodes.iter_mut()) {
+//         node.phase = asn;
+//     }
+// }

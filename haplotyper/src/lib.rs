@@ -9,6 +9,7 @@ mod extract;
 mod filter_unit;
 pub mod find_union;
 pub mod global_clustering;
+pub mod hapcut;
 pub mod local_clustering;
 pub mod minimap2;
 pub mod multiplicity_estimation;
