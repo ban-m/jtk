@@ -2,7 +2,7 @@ use definitions::*;
 // use haplotyper::DetermineUnit;
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -10,6 +10,25 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let units: Vec<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
+    for read in ds.encoded_reads.iter() {
+        if units
+            .iter()
+            .all(|&n| read.nodes.iter().any(|node| node.unit == n))
+        {
+            let answer = id2desc[&read.id].contains("251v2") as usize;
+            let read: Vec<_> = read
+                .nodes
+                .iter()
+                .filter(|n| units.contains(&n.unit))
+                .map(|n| format!("{}-{}", n.unit, n.cluster))
+                .collect();
+            println!("{}\t{}", answer, read.join("\t"));
+        }
+    }
+    // Length of the reads given.
+    // Match names.
     // Length of homopolymers.
     // let mut homo_polymers: Vec<Vec<u32>> = vec![vec![]; 4];
     // for seq in ds
@@ -195,36 +214,36 @@ fn main() -> std::io::Result<()> {
     // ds = haplotyper::encode::deletion_fill::correct_unit_deletion(ds, &mut failed_trials, 0.35);
 
     // Local clustering.
-    let cov = ds.coverage.unwrap();
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
-    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    let target: u64 = args[2].parse().unwrap();
-    let (seqs, ids): (Vec<_>, Vec<_>) = ds
-        .encoded_reads
-        .iter()
-        .flat_map(|r| {
-            //let is_hapa = id2desc[&r.id].contains("255v2");
-            // let is_hapa = id2name[&r.id].contains("ler");
-            let is_hapa = id2name[&r.id].contains("hapA");
-            r.nodes
-                .iter()
-                .filter(|n| n.unit == target)
-                .map(|n| (n.seq(), is_hapa as u8))
-                .collect::<Vec<_>>()
-        })
-        .unzip();
-    let cl = ds
-        .selected_chunks
-        .iter()
-        .find(|n| n.id == target)
-        .unwrap()
-        .cluster_num as u8;
-    let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
-    let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
-    let (asn, _, score) =
-        haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
-    eprintln!("{}", score);
-    eprintln!("{:?}\n{:?}", ids, asn);
+    // let cov = ds.coverage.unwrap();
+    // // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.desc)).collect();
+    // let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    // let target: u64 = args[2].parse().unwrap();
+    // let (seqs, ids): (Vec<_>, Vec<_>) = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .flat_map(|r| {
+    //         //let is_hapa = id2desc[&r.id].contains("255v2");
+    //         // let is_hapa = id2name[&r.id].contains("ler");
+    //         let is_hapa = id2name[&r.id].contains("hapA");
+    //         r.nodes
+    //             .iter()
+    //             .filter(|n| n.unit == target)
+    //             .map(|n| (n.seq(), is_hapa as u8))
+    //             .collect::<Vec<_>>()
+    //     })
+    //     .unzip();
+    // let cl = ds
+    //     .selected_chunks
+    //     .iter()
+    //     .find(|n| n.id == target)
+    //     .unwrap()
+    //     .cluster_num as u8;
+    // let mut config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, cl, cov);
+    // let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(3424);
+    // let (asn, _, score) =
+    //     haplotyper::local_clustering::kmeans::clustering(&seqs, &mut rng, &mut config).unwrap();
+    // eprintln!("{}", score);
+    // eprintln!("{:?}\n{:?}", ids, asn);
     // let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     // for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
     //     let ref_unit = units[&node.unit];

@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
     let id2desc: HashMap<_, _> = ds
         .raw_reads
         .iter()
-        .map(|r| (r.id, r.desc.clone()))
+        .map(|r| (r.id, r.name.clone()))
         .collect();
     let units: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
     for read in ds.encoded_reads.iter() {
@@ -36,7 +36,7 @@ fn main() -> std::io::Result<()> {
                     dumps[i] = format!("{:<5}", unit);
                 }
             }
-            let is_hap1 = id2desc[&read.id].contains("252v2");
+            let is_hap1 = id2desc[&read.id].contains("251v2");
             // println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
             println!(
                 "{}\t{}\t{}\t{}",

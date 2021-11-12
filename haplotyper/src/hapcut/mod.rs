@@ -8,7 +8,7 @@ use definitions::*;
 use std::collections::{HashMap, HashSet};
 pub trait HapCut {
     /// Run HapCUT algorithm. Return the consistency score of the result.
-    fn hapcut(&mut self, c: &HapCutConfig) -> i64;
+    fn hapcut(&mut self, c: &HapCutConfig) -> (i64, Vec<Phase>);
     fn hapcut_squish_diplotig(&mut self, c: &HapCutConfig) -> i64;
     /// Run HapCUT2 algorithm. Return the (scaled-)likelihood of the result.
     fn hapcut2(&mut self, c: &HapCut2Config) -> f64;
@@ -31,9 +31,14 @@ pub struct HapCutConfig {
     // The count threshold used to construct the adj graph.
     // The edges with count less than or equal to this value would be dicarded.
     count_thr: u32,
+    // Copy number information
+    copy_number: HashMap<u64, usize>,
 }
 
 impl HapCutConfig {
+    pub fn set_thr(&mut self, thr: f64) {
+        self.round_threshold = thr;
+    }
     pub fn set_seed(&mut self, seed: u64) {
         self.seed = seed;
     }
@@ -42,6 +47,19 @@ impl HapCutConfig {
     }
     fn seed(&self) -> u64 {
         self.seed
+    }
+    pub fn new(
+        seed: u64,
+        round_threshold: f64,
+        count_thr: u32,
+        copy_number: HashMap<u64, usize>,
+    ) -> Self {
+        Self {
+            seed,
+            round_threshold,
+            count_thr,
+            copy_number,
+        }
     }
 }
 
@@ -52,8 +70,9 @@ impl std::default::Default for HapCutConfig {
             // match_reward: 1,
             // mism_penalty: -1,
             // dont_care_score: 0,
-            round_threshold: 0.2,
-            count_thr: 1,
+            round_threshold: 0.25,
+            count_thr: 0,
+            copy_number: HashMap::new(),
         }
     }
 }
@@ -83,6 +102,16 @@ impl std::ops::Index<u64> for Phase {
 }
 
 impl Phase {
+    pub fn phases(&self) -> Vec<((u64, u64), i8)> {
+        self.phase
+            .iter()
+            .enumerate()
+            .map(|(cl, phase)| ((self.unit, cl as u64), *phase))
+            .collect()
+    }
+    pub fn phase(&self) -> &[i8] {
+        &self.phase
+    }
     pub fn new(unit: u64, phase: Vec<i8>) -> Self {
         Self {
             cluster_size: phase.len(),
@@ -120,6 +149,29 @@ impl Phase {
             phase,
         }
     }
+    // Return how much consistencies would be changed on fliping haplotyping on chunks.
+    // i->the consistency change by flipping the i-th phase.
+    pub fn consistency_change_by_flip(
+        phases: &[Phase],
+        reads: &[(u64, Vec<(u64, u64)>)],
+        c: &HapCutConfig,
+    ) -> Vec<i64> {
+        let mut consistency_changes = vec![0; phases.len()];
+        for (_, read) in reads.iter() {
+            let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
+            let consis = plus.min(minus);
+            for &(unit, cl) in read {
+                // If we flip the phase on phases[unit]...
+                consistency_changes[unit as usize] += match phases[unit as usize][cl] {
+                    1 => (plus + 2).min(minus - 2) - consis,
+                    -1 => (plus - 2).min(minus + 2) - consis,
+                    _ => 0,
+                };
+            }
+        }
+        consistency_changes.iter_mut().for_each(|x| *x /= 2);
+        consistency_changes
+    }
     // Return consistency score of the current phase.
     // *Smaller is better*.
     fn consistency(phases: &[Phase], reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> i64 {
@@ -129,7 +181,15 @@ impl Phase {
             .sum();
         total_consistency / 2
     }
-    fn consistency_of_read(phases: &[Phase], read: &[(u64, u64)], _c: &HapCutConfig) -> i64 {
+    fn consistency_of_read(phases: &[Phase], read: &[(u64, u64)], c: &HapCutConfig) -> i64 {
+        let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
+        plus.min(minus)
+    }
+    fn get_consis_on_phases(
+        phases: &[Phase],
+        read: &[(u64, u64)],
+        _c: &HapCutConfig,
+    ) -> (i64, i64) {
         // Match -> 0, Mismatch -> 2, Diplochunk -> 1
         let plus: i64 = read
             .iter()
@@ -140,7 +200,7 @@ impl Phase {
             .iter()
             .map(|&(unit, cl)| 1 + phases[unit as usize][cl] as i64)
             .sum();
-        plus.min(minus)
+        (plus, minus)
     }
     // Optimizing a unit.
     // It re-assign the haplotype assignment on each chunk, by choosing a ``near-parallel'' integer vector
@@ -454,54 +514,52 @@ impl HapCut for DataSet {
             .map(|r| (r.id, r.nodes.iter().map(|x| (x.unit, x.cluster)).collect()))
             .collect();
         let (phases, consistency) = hapcut(&reads, c);
-        // Map all the diplotig into one.
-        // unit -> cluster -> new cluster.
-        let mapping: Vec<Vec<u64>> = phases
+        // Squishing nodes.
+        let is_uninformative: HashSet<_> = phases
             .iter()
             .enumerate()
-            .map(|(i, phase)| {
+            .filter_map(|(i, phase)| {
                 assert_eq!(phase.unit, i as u64);
-                let mut removed_so_far = 0;
-                phase
-                    .phase
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &p)| {
-                        if p == 0 {
-                            removed_so_far += 1;
-                            0
-                        } else {
-                            (i + 1 - removed_so_far) as u64
-                        }
-                    })
-                    .collect()
+                (phase.phase.iter().all(|&p| p == 0)).then(|| i as u64)
             })
             .collect();
-        let squished: usize = phases
-            .iter()
-            .map(|p| p.phase.iter().filter(|&&p| p == 0).count())
-            .sum();
-        debug!("SQUISHED\t{}\tCLUSTER", squished);
+        debug!("SQUISHED\t{}\tCLUSTER", is_uninformative.len());
         self.encoded_reads
             .iter_mut()
             .flat_map(|read| read.nodes.iter_mut())
-            .for_each(|node| {
-                node.cluster = mapping[node.unit as usize][node.cluster as usize];
-            });
+            .filter(|node| is_uninformative.contains(&node.unit))
+            .for_each(|node| node.cluster = 0);
+        // self.encoded_reads
+        //     .iter_mut()
+        //     .flat_map(|read| read.nodes.iter_mut())
+        //     .for_each(|node| {
+        //         node.cluster = mapping[node.unit as usize][node.cluster as usize];
+        //     });
         // This is a vector of the hashset.
         consistency
     }
-    fn hapcut(&mut self, c: &HapCutConfig) -> i64 {
+    fn hapcut(&mut self, c: &HapCutConfig) -> (i64, Vec<Phase>) {
         let reads: Vec<(u64, Vec<(u64, u64)>)> = self
             .encoded_reads
             .iter()
             .map(|r| (r.id, r.nodes.iter().map(|x| (x.unit, x.cluster)).collect()))
             .collect();
         let (phases, consistency) = hapcut(&reads, c);
-        // This is a vector of the hashset.
+        let changes = Phase::consistency_change_by_flip(&phases, &reads, c);
+        trace!("HAPCUT\tChange\tunit\tdiff");
+        for (phase, change) in phases.iter().zip(changes.iter()) {
+            trace!("HAPCUT\tChange\t{}\t{}", phase.unit, change);
+        }
+        for phase in phases.iter() {
+            trace!("HAPCUT\tDUMP\t{:?}", phase);
+        }
         let phased_blocks = split_phase_blocks(&phases, &reads, c);
+        for pb in phased_blocks.iter() {
+            let pb: Vec<_> = pb.iter().map(|(u, cl)| format!("{}-{}", u, cl)).collect();
+            trace!("HAPCUT\tPB\t{}", pb.join("\t"));
+        }
         self.assignments = reads_into_phased_block(&reads, &phased_blocks, c);
-        consistency
+        (consistency, phases)
     }
     fn hapcut2(&mut self, _c: &HapCut2Config) -> f64 {
         todo!()
@@ -509,19 +567,19 @@ impl HapCut for DataSet {
 }
 
 fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i64) {
-    debug!("HapCut\tStart\t1");
+    debug!("HAPCUT\tStart\t1");
     // First, associate cluster/phase randomly.
     // Vector of phases. [i] -> i-th chunk.
     let mut phases = gen_random_phase(reads, c).unwrap();
     let mut c = c.clone();
-    for t in 0..220 {
-        trace!("HapCut\tIter\t{}\t1", t);
+    for t in 0..50 {
+        trace!("HAPCUT\tIter\t{}\t1", t);
         let (cut, _) = Phase::optimize_by_cut(&mut phases, reads, &c);
         let prev_consis = Phase::consistency(&phases, reads, &c);
-        trace!("HapCut\tCONSIS\t{}\t{}\t0", t, prev_consis);
+        trace!("HAPCUT\tCONSIS\t{}\t{}\t0", t, prev_consis);
         Phase::flip_cut(&mut phases, &cut);
         let consis = Phase::consistency(&phases, reads, &c);
-        trace!("HapCut\tCONSIS\t{}\t{}\t1", t, consis);
+        trace!("HAPCUT\tCONSIS\t{}\t{}\t1", t, consis);
         if prev_consis <= consis {
             Phase::flip_cut(&mut phases, &cut);
         }
@@ -533,14 +591,14 @@ fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i6
         //     .collect();
         // eprintln!("CUT\t{}\t{:?}", prev_consis - consis, cut);
         // }
-        if 100 < t {
+        if 20 < t {
             Phase::optimize_unit_mc(&mut phases, reads, &c);
         }
-        if 200 < t {
-            Phase::optimize_unit(&mut phases, reads, &c);
-        }
-        let consis = Phase::consistency(&phases, reads, &c);
-        trace!("HapCut\tCONSIS\t{}\t{}\t2", t, consis);
+        // if 220 < t {
+        //     Phase::optimize_unit(&mut phases, reads, &c);
+        // }
+        // let consis = Phase::consistency(&phases, reads, &c);
+        // trace!("HapCut\tCONSIS\t{}\t{}\t2", t, consis);
         c.update_seed();
     }
     // Phase::optimize_unit(&mut phases, reads, &c);
@@ -570,7 +628,15 @@ fn gen_random_phase(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> Optio
     let init_phases: Vec<_> = max_cluster_num
         .iter()
         .enumerate()
-        .map(|(idx, &cl_num)| Phase::new_with_rand(&mut rng, idx as u64, cl_num))
+        .map(|(idx, &cl_num)| {
+            let mut phase = Phase::new_with_rand(&mut rng, idx as u64, cl_num);
+            if matches!(c.copy_number.get(&(idx as u64)), Some(1)) {
+                // If this unit is haplotype specific, add phase information.
+                assert_eq!(cl_num, 1);
+                phase.phase = if rng.gen_bool(0.5) { vec![1] } else { vec![-1] };
+            }
+            phase
+        })
         .collect();
     Some(init_phases)
 }
@@ -627,11 +693,6 @@ fn connected_components(
     }
     let mut nodes: Vec<((u64, u64), usize)> = nodes.into_iter().collect();
     nodes.sort_by_key(|x| x.1);
-    {
-        for (i, x) in nodes.iter().enumerate() {
-            assert_eq!(i, x.1);
-        }
-    }
     // O(KN)
     let mut phased_blocks = vec![];
     for i in 0..nodes.len() {
@@ -1098,6 +1159,141 @@ pub mod hapcut {
         );
     }
     #[test]
+    fn test_hap_specific_region() {
+        let read_params = (100, 9, 0.1);
+        let var_params = (20, 0f64, 0f64, 0);
+        // There's no collapsing.
+        let mut reads = gen_test_dataset(read_params, var_params, 438290);
+        // Lets try to remove 3-9 in cluster 1.
+        for &mut (_, ref mut read) in reads.iter_mut() {
+            read.retain(|&(node, cl)| !(cl == 1 && (3..10).contains(&node)));
+        }
+        let copy_number: HashMap<_, _> = (0..var_params.0)
+            .map(|i| match i {
+                3..=9 => (i as u64, 1),
+                _ => (i as u64, 2),
+            })
+            .collect();
+        let mut config = HapCutConfig::default();
+        config.copy_number = copy_number;
+        let (phases, _consis) = hapcut(&reads, &config);
+        let mut count_phase: HashMap<_, u32> = HashMap::new();
+        for phase in phases.iter() {
+            *count_phase.entry(phase.phase.clone()).or_default() += 1;
+            eprintln!("{:?}", phase);
+        }
+        // let largest_phase = *count_phase.values().max().unwrap() as usize;
+        // assert!(
+        //     var_params.0 * 7 / 10 <= largest_phase,
+        //     "{},{}",
+        //     var_params.0,
+        //     largest_phase
+        // );
+        let phased_blocks = split_phase_blocks(&phases, &reads, &config);
+        assert_eq!(phased_blocks.len(), 2);
+        let assignments: Vec<_> = reads_into_phased_block(&reads, &phased_blocks, &config)
+            .into_iter()
+            .map(|asn| asn.cluster)
+            .collect();
+        let answer = vec![vec![0; read_params.0], vec![1; read_params.0]].concat();
+        let num_cl: HashSet<_> = assignments.iter().copied().collect();
+        assert_eq!(num_cl.len(), 2);
+        let correct = assignments
+            .iter()
+            .zip(answer.iter())
+            .map(|(p, a)| p == a)
+            .count();
+        let correct = (answer.len() - correct).max(correct);
+        assert!(
+            90 * 2 * read_params.0 / 100 < correct,
+            "{}/{}",
+            correct,
+            answer.len()
+        );
+    }
+    #[test]
+    fn test_unreliable_region() {
+        let read_params = (1200, 5, 0.1);
+        let var_params = (200, 0f64, 0.8f64, 0);
+        let reads = gen_test_dataset(read_params, var_params, 438290);
+        let config = HapCutConfig::default();
+        let (phases, _consis) = hapcut(&reads, &config);
+        let phased_blocks = split_phase_blocks(&phases, &reads, &config);
+        assert_eq!(phased_blocks.len(), 2);
+        let assignments: Vec<_> = reads_into_phased_block(&reads, &phased_blocks, &config)
+            .into_iter()
+            .map(|asn| asn.cluster)
+            .collect();
+        let answer = vec![vec![0; read_params.0], vec![1; read_params.0]].concat();
+        let num_cl: HashSet<_> = assignments.iter().copied().collect();
+        assert_eq!(num_cl.len(), 2);
+        let correct = assignments
+            .iter()
+            .zip(answer.iter())
+            .map(|(p, a)| p == a)
+            .count();
+        let correct = (answer.len() - correct).max(correct);
+        assert!(
+            90 * 2 * read_params.0 / 100 < correct,
+            "{}/{}",
+            correct,
+            answer.len()
+        );
+    }
+    #[test]
+    fn test_multicopy_region() {
+        let read_params = (100, 10, 0.1);
+        let var_params = (20, 0f64, 0f64, 0);
+        // There's no collapsing.
+        let mut reads = gen_test_dataset(read_params, var_params, 438290);
+        // Lets try to merge 2,4,6,8,10 -> 2. It's 5 times copy.
+        for &mut (_, ref mut read) in reads.iter_mut() {
+            for node in read.iter_mut() {
+                match node.0 {
+                    2 => node.1 = node.1,
+                    4 => node.1 = node.1 + 2,
+                    6 => node.1 = node.1 + 4,
+                    8 => node.1 = node.1 + 6,
+                    _ => {}
+                };
+            }
+        }
+        let config = HapCutConfig::default();
+        let (phases, _consis) = hapcut(&reads, &config);
+        let mut count_phase: HashMap<_, u32> = HashMap::new();
+        for phase in phases.iter() {
+            *count_phase.entry(phase.phase.clone()).or_default() += 1;
+        }
+        let largest_phase = *count_phase.values().max().unwrap() as usize;
+        assert!(
+            var_params.0 * 7 / 10 <= largest_phase,
+            "{},{}",
+            var_params.0,
+            largest_phase
+        );
+        let phased_blocks = split_phase_blocks(&phases, &reads, &config);
+        assert_eq!(phased_blocks.len(), 2);
+        let assignments: Vec<_> = reads_into_phased_block(&reads, &phased_blocks, &config)
+            .into_iter()
+            .map(|asn| asn.cluster)
+            .collect();
+        let answer = vec![vec![0; read_params.0], vec![1; read_params.0]].concat();
+        let num_cl: HashSet<_> = assignments.iter().copied().collect();
+        assert_eq!(num_cl.len(), 2);
+        let correct = assignments
+            .iter()
+            .zip(answer.iter())
+            .map(|(p, a)| p == a)
+            .count();
+        let correct = (answer.len() - correct).max(correct);
+        assert!(
+            90 * 2 * read_params.0 / 100 < correct,
+            "{}/{}",
+            correct,
+            answer.len()
+        );
+    }
+    #[test]
     fn reads_into_phased_block_test() {
         let mut phases = vec![];
         let h1: HashSet<_> = vec![(0, 0), (1, 0), (2, 0), (3, 0)].into_iter().collect();
@@ -1213,5 +1409,28 @@ pub mod hapcut {
         let pv = Phase::approx_parallel_vector(&target, &c);
         let answer = vec![1, 0, 0];
         assert_eq!(pv, answer);
+    }
+    #[test]
+    fn test_phase_flip() {
+        let config = HapCutConfig::default();
+        let read_params = (1000, 4, 0.1);
+        let var_params = (50, 0.1, 0.1, 2);
+        let seed = 38940;
+        let reads = gen_test_dataset(read_params, var_params, seed);
+        let (mut phases, consis) = hapcut(&reads, &config);
+        let changes = Phase::consistency_change_by_flip(&phases, &reads, &config);
+        for (i, &change) in changes.iter().enumerate() {
+            phases[i].flip();
+            let consis_flip = Phase::consistency(&phases, &reads, &config);
+            assert_eq!(
+                consis_flip - consis,
+                change,
+                "{}-{}!={}",
+                consis_flip,
+                consis,
+                change
+            );
+            phases[i].flip();
+        }
     }
 }

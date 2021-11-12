@@ -359,3 +359,16 @@ homopolymer_count %>% filter(Len > 50) %>%
 
 graph.features <- read_tsv("dip-A-CS.dump.tsv")
 graph.features <- graph.features %>% mutate(skewness = hap1/(hap1+hap2)-1/2)
+
+cov.unit.data <- read_tsv("units.tsv")
+cov.flip.data <- read_tsv("flip.tsv")
+
+cov.unit.data %>% mutate(coverage = hap1 + hap2) %>% group_by(unit) %>%
+    summarize(purity = min(purity),
+              copy_num = n(),
+              coverage = sum(coverage))
+
+join_full(cov.flip.data,
+          cov.unit.data %>% group_by(unit) %>% summarize(purity = min(purity)),
+          by = "unit")
+
