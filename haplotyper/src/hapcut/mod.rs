@@ -23,6 +23,15 @@ pub struct HapCutConfig {
     // mism_penalty: i64,
     // // Penalty for dont care position.
     // dont_care_score: i64,
+    // Flip threshold `t`.
+    // Suppose there is N reads read through the k-th cluster of the n-th chunk,
+    // and the consistency improved by `imp` by negating the phase at (n,k).
+    // Then, if `imp/N < t`, the phase at (n,k) would be negated, regardless of the
+    // other phase in the same unit.
+    // This is because we need to treat the cese of duplication of haplotype specific region.
+    // For who suspect this is truely the actual case, please examine COX and PEG haplotype in VESS dataset. Shortly, there are.
+    // usually, we can set this value as high as 0.7 or so.
+    flip_threshold: f64,
     // Rounding threshold.
     // For k-dim weight vector x, if x[i].abs() < round_thr holds,
     // the corresponding phase would be ``graph'', or, regardedas diplochunk.
@@ -51,12 +60,14 @@ impl HapCutConfig {
     pub fn new(
         seed: u64,
         round_threshold: f64,
+        flip_threshold: f64,
         count_thr: u32,
         copy_number: HashMap<u64, usize>,
     ) -> Self {
         Self {
             seed,
             round_threshold,
+            flip_threshold,
             count_thr,
             copy_number,
         }
@@ -67,9 +78,7 @@ impl std::default::Default for HapCutConfig {
     fn default() -> Self {
         Self {
             seed: 0,
-            // match_reward: 1,
-            // mism_penalty: -1,
-            // dont_care_score: 0,
+            flip_threshold: 0.7,
             round_threshold: 0.25,
             count_thr: 0,
             copy_number: HashMap::new(),
@@ -149,9 +158,165 @@ impl Phase {
             phase,
         }
     }
-    // Return how much consistencies would be changed on fliping haplotyping on chunks.
-    // i->the consistency change by flipping the i-th phase.
+    // Fix homo<->hetero switches.
+    // It actually does two different things.
+    // First, it "compress" the segmental duplication of the haplotype specific region.
+    // or "decomporess" the failsely compressed phase.
+    // Second, it re-assigns phases to the haplotype specific chunks mistakenly estimated as diplotig, or revert it.
+    fn homo_hetero_switch(
+        phases: &mut [Phase],
+        reads: &[(u64, Vec<(u64, u64)>)],
+        c: &HapCutConfig,
+    ) {
+        // Calculate coverage of each phase.
+        let mut coverages: Vec<Vec<_>> = phases.iter().map(|p| vec![0; p.phase.len()]).collect();
+        for (_, read) in reads.iter() {
+            for &(unit, cl) in read.iter() {
+                coverages[unit as usize][cl as usize] += 1;
+            }
+        }
+        let mut reads_on_chunk: Vec<_> = vec![vec![]; phases.len()];
+        for (idx, (_, read)) in reads.iter().enumerate() {
+            for &(unit, _) in read.iter() {
+                reads_on_chunk[unit as usize].push(idx);
+            }
+        }
+        // Compress mode.
+        // We can not direclty loop on phases.iter_mut(), because inside it we borrow the entire vector.
+        // TODO: This order should be shuffled.
+        for (idx, covs) in coverages.iter().enumerate() {
+            let target = phases[idx].unit;
+            let mut consistency_change = vec![0; phases[idx].phase.len()];
+            for (_, read) in reads_on_chunk[idx].iter().map(|&i| &reads[i]) {
+                let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
+                let consis = plus.min(minus);
+                for &(unit, cl) in read.iter().filter(|&&(u, _)| u == target) {
+                    consistency_change[cl as usize] += match phases[unit as usize][cl] {
+                        1 => (plus + 2).min(minus - 2) - consis,
+                        -1 => (plus - 2).min(minus + 2) - consis,
+                        _ => 0,
+                    }
+                }
+            }
+            consistency_change.iter_mut().for_each(|x| *x /= 2);
+            for (cl, (&change, &cov)) in consistency_change.iter().zip(covs.iter()).enumerate() {
+                // If it is negative, and almost all the reads on it agree that, flip the
+                // TODO: This needs to asynmetric homo<->hetero.
+                if c.flip_threshold < -(change as f64 / cov as f64) {
+                    phases[idx].phase[cl] *= -1;
+                }
+            }
+        }
+        // Re-Assign mode.
+        let length_param = (mean_length(reads) as f64).recip();
+        for (idx, covs) in coverages.iter().enumerate() {
+            if phases[idx].cluster_size != 1 {
+                continue;
+            }
+            let target = phases[idx].unit;
+            // change flipped to -1, 0, and 1.
+            let mut consistency_change = [0, 0, 0];
+            for (_, read) in reads_on_chunk[idx].iter().map(|&i| &reads[i]) {
+                let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
+                let consis = plus.min(minus);
+                for &(unit, cl) in read.iter().filter(|&&(u, _)| u == target) {
+                    match phases[unit as usize][cl] {
+                        -1 => {
+                            consistency_change[1] = (plus - 1).min(minus + 1) - consis;
+                            consistency_change[2] = (plus - 2).min(minus + 2) - consis;
+                        }
+                        0 => {
+                            consistency_change[0] = (plus + 1).min(minus - 1) - consis;
+                            consistency_change[2] = (plus - 1).min(minus + 1) - consis;
+                        }
+                        1 => {
+                            consistency_change[0] = (plus + 2).min(minus - 2) - consis;
+                            consistency_change[1] = (plus + 1).min(minus - 1) - consis;
+                        }
+                        _ => panic!(),
+                    };
+                }
+            }
+            consistency_change.iter_mut().for_each(|x| *x /= 2);
+            let changed_fraction: Vec<_> = consistency_change
+                .iter()
+                .map(|&x| x as f64 / covs[0] as f64)
+                .collect();
+            // If it is negative, and almost all the reads on it agree that, flip the
+            // TODO: This needs to asynmetric homo<->hetero.
+            for (p, changed) in changed_fraction.iter().enumerate() {
+                if c.flip_threshold * length_param < -changed {
+                    phases[idx].phase[0] *= (p as i8) - 1;
+                }
+            }
+        }
+    }
+
+    // Optimize phases in local.
+    // In other words, for each phase,
+    // we check the consistency change.
+    // If the change is negative, or equevalently, it reduces
+    // the consistency penalty, we nagate/flip the phase on the chunk.
+    fn flip_local(phases: &mut [Phase], reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) {
+        // i->indices of reads spanning the i-th chunk.
+        // It is O(|R|).
+        // Maybe linked-list type would be much more efficient? I do not think so.
+        let mut reads_on_chunk: Vec<_> = vec![vec![]; phases.len()];
+        for (idx, (_, read)) in reads.iter().enumerate() {
+            for &(unit, _) in read.iter() {
+                reads_on_chunk[unit as usize].push(idx);
+            }
+        }
+        let phase_num = phases.len();
+        // We can not direclty loop on phases.iter_mut(), because inside it we borrow the entire vector.
+        // TODO: This order should be shuffled.
+        for idx in 0..phase_num {
+            let target = phases[idx].unit;
+            let mut consistency_change = 0;
+            for (_, read) in reads_on_chunk[idx].iter().map(|&i| &reads[i]) {
+                let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
+                let consis = plus.min(minus);
+                for &(unit, cl) in read.iter().filter(|&&(u, _)| u == target) {
+                    consistency_change += match phases[unit as usize][cl] {
+                        1 => (plus + 2).min(minus - 2) - consis,
+                        -1 => (plus - 2).min(minus + 2) - consis,
+                        _ => 0,
+                    }
+                }
+            }
+            if consistency_change.is_negative() {
+                phases[idx].flip();
+            }
+        }
+    }
     pub fn consistency_change_by_flip(
+        phases: &[Phase],
+        reads: &[(u64, Vec<(u64, u64)>)],
+        c: &HapCutConfig,
+    ) -> Vec<Vec<i64>> {
+        let mut consistency_changes: Vec<Vec<_>> =
+            phases.iter().map(|p| vec![0; p.phase.len()]).collect();
+        for (_, read) in reads.iter() {
+            let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
+            let consis = plus.min(minus);
+            for &(unit, cl) in read {
+                let flip_change = match phases[unit as usize][cl] {
+                    1 => (plus + 2).min(minus - 2) - consis,
+                    -1 => (plus - 2).min(minus + 2) - consis,
+                    _ => 0,
+                };
+                consistency_changes[unit as usize][cl as usize] += flip_change;
+            }
+        }
+        consistency_changes
+            .iter_mut()
+            .flat_map(|xs| xs.iter_mut())
+            .for_each(|x| *x /= 2);
+        consistency_changes
+    }
+    // Return how much consistencies would be changed on nagating haplotyping on chunks.
+    // i->the consistency change by flipping the i-th phase.
+    pub fn consistency_change_by_negation(
         phases: &[Phase],
         reads: &[(u64, Vec<(u64, u64)>)],
         c: &HapCutConfig,
@@ -205,10 +370,11 @@ impl Phase {
     // Optimizing a unit.
     // It re-assign the haplotype assignment on each chunk, by choosing a ``near-parallel'' integer vector
     // with `cluster_size`-dimensional vector `w`, where the k-th element of `w` is defined as
-    // the sum of the w_rk over the all reads having (unit,k) in them.
+    // the sum of the w_rk over the all reads r having (unit,k) in them.
     // w_rk :=
     // (sum of phases[u][c] of the read r)/(length of r - 1) divided by
     // (sum of abs(phases[u][c]) of the read r)/(length of r - 1)
+    // However, if the min_k(abs(sum_r(w_rk))) is less than c.
     #[allow(dead_code)]
     fn optimize_unit(phases: &mut [Phase], reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) {
         let weight_vector: Vec<_> = phases
@@ -545,10 +711,18 @@ impl HapCut for DataSet {
             .map(|r| (r.id, r.nodes.iter().map(|x| (x.unit, x.cluster)).collect()))
             .collect();
         let (phases, consistency) = hapcut(&reads, c);
-        let changes = Phase::consistency_change_by_flip(&phases, &reads, c);
+        let changes = Phase::consistency_change_by_negation(&phases, &reads, c);
         trace!("HAPCUT\tChange\tunit\tdiff");
         for (phase, change) in phases.iter().zip(changes.iter()) {
             trace!("HAPCUT\tChange\t{}\t{}", phase.unit, change);
+        }
+        trace!("HAPCUT\tFlip\tunit\tcluster\tflip\tcopynum");
+        let changes = Phase::consistency_change_by_flip(&phases, &reads, c);
+        for (phase, change) in changes.iter().enumerate() {
+            let cp = c.copy_number.get(&(phase as u64)).unwrap_or(&0);
+            for (cluster, change) in change.iter().enumerate() {
+                trace!("HAPCUT\tFlip\t{}\t{}\t{}\t{}", phase, cluster, change, cp);
+            }
         }
         for phase in phases.iter() {
             trace!("HAPCUT\tDUMP\t{:?}", phase);
@@ -566,13 +740,27 @@ impl HapCut for DataSet {
     }
 }
 
+// HapCut procedure. It has two optimize engine and run them for specified times.
+// The former engine is a global optimization engine: It look the entire structure of the
+// phasing and switch large portion of the phasing at once.
+// Specifically, it constructs a so-called haplo-graph where nodes are variants and
+// weight between i-j represents the # of inconsistency reads - # consistent reads.
+// Then, the engine find a cut with positive weight, then flip the cut.
+// The latter engine is an local optimization engine: It check each variants and
+// flip it if it improve the consistency score.
+// Specifically, currently it has three sub-components.
+// First, it flips the phase of each variant if it reduce the inconsistency.
+// Next unit re-assign the phase on each chunk with multiplicity more than two.
+// The third one is homo<->hetero switcher. In this sub-engine, switching like (1,-1) -> (1,1) and
+// (1,1) -> (1,-1) are considered. Also, (0) -> (1) and (1) -> (0) are considered.
 fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i64) {
     debug!("HAPCUT\tStart\t1");
+    trace!("HAPCUT\tMeanReadLength\t{}", mean_length(reads));
     // First, associate cluster/phase randomly.
     // Vector of phases. [i] -> i-th chunk.
     let mut phases = gen_random_phase(reads, c).unwrap();
     let mut c = c.clone();
-    for t in 0..50 {
+    for t in 0..100 {
         trace!("HAPCUT\tIter\t{}\t1", t);
         let (cut, _) = Phase::optimize_by_cut(&mut phases, reads, &c);
         let prev_consis = Phase::consistency(&phases, reads, &c);
@@ -583,25 +771,15 @@ fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i6
         if prev_consis <= consis {
             Phase::flip_cut(&mut phases, &cut);
         }
-        // if consis < prev_consis {
-        // let cut: Vec<_> = cut
-        //     .iter()
-        //     .enumerate()
-        //     .filter_map(|(i, &c)| c.then(|| i))
-        //     .collect();
-        // eprintln!("CUT\t{}\t{:?}", prev_consis - consis, cut);
-        // }
+        Phase::flip_local(&mut phases, &reads, &c);
         if 20 < t {
             Phase::optimize_unit_mc(&mut phases, reads, &c);
         }
-        // if 220 < t {
-        //     Phase::optimize_unit(&mut phases, reads, &c);
-        // }
-        // let consis = Phase::consistency(&phases, reads, &c);
-        // trace!("HapCut\tCONSIS\t{}\t{}\t2", t, consis);
+        if 20 < t {
+            Phase::homo_hetero_switch(&mut phases, reads, &c);
+        }
         c.update_seed();
     }
-    // Phase::optimize_unit(&mut phases, reads, &c);
     let consis = Phase::consistency(&phases, reads, &c);
     (phases, consis)
 }
@@ -739,6 +917,12 @@ fn read_into_phased_block(
         .filter(|&(_, overlap)| 0 < overlap)
         .max_by_key(|x| x.1)
         .map(|x| x.0)
+}
+
+// Return the mean length of reads.
+fn mean_length(reads: &[(u64, Vec<(u64, u64)>)]) -> usize {
+    let sum: usize = reads.iter().map(|x| x.1.len()).sum();
+    sum / reads.len()
 }
 
 #[cfg(test)]
@@ -1418,7 +1602,7 @@ pub mod hapcut {
         let seed = 38940;
         let reads = gen_test_dataset(read_params, var_params, seed);
         let (mut phases, consis) = hapcut(&reads, &config);
-        let changes = Phase::consistency_change_by_flip(&phases, &reads, &config);
+        let changes = Phase::consistency_change_by_negation(&phases, &reads, &config);
         for (i, &change) in changes.iter().enumerate() {
             phases[i].flip();
             let consis_flip = Phase::consistency(&phases, &reads, &config);
@@ -1431,6 +1615,11 @@ pub mod hapcut {
                 change
             );
             phases[i].flip();
+        }
+        let changes_each = Phase::consistency_change_by_flip(&phases, &reads, &config);
+        for (cs, &c) in changes_each.iter().zip(changes.iter()) {
+            let sum: i64 = cs.iter().sum();
+            assert_eq!(sum, c);
         }
     }
 }

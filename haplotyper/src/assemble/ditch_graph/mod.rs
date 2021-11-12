@@ -380,7 +380,7 @@ impl std::fmt::Display for ContigSummary {
             .iter()
             .map(|n| format!("{}-{}", n.unit, n.cluster))
             .collect();
-        write!(f, "{}\t{}", self.id, line.join(":"))
+        write!(f, "{}\t{}", self.id, line.join("\t"))
     }
 }
 

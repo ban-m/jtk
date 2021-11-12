@@ -17,9 +17,10 @@ fn main() -> std::io::Result<()> {
         .collect();
     let seed = 342;
     let thr = 0.1;
+    let flip = 0.8;
     // for seed in vec![342094, 4234, 56, 43290] {
     //     for thr in vec![0.05, 0.1, 0.15, 0.2, 0.3] {
-    let config = HapCutConfig::new(seed, thr, 0, copy_number.clone());
+    let config = HapCutConfig::new(seed, thr, flip, 0, copy_number.clone());
     // println!("{}\t{}", seed, thr);
     let (_consis, phases) = ds.hapcut(&config);
     let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();

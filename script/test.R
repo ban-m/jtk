@@ -362,13 +362,15 @@ graph.features <- graph.features %>% mutate(skewness = hap1/(hap1+hap2)-1/2)
 
 cov.unit.data <- read_tsv("units.tsv")
 cov.flip.data <- read_tsv("flip.tsv")
-
-cov.unit.summary <- cov.unit.data %>% mutate(coverage = hap1 + hap2) %>% group_by(unit) %>%
-    summarize(purity = min(purity),
-              copy_num = n(),
-              coverage = sum(coverage))
-
 cov.flip.unit <- full_join(cov.flip.data,
-          cov.unit.summary,
-          by = "unit")
+                           cov.unit.data, 
+                           by = c("unit","cluster"))
 
+cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>%
+    summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
+    filter(flip < 20 & purity > 0.8 & purity < 1)
+
+
+cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>%
+    summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
+    ggplot() + geom_point(aes(x=flip, y = purity))
