@@ -173,8 +173,6 @@ fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) {
         let kmer_position = to_idx(&seq[idx..idx + k]);
         if mask.contains(&kmer_position) {
             for seq in seq.iter_mut().take(idx + k).skip(farthest.max(idx)) {
-                //for i in farthest.max(idx)..idx + k {
-                //seq[i].make_ascii_lowercase();
                 seq.make_ascii_lowercase();
             }
             farthest = idx + k - 1;

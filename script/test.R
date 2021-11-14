@@ -371,6 +371,14 @@ cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>%
     filter(flip < 20 & purity > 0.8 & purity < 1)
 
 
-cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>%
+cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>% 
     summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
     ggplot() + geom_point(aes(x=flip, y = purity))
+
+
+cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>% 
+    summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
+    ggplot() + geom_point(aes(x=flip, y = purity))
+
+
+consis.data <- read_tsv("consis.tsv")

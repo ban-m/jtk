@@ -1,4 +1,5 @@
 use definitions::*;
+use haplotyper::Encode;
 // use haplotyper::DetermineUnit;
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -7,26 +8,36 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
+    let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    let units: Vec<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
-    for read in ds.encoded_reads.iter() {
-        if units
-            .iter()
-            .all(|&n| read.nodes.iter().any(|node| node.unit == n))
-        {
-            let answer = id2desc[&read.id].contains("251v2") as usize;
-            let read: Vec<_> = read
-                .nodes
-                .iter()
-                .filter(|n| units.contains(&n.unit))
-                .map(|n| format!("{}-{}", n.unit, n.cluster))
-                .collect();
-            println!("{}\t{}", answer, read.join("\t"));
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    for read in ds.encoded_reads.iter_mut() {
+        for node in read.nodes.iter_mut() {
+            node.cluster = 0;
         }
     }
+    use assemble::Assemble;
+    use haplotyper::assemble;
+    let config = assemble::AssembleConfig::new(10, 1000, false, false, 5);
+    let gfa = ds.assemble(&config);
+    println!("{}", gfa);
+    // let units: Vec<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
+    // for read in ds.encoded_reads.iter() {
+    //     if units
+    //         .iter()
+    //         .all(|&n| read.nodes.iter().any(|node| node.unit == n))
+    //     {
+    //         let answer = id2desc[&read.id].contains("251v2") as usize;
+    //         let read: Vec<_> = read
+    //             .nodes
+    //             .iter()
+    //             .filter(|n| units.contains(&n.unit))
+    //             .map(|n| format!("{}-{}", n.unit, n.cluster))
+    //             .collect();
+    //         println!("{}\t{}", answer, read.join("\t"));
+    //     }
+    // }
     // Length of the reads given.
     // Match names.
     // Length of homopolymers.

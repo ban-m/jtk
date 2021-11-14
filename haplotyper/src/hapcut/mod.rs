@@ -139,11 +139,6 @@ impl Phase {
         self.phase.iter_mut().for_each(|x| *x *= -1);
     }
     fn new_with_rand<R: Rng>(rng: &mut R, unit: u64, cluster_size: usize) -> Self {
-        //         const INIT_WEIGHT: [f64; 3] = [0.45, 0.1, 0.45];
-        // const CHOISES: [usize; 3] = [0, 1, 2];
-        // let phase: Vec<_> = (0..cluster_size)
-        //     .map(|_| [-1, 0, 1][*CHOISES.choose_weighted(rng, |&k| INIT_WEIGHT[k]).unwrap()])
-        //     .collect();
         let mut phase: Vec<_> = (0..cluster_size)
             .map(|i| if i < cluster_size / 2 { -1 } else { 1 })
             .collect();
@@ -208,48 +203,40 @@ impl Phase {
             }
         }
         // Re-Assign mode.
-        let length_param = (mean_length(reads) as f64).recip();
-        for (idx, covs) in coverages.iter().enumerate() {
+        let mut re_assign_num = 0;
+        for (idx, _) in coverages.iter().enumerate() {
             if phases[idx].cluster_size != 1 {
                 continue;
             }
             let target = phases[idx].unit;
-            // change flipped to -1, 0, and 1.
-            let mut consistency_change = [0, 0, 0];
+            // -1,0,1
+            let mut read_count = [0, 0, 0];
             for (_, read) in reads_on_chunk[idx].iter().map(|&i| &reads[i]) {
                 let (plus, minus) = Self::get_consis_on_phases(phases, read, c);
-                let consis = plus.min(minus);
-                for &(unit, cl) in read.iter().filter(|&&(u, _)| u == target) {
-                    match phases[unit as usize][cl] {
-                        -1 => {
-                            consistency_change[1] = (plus - 1).min(minus + 1) - consis;
-                            consistency_change[2] = (plus - 2).min(minus + 2) - consis;
-                        }
-                        0 => {
-                            consistency_change[0] = (plus + 1).min(minus - 1) - consis;
-                            consistency_change[2] = (plus - 1).min(minus + 1) - consis;
-                        }
-                        1 => {
-                            consistency_change[0] = (plus + 2).min(minus - 2) - consis;
-                            consistency_change[1] = (plus + 1).min(minus - 1) - consis;
-                        }
-                        _ => panic!(),
-                    };
+                let unit_occ: usize = read.iter().filter(|&&(u, _)| u == target).count();
+                match plus.cmp(&minus) {
+                    std::cmp::Ordering::Greater => read_count[0] += unit_occ,
+                    std::cmp::Ordering::Less => read_count[2] += unit_occ,
+                    std::cmp::Ordering::Equal => read_count[1] += unit_occ,
                 }
             }
-            consistency_change.iter_mut().for_each(|x| *x /= 2);
-            let changed_fraction: Vec<_> = consistency_change
-                .iter()
-                .map(|&x| x as f64 / covs[0] as f64)
-                .collect();
-            // If it is negative, and almost all the reads on it agree that, flip the
-            // TODO: This needs to asynmetric homo<->hetero.
-            for (p, changed) in changed_fraction.iter().enumerate() {
-                if c.flip_threshold * length_param < -changed {
-                    phases[idx].phase[0] *= (p as i8) - 1;
-                }
+            // Out of the reads assigned to either -1 phase of 1 phase,
+            // if # of reads from an either phase is by far greater than the other,
+            // and # of reads assigned to either -1 phase or 1 phase is
+            // at least half of the reads spanning this unit,
+            // it would be ok to flip this phase.
+            let (new_phase, max_count) = match (read_count[0], read_count[2]) {
+                (minus_count, plus_count) if plus_count < minus_count => (-1, minus_count),
+                (_, plus_count) => (1, plus_count),
+            };
+            let phased_reads = read_count[0] + read_count[2];
+            let total: usize = read_count.iter().copied().sum();
+            if total / 2 < max_count && c.flip_threshold < max_count as f64 / phased_reads as f64 {
+                phases[idx].phase[0] = new_phase;
+                re_assign_num += 1;
             }
         }
+        trace!("HAPCUT\tReassign\t{}", re_assign_num);
     }
 
     // Optimize phases in local.
@@ -754,21 +741,30 @@ impl HapCut for DataSet {
 // The third one is homo<->hetero switcher. In this sub-engine, switching like (1,-1) -> (1,1) and
 // (1,1) -> (1,-1) are considered. Also, (0) -> (1) and (1) -> (0) are considered.
 fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i64) {
+    // for (_, read) in reads.iter() {
+    //     if read.contains(&(853, 0)) || read.contains(&(853, 1)) {
+    //         let dump: Vec<_> = read.iter().map(|x| format!("{}", x.0)).collect();
+    //         trace!("{}", dump.join("\t"));
+    //     }
+    // }
     debug!("HAPCUT\tStart\t1");
     trace!("HAPCUT\tMeanReadLength\t{}", mean_length(reads));
     // First, associate cluster/phase randomly.
     // Vector of phases. [i] -> i-th chunk.
     let mut phases = gen_random_phase(reads, c).unwrap();
     let mut c = c.clone();
+    // eprintln!("{:.3}", (mean_length(reads) as f64).recip());
+    trace!("HAPCUT\tCONSIS\titer\tconsis\tloop");
     for t in 0..100 {
-        trace!("HAPCUT\tIter\t{}\t1", t);
-        let (cut, _) = Phase::optimize_by_cut(&mut phases, reads, &c);
         let prev_consis = Phase::consistency(&phases, reads, &c);
         trace!("HAPCUT\tCONSIS\t{}\t{}\t0", t, prev_consis);
+        let (cut, _) = Phase::optimize_by_cut(&mut phases, reads, &c);
         Phase::flip_cut(&mut phases, &cut);
+        trace!("HAPCUT\tCutsize\t{}", cut.iter().filter(|&&x| x).count());
         let consis = Phase::consistency(&phases, reads, &c);
         trace!("HAPCUT\tCONSIS\t{}\t{}\t1", t, consis);
         if prev_consis <= consis {
+            // Revert the cut.
             Phase::flip_cut(&mut phases, &cut);
         }
         Phase::flip_local(&mut phases, &reads, &c);
@@ -776,7 +772,10 @@ fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i6
             Phase::optimize_unit_mc(&mut phases, reads, &c);
         }
         if 20 < t {
+            let p = Phase::consistency(&phases, reads, &c);
             Phase::homo_hetero_switch(&mut phases, reads, &c);
+            let a = Phase::consistency(&phases, reads, &c);
+            trace!("HAPCUT\thomohetero\t{}\t{}", p, a);
         }
         c.update_seed();
     }
@@ -1621,5 +1620,61 @@ pub mod hapcut {
             let sum: i64 = cs.iter().sum();
             assert_eq!(sum, c);
         }
+    }
+    #[test]
+    fn test_phase_misdips() {
+        let varnum = 500;
+        let del_region = 100..200;
+        let num_reads = (varnum * 30 / 4) as u64;
+        let len = 4;
+        let seed = 23094;
+        let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(seed);
+        let mut gen = |i| -> Vec<(u64, u64)> {
+            let hap = i < num_reads;
+            let start = rng.gen_range(0..varnum - len + 1);
+            let mut fragment: Vec<_> = (0..varnum)
+                .chain(0..varnum)
+                .filter(|i| hap || !del_region.contains(i))
+                .skip(start)
+                .take(len)
+                .map(|var| (var as u64, !hap as u64))
+                .collect();
+            if rng.gen_bool(0.5) {
+                fragment.reverse();
+            }
+            fragment
+        };
+        let reads: Vec<_> = (0..2 * num_reads).map(|i| (i, gen(i))).collect();
+        let mut config = HapCutConfig::default();
+        let copy_number: HashMap<_, _> = (0..varnum).map(|i| (i as u64, 2)).collect();
+        config.copy_number = copy_number;
+        let (phases, _consis) = hapcut(&reads, &config);
+        for read in reads.iter() {
+            eprintln!("{:?}", read);
+        }
+        for phase in phases.iter() {
+            eprintln!("{:?}", phase);
+        }
+        let phased_blocks = split_phase_blocks(&phases, &reads, &config);
+        assert_eq!(phased_blocks.len(), 2);
+        let assignments: Vec<_> = reads_into_phased_block(&reads, &phased_blocks, &config)
+            .into_iter()
+            .map(|asn| asn.cluster)
+            .collect();
+        let answer = vec![vec![0; num_reads as usize], vec![1; num_reads as usize]].concat();
+        let num_cl: HashSet<_> = assignments.iter().copied().collect();
+        assert_eq!(num_cl.len(), 2);
+        let correct = assignments
+            .iter()
+            .zip(answer.iter())
+            .map(|(p, a)| p == a)
+            .count();
+        let correct = (answer.len() - correct).max(correct);
+        assert!(
+            90 * 2 * num_reads as usize / 100 < correct,
+            "{}/{}",
+            correct,
+            answer.len()
+        );
     }
 }
