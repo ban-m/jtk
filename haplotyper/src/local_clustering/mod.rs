@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 mod config;
 pub use config::*;
 pub mod kmeans;
+pub mod normalize;
 
 /// Return rand index.
 pub fn rand_index(label: &[u8], pred: &[u8]) -> f64 {
@@ -136,6 +137,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     // NOTE that we do not need to remove the very different reads, as
     // it is already "different" with respect to the clustering information.
     re_encode_reads(ds, &consensus_and_clusternum);
+    // Normalize local clustering.
+    normalize::normalize_local_clustering(ds);
 }
 
 pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(

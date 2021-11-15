@@ -17,11 +17,29 @@ fn main() -> std::io::Result<()> {
         .collect();
     let seed = 342;
     let thr = 0.1;
-    let flip = 0.7;
+    let flip = 0.8;
     // for seed in vec![342094, 4234, 56, 43290] {
     //     for thr in vec![0.05, 0.1, 0.15, 0.2, 0.3] {
-    let config = HapCutConfig::new(seed, thr, flip, 0, copy_number.clone());
+    let config = HapCutConfig::new(seed, thr, flip, 0, 1, copy_number.clone());
     // println!("{}\t{}", seed, thr);
+    // Want to check the correct phasing -> OK
+    // Collapse errorneous variants -> NG.
+    {
+        ds = squish_errorneous_clustering(ds);
+        // Create the correct phaseing.
+        haplotyper::local_clustering::normalize::normalize_local_clustering(&mut ds);
+        let phases: Vec<_> = predict_correct_phasing(&ds);
+        let reads: Vec<_> = ds
+            .encoded_reads
+            .iter()
+            .map(|read| {
+                let nodes: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+                (read.id, nodes)
+            })
+            .collect();
+        let consis = haplotyper::hapcut::Phase::consistency(&phases, &reads, &config);
+        eprintln!("ConsistencyOfCorrectPhase\t{}", consis);
+    }
     let (_consis, phases) = ds.hapcut(&config);
     let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     {
@@ -108,4 +126,86 @@ fn main() -> std::io::Result<()> {
     /////
 
     Ok(())
+}
+
+fn squish_errorneous_clustering(mut ds: DataSet) -> DataSet {
+    let max_cluster_num = get_max_cluster_num(&ds);
+    let counts = get_counts(&ds);
+    let bad_clusterings: HashSet<_> = counts
+        .iter()
+        .filter(|(_, counts)| {
+            let frac = counts[0].max(counts[1]) as f64 / (counts[0] + counts[1]) as f64;
+            frac < 0.8
+        })
+        .map(|(&x, _)| x)
+        .collect();
+    let bad_unit: HashSet<u64> = max_cluster_num
+        .iter()
+        .filter(|(&unit, &clsize)| (0..clsize).all(|cl| bad_clusterings.contains(&(unit, cl))))
+        .map(|(&unit, _)| unit)
+        .collect();
+    eprintln!("Squish {} units.", bad_unit.len());
+    for read in ds.encoded_reads.iter_mut() {
+        for node in read.nodes.iter_mut() {
+            if bad_unit.contains(&node.unit) {
+                node.cluster = 0;
+            }
+            if node.unit == 1625 {
+                node.cluster = 0;
+            }
+        }
+    }
+    ds
+}
+
+fn predict_correct_phasing(ds: &DataSet) -> Vec<haplotyper::hapcut::Phase> {
+    let max_cluster_num = get_max_cluster_num(ds);
+    let counts = get_counts(ds);
+    let max_num_unit: u64 = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
+    (0..=max_num_unit)
+        .map(|unit| {
+            let cl_num = max_cluster_num.get(&unit).unwrap_or(&0);
+            let phase: Vec<i8> = (0..*cl_num)
+                .map(|cl| {
+                    counts
+                        .get(&(unit, cl))
+                        .map(|counts| {
+                            let total = counts[0] + counts[1];
+                            if total * 6 / 10 < counts[0] {
+                                1
+                            } else if total * 6 / 10 < counts[1] {
+                                -1
+                            } else {
+                                0
+                            }
+                        })
+                        .unwrap_or(0)
+                })
+                .collect();
+            haplotyper::hapcut::Phase::new(unit, phase)
+        })
+        .collect()
+}
+
+fn get_max_cluster_num(ds: &DataSet) -> HashMap<u64, u64> {
+    let mut max_cluster_num: HashMap<_, u64> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        max_cluster_num
+            .entry(node.unit)
+            .and_modify(|x| *x = (*x).max(node.cluster + 1))
+            .or_insert(node.cluster + 1);
+    }
+    max_cluster_num
+}
+
+fn get_counts(ds: &DataSet) -> HashMap<(u64, u64), [u32; 2]> {
+    let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        let ans = id2name[&read.id].contains("000251v2") as usize;
+        for node in read.nodes.iter() {
+            counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
+        }
+    }
+    counts
 }

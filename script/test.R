@@ -366,6 +366,10 @@ cov.flip.unit <- full_join(cov.flip.data,
                            cov.unit.data, 
                            by = c("unit","cluster"))
 
+cov.flip.unit %>% ggplot(aes(x=hap1, y=hap2)) + geom_point() + facet_wrap(vars(phaseblock))
+
+cov.flip.unit %>% group_by(phaseblock) %>% summarize(n=n(), hap1=sum(hap1), hap2=sum(hap2))
+
 cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>%
     summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
     filter(flip < 20 & purity > 0.8 & purity < 1)
@@ -382,3 +386,8 @@ cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>%
 
 
 consis.data <- read_tsv("consis.tsv")
+
+
+cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>%
+    filter(sum(flip) < 25) %>%
+    arrange(desc(unit,purity)) %>% print(n=Inf)

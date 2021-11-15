@@ -1,10 +1,10 @@
 //! A module to implement the original HapCUT algorithm (MEC-based) in a chunk-grpah.
+use definitions::*;
 use log::*;
 use rand::{prelude::SliceRandom, Rng, SeedableRng};
 use rand_distr::num_traits::Signed;
 use rand_xoshiro::Xoshiro256Plus;
-
-use definitions::*;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 pub trait HapCut {
     /// Run HapCUT algorithm. Return the consistency score of the result.
@@ -40,6 +40,8 @@ pub struct HapCutConfig {
     // The count threshold used to construct the adj graph.
     // The edges with count less than or equal to this value would be dicarded.
     count_thr: u32,
+    // The count threshould used to determine phase blocks.
+    phase_count_thr: u32,
     // Copy number information
     copy_number: HashMap<u64, usize>,
 }
@@ -62,6 +64,7 @@ impl HapCutConfig {
         round_threshold: f64,
         flip_threshold: f64,
         count_thr: u32,
+        phase_count_thr: u32,
         copy_number: HashMap<u64, usize>,
     ) -> Self {
         Self {
@@ -69,6 +72,7 @@ impl HapCutConfig {
             round_threshold,
             flip_threshold,
             count_thr,
+            phase_count_thr,
             copy_number,
         }
     }
@@ -78,9 +82,10 @@ impl std::default::Default for HapCutConfig {
     fn default() -> Self {
         Self {
             seed: 0,
-            flip_threshold: 0.7,
+            flip_threshold: 0.9,
             round_threshold: 0.25,
             count_thr: 0,
+            phase_count_thr: 0,
             copy_number: HashMap::new(),
         }
     }
@@ -231,6 +236,13 @@ impl Phase {
             };
             let phased_reads = read_count[0] + read_count[2];
             let total: usize = read_count.iter().copied().sum();
+            let suspic = vec![
+                105, 106, 107, 429, 430, 431, 432, 1078, 1079, 1080, 1358, 1626, 1753, 1758, 1759,
+                1760,
+            ];
+            if suspic.contains(&phases[idx].unit) {
+                trace!("HAPCUT\tSuspic\t{}\t{:?}", phases[idx].unit, read_count);
+            }
             if total / 2 < max_count && c.flip_threshold < max_count as f64 / phased_reads as f64 {
                 phases[idx].phase[0] = new_phase;
                 re_assign_num += 1;
@@ -326,9 +338,13 @@ impl Phase {
     }
     // Return consistency score of the current phase.
     // *Smaller is better*.
-    fn consistency(phases: &[Phase], reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> i64 {
+    pub fn consistency(
+        phases: &[Phase],
+        reads: &[(u64, Vec<(u64, u64)>)],
+        c: &HapCutConfig,
+    ) -> i64 {
         let total_consistency: i64 = reads
-            .iter()
+            .par_iter()
             .map(|(_, read)| Phase::consistency_of_read(phases, read, c))
             .sum();
         total_consistency / 2
@@ -447,12 +463,6 @@ impl Phase {
         c: &HapCutConfig,
     ) -> (Vec<bool>, f64) {
         let consistency_graph = Self::to_consistency_graph(phases, reads, c);
-        // for (i, edges) in consistency_graph.iter().enumerate() {
-        //     if edges.iter().any(|e| e.1 > 0f64) {
-        //         eprintln!("{}\t{:?}", i, edges);
-        //     }
-        // }
-        // eprintln!("============");
         Self::find_cut(&consistency_graph, &c)
     }
     // Make the adjacency graph for the given dataset.
@@ -465,7 +475,7 @@ impl Phase {
         let pileups = Self::to_pileups(phases, reads, c);
         let connections = Self::get_connections(phases.len(), reads, c);
         connections
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(from, edges)| {
                 edges
@@ -528,7 +538,7 @@ impl Phase {
             }
         }
         edges_and_counts
-            .iter()
+            .par_iter()
             .map(|counts| {
                 let mut edges: Vec<_> = counts
                     .iter()
@@ -558,7 +568,7 @@ impl Phase {
             .collect();
         let seed = c.seed();
         init_edges
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(i, &edge)| Phase::propose_cut(graph, edge, c, seed + i as u64 + 1))
             .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
@@ -682,13 +692,6 @@ impl HapCut for DataSet {
             .flat_map(|read| read.nodes.iter_mut())
             .filter(|node| is_uninformative.contains(&node.unit))
             .for_each(|node| node.cluster = 0);
-        // self.encoded_reads
-        //     .iter_mut()
-        //     .flat_map(|read| read.nodes.iter_mut())
-        //     .for_each(|node| {
-        //         node.cluster = mapping[node.unit as usize][node.cluster as usize];
-        //     });
-        // This is a vector of the hashset.
         consistency
     }
     fn hapcut(&mut self, c: &HapCutConfig) -> (i64, Vec<Phase>) {
@@ -698,26 +701,42 @@ impl HapCut for DataSet {
             .map(|r| (r.id, r.nodes.iter().map(|x| (x.unit, x.cluster)).collect()))
             .collect();
         let (phases, consistency) = hapcut(&reads, c);
-        let changes = Phase::consistency_change_by_negation(&phases, &reads, c);
-        trace!("HAPCUT\tChange\tunit\tdiff");
-        for (phase, change) in phases.iter().zip(changes.iter()) {
-            trace!("HAPCUT\tChange\t{}\t{}", phase.unit, change);
-        }
-        trace!("HAPCUT\tFlip\tunit\tcluster\tflip\tcopynum");
-        let changes = Phase::consistency_change_by_flip(&phases, &reads, c);
-        for (phase, change) in changes.iter().enumerate() {
-            let cp = c.copy_number.get(&(phase as u64)).unwrap_or(&0);
-            for (cluster, change) in change.iter().enumerate() {
-                trace!("HAPCUT\tFlip\t{}\t{}\t{}\t{}", phase, cluster, change, cp);
-            }
-        }
         for phase in phases.iter() {
             trace!("HAPCUT\tDUMP\t{:?}", phase);
         }
         let phased_blocks = split_phase_blocks(&phases, &reads, c);
-        for pb in phased_blocks.iter() {
-            let pb: Vec<_> = pb.iter().map(|(u, cl)| format!("{}-{}", u, cl)).collect();
-            trace!("HAPCUT\tPB\t{}", pb.join("\t"));
+        trace!("HAPCUT\tFlip\tunit\tcluster\tphaseblock\tflip\tcopynum");
+        if log_enabled!(log::Level::Trace) {
+            let unit2pb: HashMap<_, _> = phased_blocks
+                .iter()
+                .enumerate()
+                .flat_map(|(i, pb)| -> Vec<((u64, u64), usize)> {
+                    pb.iter().map(|&x| (x, i)).collect()
+                })
+                .collect();
+            let changes = Phase::consistency_change_by_flip(&phases, &reads, c);
+            for (phase, change) in changes.iter().enumerate() {
+                let cp = c.copy_number.get(&(phase as u64)).unwrap_or(&0);
+                for (cluster, change) in change.iter().enumerate() {
+                    let pb = unit2pb
+                        .get(&(phase as u64, cluster as u64))
+                        .copied()
+                        .unwrap_or(phased_blocks.len());
+                    trace!(
+                        "HAPCUT\tFlip\t{}\t{}\t{}\t{}\t{}",
+                        phase,
+                        cluster,
+                        pb,
+                        change,
+                        cp
+                    );
+                }
+            }
+
+            for pb in phased_blocks.iter() {
+                let pb: Vec<_> = pb.iter().map(|(u, cl)| format!("{}-{}", u, cl)).collect();
+                trace!("HAPCUT\tPB\t{}\t{}", pb.len(), pb.join("\t"));
+            }
         }
         self.assignments = reads_into_phased_block(&reads, &phased_blocks, c);
         (consistency, phases)
@@ -740,13 +759,8 @@ impl HapCut for DataSet {
 // Next unit re-assign the phase on each chunk with multiplicity more than two.
 // The third one is homo<->hetero switcher. In this sub-engine, switching like (1,-1) -> (1,1) and
 // (1,1) -> (1,-1) are considered. Also, (0) -> (1) and (1) -> (0) are considered.
+// HAPIMPL
 fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i64) {
-    // for (_, read) in reads.iter() {
-    //     if read.contains(&(853, 0)) || read.contains(&(853, 1)) {
-    //         let dump: Vec<_> = read.iter().map(|x| format!("{}", x.0)).collect();
-    //         trace!("{}", dump.join("\t"));
-    //     }
-    // }
     debug!("HAPCUT\tStart\t1");
     trace!("HAPCUT\tMeanReadLength\t{}", mean_length(reads));
     // First, associate cluster/phase randomly.
@@ -758,9 +772,10 @@ fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i6
     for t in 0..100 {
         let prev_consis = Phase::consistency(&phases, reads, &c);
         trace!("HAPCUT\tCONSIS\t{}\t{}\t0", t, prev_consis);
-        let (cut, _) = Phase::optimize_by_cut(&mut phases, reads, &c);
+        let (cut, cap) = Phase::optimize_by_cut(&mut phases, reads, &c);
         Phase::flip_cut(&mut phases, &cut);
-        trace!("HAPCUT\tCutsize\t{}", cut.iter().filter(|&&x| x).count());
+        let cutsize = cut.iter().filter(|&&x| x).count();
+        trace!("HAPCUT\tCutsize\t{}\t{:.3}", cutsize, cap);
         let consis = Phase::consistency(&phases, reads, &c);
         trace!("HAPCUT\tCONSIS\t{}\t{}\t1", t, consis);
         if prev_consis <= consis {
@@ -772,10 +787,10 @@ fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>, i6
             Phase::optimize_unit_mc(&mut phases, reads, &c);
         }
         if 20 < t {
-            let p = Phase::consistency(&phases, reads, &c);
+            // let p = Phase::consistency(&phases, reads, &c);
             Phase::homo_hetero_switch(&mut phases, reads, &c);
-            let a = Phase::consistency(&phases, reads, &c);
-            trace!("HAPCUT\thomohetero\t{}\t{}", p, a);
+            // let a = Phase::consistency(&phases, reads, &c);
+            // trace!("HAPCUT\thomohetero\t{}\t{}", p, a);
         }
         c.update_seed();
     }
@@ -845,7 +860,7 @@ fn split_phase_blocks(
 fn connected_components(
     nodes: &[(u64, u64)],
     reads: &[(u64, Vec<(u64, u64)>)],
-    _config: &HapCutConfig,
+    config: &HapCutConfig,
 ) -> Vec<HashSet<(u64, u64)>> {
     use crate::find_union::FindUnion;
     let nodes: HashMap<_, _> = nodes
@@ -854,7 +869,7 @@ fn connected_components(
         .enumerate()
         .map(|(x, y)| (y, x))
         .collect();
-    let mut fu = FindUnion::new(nodes.len());
+    let mut edges: Vec<HashMap<_, u32>> = (0..nodes.len()).map(|_| HashMap::new()).collect();
     for (_, read) in reads {
         let mut read = read.iter().filter(|n| nodes.contains_key(n));
         let mut from = match read.next().map(|n| nodes.get(n)) {
@@ -864,8 +879,15 @@ fn connected_components(
         for node in read {
             // This unwrap never panics.
             let to = *nodes.get(node).unwrap();
-            fu.unite(from, to);
+            *edges[to].entry(from).or_default() += 1;
+            *edges[from].entry(to).or_default() += 1;
             from = to;
+        }
+    }
+    let mut fu = FindUnion::new(nodes.len());
+    for (from, edges) in edges.iter().enumerate() {
+        for (&to, _) in edges.iter().filter(|(_, &c)| config.phase_count_thr < c) {
+            fu.unite(from, to).unwrap();
         }
     }
     let mut nodes: Vec<((u64, u64), usize)> = nodes.into_iter().collect();

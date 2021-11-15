@@ -69,26 +69,6 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
         if log_enabled!(log::Level::Trace) {
-            // DUMP Entire purturbation matrix.
-            // debug!("DUMP\tread\tbp\tedit\ttype\tlkdiff");
-            // for (i, prof) in profiles.iter().enumerate() {
-            //     for (j, x) in prof.iter().enumerate() {
-            //         let (idx, t) = (j / 9, j % 9);
-            //         if idx < template.len() {
-            //             debug!("DUMP\t{}\t{}\t{}\tSn\t{:.3}", i, idx, t, x);
-            //         } else {
-            //             let idx = j - 9 * template.len();
-            //             if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-            //                 let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-            //                 debug!("DUMP\t{}\t{}\t{}\tDl\t{:.3}", i, idx, len, x);
-            //             } else {
-            //                 let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-            //                 let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-            //                 debug!("DUMP\t{}\t{}\t{}\tCp\t{:.3}", i, idx, len, x);
-            //             };
-            //         }
-            //     }
-            // }
             // DUMP Hot columns.
             for (pos, lk) in probes.iter() {
                 let (idx, t) = (pos / 9, pos % 9);
