@@ -1,5 +1,5 @@
 #!/bin/bash
-REFERENCE=~/work/sandbox/result/DBB_QBL_without_gaps.fasta
+REFERENCE=${PWD}/data/COX_PGF.fa
 for UNIT in $@
 do
     cat ${PWD}/units.fa | rg -A 1 ">${UNIT}$" | \

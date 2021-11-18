@@ -22,9 +22,87 @@ impl DenseEncodingConfig {
 }
 pub trait DenseEncoding {
     fn dense_encoding(self, config: &DenseEncodingConfig) -> Self;
+    fn dense_encoding_hapcut(self, config: &DenseEncodingConfig) -> Self;
 }
 
 impl DenseEncoding for DataSet {
+    fn dense_encoding_hapcut(mut self, _config: &DenseEncodingConfig) -> Self {
+        use super::hapcut::HapCut;
+        use super::hapcut::HapCutConfig;
+        let ave_unit_len = get_average_unit_length(&self);
+        let copy_number: HashMap<_, _> = self
+            .selected_chunks
+            .iter()
+            .map(|x| (x.id, x.cluster_num))
+            .collect();
+        let hapcut_config = HapCutConfig::new(4329, 0.7, 0.8, 1, 0, copy_number);
+        // They are all diplotig.
+        let squished = self.hapcut_squish_diplotig(&hapcut_config);
+        let cov = self
+            .coverage
+            .unwrap_or_else(|| panic!("do not have coverage"));
+        let read_seq: HashMap<u64, &[u8]> =
+            self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+        let nodes: Vec<_> = {
+            let mut neighbors: HashSet<_> = HashSet::new();
+            for w in self.encoded_reads.iter().flat_map(|r| r.nodes.windows(2)) {
+                if squished.contains(&w[0].unit) {
+                    neighbors.insert((w[1].unit, w[1].cluster));
+                }
+                if squished.contains(&w[1].unit) {
+                    neighbors.insert((w[0].unit, w[0].cluster));
+                }
+            }
+            squished.iter().map(|&x| (x, 0)).chain(neighbors).collect()
+        };
+        let cluster_num = 2;
+        let mut reads: Vec<_> = self
+            .encoded_reads
+            .iter_mut()
+            .filter(|r| r.nodes.iter().any(|n| nodes.contains(&(n.unit, n.cluster))))
+            .collect();
+        // Create new nodes between nodes to make this region "dense."
+        // (unit,cluster,is_tail).
+        let discard_thr = cov.floor() as usize / 2;
+        let edge_consensus = take_consensus_between_nodes(&reads, &nodes, discard_thr);
+        let max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
+        let edge_encoding_patterns =
+            split_edges_into_units(&edge_consensus, ave_unit_len, max_unit_id);
+        for (key, new_units) in edge_encoding_patterns.iter() {
+            let contig = &edge_consensus[key];
+            let mut prev_bp = 0;
+            log::debug!("NEWUNIT\t{:?}\t{:?}\t{}", key, new_units, contig.len());
+            for &(break_point, id) in new_units {
+                let seq = String::from_utf8_lossy(&contig[prev_bp..break_point]).to_string();
+                let unit = Unit::new(id, seq, cluster_num);
+                self.selected_chunks.push(unit);
+                prev_bp = break_point;
+            }
+        }
+        // Encoding.
+        for read in reads.iter_mut() {
+            let seq = &read_seq[&read.id];
+            let inserts =
+                fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &edge_consensus);
+            // Encode.
+            for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+                read.nodes.insert(idx + accum_inserts, node);
+            }
+            // Formatting.
+            re_encode_read(read, seq);
+        }
+        let to_clustering_nodes: HashSet<_> = edge_encoding_patterns
+            .values()
+            .flat_map(|new_units| new_units.iter().map(|(_, id)| *id))
+            .chain(squished.iter().copied())
+            .collect();
+        use crate::encode::deletion_fill::correct_unit_deletion;
+        self = correct_unit_deletion(self, CLR_CLR_SIM);
+        // Local clustering.
+        debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
+        crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
+        self
+    }
     fn dense_encoding(mut self, config: &DenseEncodingConfig) -> Self {
         let ave_unit_len = get_average_unit_length(&self);
         let original_assignments = log_original_assignments(&self);

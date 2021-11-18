@@ -262,7 +262,7 @@ impl Assemble for DataSet {
                 }
             })
             .fold((vec![], vec![]), |(mut nodes, mut edges), (cl, _)| {
-                let (records, summaries) = assemble(self, cl, c);
+                let (records, summaries) = assemble_draft(self, cl, c);
                 nodes.extend(summaries.iter().map(|s| {
                     let id = s.id.clone();
                     let segments: Vec<_> = s
@@ -305,11 +305,13 @@ impl Assemble for DataSet {
     }
 }
 
+/// ASSEMBLEIMPL
 pub fn assemble(
     ds: &DataSet,
     cl: usize,
     c: &AssembleConfig,
 ) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
+    assert!(c.to_resolve);
     let clusters: HashSet<_> = ds
         .assignments
         .iter()
@@ -327,11 +329,9 @@ pub fn assemble(
     debug!("Constructing the {}-th ditch graph", cl);
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     graph.remove_lightweight_edges(2, true);
-    if c.to_resolve {
-        let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
-        let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
-    }
+    let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
+    let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
     graph.remove_lightweight_edges(1, true);
     let (segments, edge, group, summaries) = graph.spell(c, cl);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
@@ -369,6 +369,50 @@ pub fn assemble(
                 tags
             })
             .unwrap_or_else(Vec::new);
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+    });
+    let edges = edge
+        .into_iter()
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+    let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
+    (records, summaries)
+}
+pub fn assemble_draft(
+    ds: &DataSet,
+    cl: usize,
+    c: &AssembleConfig,
+) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
+    let clusters: HashSet<_> = ds
+        .assignments
+        .iter()
+        .filter(|asn| asn.cluster == cl)
+        .map(|asn| asn.id)
+        .collect();
+    let reads: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .filter(|r| clusters.contains(&r.id))
+        .collect();
+    if reads.is_empty() {
+        panic!("Read is empty! {}", cl);
+    }
+    debug!("Constructing the {}-th ditch graph", cl);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    graph.remove_lightweight_edges(2, true);
+    let (segments, edge, group, summaries) = graph.spell(c, cl);
+    let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
+    debug!("{} segments({} bp in total).", segments.len(), total_base);
+    let nodes = segments.into_iter().map(|node| {
+        let tags = match summaries.iter().find(|x| x.id == node.sid) {
+            Some(contigsummary) => {
+                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                let coverage =
+                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                vec![coverage]
+            }
+            None => Vec::new(),
+        };
         gfa::Record::from_contents(gfa::Content::Seg(node), tags)
     });
     let edges = edge

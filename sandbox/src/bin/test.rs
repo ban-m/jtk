@@ -2,7 +2,7 @@ use definitions::*;
 use haplotyper::Encode;
 // use haplotyper::DetermineUnit;
 use rand::SeedableRng;
-use rand_xoshiro::Xoroshiro128PlusPlus;
+use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
 use std::collections::{HashMap, HashSet};
 use std::io::*;
 fn main() -> std::io::Result<()> {
@@ -11,17 +11,42 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    for read in ds.encoded_reads.iter_mut() {
-        for node in read.nodes.iter_mut() {
-            node.cluster = 0;
-        }
+    use haplotyper::encode::deletion_fill;
+    ds = deletion_fill::correct_unit_deletion(ds, 0.35);
+    use haplotyper::re_clustering::*;
+    let config = ReClusteringConfig::new(24, 7, 5);
+    ds = ds.re_clustering(&config);
+    use std::io::{BufWriter, Write};
+    if let Ok(mut wtr) = std::fs::File::create("bf.json").map(BufWriter::new) {
+        writeln!(
+            &mut wtr,
+            "{}",
+            serde_json::ser::to_string_pretty(&ds).unwrap()
+        )?;
     }
-    use assemble::Assemble;
-    use haplotyper::assemble;
-    let config = assemble::AssembleConfig::new(10, 1000, false, false, 5);
-    let gfa = ds.assemble(&config);
-    println!("{}", gfa);
+    use haplotyper::dense_encoding::*;
+    let config = DenseEncodingConfig::new(5, 5);
+    ds = ds.dense_encoding_hapcut(&config);
+    if let Ok(mut wtr) = std::fs::File::create("af.json").map(BufWriter::new) {
+        writeln!(
+            &mut wtr,
+            "{}",
+            serde_json::ser::to_string_pretty(&ds).unwrap()
+        )?;
+    }
+    ds = deletion_fill::correct_unit_deletion(ds, 0.35);
+    println!("{}", serde_json::ser::to_string_pretty(&ds).unwrap());
+    // // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    // for read in ds.encoded_reads.iter_mut() {
+    //     for node in read.nodes.iter_mut() {
+    //         node.cluster = 0;
+    //     }
+    // }
+    // use assemble::Assemble;
+    // use haplotyper::assemble;
+    // let config = assemble::AssembleConfig::new(10, 1000, false, false, 5);
+    // let gfa = ds.assemble(&config);
+    // println!("{}", gfa);
     // let units: Vec<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
     // for read in ds.encoded_reads.iter() {
     //     if units

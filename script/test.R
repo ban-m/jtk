@@ -365,6 +365,9 @@ cov.flip.data <- read_tsv("flip.tsv")
 cov.flip.unit <- full_join(cov.flip.data,
                            cov.unit.data, 
                            by = c("unit","cluster"))
+consis.data <- read_tsv("consis.tsv") %>% mutate(idx = iter * 2 + loop)
+
+consis.data  %>% filter(iter > 5) %>% ggplot() + geom_line(aes(x=iter,y=consis, color=factor(loop)))
 
 cov.flip.unit %>% ggplot(aes(x=hap1, y=hap2)) + geom_point() + facet_wrap(vars(phaseblock))
 
@@ -384,10 +387,17 @@ cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>%
     summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
     ggplot() + geom_point(aes(x=flip, y = purity))
 
+cov.flip.unit.summary <- cov.flip.unit %>% filter(copynum == 2) %>% group_by(unit) %>% filter(n() > 1) %>% 
+    summarize(flip=sum(flip), copy_num=min(copynum), purity = mean(purity), score = mean(score))
 
-consis.data <- read_tsv("consis.tsv")
+cov.flip.unit.summary <- cov.flip.unit %>% group_by(unit) %>% 
+    summarize(flip=sum(flip), copy_num=min(copynum), purity = mean(purity), score = mean(score))
 
 
-cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>%
-    filter(sum(flip) < 25) %>%
-    arrange(desc(unit,purity)) %>% print(n=Inf)
+cov.flip.unit.summary %>% 
+    ##  filter(score < 100 & flip < 30)  %>% 
+    ggplot() + geom_point(aes(x=flip, y = score, color = purity)) + scale_color_gradient2(high="blue", low="orange", midpoint = 0.8)
+
+
+cov.flip.unit.summary %>%  ggplot() + geom_histogram(aes(x=flip))
+cov.flip.unit.summary %>%  ggplot() + geom_histogram(aes(x=score))

@@ -3,7 +3,6 @@ use haplotyper::Encode;
 use std::collections::{HashMap, HashSet};
 use std::io::*;
 fn main() -> std::io::Result<()> {
-    env_logger::init();
     let args: Vec<_> = std::env::args().collect();
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
@@ -15,38 +14,61 @@ fn main() -> std::io::Result<()> {
         .iter()
         .map(|x| (x.id, x.cluster_num))
         .collect();
-    let seed = 342;
-    let thr = 0.1;
+    let seed = 34220392;
+    let thr = 0.8;
     let flip = 0.8;
     // for seed in vec![342094, 4234, 56, 43290] {
     //     for thr in vec![0.05, 0.1, 0.15, 0.2, 0.3] {
-    let config = HapCutConfig::new(seed, thr, flip, 0, 1, copy_number.clone());
+    let config = HapCutConfig::new(seed, thr, flip, 0, 2, copy_number.clone());
     // println!("{}\t{}", seed, thr);
     // Want to check the correct phasing -> OK
     // Collapse errorneous variants -> NG.
-    {
-        ds = squish_errorneous_clustering(ds);
-        // Create the correct phaseing.
-        haplotyper::local_clustering::normalize::normalize_local_clustering(&mut ds);
-        let phases: Vec<_> = predict_correct_phasing(&ds);
-        let reads: Vec<_> = ds
-            .encoded_reads
-            .iter()
-            .map(|read| {
-                let nodes: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
-                (read.id, nodes)
-            })
-            .collect();
-        let consis = haplotyper::hapcut::Phase::consistency(&phases, &reads, &config);
-        eprintln!("ConsistencyOfCorrectPhase\t{}", consis);
-    }
+    // let correct_phases = {
+    //     ds = squish_errorneous_clustering(ds);
+    //     // Create the correct phaseing.
+    //     haplotyper::local_clustering::normalize::normalize_local_clustering(&mut ds);
+    // let phases: Vec<_> = predict_correct_phasing(&ds);
+    //     let reads: Vec<_> = ds
+    //         .encoded_reads
+    //         .iter()
+    //         .map(|read| {
+    //             let nodes: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+    //             (read.id, nodes)
+    //         })
+    //         .collect();
+    //     let consis = haplotyper::hapcut::Phase::consistency(&phases, &reads, &config);
+    //     eprintln!("ConsistencyOfCorrectPhase\t{}", consis);
+    //     phases
+    // };
+    let sq = ds.hapcut_squish_diplotig(&config);
+    eprintln!("HAPCUT\tSquish\t{:?}", sq);
+    env_logger::init();
     let (_consis, phases) = ds.hapcut(&config);
+    // {
+    //     let mut counts: HashMap<_, u32> = HashMap::new();
+    //     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+    //         *counts.entry(node.unit).or_default() += 1;
+    //     }
+    //     assert_eq!(correct_phases.len(), phases.len());
+    //     for (unit, (correct, pred)) in correct_phases.iter().zip(phases.iter()).enumerate() {
+    //         if correct != pred {
+    //             eprintln!(
+    //                 "{}\t{}\t{:?}\t{:?}",
+    //                 unit,
+    //                 counts[&(unit as u64)],
+    //                 correct.phase(),
+    //                 pred.phase(),
+    //             );
+    //         }
+    //     }
+    // }
     let id2name: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     {
         let phases: HashMap<(u64, u64), _> = phases.iter().flat_map(|p| p.phases()).collect();
         let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
         for read in ds.encoded_reads.iter() {
-            let ans = id2name[&read.id].contains("000251v2") as usize;
+            //let ans = id2name[&read.id].contains("000251v2") as usize;
+            let ans = id2name[&read.id].contains("hapA") as usize;
             for node in read.nodes.iter() {
                 counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
             }
@@ -171,9 +193,9 @@ fn predict_correct_phasing(ds: &DataSet) -> Vec<haplotyper::hapcut::Phase> {
                         .get(&(unit, cl))
                         .map(|counts| {
                             let total = counts[0] + counts[1];
-                            if total * 6 / 10 < counts[0] {
+                            if total * 7 / 10 < counts[0] {
                                 1
-                            } else if total * 6 / 10 < counts[1] {
+                            } else if total * 7 / 10 < counts[1] {
                                 -1
                             } else {
                                 0

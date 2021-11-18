@@ -1121,8 +1121,6 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
     let min_count = 6;
     let max_tig_length = 20;
     dataset.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
-    // let squish_limit = 1;
-    // dataset.squish_small_contig(&config, squish_limit);
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
