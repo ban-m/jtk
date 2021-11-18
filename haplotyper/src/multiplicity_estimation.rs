@@ -195,7 +195,7 @@ impl MultiplicityEstimation for DataSet {
 }
 
 fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
-    let (segments, edge, group, summaries) = graph.spell(c, 0);
+    let (segments, edge, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     // TODO: maybe just zip up segments and summaries would be OK?

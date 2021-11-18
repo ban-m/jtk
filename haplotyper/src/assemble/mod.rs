@@ -122,7 +122,7 @@ pub trait Assemble {
 
 impl Assemble for DataSet {
     fn zip_up_suspicious_haplotig(&mut self, c: &AssembleConfig, count: u32, len: usize) {
-        let (_, summaries) = assemble(self, 0, c);
+        let (_, summaries) = assemble(self, c);
         // Select unique units.
         // let unique_units = filter_non_unique_units(&summaries);
         let copy_numbers = get_contig_copy_numbers(&summaries);
@@ -205,7 +205,7 @@ impl Assemble for DataSet {
     }
     fn assemble(&self, c: &AssembleConfig) -> GFA {
         debug!("Start assembly");
-        let (records, summaries) = assemble(self, 0, c);
+        let (records, summaries) = assemble(self, c);
         let copy_numbers = get_contig_copy_numbers(&summaries);
         let shared_read_counts = count_contig_connection(self, &summaries);
         debug!("ContigConnection\tid1\tid2\tcp1\tcp2\tcount");
@@ -246,94 +246,60 @@ impl Assemble for DataSet {
         GFA::from_records(header)
     }
     fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph {
-        let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
-        for asn in self.assignments.iter() {
-            *cluster_and_num.entry(asn.cluster).or_default() += 1;
-        }
-        debug!("There is {} clusters.", cluster_and_num.len());
-        let (nodes, edges) = cluster_and_num
-            .into_iter()
-            .filter(|&(cl, num)| {
-                if num < 10 {
-                    debug!("Detected small group:{}(cluster:{})", num, cl);
-                    false
-                } else {
-                    true
+        let (records, summaries) = assemble_draft(self, c);
+        let nodes: Vec<_> = summaries
+            .iter()
+            .map(|s| {
+                let id = s.id.clone();
+                let segments: Vec<_> = s
+                    .summary
+                    .iter()
+                    .map(|n| Tile {
+                        unit: n.unit,
+                        cluster: n.cluster,
+                        strand: n.strand,
+                    })
+                    .collect();
+                Node { id, segments }
+            })
+            .collect();
+        let edges: Vec<_> = records
+            .iter()
+            .filter_map(|record| match &record.content {
+                gfa::Content::Edge(e) => Some(e),
+                _ => None,
+            })
+            .map(|e| {
+                let from = e.sid1.id.to_string();
+                let from_tail = e.sid1.is_forward();
+                let to = e.sid2.id.to_string();
+                let to_tail = e.sid2.is_forward();
+                Edge {
+                    from,
+                    from_tail,
+                    to,
+                    to_tail,
                 }
             })
-            .fold((vec![], vec![]), |(mut nodes, mut edges), (cl, _)| {
-                let (records, summaries) = assemble_draft(self, cl, c);
-                nodes.extend(summaries.iter().map(|s| {
-                    let id = s.id.clone();
-                    let segments: Vec<_> = s
-                        .summary
-                        .iter()
-                        .map(|n| Tile {
-                            unit: n.unit,
-                            cluster: n.cluster,
-                            strand: n.strand,
-                        })
-                        .collect();
-                    Node { id, segments }
-                }));
-                edges.extend(
-                    records
-                        .iter()
-                        .filter_map(|record| match &record.content {
-                            gfa::Content::Edge(e) => Some(e),
-                            _ => None,
-                        })
-                        .map(|e| {
-                            let from = e.sid1.id.to_string();
-                            let from_tail = e.sid1.is_forward();
-                            let to = e.sid2.id.to_string();
-                            let to_tail = e.sid2.is_forward();
-                            Edge {
-                                from,
-                                from_tail,
-                                to,
-                                to_tail,
-                            }
-                        }),
-                );
-                for summary in summaries.iter() {
-                    debug!("SUMMARY\t{}", summary);
-                }
-                (nodes, edges)
-            });
+            .collect();
+        for summary in summaries.iter() {
+            debug!("SUMMARY\t{}", summary);
+        }
         Graph { nodes, edges }
     }
 }
 
 /// ASSEMBLEIMPL
-pub fn assemble(
-    ds: &DataSet,
-    cl: usize,
-    c: &AssembleConfig,
-) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
+pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     assert!(c.to_resolve);
-    let clusters: HashSet<_> = ds
-        .assignments
-        .iter()
-        .filter(|asn| asn.cluster == cl)
-        .map(|asn| asn.id)
-        .collect();
-    let reads: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .filter(|r| clusters.contains(&r.id))
-        .collect();
-    if reads.is_empty() {
-        panic!("Read is empty! {}", cl);
-    }
-    debug!("Constructing the {}-th ditch graph", cl);
+    let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     graph.remove_lightweight_edges(2, true);
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
     graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
     graph.remove_lightweight_edges(1, true);
-    let (segments, edge, group, summaries) = graph.spell(c, cl);
+    let (segments, edge, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     let segments = if c.to_polish {
@@ -378,29 +344,11 @@ pub fn assemble(
     let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
     (records, summaries)
 }
-pub fn assemble_draft(
-    ds: &DataSet,
-    cl: usize,
-    c: &AssembleConfig,
-) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
-    let clusters: HashSet<_> = ds
-        .assignments
-        .iter()
-        .filter(|asn| asn.cluster == cl)
-        .map(|asn| asn.id)
-        .collect();
-    let reads: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .filter(|r| clusters.contains(&r.id))
-        .collect();
-    if reads.is_empty() {
-        panic!("Read is empty! {}", cl);
-    }
-    debug!("Constructing the {}-th ditch graph", cl);
+pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
+    let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
     graph.remove_lightweight_edges(2, true);
-    let (segments, edge, group, summaries) = graph.spell(c, cl);
+    let (segments, edge, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     let nodes = segments.into_iter().map(|node| {

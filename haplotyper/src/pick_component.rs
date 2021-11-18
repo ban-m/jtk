@@ -18,11 +18,6 @@ pub trait ComponentPicking {
 
 impl ComponentPicking for DataSet {
     fn pick_top_n_component(mut self, c: &ComponentPickingConfig) -> Self {
-        self.assignments = self
-            .encoded_reads
-            .iter()
-            .map(|read| Assignment::new(read.id, 0))
-            .collect();
         use crate::assemble::Assemble;
         use crate::assemble::AssembleConfig;
         let asm_config = AssembleConfig::new(1, 100, false, false, 6);

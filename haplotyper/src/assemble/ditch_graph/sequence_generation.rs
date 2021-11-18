@@ -7,7 +7,6 @@ impl<'a> super::DitchGraph<'a> {
     pub fn spell(
         &self,
         c: &AssembleConfig,
-        cl: usize,
     ) -> (
         Vec<gfa::Segment>,
         Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
@@ -22,7 +21,7 @@ impl<'a> super::DitchGraph<'a> {
             if arrived.contains(&node) {
                 continue;
             }
-            let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
+            let name = format!("tig_{:04}", g_segs.len());
             let (contig, edges, summary) =
                 self.traverse_from(&mut arrived, &mut sids, node, p, name, c);
             g_segs.push(contig);
@@ -34,7 +33,7 @@ impl<'a> super::DitchGraph<'a> {
                 continue;
             }
             let p = Position::Head;
-            let name = format!("tig_{:03}_{:03}", cl, g_segs.len());
+            let name = format!("tig_{:04}", g_segs.len());
             let (contig, edges, summary) =
                 self.traverse_from(&mut arrived, &mut sids, *key, p, name, c);
             g_segs.push(contig);
@@ -46,7 +45,7 @@ impl<'a> super::DitchGraph<'a> {
             .map(|seg| seg.sid.clone())
             .chain(g_edges.iter().filter_map(|e| e.0.eid.clone()))
             .collect();
-        let uid = Some(format!("group-{}", cl));
+        let uid = Some(format!("group-{}", 0));
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
         (g_segs, g_edges, group, summaries)
     }

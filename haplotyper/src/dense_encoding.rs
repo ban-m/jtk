@@ -369,7 +369,7 @@ fn enumerate_multitigs(
     use crate::assemble::*;
     let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
     ds.squish_small_contig(&config, len);
-    let (_, summaries) = assemble(ds, 0, &config);
+    let (_, summaries) = assemble(ds, &config);
     let mut multi_tig: Vec<_> = summaries
         .iter()
         .filter(|summary| !summary.summary.is_empty())

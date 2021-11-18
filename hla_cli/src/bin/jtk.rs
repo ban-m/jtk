@@ -1110,13 +1110,6 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
-    if dataset.assignments.is_empty() {
-        dataset.assignments = dataset
-            .encoded_reads
-            .iter()
-            .map(|r| Assignment::new(r.id, 0))
-            .collect();
-    }
     // TODO:Parametrize here.
     let min_count = 6;
     let max_tig_length = 20;
