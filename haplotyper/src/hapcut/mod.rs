@@ -9,10 +9,10 @@ use std::collections::{HashMap, HashSet};
 // use std::println as trace;
 pub trait HapCut {
     /// Run HapCUT algorithm. Return the consistency score of the result.
-    fn hapcut(&mut self, c: &HapCutConfig) -> (i64, Vec<Phase>);
+    fn hapcut(&self, c: &HapCutConfig) -> (i64, Vec<Phase>, Vec<HashSet<(u64, u64)>>);
     fn hapcut_squish_diplotig(&mut self, c: &HapCutConfig) -> HashSet<u64>;
     /// Run HapCUT2 algorithm. Return the (scaled-)likelihood of the result.
-    fn hapcut2(&mut self, c: &HapCut2Config) -> f64;
+    fn hapcut2(&self, c: &HapCut2Config) -> f64;
 }
 
 #[derive(Debug, Clone)]
@@ -740,8 +740,15 @@ impl HapCut for DataSet {
         debug!("HAPCUT\tConsistency\t{}", consistency);
         let changes = Phase::consistency_change_by_flip(&phases, &reads, c);
         // Squishing nodes.
-        // TODO: parametrize here.
-        let (flip_thr, score_thr) = (25, 50f64);
+        // TODO:Rationale behind these parameters:
+        let flip_thr = (self.coverage.unwrap() / 3f64 * 2f64).floor() as i64;
+        let scores: Vec<_> = self
+            .selected_chunks
+            .iter()
+            .filter_map(|c| (1f64 < c.score).then(|| c.score))
+            .collect();
+        let score_thr = quantile(&scores, 0.5);
+        // let (flip_thr, score_thr) = (10, 20f64);
         debug!("HAPCUT\tThreshold\tF\t{}", flip_thr);
         debug!("HAPCUT\tThreshold\tS\t{}", score_thr);
         let mut squish_nodes: HashSet<_> = HashSet::new();
@@ -764,7 +771,7 @@ impl HapCut for DataSet {
             .for_each(|node| node.cluster = 0);
         squish_nodes
     }
-    fn hapcut(&mut self, c: &HapCutConfig) -> (i64, Vec<Phase>) {
+    fn hapcut(&self, c: &HapCutConfig) -> (i64, Vec<Phase>, Vec<HashSet<(u64, u64)>>) {
         let reads: Vec<(u64, Vec<(u64, u64)>)> = self
             .encoded_reads
             .iter()
@@ -801,10 +808,10 @@ impl HapCut for DataSet {
                 debug!("HAPCUT\tPB\t{}\t{}", pb.len(), pb.join("\t"));
             }
         }
-        self.assignments = reads_into_phased_block(&reads, &phased_blocks, c);
-        (consistency, phases)
+        // self.assignments = reads_into_phased_block(&reads, &phased_blocks, c);
+        (consistency, phases, phased_blocks)
     }
-    fn hapcut2(&mut self, _c: &HapCut2Config) -> f64 {
+    fn hapcut2(&self, _c: &HapCut2Config) -> f64 {
         todo!()
     }
 }
@@ -917,6 +924,12 @@ fn gen_random_phase(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> Optio
         })
         .collect();
     Some(init_phases)
+}
+
+fn quantile<T: Copy + PartialOrd>(xs: &[T], quantile: f64) -> T {
+    let mut xs = xs.to_vec();
+    xs.sort_by(|x, y| x.partial_cmp(&y).unwrap());
+    xs[(xs.len() as f64 * quantile).ceil() as usize]
 }
 
 /// Split phases into phased blocks. In other words, for each plus(1)/minus(-1) clusters,

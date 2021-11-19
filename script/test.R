@@ -371,6 +371,7 @@ consis.data  %>% filter(iter > 5) %>% ggplot() + geom_line(aes(x=iter,y=consis, 
 
 cov.flip.unit %>% ggplot(aes(x=hap1, y=hap2)) + geom_point() + facet_wrap(vars(phaseblock))
 
+
 cov.flip.unit %>% group_by(phaseblock) %>% summarize(n=n(), hap1=sum(hap1), hap2=sum(hap2))
 
 cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>%
@@ -387,17 +388,17 @@ cov.flip.unit %>% filter(copynum >1) %>% group_by(unit) %>% filter(n() > 1) %>%
     summarize(flip=sum(flip), copy_num=min(copynum), purity = sum(purity)/n()) %>%
     ggplot() + geom_point(aes(x=flip, y = purity))
 
-cov.flip.unit.summary <- cov.flip.unit %>% filter(copynum == 2) %>% group_by(unit) %>% filter(n() > 1) %>% 
-    summarize(flip=sum(flip), copy_num=min(copynum), purity = mean(purity), score = mean(score))
 
 cov.flip.unit.summary <- cov.flip.unit %>% group_by(unit) %>% 
-    summarize(flip=sum(flip), copy_num=min(copynum), purity = mean(purity), score = mean(score))
-
-
-cov.flip.unit.summary %>% 
-    ##  filter(score < 100 & flip < 30)  %>% 
-    ggplot() + geom_point(aes(x=flip, y = score, color = purity)) + scale_color_gradient2(high="blue", low="orange", midpoint = 0.8)
+    summarize(flip=sum(flip, na.rm = TRUE),
+              copy_num=min(copynum, na.rm = TRUE),
+              purity = mean(purity, na.rm = TRUE),
+              score = mean(score, na.rm = TRUE))
+cov.flip.unit.summary %>%
+    filter(score < 500 & flip < 75) %>% 
+    ggplot() + geom_point(aes(x=flip, y = score, color = purity)) + scale_color_gradient2(high="blue", low="orange", midpoint = 0.8) 
 
 
 cov.flip.unit.summary %>%  ggplot() + geom_histogram(aes(x=flip))
-cov.flip.unit.summary %>%  ggplot() + geom_histogram(aes(x=score))
+cov.flip.unit.summary %>% filter(score < 500) %>%  ggplot() + geom_histogram(aes(x=score), bins=100)
+

@@ -40,10 +40,9 @@ fn main() -> std::io::Result<()> {
     //     eprintln!("ConsistencyOfCorrectPhase\t{}", consis);
     //     phases
     // };
-    let sq = ds.hapcut_squish_diplotig(&config);
-    eprintln!("HAPCUT\tSquish\t{:?}", sq);
+    // let _ = ds.hapcut_squish_diplotig(&config);
     env_logger::init();
-    let (_consis, phases) = ds.hapcut(&config);
+    let (_consis, phases, _) = ds.hapcut(&config);
     // {
     //     let mut counts: HashMap<_, u32> = HashMap::new();
     //     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
@@ -67,8 +66,8 @@ fn main() -> std::io::Result<()> {
         let phases: HashMap<(u64, u64), _> = phases.iter().flat_map(|p| p.phases()).collect();
         let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
         for read in ds.encoded_reads.iter() {
-            //let ans = id2name[&read.id].contains("000251v2") as usize;
-            let ans = id2name[&read.id].contains("hapA") as usize;
+            let ans = id2name[&read.id].contains("000251v2") as usize;
+            //let ans = id2name[&read.id].contains("hapA") as usize;
             for node in read.nodes.iter() {
                 counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
             }

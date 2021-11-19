@@ -1111,9 +1111,21 @@ fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
     // TODO:Parametrize here.
-    let min_count = 6;
-    let max_tig_length = 20;
-    dataset.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
+    // 1. Zip up errorneous clustering.
+    // let min_count = 6;
+    // let max_tig_length = 20;
+    // dataset.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
+    // 2. Zip up by hapcut. Is this stronger than 1?
+    // use crate::hapcut::*;
+    // use std::collections::HashMap;
+    // let copy_number: HashMap<_, _> = dataset
+    //     .selected_chunks
+    //     .iter()
+    //     .map(|c| (c.id, c.cluster_num))
+    //     .collect();
+    // let hc_config = HapCutConfig::new(13912830, 0.8, 0.8, 1, 1, copy_number);
+    // 1. squish mis-clustering from dataset.
+    // dataset.hapcut_squish_diplotig(&hc_config);
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;

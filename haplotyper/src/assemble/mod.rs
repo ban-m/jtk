@@ -174,6 +174,7 @@ impl Assemble for DataSet {
         let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
         graph.remove_lightweight_edges(2, true);
         graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
+
         // TODO: Parametrize here.
         let squish = graph.squish_bubbles(2);
         self.encoded_reads
@@ -293,12 +294,23 @@ impl Assemble for DataSet {
 pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     assert!(c.to_resolve);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    graph.remove_lightweight_edges(2, true);
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    graph.remove_lightweight_edges(2, true);
     graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
-    graph.remove_lightweight_edges(1, true);
+    // let (_, _, phaseset) = {
+    //     use crate::hapcut::*;
+    //     let copy_number: HashMap<_, _> = ds
+    //         .selected_chunks
+    //         .iter()
+    //         .map(|c| (c.id, c.cluster_num))
+    //         .collect();
+    //     let hc_config = HapCutConfig::new(13912830, 0.8, 0.8, 1, 1, copy_number);
+    //     ds.hapcut(&hc_config)
+    // };
+    // let search_len = reads.iter().map(|r| r.nodes.len()).max().unwrap() - 5;
+    // graph.resolve_by_phaseset(&phaseset, search_len);
     let (segments, edge, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
