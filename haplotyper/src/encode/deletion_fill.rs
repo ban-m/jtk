@@ -302,14 +302,15 @@ fn encode_node(
     }
     trace!("{}\t{}\t{}\t{}\tOK", uid, cluster, max_indel, aln_dist);
     let ops = super::compress_kiley_ops(&ops);
-    let node = Node {
-        position_from_start,
-        unit: uid,
-        cluster,
-        is_forward,
-        seq: String::from_utf8(seq).unwrap(),
-        cigar: ops,
-    };
+    let mut node = Node::new(uid, is_forward, &seq, ops, position_from_start);
+    node.cluster = cluster;
+    //     position_from_start,
+    //     unit: uid,
+    //     cluster,
+    //     is_forward,
+    //     seq: String::from_utf8(seq).unwrap(),
+    //     cigar: ops,
+    // };
     Some((node, score))
 }
 

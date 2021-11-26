@@ -1,5 +1,4 @@
 use haplotyper::ClusteringConfig;
-use log::*;
 use poa_hmm::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -22,6 +21,7 @@ fn main() -> std::io::Result<()> {
         assert_eq!(clusters, probs.len());
         (seed, test_num, clusters, errors, probs)
     };
+    assert_eq!(clusters, 2);
     let profile = gen_sample::PROFILE.norm().mul(errors);
     c.cluster_num = clusters;
     c.variant_num = 2;
@@ -29,7 +29,7 @@ fn main() -> std::io::Result<()> {
     let len = 2000;
     let template: Vec<_> = gen_sample::generate_seq(&mut rng, len);
     let mut templates = vec![template.clone()];
-    for _ in 0..clusters - 1 {
+    let (var_type, seq) = {
         let mut seq = template.clone();
         let var_pos = rng.gen_range(0..seq.len());
         let var_type = loop {
@@ -40,28 +40,25 @@ fn main() -> std::io::Result<()> {
         };
         match var_type {
             0..=3 => {
-                debug!("Subs,{}", var_pos);
                 seq[var_pos] = b"ACGT"[var_type];
+                ("Sub", seq)
             }
             4..=7 => {
-                debug!("Ins,{}", var_pos);
                 seq.insert(var_pos, b"ACGT"[var_type - 4]);
+                ("Ins", seq)
             }
             _ => {
-                debug!("Del,{}", var_pos);
                 seq.remove(var_pos);
+                ("Del", seq)
             }
-        };
-        templates.push(seq);
-    }
+        }
+    };
+    templates.push(seq);
     use sandbox::generate_test_data;
     let (dataset, answer) = generate_test_data(&templates, test_num, &mut rng, &probs, &profile);
     let mut counts: HashMap<_, u32> = HashMap::new();
     for &ans in answer.iter() {
         *counts.entry(ans).or_default() += 1;
-    }
-    for k in 0..clusters {
-        debug!("CL\t{}\t{}", k, counts[&(k as u8)]);
     }
     {
         let start = std::time::Instant::now();
@@ -81,17 +78,11 @@ fn main() -> std::io::Result<()> {
             .count() as f64
             / preds.len() as f64;
         let acc = (1f64 - acc).max(acc);
-        println!("RESULT\t{}\tNEW\t{}\t{}\t{}", seed, score, time, acc);
+        println!(
+            "RESULT\t{}\tNEW\t{}\t{}\t{}\t{}",
+            seed, score, time, acc, var_type
+        );
         log::debug!("\n{:?}\n{:?}", preds, answer);
-    }
-    for (i, (ans, read)) in answer.iter().zip(dataset.iter()).enumerate() {
-        let dist = kiley::bialignment::edit_dist(&templates[0], read) as i32;
-        let others: Vec<_> = templates
-            .iter()
-            .map(|x| kiley::bialignment::edit_dist(x, read) as i32 - dist)
-            .collect();
-        let others: Vec<_> = others.iter().map(|x| format!("{}", x)).collect();
-        log::trace!("OPTIMAL\t{}\t{}\t{}", i, ans, others.join("\t"));
     }
     Ok(())
 }

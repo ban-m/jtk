@@ -173,17 +173,19 @@ pub fn em_clustering(
             *unit_counts.entry(node.unit).or_default() += 1;
         }
     }
-    let use_units: HashSet<_> = unit_counts
-        .iter()
-        .filter(|&(_, &c)| c > config.coverage_thr)
-        .map(|(&x, _)| x)
-        .collect();
+    unit_counts.retain(|_, c| config.coverage_thr < *c);
+    // let use_units: HashSet<_> = unit_counts
+    //     .iter()
+    //     .filter(|&(_, &c)| c > config.coverage_thr)
+    //     .map(|(&x, _)| x)
+    //     .collect();
     let contexts: Vec<_> = {
         let mut buffer = vec![];
         for read in reads.iter() {
             for index in 0..read.nodes.len() {
                 if read.nodes[index].unit == config.focal {
-                    buffer.push(Context::new(read, index, &use_units));
+                    // buffer.push(Context::new(read, index, &use_units));
+                    buffer.push(Context::new(read, index, &unit_counts));
                 }
             }
         }
@@ -417,21 +419,24 @@ impl Context {
             backward,
         }
     }
-    fn new(read: &EncodedRead, index: usize, use_unit: &HashSet<u64>) -> Self {
+    // fn new(read: &EncodedRead, index: usize, use_unit: &HashSet<u64>) -> Self {
+    fn new(read: &EncodedRead, index: usize, unit_counts: &HashMap<u64, usize>) -> Self {
         let (unit, cluster) = (read.nodes[index].unit, read.nodes[index].cluster);
         let nodes = read.nodes.iter();
         let forward: Vec<_> = nodes
             .clone()
             .skip(index + 1)
             .map(|n| (n.unit, n.cluster))
-            .filter(|n| use_unit.contains(&n.0))
+            //.filter(|n| use_unit.contains(&n.0))
+            .filter(|n| unit_counts.contains_key(&n.0))
             .collect();
         let backward: Vec<_> = nodes
             .clone()
             .take(index)
             .rev()
             .map(|n| (n.unit, n.cluster))
-            .filter(|n| use_unit.contains(&n.0))
+            //.filter(|n| use_unit.contains(&n.0))
+            .filter(|n| unit_counts.contains_key(&n.0))
             .collect();
         if read.nodes[index].is_forward {
             Self {

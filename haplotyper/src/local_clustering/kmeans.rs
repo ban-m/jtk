@@ -101,10 +101,20 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
             let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
-            // let null_gain = (k - 1) as f64 * expected_mis_num(reads.len()) * DEL_LK;
             Some((asn, score - expected_gain))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    // let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
+    // let (assignments, score) = (init_cluster_num..=cluster_num)
+    //     .filter_map(|k| {
+    //         let (asn, score) = (0..num)
+    //             .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+    //             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    //         trace!("LK\t{}\t{:.3}", k, score);
+    //         let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
+    //         Some((asn, score - expected_gain))
+    //     })
+    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
     trace!("MAXLK\t{:.3}", score);
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
@@ -113,6 +123,179 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
         }
     }
     Some((assignments, score))
+}
+
+pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    rng: &mut R,
+    hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
+    config: &ClusteringConfig,
+) -> Option<(Vec<u8>, Vec<Vec<f64>>, f64)> {
+    let ClusteringConfig {
+        band_width,
+        cluster_num,
+        coverage,
+    } = *config;
+    let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
+    let cluster_num = cluster_num as usize;
+    let selected_variants: Vec<Vec<_>> = {
+        let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
+        if log_enabled!(log::Level::Trace) {
+            // DUMP Hot columns.
+            for (pos, lk) in probes.iter() {
+                let (idx, t) = (pos / 9, pos % 9);
+                if idx < template.len() {
+                    trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
+                } else {
+                    let idx = pos - 9 * template.len();
+                    if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+                        let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+                        trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
+                    } else {
+                        let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+                        let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
+                        trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
+                    };
+                }
+            }
+        }
+        profiles
+            .iter()
+            .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
+            .collect()
+    };
+    let num = 10;
+    let init_cluster_num = cluster_num.max(4) - 3;
+    let (assignments, _score) = (init_cluster_num..=cluster_num)
+        .filter_map(|k| {
+            let (asn, score) = (0..num)
+                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+            trace!("LK\t{}\t{:.3}", k, score);
+            let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
+            Some((asn, score - expected_gain))
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
+    let (assignments, score) = (init_cluster_num..=cluster_num)
+        .filter_map(|k| {
+            let (asn, score) = (0..num)
+                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+            trace!("LK\t{}\t{:.3}", k, score);
+            let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
+            Some((asn, score - expected_gain))
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let posterior_probs = get_posterior_probability(&selected_variants, &assignments);
+    trace!("MAXLK\t{:.3}", score);
+    if log_enabled!(log::Level::Trace) {
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+            trace!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
+        }
+    }
+    Some((assignments, posterior_probs, score))
+}
+
+fn get_posterior_probability(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<Vec<f64>> {
+    let max_asn = *assignments.iter().max().unwrap() as usize;
+    let mut count = vec![0; max_asn + 1];
+    let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; max_asn + 1];
+    for (vars, &asn) in variants.iter().zip(assignments.iter()) {
+        count[asn as usize] += 1;
+        for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
+            *total += var;
+        }
+    }
+    let is_used_position: Vec<Vec<_>> = total_lk_gain
+        .iter()
+        .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
+        .collect();
+    let len = variants.len() as f64;
+    let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len).ln()).collect();
+    variants
+        .iter()
+        .map(|vars| {
+            let mut lks: Vec<_> = is_used_position
+                .iter()
+                .zip(fractions.iter())
+                .map(|(ps, f)| {
+                    let lk = vars
+                        .iter()
+                        .zip(ps)
+                        .fold(0f64, |acc, (v, &p)| if p { acc + v } else { acc });
+                    lk + f
+                })
+                .collect();
+            let total = logsumexp(&lks);
+            lks.iter_mut().for_each(|x| *x = (*x - total).exp());
+            lks
+        })
+        .collect()
+}
+
+// Filter column with small confidence.
+// HowTo: If a column is indeed a variant site, in at least one cluster,
+// the column is almost filled with positive values.
+// More precisely, given the error rate e, the # of reads with the negative value
+// would follow the poisson distribution with parameter lambda = |r| * e, where
+// |r| is the # of the read in that cluster.
+// If this value is too small, we can remove that column from `variants.`
+#[allow(dead_code)]
+fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<Vec<f64>> {
+    let max_asn = *assignments.iter().max().unwrap() as usize;
+    let dim = variants[0].len();
+    let mut count = vec![0; max_asn + 1];
+    let mut neg_count = vec![vec![0; max_asn + 1]; dim];
+    for (&asn, vars) in assignments.iter().zip(variants.iter()) {
+        count[asn as usize] += 1;
+        for (pos, var) in vars.iter().enumerate() {
+            neg_count[pos][asn as usize] += var.is_sign_negative() as usize;
+        }
+    }
+    // Return 1 - cumulative distribution of the binomial distribution Binom(x|N,P).
+    // In other words, i-> sum_{k=i}^{N} Binom(k|N,p).
+    fn cum_dist(n: usize, p: f64) -> Vec<f64> {
+        // Return log(n!), log(0!) = log(1) = 0.
+        let sumlog = |n| -> f64 { (1..n + 1).map(|x| (x as f64).ln()).sum() };
+        let (_, mut cdf) = (0..=n)
+            .map(|i| {
+                sumlog(n) - sumlog(i) - sumlog(n - i)
+                    + i as f64 * p.ln()
+                    + (n - i) as f64 * (1f64 - p).ln()
+            })
+            .fold((0f64, vec![]), |(acc, mut xs), x| {
+                xs.push(acc + x.exp());
+                (acc + x.exp(), xs)
+            });
+        cdf.iter_mut().for_each(|x| *x = 1f64 - *x);
+        cdf
+    }
+    // Error rate is 15%. (Every error operation would erase the variant information, in the worst case.)
+    let err = 0.15;
+    let cum_distibution: Vec<_> = count.iter().map(|&n| cum_dist(n, err)).collect();
+    let is_informative: Vec<bool> = neg_count
+        .iter()
+        .map(|negs| {
+            let max_p_value = negs
+                .iter()
+                .zip(cum_distibution.iter())
+                .map(|(&neg, pvalues)| pvalues[neg])
+                .fold(std::f64::NEG_INFINITY, |x, y| x.max(y));
+            0.01 < max_p_value
+        })
+        .collect();
+    variants
+        .iter()
+        .map(|vars| {
+            vars.iter()
+                .zip(is_informative.iter())
+                .filter_map(|(&v, &b)| b.then(|| v))
+                .collect()
+        })
+        .collect()
 }
 
 #[allow(dead_code)]

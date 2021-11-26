@@ -1,5 +1,5 @@
+#![allow(unused_imports)]
 use definitions::*;
-use haplotyper::Encode;
 // use haplotyper::DetermineUnit;
 use rand::SeedableRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};

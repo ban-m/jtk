@@ -36,7 +36,8 @@ fn main() -> std::io::Result<()> {
                     dumps[i] = format!("{:<5}", unit);
                 }
             }
-            let is_hap1 = id2desc[&read.id].contains("251v2");
+            //let is_hap1 = id2desc[&read.id].contains("251v2");
+            let is_hap1 = id2desc[&read.id].contains("hapA");
             // println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
             println!(
                 "{}\t{}\t{}\t{}",

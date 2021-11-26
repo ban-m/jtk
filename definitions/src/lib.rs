@@ -374,6 +374,8 @@ pub struct Node {
     pub seq: String,
     pub is_forward: bool,
     pub cigar: Vec<Op>,
+    // TODO: This is temporary.
+    pub posterior: Vec<f64>,
 }
 
 impl std::fmt::Display for Node {
@@ -391,6 +393,26 @@ impl std::fmt::Display for Node {
 }
 
 impl Node {
+    /// Create a new instance of node.
+    /// As usually it is created before the local clustering,
+    /// It only accepts the minimum requirements, i.e, the position in the read, the units, the direction, the sequence, and the cigar string.
+    pub fn new(
+        unit: u64,
+        is_forward: bool,
+        seq: &[u8],
+        cigar: Vec<Op>,
+        position_from_start: usize,
+    ) -> Self {
+        Self {
+            position_from_start,
+            unit,
+            cluster: 0,
+            seq: String::from_utf8_lossy(seq).to_string(),
+            is_forward,
+            cigar,
+            posterior: Vec::new(),
+        }
+    }
     pub fn seq(&self) -> &[u8] {
         self.seq.as_bytes()
     }

@@ -488,14 +488,8 @@ fn encode_edge(
                     true => start + ypos - ylen,
                     false => end - ypos,
                 };
-                nodes.push(Node {
-                    position_from_start,
-                    unit: uid,
-                    cluster: 0,
-                    is_forward,
-                    seq: String::from_utf8_lossy(&seq[ypos - ylen..ypos]).to_string(),
-                    cigar,
-                })
+                let seq = &seq[ypos - ylen..ypos];
+                nodes.push(Node::new(uid, is_forward, seq, cigar, position_from_start));
             }
             // Refresh.
             target_idx += 1;

@@ -371,6 +371,8 @@ consis.data  %>% filter(iter > 5) %>% ggplot() + geom_line(aes(x=iter,y=consis, 
 
 cov.flip.unit %>% ggplot(aes(x=hap1, y=hap2)) + geom_point() + facet_wrap(vars(phaseblock))
 
+cov.flip.unit %>% ggplot(aes(x=hap1, y=hap2, color = factor(phaseblock))) + geom_point()
+
 
 cov.flip.unit %>% group_by(phaseblock) %>% summarize(n=n(), hap1=sum(hap1), hap2=sum(hap2))
 
