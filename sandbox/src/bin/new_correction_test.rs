@@ -298,6 +298,7 @@ pub fn simple_clustering_inner<R: Rng>(
 
 #[derive(Debug, Clone)]
 struct SimpleModel {
+    unit: u64,
     // Fraction of each consensus. Currently not used.
     fraction: Vec<f64>,
     // Consensus of each cluster. Actually, it is a bug of probability distribution on chunks.
@@ -319,6 +320,7 @@ impl std::fmt::Display for SimpleModel {
 impl SimpleModel {
     // Create new model.
     fn new(contexts: &[Context<'_>], assignments: &[usize], cluster_num: usize) -> Self {
+        let unit = contexts[0].unit;
         let fraction = {
             let mut fraction = vec![0f64; cluster_num];
             for &asn in assignments {
@@ -339,6 +341,7 @@ impl SimpleModel {
             })
             .collect();
         Self {
+            unit,
             fraction,
             consensus,
         }
@@ -346,8 +349,8 @@ impl SimpleModel {
     fn num_parameters(&self) -> usize {
         use std::collections::HashSet;
         let mut used_units: HashSet<_> = HashSet::new();
+        used_units.insert(self.unit);
         for cons in self.consensus.iter() {
-            used_units.insert(cons.center.0);
             used_units.extend(cons.forward.keys().copied());
             used_units.extend(cons.backward.keys().copied());
         }
@@ -381,7 +384,7 @@ fn vec2str(xs: &[f64]) -> String {
 
 #[derive(Debug, Clone)]
 struct Consensus {
-    center: (u64, Vec<f64>),
+    center: Vec<f64>,
     forward: HashMap<u64, (f64, Vec<f64>)>,
     backward: HashMap<u64, (f64, Vec<f64>)>,
 }
@@ -398,7 +401,7 @@ impl std::fmt::Display for Consensus {
         let forward = forward
             .iter()
             .map(|(u, c)| format!("{}-{}", u, vec2str(&c.1)));
-        let center = std::iter::once(format!("{}-C-{}", self.center.0, vec2str(&self.center.1)));
+        let center = std::iter::once(format!("C-{}", vec2str(&self.center)));
         let dump: Vec<_> = backward.chain(center).chain(forward).collect();
         write!(f, "{}", dump.join("\t"))
     }
@@ -407,15 +410,17 @@ impl std::fmt::Display for Consensus {
 impl Consensus {
     fn new(xs: &[&Context<'_>]) -> Self {
         // Column sum, take the max value.
-        let mut center = vec![0f64; xs[0].cluster.len()];
         let mut forward: HashMap<u64, Vec<f64>> = HashMap::new();
         let mut backward: HashMap<u64, Vec<f64>> = HashMap::new();
-        for ctx in xs.iter() {
-            center
-                .iter_mut()
+        let mut center = xs.iter().fold(Vec::new(), |mut sum, ctx| {
+            if sum.is_empty() {
+                sum = vec![0f64; ctx.cluster.len()];
+            }
+            sum.iter_mut()
                 .zip(ctx.cluster.iter())
                 .for_each(|(x, y)| *x += y);
-        }
+            sum
+        });
         for ctx in xs.iter() {
             for &(unit, post) in ctx.forward.iter() {
                 forward
@@ -455,7 +460,6 @@ impl Consensus {
                 (unit, (sum / backward_sum, prob))
             })
             .collect();
-        let center = (xs[0].unit, center);
         Self {
             center,
             forward,
@@ -463,10 +467,13 @@ impl Consensus {
         }
     }
     fn get_dist(&self, context: &Context) -> f64 {
+        let kl_center = match self.center.is_empty() {
+            false => kl_divergence(&self.center, context.cluster),
+            true => -(0.00001f64).ln(),
+        };
         Self::kl_divergences(&self.forward, &context.forward)
             + Self::kl_divergences(&self.backward, &context.backward)
-            //+ kl_divergence(context.cluster, &self.center.1)
-            + kl_divergence(&self.center.1, context.cluster)
+            + kl_center
     }
     fn kl_divergences(cons: &HashMap<u64, (f64, Vec<f64>)>, query: &[(u64, &[f64])]) -> f64 {
         query
@@ -480,15 +487,5 @@ impl Consensus {
                 }
             })
             .sum()
-        // let len = query.len().max(1) as f64;
-        // let kl: f64 = query
-        //     .iter()
-        //     .filter_map(|(unit, distribution)| {
-        //         cons.get(unit).map(|(f, model)| {
-        //             kl_divergence(distribution, model) / len - f.max(0.00001).ln()
-        //         })
-        //     })
-        //     .sum();
-        // kl - len.ln()
     }
 }

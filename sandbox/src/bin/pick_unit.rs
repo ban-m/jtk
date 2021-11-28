@@ -14,8 +14,8 @@ fn main() -> std::io::Result<()> {
         .collect();
     for unit in args[2..].iter().map(|x| -> u64 { x.parse().unwrap() }) {
         for read in ds.encoded_reads.iter() {
-            // let is_hap1 = id2desc[&read.id].contains("251v2");
-            let is_hap1 = id2desc[&read.id].contains("hapA");
+            let is_hap1 = id2desc[&read.id].contains("251v2");
+            // let is_hap1 = id2desc[&read.id].contains("hapA");
             for node in read.nodes.iter().filter(|n| unit == n.unit) {
                 let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
                 let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));

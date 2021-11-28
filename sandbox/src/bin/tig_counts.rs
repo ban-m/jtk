@@ -12,8 +12,8 @@ fn main() -> std::io::Result<()> {
     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
     for read in ds.encoded_reads.iter() {
-        let ans = id2desc[&read.id].contains("hapA") as usize;
-        // let ans = id2desc[&read.id].contains("000251v2") as usize;
+        //let ans = id2desc[&read.id].contains("hapA") as usize;
+        let ans = id2desc[&read.id].contains("000251v2") as usize;
         for node in read.nodes.iter() {
             counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
         }
