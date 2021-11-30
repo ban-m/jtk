@@ -1085,7 +1085,7 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
     Ok(dataset.dense_encoding(&config))
 }
 
-fn assembly(matches: &clap::ArgMatches, mut dataset: DataSet) -> std::io::Result<DataSet> {
+fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
     debug!("START\tAssembly step");
     let threads: usize = matches
         .value_of("threads")

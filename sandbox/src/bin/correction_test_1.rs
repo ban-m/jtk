@@ -20,7 +20,7 @@ pub struct Config {
     seed: u64,
     cluster_num: usize,
     coverage_thr: usize,
-    to_use_offset: bool,
+    pub to_use_offset: bool,
     focal: u64,
 }
 
