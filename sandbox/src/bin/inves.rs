@@ -2,58 +2,70 @@ use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
+    use definitions::*;
     use std::collections::HashMap;
-    use std::io::BufRead;
-    let input: Vec<_> = std::fs::File::open(&args[1])
-        .map(BufReader::new)?
-        .lines()
-        .filter_map(|l| l.ok())
-        .collect();
-    let mut paf: HashMap<_, Vec<_>> = HashMap::new();
-    for line in input {
-        let id: u64 = line.split('\t').next().unwrap().parse().unwrap();
-        paf.entry(id).or_default().push(line);
+    let ds: DataSet =
+        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
+            .unwrap();
+    let mut counts: HashMap<_, u32> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        *counts.entry(node.unit).or_default() += 1;
     }
-    paf.retain(|_, val| val.len() == 2);
-    let record_to_mntag = |record: &String| -> Option<i64> {
-        record
-            .split('\t')
-            .find(|tag| tag.starts_with("NM"))?
-            .rsplit_once(':')?
-            .1
-            .parse()
-            .ok()
-    };
-    paf.retain(|_, val| {
-        let nm: Vec<_> = val.iter().filter_map(record_to_mntag).collect();
-        !nm.iter().all(|&x| x == nm[0])
-    });
-    let record_to_mism = |record: &String| -> Option<usize> {
-        let cigar = record
-            .split('\t')
-            .find(|tag| tag.starts_with("cg"))?
-            .rsplit_once(':')?
-            .1;
-        let mismatch: usize = bio_utils::sam::parse_cigar_string(&cigar)
-            .iter()
-            .filter_map(|op| match op {
-                &bio_utils::sam::Op::Mismatch(x) => Some(x),
-                _ => None,
-            })
-            .sum();
-        Some(mismatch)
-    };
-    paf.retain(|_, val| {
-        let mism: Vec<_> = val.iter().filter_map(record_to_mism).collect();
-        !mism.iter().all(|&x| x == mism[0])
-    });
-    let mut paf: Vec<_> = paf.into_iter().collect();
-    paf.sort_by_key(|x| x.0);
-    for (_, bucket) in paf.iter() {
-        for rec in bucket {
-            println!("{}", rec);
-        }
+    for c in ds.selected_chunks.iter() {
+        let count = counts[&c.id];
+        println!("{}\t{}\t{}\t{}", c.id, c.cluster_num, count, c.seq().len());
     }
+    // use std::io::BufRead;
+    // let input: Vec<_> = std::fs::File::open(&args[1])
+    //     .map(BufReader::new)?
+    //     .lines()
+    //     .filter_map(|l| l.ok())
+    //     .collect();
+    // let mut paf: HashMap<_, Vec<_>> = HashMap::new();
+    // for line in input {
+    //     let id: u64 = line.split('\t').next().unwrap().parse().unwrap();
+    //     paf.entry(id).or_default().push(line);
+    // }
+    // paf.retain(|_, val| val.len() == 2);
+    // let record_to_mntag = |record: &String| -> Option<i64> {
+    //     record
+    //         .split('\t')
+    //         .find(|tag| tag.starts_with("NM"))?
+    //         .rsplit_once(':')?
+    //         .1
+    //         .parse()
+    //         .ok()
+    // };
+    // paf.retain(|_, val| {
+    //     let nm: Vec<_> = val.iter().filter_map(record_to_mntag).collect();
+    //     !nm.iter().all(|&x| x == nm[0])
+    // });
+    // let record_to_mism = |record: &String| -> Option<usize> {
+    //     let cigar = record
+    //         .split('\t')
+    //         .find(|tag| tag.starts_with("cg"))?
+    //         .rsplit_once(':')?
+    //         .1;
+    //     let mismatch: usize = bio_utils::sam::parse_cigar_string(&cigar)
+    //         .iter()
+    //         .filter_map(|op| match op {
+    //             &bio_utils::sam::Op::Mismatch(x) => Some(x),
+    //             _ => None,
+    //         })
+    //         .sum();
+    //     Some(mismatch)
+    // };
+    // paf.retain(|_, val| {
+    //     let mism: Vec<_> = val.iter().filter_map(record_to_mism).collect();
+    //     !mism.iter().all(|&x| x == mism[0])
+    // });
+    // let mut paf: Vec<_> = paf.into_iter().collect();
+    // paf.sort_by_key(|x| x.0);
+    // for (_, bucket) in paf.iter() {
+    //     for rec in bucket {
+    //         println!("{}", rec);
+    //     }
+    // }
     // use definitions::*;
     // let ds: DataSet = std::fs::File::open(&args[1])
     //     .map(BufReader::new)

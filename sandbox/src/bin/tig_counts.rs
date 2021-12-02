@@ -1,4 +1,4 @@
-const IS_MOCK: bool = true;
+const IS_MOCK: bool = false;
 use definitions::*;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
@@ -12,6 +12,7 @@ fn main() -> std::io::Result<()> {
     use std::collections::HashMap;
     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
+    let mut entropy: HashMap<(u64, u64), f64> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         let ans = match IS_MOCK {
             true => id2desc[&read.id].contains("hapA") as usize,
@@ -19,17 +20,24 @@ fn main() -> std::io::Result<()> {
         };
         for node in read.nodes.iter() {
             counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
+            let ent: f64 = node
+                .posterior
+                .iter()
+                .map(|x| x * x.max(0.000001).ln())
+                .sum();
+            *entropy.entry((node.unit, node.cluster)).or_default() -= ent;
         }
     }
     let score: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.score)).collect();
-    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore");
+    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore\tentropy");
     for ((unit, cluster), counts) in counts.iter() {
         let score = score[unit];
         let total = counts[0] + counts[1];
         let pur = counts[0].max(counts[1]) as f64 / total as f64;
+        let entropy = entropy[&(*unit, *cluster)] / total as f64;
         println!(
-            "UNIT\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}",
-            unit, cluster, counts[0], counts[1], pur, score
+            "UNIT\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.3}",
+            unit, cluster, counts[0], counts[1], pur, score, entropy,
         );
     }
     if args.len() < 3 {

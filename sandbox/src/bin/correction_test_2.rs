@@ -1,5 +1,7 @@
 const PRIOR_FRACTION: f64 = 1f64;
-const CLUSTER_PRIOR: f64 = 0f64;
+const CLUSTER_PRIOR: f64 = 1f64;
+const SMALL: f64 = 0.0000001;
+const LOGSMALL: f64 = -100f64;
 use definitions::*;
 use std::collections::HashMap;
 use std::io::BufReader;
@@ -47,15 +49,13 @@ impl Config {
     }
 }
 
-// use rayon::prelude::*;
-
 fn correct(ds: &mut DataSet) {
+    use rayon::prelude::*;
     let posterior_distributions: Vec<_> = ds
         .selected_chunks
-        // .par_iter()
-        .iter()
+        .par_iter()
         .map(|c| (c.id, c.cluster_num))
-        .filter(|&(unit, _)| unit == 99)
+        // .filter(|&(unit, _)| unit == 92)
         .map(|(id, cluster_num)| correct_unit(ds, id, cluster_num))
         .collect();
     let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
@@ -85,8 +85,8 @@ fn correct(ds: &mut DataSet) {
 }
 
 fn correct_unit(ds: &DataSet, unit_id: u64, k: usize) -> Vec<(u64, usize, Vec<f64>)> {
-    // let repeat_num = 20;
-    let repeat_num = 1;
+    let repeat_num = 20;
+    //let repeat_num = 1;
     let coverage_thr = 5;
     let reads: Vec<_> = ds
         .encoded_reads
@@ -151,6 +151,35 @@ fn clustering(
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(config.seed);
     let (asn, likelihood, _) = simple_clustering_inner(&contexts, cluster_num, &mut rng);
     (asn, likelihood, cluster_num)
+}
+
+fn test_correction() {
+    let len = 10;
+    let dataset: Vec<_> = (0..len)
+        .map(|i| {
+            let forward: Vec<(u64, Vec<f64>)> = vec![];
+            let (backward, cluster) = if i < len / 2 {
+                (vec![(0, vec![1f64])], vec![1f64, 0f64])
+            } else {
+                (vec![(1, vec![1f64])], vec![0f64, 1f64])
+            };
+            (i, cluster, forward, backward)
+        })
+        .collect();
+    let contexts: Vec<_> = dataset
+        .iter()
+        .map(|(id, cluster, forward, backward)| {
+            let forward: Vec<_> = forward.iter().map(|(i, f)| (*i, f.as_slice())).collect();
+            let backward: Vec<_> = backward.iter().map(|(i, f)| (*i, f.as_slice())).collect();
+            Context::with_attrs(*id, 0, 2, cluster.as_slice(), forward, backward)
+        })
+        .collect();
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(942830);
+    let (asn, likelihood, _) = simple_clustering_inner(&contexts, 2, &mut rng);
+    println!("{}", likelihood);
+    for (i, asn) in asn.iter().enumerate() {
+        println!("{}\t{:?}", i, asn);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -288,9 +317,9 @@ pub fn simple_clustering_inner<R: Rng>(
     };
     let mut weights: Vec<_> = contexts.iter().map(gen_weight).collect();
     let mut model = DirichletModel::new(contexts, &weights, k);
+    trace!("CORRECT\tModel\t{}\n{}", id, model);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
     trace!("CORRECT\tLikelihood\t{}\t{}", id, lk);
-    trace!("CORRECT\tModel\t{}\n{}", id, model);
     for _ in 0..20 {
         trace!("CORRECT\tModel\t{}\n{}", id, model);
         model.update(&mut weights, contexts);
@@ -324,13 +353,10 @@ struct DirichletModel {
 
 impl std::fmt::Display for DirichletModel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let dump: Vec<_> = self
-            .fraction
-            .iter()
-            .zip(self.consensus.iter())
-            .map(|(frac, m)| format!("{:.3}-({})", frac, m))
-            .collect();
-        write!(f, "{}", dump.join("\n"))
+        for (i, (fr, cons)) in self.fraction.iter().zip(self.consensus.iter()).enumerate() {
+            writeln!(f, "{}\t{:.3}\n{}", i, fr, cons)?;
+        }
+        Ok(())
     }
 }
 
@@ -370,7 +396,9 @@ impl DirichletModel {
     }
     fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context]) {
         for (weight, context) in weights.iter_mut().zip(contexts.iter()) {
+            // let prev = weight.clone();
             self.update_weight(weight, context);
+            // trace!("[{}]->[{}]", vec2str(&prev), vec2str(weight));
         }
     }
     fn update_weight(&self, weight: &mut [f64], context: &Context<'_>) {
@@ -396,7 +424,7 @@ impl DirichletModel {
 
 fn vec2str(xs: &[f64]) -> String {
     let dump: Vec<_> = xs.iter().map(|x| format!("{:.1}", x)).collect();
-    dump.join(":")
+    dump.join(",")
 }
 
 #[derive(Debug, Clone)]
@@ -412,17 +440,16 @@ impl std::fmt::Display for Consensus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mut backward: Vec<_> = self.backward.iter().collect();
         backward.sort_by_key(|x| x.0);
-        let backward = backward
-            .iter()
-            .map(|(u, c)| format!("{}-{:.2}[{}]", u, c.0, vec2str(&c.1)));
+        for (u, c) in backward.iter() {
+            writeln!(f, "B\t{}\t{:.2}\t[{}]", u, c.0, vec2str(&c.1))?;
+        }
+        writeln!(f, "C\t1.0\t{}", vec2str(&self.center))?;
         let mut forward: Vec<_> = self.forward.iter().collect();
         forward.sort_by_key(|x| x.0);
-        let forward = forward
-            .iter()
-            .map(|(u, c)| format!("{}-{:.2}[{}]", u, c.0, vec2str(&c.1)));
-        let center = std::iter::once(format!("C-1.0[{}]", vec2str(&self.center)));
-        let dump: Vec<_> = backward.chain(center).chain(forward).collect();
-        write!(f, "{}", dump.join("\t"))
+        for (u, c) in forward.iter() {
+            writeln!(f, "F\t{}\t{:.2}\t[{}]", u, c.0, vec2str(&c.1))?;
+        }
+        Ok(())
     }
 }
 
@@ -431,11 +458,11 @@ impl Consensus {
         // Column sum, take the max value.
         let center = {
             let mut center = vec![CLUSTER_PRIOR; xs[0].cluster.len()];
-            for ctx in xs.iter() {
+            for (ctx, w) in xs.iter().zip(weights.iter()).map(|(x, ws)| (x, ws[cl])) {
                 center
                     .iter_mut()
                     .zip(ctx.cluster.iter())
-                    .for_each(|(x, y)| *x += y);
+                    .for_each(|(x, y)| *x += w * y);
             }
             let sum: f64 = center.iter().sum();
             center.iter_mut().for_each(|x| *x /= sum);
@@ -458,19 +485,24 @@ impl Consensus {
             }
         }
         // Normalizing.
+        fn normalize(xs: &mut [f64]) -> f64 {
+            let sum: f64 = xs.iter().sum();
+            xs.iter_mut().for_each(|x| *x /= sum);
+            sum
+        }
         let forward_sum = forward.values().flat_map(|x| x).sum::<f64>().max(1f64);
         let forward: HashMap<u64, (f64, Vec<f64>)> = forward
             .into_iter()
-            .map(|(unit, prob)| {
-                let sum: f64 = prob.iter().sum();
+            .map(|(unit, mut prob)| {
+                let sum = normalize(&mut prob);
                 (unit, (sum / forward_sum, prob))
             })
             .collect();
         let backward_sum = backward.values().flat_map(|x| x).sum::<f64>().max(1f64);
         let backward: HashMap<u64, (f64, Vec<f64>)> = backward
             .into_iter()
-            .map(|(unit, prob)| {
-                let sum: f64 = prob.iter().sum();
+            .map(|(unit, mut prob)| {
+                let sum = normalize(&mut prob);
                 (unit, (sum / backward_sum, prob))
             })
             .collect();
@@ -489,8 +521,8 @@ impl Consensus {
             .map(|(unit, prob)| {
                 self.forward
                     .get(unit)
-                    .map(|(frac, param)| frac.ln() + dirichlet(prob, param))
-                    .unwrap_or((0.000000001f64).ln())
+                    .map(|(frac, param)| frac.max(SMALL).ln() + dirichlet(prob, param))
+                    .unwrap_or(LOGSMALL)
             })
             .sum();
         assert!(!forward.is_nan());
@@ -500,8 +532,8 @@ impl Consensus {
             .map(|(unit, prob)| {
                 self.backward
                     .get(unit)
-                    .map(|(frac, param)| frac.ln() + dirichlet(prob, param))
-                    .unwrap_or((0.0000001f64).ln())
+                    .map(|(frac, param)| frac.max(SMALL).ln() + dirichlet(prob, param))
+                    .unwrap_or(LOGSMALL)
             })
             .sum();
         assert!(!backward.is_nan(), "{}\n{}\n{}", context, self, backward);
@@ -517,12 +549,14 @@ fn dirichlet(prob: &[f64], param: &[f64]) -> f64 {
     let without_scale: f64 = prob
         .iter()
         .zip(param.iter())
-        .map(|(p, q)| (q - 1f64) * p.ln())
+        .map(|(p, q)| (q - 1f64) * p.max(0.00001).ln())
         .sum();
     let sum: f64 = param.iter().sum();
-    let lk = unsafe { lgamma(sum) - param.iter().map(|&q| lgamma(q)).sum::<f64>() + without_scale };
-    assert!(!lk.is_nan(), "{:?}\t{:?}", prob, param);
-    lk
+    let coef = unsafe {
+        let denom: f64 = param.iter().map(|&q| lgamma(q)).sum::<f64>();
+        lgamma(sum) - denom
+    };
+    coef + without_scale
 }
 
 #[link(name = "m")]
@@ -541,4 +575,28 @@ fn logsumexp(xs: &[f64]) -> f64 {
         assert!(sum >= 0., "{:?}->{}", xs, sum);
         max + sum
     }
+}
+
+#[test]
+fn dirichlet_test() {
+    let pdf = dirichlet(&[0.1, 0.9], &[1f64, 100f64]);
+    let answer = -5.8255;
+    eprintln!("{}\n{}", pdf, answer);
+    assert!((pdf - answer).abs() < 0.0001);
+
+    let pdf = dirichlet(&[0.5, 0.5], &[1f64, 1f64]);
+    let answer = 0f64;
+    eprintln!("{}\n{}", pdf, answer);
+    assert!((pdf - answer).abs() < 0.0001);
+
+    let pdf = dirichlet(&[0.2, 0.6, 0.2], &[1f64, 1f64, 1f64]);
+    let answer = 0.693147;
+    eprintln!("{}\n{}", pdf, answer);
+    assert!((pdf - answer).abs() < 0.0001);
+
+    let pdf = dirichlet(&[0.2, 0.6, 0.2], &[2f64, 6f64, 2f64]);
+    let answer = 2.2413317;
+    let diff = (pdf - answer).abs();
+    eprintln!("{}\n{}", pdf, answer);
+    assert!(diff < 0.001, "{},{},{}", pdf, answer, diff);
 }

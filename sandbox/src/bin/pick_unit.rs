@@ -1,4 +1,4 @@
-const IS_MOCK: bool = true;
+const IS_MOCK: bool = false;
 use definitions::*;
 use std::collections::HashMap;
 use std::io::BufReader;

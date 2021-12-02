@@ -1,7 +1,7 @@
 [workspace]
 members = [
         "definitions",
-        "hla_cli",
+        "hla_cli", 
         "haplotyper",
         "sandbox",
         "mcl",
