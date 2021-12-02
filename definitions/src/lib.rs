@@ -39,6 +39,20 @@ pub enum ReadType {
 }
 
 impl DataSet {
+    /// Return an empty dataset.
+    pub fn new() -> Self {
+        Self {
+            input_file: String::new(),
+            coverage: None,
+            raw_reads: vec![],
+            hic_pairs: vec![],
+            selected_chunks: vec![],
+            encoded_reads: vec![],
+            hic_edges: vec![],
+            assignments: vec![],
+            read_type: ReadType::None,
+        }
+    }
     pub fn with_minimum_data(
         input_file: &str,
         raw_reads: Vec<RawRead>,

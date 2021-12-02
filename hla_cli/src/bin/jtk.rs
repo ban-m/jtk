@@ -699,7 +699,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
     debug!("Encoding {} reads", seqs.len());
     let read_type = matches.value_of("read_type").unwrap();
-    Ok(DataSet::new(file, &seqs, read_type))
+    Ok(DataSet::entry(file, &seqs, read_type))
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {

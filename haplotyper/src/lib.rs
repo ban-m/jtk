@@ -1,7 +1,9 @@
 #![feature(is_sorted)]
 pub mod assemble;
+pub mod copy_number_estimation;
 pub mod dense_encoding;
 mod determine_units;
+pub mod dirichlet_correction;
 pub mod em_correction;
 pub mod encode;
 mod entry;

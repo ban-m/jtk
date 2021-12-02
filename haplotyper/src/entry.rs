@@ -1,9 +1,9 @@
 pub trait Entry {
-    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record], rt: &str) -> Self;
+    fn entry(input_file: &str, raw_data: &[bio_utils::fasta::Record], rt: &str) -> Self;
 }
 
 impl Entry for definitions::DataSet {
-    fn new(input_file: &str, raw_data: &[bio_utils::fasta::Record], rt: &str) -> Self {
+    fn entry(input_file: &str, raw_data: &[bio_utils::fasta::Record], rt: &str) -> Self {
         use definitions::ReadType;
         let read_type = match rt {
             "CLR" => ReadType::CLR,

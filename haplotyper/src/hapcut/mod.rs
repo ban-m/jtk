@@ -1814,6 +1814,7 @@ pub mod hapcut {
         );
     }
     #[test]
+    #[ignore]
     fn test_phase_loop_dips() {
         let hap1: Vec<(u64, u64)> = vec![
             (0, 0),
