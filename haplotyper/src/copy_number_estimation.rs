@@ -19,7 +19,7 @@ const ERROR_FRAC: f64 = 0.25;
 // const CONFIDENCE: f64 = 0.8;
 // If true, condidence is set to the MAX_CONFIDENCE from the beggining.
 const CONST_CONFIDENCE: bool = false;
-const MAX_CONFIDENCE: f64 = 0.8;
+const MAX_CONFIDENCE: f64 = 0.95;
 // sample copy-number estimation in  `BURN_IN` times from confidence=0 to condidence=MAX_CONFIDENCE,
 // then keep sampling `BURN_IN` times at confidence=MAX_CONFIDENCE to reach the stationaly distribution.
 const BURN_IN: usize = 1_000;
@@ -263,16 +263,18 @@ impl Graph {
     }
     fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
         let (node_cp, edge_cp) = self.estimate_copy_numbers_inner(config);
-        let node_cp: Vec<_> = self
+        let mut node_cp: Vec<_> = self
             .node_to_idx
             .iter()
             .map(|(&node, &i)| (node, node_cp[i]))
             .collect();
-        let edge_cp: Vec<_> = self
+        node_cp.sort_unstable_by_key(|x| x.0);
+        let mut edge_cp: Vec<_> = self
             .edge_to_idx
             .iter()
             .map(|(&edge, &i)| (edge, edge_cp[i]))
             .collect();
+        edge_cp.sort_unstable_by_key(|x| x.0);
         (node_cp, edge_cp)
     }
     // Return vector of (estimated) copy numbers of nodes and those of edges.
