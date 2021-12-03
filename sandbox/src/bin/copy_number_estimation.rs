@@ -7,7 +7,7 @@ fn main() {
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
     use haplotyper::copy_number_estimation::*;
-    let config = Config::default();
+    let config = Config::estimate_coverage(3948023);
     let (node_cp, edge_cp) = ds.estimate_copy_numbers(&config);
     println!("NODE\tunit\tcluster\tcopy.number");
     for ((unit, cluster), cp) in node_cp {
