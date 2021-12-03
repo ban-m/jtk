@@ -1,3 +1,6 @@
+use rand::{seq::SliceRandom, Rng, SeedableRng};
+use rand_xoshiro::Xoroshiro128StarStar;
+use std::collections::HashMap;
 // Each edge has its direction to either "plus" or "minus" direction of the node.
 type Edge = (usize, bool, usize, bool, f64);
 
@@ -27,19 +30,9 @@ impl CoverageCalibrator {
                     (sums, cum + x as usize)
                 });
         cum_sum.reverse();
-        // let (mut cum_inverse_sum, _): (Vec<_>, _) = lengths
-        //     .iter()
-        //     .map(|&x| (x as f64).recip())
-        //     .rev()
-        //     .fold((vec![], 0f64), |(mut sums, cum), x| {
-        //         sums.push(cum + x);
-        //         (sums, cum + x)
-        //     });
-        // cum_inverse_sum.reverse();
         let mean = sum as f64 / lengths.len() as f64;
         Self {
             lengths,
-            // cum_inverse_sum,
             cum_sum,
             mean,
         }
@@ -85,6 +78,230 @@ impl CoverageCalibrator {
             / self.lengths.len() as f64
             / self.mean
     }
+}
+
+// Out of the haploid coverage, how much fraction would be observed in the 0-coverage nodes.
+// For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge
+// even in the zero-copy elements.
+const ERROR_FRAC: f64 = 0.25;
+// Probability that the adjacent copy number is correct.
+// TODO: Maybe we need to increase this value from 0.5 -> 1 as the iteration goes.
+// 0:no condidence to 1:certain
+// const CONFIDENCE: f64 = 0.8;
+// If true, condidence is set to the MAX_CONFIDENCE from the beggining.
+const CONST_CONFIDENCE: bool = false;
+const MAX_CONFIDENCE: f64 = 0.95;
+// sample copy-number estimation in  `BURN_IN` times from confidence=0 to condidence=MAX_CONFIDENCE,
+// then keep sampling `BURN_IN` times at confidence=MAX_CONFIDENCE to reach the stationaly distribution.
+const BURN_IN: usize = 1_000;
+// After burn-in, sample `SAMPLE_LEN` to get max a posterior estimation.
+const SAMPLE_LEN: usize = 1_000;
+
+#[derive(Debug, Clone)]
+pub struct GibbsSampler {
+    nodes: Vec<u64>,
+    edges: Vec<(usize, bool, usize, bool, u64)>,
+    // i->(indices of edges with (i,true), indices of edges with (i,false));
+    node_terminals: Vec<(Vec<usize>, Vec<usize>)>,
+    haploid_coverage: f64,
+}
+
+/// The structure to configure the parameters in copy number estimation.
+#[derive(Debug, Clone)]
+pub struct Config {
+    seed: u64,
+}
+
+impl Config {
+    pub fn new(seed: u64) -> Self {
+        Self { seed }
+    }
+}
+
+impl std::default::Default for Config {
+    fn default() -> Self {
+        Self { seed: 24309 }
+    }
+}
+
+impl GibbsSampler {
+    pub fn new(nodes: &[u64], edges: &[(usize, bool, usize, bool, u64)], cov: f64) -> Self {
+        let mut node_terminals = vec![(vec![], vec![]); nodes.len()];
+        for (idx, &(from, fd, to, td, _)) in edges.iter().enumerate() {
+            match fd {
+                true => node_terminals[from].0.push(idx),
+                false => node_terminals[from].1.push(idx),
+            }
+            match td {
+                true => node_terminals[to].0.push(idx),
+                false => node_terminals[to].1.push(idx),
+            }
+        }
+        Self {
+            nodes: nodes.to_vec(),
+            edges: edges.to_vec(),
+            node_terminals,
+            haploid_coverage: cov,
+        }
+    }
+    pub fn sample_copy_numer(&self, config: &Config) -> (Vec<usize>, Vec<usize>) {
+        let mut node_cp: Vec<usize> = self
+            .nodes
+            .iter()
+            .map(|&x| (x as f64 / self.haploid_coverage).round() as usize)
+            .collect();
+        let mut edge_cp: Vec<_> = self
+            .edges
+            .iter()
+            .map(|x| (x.4 as f64 / self.haploid_coverage).round() as usize)
+            .collect();
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(config.seed);
+        for i in 0..BURN_IN {
+            let confidence = match CONST_CONFIDENCE {
+                true => MAX_CONFIDENCE,
+                false => i as f64 * MAX_CONFIDENCE / BURN_IN as f64,
+            };
+            self.update_nodes(&mut node_cp, &edge_cp, confidence, &mut rng);
+            self.update_edges(&node_cp, &mut edge_cp, confidence, &mut rng);
+        }
+        // spin loop to reach stationaly distribution.
+        for _ in 0..BURN_IN {
+            self.update_nodes(&mut node_cp, &edge_cp, MAX_CONFIDENCE, &mut rng);
+            self.update_edges(&node_cp, &mut edge_cp, MAX_CONFIDENCE, &mut rng);
+        }
+        // Let's calculate the posterior distributions on each nodes/edges.
+        let mut node_cp_dist: Vec<_> = node_cp.iter().map(|&c| vec![0; 2 * (c + 1)]).collect();
+        let mut edge_cp_dist: Vec<_> = edge_cp.iter().map(|&c| vec![0; 2 * (c + 1)]).collect();
+        for _ in 0..SAMPLE_LEN {
+            self.update_nodes(&mut node_cp, &edge_cp, MAX_CONFIDENCE, &mut rng);
+            self.update_edges(&node_cp, &mut edge_cp, MAX_CONFIDENCE, &mut rng);
+            for (buf, &x) in node_cp_dist.iter_mut().zip(node_cp.iter()) {
+                if let Some(slot) = buf.get_mut(x) {
+                    *slot += 1;
+                }
+            }
+            for (buf, &x) in edge_cp_dist.iter_mut().zip(edge_cp.iter()) {
+                if let Some(slot) = buf.get_mut(x) {
+                    *slot += 1;
+                }
+            }
+        }
+        let argmax = |buf: &Vec<u32>| buf.iter().enumerate().max_by_key(|x| x.1).unwrap().0;
+        let node_cp: Vec<_> = node_cp_dist.iter().map(argmax).collect();
+        let edge_cp: Vec<_> = edge_cp_dist.iter().map(argmax).collect();
+        (node_cp, edge_cp)
+    }
+    fn update_nodes<R: Rng>(
+        &self,
+        node_cp: &mut [usize],
+        edge_cp: &[usize],
+        confidence: f64,
+        rng: &mut R,
+    ) {
+        let mut order: Vec<_> = (0..self.nodes.len()).collect();
+        order.shuffle(rng);
+        for node in order {
+            self.update_node(node, &mut node_cp[node], edge_cp, confidence, rng);
+        }
+    }
+    fn update_node<R: Rng>(
+        &self,
+        node: usize,
+        node_cp: &mut usize,
+        edge_cp: &[usize],
+        confidence: f64,
+        rng: &mut R,
+    ) {
+        let mut cps: Vec<usize> = vec![];
+        let &(ref down, ref up) = &self.node_terminals[node];
+        if !down.is_empty() {
+            cps.push(down.iter().map(|&j| edge_cp[j]).sum());
+        }
+        if !up.is_empty() {
+            cps.push(down.iter().map(|&j| edge_cp[j]).sum());
+        }
+        let w = self.nodes[node];
+        *node_cp = choose_copy_num(w, &cps, self.haploid_coverage, confidence, rng);
+    }
+    fn update_edges<R: Rng>(
+        &self,
+        node_cp: &[usize],
+        edge_cp: &mut [usize],
+        confidence: f64,
+        rng: &mut R,
+    ) {
+        let mut order: Vec<_> = (0..self.edges.len()).collect();
+        order.shuffle(rng);
+        for edge in order {
+            self.update_edge(edge, node_cp, edge_cp, confidence, rng);
+        }
+    }
+    fn update_edge<R: Rng>(
+        &self,
+        edge: usize,
+        node_cp: &[usize],
+        edge_cp: &mut [usize],
+        confidence: f64,
+        rng: &mut R,
+    ) {
+        let (from, fd, to, td, w) = self.edges[edge];
+        let from = self.edge_copy_num(edge, from, fd, node_cp, edge_cp);
+        let to = self.edge_copy_num(edge, to, td, node_cp, edge_cp);
+        let cps = [from, to];
+        edge_cp[edge] = choose_copy_num(w, &cps, self.haploid_coverage, confidence, rng);
+    }
+    fn edge_copy_num(
+        &self,
+        edge: usize,
+        node: usize,
+        is_plus: bool,
+        node_cp: &[usize],
+        edge_cp: &[usize],
+    ) -> usize {
+        let &(ref plus, ref minus) = &self.node_terminals[node];
+        let edge_cps_sum: usize = match is_plus {
+            true => plus.iter().map(|&e| edge_cp[e]).sum(),
+            false => minus.iter().map(|&e| edge_cp[e]).sum(),
+        };
+        (node_cp[node] + edge_cp[edge]).saturating_sub(edge_cps_sum)
+    }
+}
+
+// Poisson(obs|copy_num*coverage)~Norm(obs|mean=var=copy_num*coverage)
+// If copy number is zero, It is Norm(obs|mean=0,var=coverage*ERROR_FRAC), this is rough heuristics.
+fn poisson(obs: u64, copy_num: usize, coverage: f64) -> f64 {
+    let lambda = match copy_num {
+        0 => coverage * ERROR_FRAC,
+        _ => copy_num as f64 * coverage,
+    };
+    let denom: f64 = (1..obs + 1).map(|i| (i as f64).ln()).sum();
+    (obs as f64 * lambda.ln() - lambda - denom).exp()
+}
+
+fn choose_copy_num<R: Rng>(
+    w: u64,
+    cps: &[usize],
+    hap_cov: f64,
+    confidence: f64,
+    rng: &mut R,
+) -> usize {
+    let mut choises = vec![];
+    for &cp in cps {
+        if cp == 0 {
+            let trust_prob = 0.5 + confidence / 2f64;
+            choises.push((cp, trust_prob * poisson(w, cp, hap_cov)));
+            choises.push((cp + 1, (1f64 - trust_prob) * poisson(w, cp + 1, hap_cov)));
+        } else {
+            let trust_prob = 3f64.recip() + 2f64 / 3f64 * confidence;
+            choises.push((cp, trust_prob * poisson(w, cp, hap_cov)));
+            let minus_one = (1f64 - trust_prob) / 2f64 * poisson(w, cp - 1, hap_cov);
+            choises.push((cp - 1, minus_one));
+            let plus_one = (1f64 - trust_prob) / 2f64 * poisson(w, cp + 1, hap_cov);
+            choises.push((cp + 1, plus_one));
+        }
+    }
+    let sum: f64 = choises.iter().map(|x| x.1).sum();
+    choises.choose_weighted(rng, |&(_, w)| w / sum).unwrap().0
 }
 
 // Optimizer.
@@ -216,7 +433,6 @@ impl Optimizer {
     }
 }
 
-use std::collections::HashMap;
 /// Estimate copy number of GFA file.
 /// Each segment record should have `cv:i:` samtag and each edge segment record
 /// should have `cv:i:` tag and `ln:i:` tag.
@@ -346,69 +562,69 @@ pub fn estimate_copy_number(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<u
     (node_cp, copy_num)
 }
 
-pub fn polish_copy_number(
-    nodes: &[f64],
-    node_cp: &mut [usize],
-    edges: &[Edge],
-    edge_cp: &mut [usize],
-) {
-    // Copy number for [i][bool as usize]. True -> 1.
-    let mut adj_copy_num = vec![[0; 2]; nodes.len()];
-    for (&cp, &(from, fp, to, tp, _)) in edge_cp.iter().zip(edges.iter()) {
-        adj_copy_num[from][fp as usize] += cp;
-        adj_copy_num[to][tp as usize] += cp;
-    }
-    // (node index, true/false, target copy number);
-    let mut diffs = vec![];
-    for (idx, (node, adj_cp)) in node_cp.iter_mut().zip(adj_copy_num.iter()).enumerate() {
-        let (plus, minus) = (adj_cp[0], adj_cp[1]);
-        if plus == minus && plus != *node {
-            // Node should be modified.
-            *node = plus;
-        } else if plus != minus && plus == *node {
-            // minus should be modified.
-            diffs.push((idx, true, plus));
-        } else if plus != minus && minus == *node {
-            // plus shoulud be modified.
-            diffs.push((idx, false, minus));
-        }
-    }
-    // Changing edge copy numbers...
-    // TODO: More effient algorithm exists.
-    // for (idx, direction, target) in diffs {
-    //     let mut edges_to_change: Vec<(&mut usize, f64)> = edge_cp
-    //         .iter_mut()
-    //         .zip(edges.iter())
-    //         .filter(|&(_, &(from, fp, to, tp, _))| {
-    //             (from, fp) == (idx, direction) || (to, tp) == (idx, direction)
-    //         })
-    //         .map(|(cp, edge)| (cp, edge.4))
-    //         .collect();
-    //     let current_cp = edges_to_change.iter().map(|x| *x.0).sum::<usize>();
-    //     if current_cp < target {
-    //         // Increase.
-    //         for _ in current_cp..target {
-    //             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
-    //                 .iter_mut()
-    //                 .map(|(cp, cov)| ((*cov - (**cp + 1) as f64).powi(2), cp))
-    //                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
-    //             if let Some((_, cp)) = to_change {
-    //                 **cp += 1;
-    //             }
-    //         }
-    //     } else {
-    //         for _ in target..current_cp {
-    //             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
-    //                 .iter_mut()
-    //                 .map(|(cp, cov)| ((*cov - (**cp - 1) as f64).powi(2), cp))
-    //                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
-    //             if let Some((_, cp)) = to_change {
-    //                 **cp -= 1;
-    //             }
-    //         }
-    //     }
-    // }
-}
+// pub fn polish_copy_number(
+//     nodes: &[f64],
+//     node_cp: &mut [usize],
+//     edges: &[Edge],
+//     edge_cp: &mut [usize],
+// ) {
+//     // Copy number for [i][bool as usize]. True -> 1.
+//     let mut adj_copy_num = vec![[0; 2]; nodes.len()];
+//     for (&cp, &(from, fp, to, tp, _)) in edge_cp.iter().zip(edges.iter()) {
+//         adj_copy_num[from][fp as usize] += cp;
+//         adj_copy_num[to][tp as usize] += cp;
+//     }
+//     // (node index, true/false, target copy number);
+//     let mut diffs = vec![];
+//     for (idx, (node, adj_cp)) in node_cp.iter_mut().zip(adj_copy_num.iter()).enumerate() {
+//         let (plus, minus) = (adj_cp[0], adj_cp[1]);
+//         if plus == minus && plus != *node {
+//             // Node should be modified.
+//             *node = plus;
+//         } else if plus != minus && plus == *node {
+//             // minus should be modified.
+//             diffs.push((idx, true, plus));
+//         } else if plus != minus && minus == *node {
+//             // plus shoulud be modified.
+//             diffs.push((idx, false, minus));
+//         }
+//     }
+// Changing edge copy numbers...
+// TODO: More effient algorithm exists.
+// for (idx, direction, target) in diffs {
+//     let mut edges_to_change: Vec<(&mut usize, f64)> = edge_cp
+//         .iter_mut()
+//         .zip(edges.iter())
+//         .filter(|&(_, &(from, fp, to, tp, _))| {
+//             (from, fp) == (idx, direction) || (to, tp) == (idx, direction)
+//         })
+//         .map(|(cp, edge)| (cp, edge.4))
+//         .collect();
+//     let current_cp = edges_to_change.iter().map(|x| *x.0).sum::<usize>();
+//     if current_cp < target {
+//         // Increase.
+//         for _ in current_cp..target {
+//             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
+//                 .iter_mut()
+//                 .map(|(cp, cov)| ((*cov - (**cp + 1) as f64).powi(2), cp))
+//                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
+//             if let Some((_, cp)) = to_change {
+//                 **cp += 1;
+//             }
+//         }
+//     } else {
+//         for _ in target..current_cp {
+//             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
+//                 .iter_mut()
+//                 .map(|(cp, cov)| ((*cov - (**cp - 1) as f64).powi(2), cp))
+//                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
+//             if let Some((_, cp)) = to_change {
+//                 **cp -= 1;
+//             }
+//         }
+//     }
+// }
+// }
 
 // /// Optimization by using OpEn.
 // pub fn estimate_copy_number_open(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<usize>) {

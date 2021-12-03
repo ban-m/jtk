@@ -357,36 +357,9 @@ impl Graph {
             let down_cp: usize = down_edge.iter().map(|&j| edge_cp[j]).sum();
             let up_cp: usize = up_edge.iter().map(|&j| edge_cp[j]).sum();
             let cps = [down_cp, up_cp];
-            let new_cp = Self::choose_copy_num(w, &cps, hap_cov, confidence, rng);
+            let new_cp = choose_copy_num(w, &cps, hap_cov, confidence, rng);
             *cp = new_cp;
         }
-    }
-    fn choose_copy_num<R: Rng>(
-        w: u64,
-        cps: &[usize],
-        hap_cov: f64,
-        confidence: f64,
-        rng: &mut R,
-    ) -> usize {
-        let mut choises = vec![];
-        for &cp in cps {
-            if cp == 0 {
-                //let trust_prob = 0.5 + CONFIDENCE / 2f64;
-                let trust_prob = 0.5 + confidence / 2f64;
-                choises.push((cp, trust_prob * poisson(w, cp, hap_cov)));
-                choises.push((cp + 1, (1f64 - trust_prob) * poisson(w, cp + 1, hap_cov)));
-            } else {
-                //let trust_prob = 3f64.recip() + 2f64 / 3f64 * CONFIDENCE;
-                let trust_prob = 3f64.recip() + 2f64 / 3f64 * confidence;
-                choises.push((cp, trust_prob * poisson(w, cp, hap_cov)));
-                let minus_one = (1f64 - trust_prob) / 2f64 * poisson(w, cp - 1, hap_cov);
-                choises.push((cp - 1, minus_one));
-                let plus_one = (1f64 - trust_prob) / 2f64 * poisson(w, cp + 1, hap_cov);
-                choises.push((cp + 1, plus_one));
-            }
-        }
-        let sum: f64 = choises.iter().map(|x| x.1).sum();
-        choises.choose_weighted(rng, |&(_, w)| w / sum).unwrap().0
     }
     fn update_edges<R: Rng>(
         &self,
@@ -415,7 +388,7 @@ impl Graph {
         let from_cp = self.edge_copy_num(edge, from, node_cp, edge_cp);
         let to_cp = self.edge_copy_num(edge, to, node_cp, edge_cp);
         let cps = [from_cp, to_cp];
-        let new_asn = Self::choose_copy_num(self.edges[edge], &cps, hap_cov, confidence, rng);
+        let new_asn = choose_copy_num(self.edges[edge], &cps, hap_cov, confidence, rng);
         edge_cp[edge] = new_asn;
     }
     // Return the current estimation of the copy number of the `edge`.
@@ -453,6 +426,34 @@ fn poisson(obs: u64, copy_num: usize, coverage: f64) -> f64 {
     };
     let denom: f64 = (1..obs + 1).map(|i| (i as f64).ln()).sum();
     (obs as f64 * lambda.ln() - lambda - denom).exp()
+}
+
+fn choose_copy_num<R: Rng>(
+    w: u64,
+    cps: &[usize],
+    hap_cov: f64,
+    confidence: f64,
+    rng: &mut R,
+) -> usize {
+    let mut choises = vec![];
+    for &cp in cps {
+        if cp == 0 {
+            //let trust_prob = 0.5 + CONFIDENCE / 2f64;
+            let trust_prob = 0.5 + confidence / 2f64;
+            choises.push((cp, trust_prob * poisson(w, cp, hap_cov)));
+            choises.push((cp + 1, (1f64 - trust_prob) * poisson(w, cp + 1, hap_cov)));
+        } else {
+            //let trust_prob = 3f64.recip() + 2f64 / 3f64 * CONFIDENCE;
+            let trust_prob = 3f64.recip() + 2f64 / 3f64 * confidence;
+            choises.push((cp, trust_prob * poisson(w, cp, hap_cov)));
+            let minus_one = (1f64 - trust_prob) / 2f64 * poisson(w, cp - 1, hap_cov);
+            choises.push((cp - 1, minus_one));
+            let plus_one = (1f64 - trust_prob) / 2f64 * poisson(w, cp + 1, hap_cov);
+            choises.push((cp + 1, plus_one));
+        }
+    }
+    let sum: f64 = choises.iter().map(|x| x.1).sum();
+    choises.choose_weighted(rng, |&(_, w)| w / sum).unwrap().0
 }
 
 #[derive(Debug, Clone)]

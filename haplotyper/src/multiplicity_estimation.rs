@@ -90,14 +90,14 @@ impl MultiplicityEstimation for DataSet {
         graph.assign_copy_number(cov, &lens);
         graph.remove_zero_copy_elements(&lens, 0.3);
         let (nodes, _) = graph.copy_number_estimation(cov, &lens);
-        for chunk in self.selected_chunks.iter_mut() {
-            chunk.cluster_num = match nodes.get(&(chunk.id, 0)) {
-                Some(res) => *res,
-                None => {
-                    warn!("MULTP\tCHUNK_ID\t{}\tMissing\tFilled with 1", chunk.id);
-                    1
-                }
-            };
+        let mut chunks: HashMap<_, _> =
+            self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
+        // reset copy number.
+        chunks.values_mut().for_each(|c| c.cluster_num = 0);
+        for ((chunk, _), cp) in nodes.iter() {
+            if let Some(c) = chunks.get_mut(chunk) {
+                c.cluster_num += cp;
+            }
         }
         let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
         for ((node, _), cp) in nodes.iter() {

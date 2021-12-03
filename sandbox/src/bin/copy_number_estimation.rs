@@ -1,6 +1,5 @@
 use std::{collections::HashMap, io::BufReader};
 
-use haplotyper::DetermineUnit;
 fn main() {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
