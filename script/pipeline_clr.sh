@@ -54,8 +54,8 @@ then
 else
     cat ${CLUSTERED} |\
         jtk correct_deletion -vv --threads ${THREADS} |\
-        jtk resolve_tangle -vv --threads ${THREADS} |\
-        tee ${2}.temp.json |\
+        # jtk resolve_tangle -vv --threads ${THREADS} |\
+        # tee ${2}.temp.json |\
         jtk encode_densely -vv --threads ${THREADS} |\
         jtk correct_deletion -vv --threads ${THREADS}  >${RESOLVED}
 fi

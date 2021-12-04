@@ -3,18 +3,40 @@ fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
     use definitions::*;
-    use std::collections::HashMap;
-    let ds: DataSet =
+    let mut ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *counts.entry(node.unit).or_default() += 1;
+    let mut entropy: HashMap<(u64, u64), (f64, u32)> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        for node in read.nodes.iter() {
+            let ent: f64 = node
+                .posterior
+                .iter()
+                .map(|x| x * x.max(0.000001).ln())
+                .sum();
+            let tuple = entropy.entry((node.unit, node.cluster)).or_default();
+            tuple.0 -= ent;
+            tuple.1 += 1;
+        }
     }
-    for c in ds.selected_chunks.iter() {
-        let count = counts[&c.id];
-        println!("{}\t{}\t{}\t{}", c.id, c.cluster_num, count, c.seq().len());
-    }
+    let ave_entropy: HashMap<_, _> = entropy
+        .iter()
+        .map(|(&node, &(ent, count))| (node, ent / count as f64))
+        .collect();
+    ds.encoded_reads
+        .iter_mut()
+        .flat_map(|r| r.nodes.iter_mut())
+        .filter(|n| 0.3 < ave_entropy[&(n.unit, n.cluster)])
+        .for_each(|n| {
+            n.cluster = 0;
+            n.posterior = vec![0f64; n.posterior.len()];
+            n.posterior[0] = 1f64;
+        });
+    // Assembly
+    use haplotyper::assemble::*;
+    let config = AssembleConfig::new(3, 1000, false, true, 4);
+    println!("{}", ds.assemble(&config));
+    use std::collections::HashMap;
     // use std::io::BufRead;
     // let input: Vec<_> = std::fs::File::open(&args[1])
     //     .map(BufReader::new)?
@@ -188,25 +210,6 @@ fn main() -> std::io::Result<()> {
     //     hap, node.cluster, prev, after, aln_dist
     // );
     //     }
-    // }
-    // use haplotyper::assemble::*;
-    // let config = AssembleConfig::new(3, 1000, false, false, 4);
-    // ds.squish_small_contig(&config, 30);
-    // println!("{}", ds.assemble(&config));
-    // let counts: Vec<_> = ds
-    //     .encoded_reads
-    //     .iter()
-    //     .filter_map(|r| {
-    //         let nodes: Vec<_> = r
-    //             .nodes
-    //             .iter()
-    //             .filter_map(|n| [905, 924].contains(&n.unit).then(|| (n.unit, n.cluster)))
-    //             .collect();
-    //         (nodes.len() == 2).then(|| nodes)
-    //     })
-    //     .collect();
-    // for nodes in counts {
-    //     println!("{:?}", nodes);
     // }
 
     // let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();

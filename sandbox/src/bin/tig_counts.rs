@@ -25,6 +25,7 @@ fn main() -> std::io::Result<()> {
                 .iter()
                 .map(|x| x * x.max(0.000001).ln())
                 .sum();
+            assert!(ent < 0.000000001, "{},{:?}", ent, node.posterior);
             *entropy.entry((node.unit, node.cluster)).or_default() -= ent;
         }
     }

@@ -10,14 +10,15 @@ fn main() {
     ds.encoded_reads
         .iter_mut()
         .for_each(|r| r.nodes.iter_mut().for_each(|n| n.cluster = 0));
-    use haplotyper::copy_number_estimation::*;
-    let config = Config::estimate_coverage(3948023);
     let old_node_cp: HashMap<_, _> = ds
         .selected_chunks
         .iter()
         .map(|x| (x.id, x.cluster_num))
         .collect();
-    let (node_cp, edge_cp) = ds.estimate_copy_numbers(&config);
+    use haplotyper::multiplicity_estimation::MultiplicityEstimation;
+    use haplotyper::multiplicity_estimation::MultiplicityEstimationConfig;
+    let config = MultiplicityEstimationConfig::new(24, 4382094, Some("temp.gfa"));
+    ds = ds.estimate_multiplicity(&config);
     println!("NODE\tunit\tcluster\tcopy.number\tprev.estim");
     let mut node_count: HashMap<_, u32> = HashMap::new();
     let mut edge_count: HashMap<_, u32> = HashMap::new();
@@ -31,14 +32,14 @@ fn main() {
                 .or_default() += 1;
         }
     }
-    for ((unit, _), cp) in node_cp {
+    for (unit, cp) in ds.selected_chunks.iter().map(|c| (c.id, c.cluster_num)) {
         let old = old_node_cp[&unit];
         let count = node_count[&unit];
         println!("NODE\t{}\t{}\t{}\t{}", unit, count, cp, old);
     }
-    println!("EDGE\tfrom.unit\tfrom.cluster\tto.unit\tto.cluster\tcopy.number");
-    for (((fu, _), (tu, _)), cp) in edge_cp {
-        let count = edge_count[&(fu.min(tu), fu.max(tu))];
-        println!("EDGE\t{}\t{}\t{}\t{}", fu, tu, count, cp);
-    }
+    // println!("EDGE\tfrom.unit\tfrom.cluster\tto.unit\tto.cluster\tcopy.number");
+    // for (((fu, _), (tu, _)), cp) in edge_cp {
+    //     let count = edge_count[&(fu.min(tu), fu.max(tu))];
+    //     println!("EDGE\t{}\t{}\t{}\t{}", fu, tu, count, cp);
+    // }
 }

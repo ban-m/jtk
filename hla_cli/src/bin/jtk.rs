@@ -906,10 +906,10 @@ fn multiplicity_estimation(
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .unwrap();
-    let max_cluster_size: usize = matches
-        .value_of("max_cluster_size")
-        .and_then(|e| e.parse().ok())
-        .unwrap();
+    // let max_cluster_size: usize = matches
+    //     .value_of("max_cluster_size")
+    //     .and_then(|e| e.parse().ok())
+    //     .unwrap();
     let seed: u64 = matches
         .value_of("seed")
         .and_then(|e| e.parse().ok())
@@ -921,8 +921,8 @@ fn multiplicity_estimation(
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = MultiplicityEstimationConfig::new(threads, max_cluster_size, seed, path);
-    Ok(dataset.estimate_multiplicity_graph(&config))
+    let config = MultiplicityEstimationConfig::new(threads, seed, path);
+    Ok(dataset.estimate_multiplicity(&config))
 }
 
 fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
@@ -1012,7 +1012,10 @@ fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::R
     }
 }
 
-fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn clustering_correction(
+    matches: &clap::ArgMatches,
+    mut dataset: DataSet,
+) -> std::io::Result<DataSet> {
     debug!("START\tClustering Correction step");
     let threads: usize = matches
         .value_of("threads")
@@ -1032,7 +1035,10 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: DataSet) -> std::i
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    Ok(dataset.correct_clustering_em(repeat_num, threshold, true))
+    use haplotyper::dirichlet_correction::*;
+    let config = Config::new(repeat_num, threshold);
+    dataset.correct_clustering(&config);
+    Ok(dataset)
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {

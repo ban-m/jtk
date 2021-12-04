@@ -6,8 +6,7 @@
 const PRIOR_FRACTION: f64 = 1f64;
 const CLUSTER_PRIOR: f64 = 1f64;
 
-// Very small values. std::f64::EPLISON is not good option, as it would cause underflow(?) in floating points(?).
-const SMALL: f64 = 0.0000001;
+const SMALL: f64 = 0.0000000000000000000001;
 const LOGSMALL: f64 = -100f64;
 use definitions::*;
 use log::*;
@@ -476,7 +475,7 @@ fn dirichlet(prob: &[f64], param: &[f64]) -> f64 {
     let without_scale: f64 = prob
         .iter()
         .zip(param.iter())
-        .map(|(p, q)| (q - 1f64) * p.max(0.00001).ln())
+        .map(|(p, q)| (q - 1f64) * p.max(SMALL).ln())
         .sum();
     let sum: f64 = param.iter().sum();
     let coef = unsafe {

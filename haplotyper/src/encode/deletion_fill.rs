@@ -24,6 +24,11 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
     let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
     const OUTER_LOOP: usize = 3;
     const INNER_LOOP: usize = 15;
+    let cluster_num: HashMap<_, _> = ds
+        .selected_chunks
+        .iter()
+        .map(|x| (x.id, x.cluster_num))
+        .collect();
     'outer: for t in 0..OUTER_LOOP {
         let representative = take_consensus_sequence(&ds);
         // i->vector of failed index and units.
@@ -44,6 +49,13 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
                         &read_skeltons,
                         sim_thr,
                     );
+                    for node in r.nodes.iter_mut().filter(|r| r.posterior.is_empty()) {
+                        let cluster_num = cluster_num[&node.unit].max(2);
+                        let correct = 0.8;
+                        let err = (1f64 - correct) / (cluster_num as f64 - 1f64);
+                        node.posterior = vec![err; cluster_num];
+                        node.posterior[node.cluster as usize] = correct;
+                    }
                 });
             let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
             debug!("Filled:{}\t{}", current, after);
@@ -259,7 +271,6 @@ fn encode_node(
         let mode = edlib_sys::AlignMode::Infix;
         let task = edlib_sys::AlignTask::Alignment;
         // Note that unit.seq would be smaller than query! So the operations should be reversed.
-        // let unitseq = unit.seq();
         let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
         let locations = alignment.locations.unwrap();
         let (aln_start, aln_end) = locations[0];
@@ -281,7 +292,6 @@ fn encode_node(
         .iter()
         .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
     let max_indel = super::max_region(indel_mism).max(0) as usize;
-    // let has_large_indel = max_indel > super::INDEL_THRESHOLD;
     let position_from_start = if is_forward {
         start + aln_start
     } else {
@@ -304,13 +314,8 @@ fn encode_node(
     let ops = super::compress_kiley_ops(&ops);
     let mut node = Node::new(uid, is_forward, &seq, ops, position_from_start);
     node.cluster = cluster;
-    //     position_from_start,
-    //     unit: uid,
-    //     cluster,
-    //     is_forward,
-    //     seq: String::from_utf8(seq).unwrap(),
-    //     cigar: ops,
-    // };
+    // TODO:Here we should know the number of cluster in `uid` chunk.
+    // node.posterior = vec![0f64;cluster_num];
     Some((node, score))
 }
 

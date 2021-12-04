@@ -1,3 +1,4 @@
+use super::copy_number::CoverageCalibrator;
 use super::AssembleConfig;
 use definitions::{EncodedRead, Unit};
 use rayon::prelude::*;
@@ -5,9 +6,6 @@ mod sequence_generation;
 use std::collections::HashMap;
 use std::collections::HashSet;
 pub mod dg_test;
-// TODO: To split the head node(the 0 degree node) into two if it is homo.
-// const DRAFT_COVERAGE: usize = 20;
-// const DRAFT_REP_NUM: usize = 7;
 
 /// Position::Head is the up-stream position of a unit, and Tail is downstream by default.
 #[derive(Debug, Clone, Eq, PartialEq, Copy, Hash, PartialOrd, Ord)]
@@ -428,14 +426,14 @@ impl EdgeLabel {
     }
 }
 
-fn take_consensus(
-    reads: &[&EncodedRead],
+fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
+    reads: &[R],
     units: Option<&[Unit]>,
     c: &AssembleConfig,
 ) -> (NodeConsensus, EdgeConsensus) {
     let mut nodes: HashMap<_, Vec<_>> = HashMap::new();
     let mut edges: HashMap<_, Vec<_>> = HashMap::new();
-    for read in reads.iter() {
+    for read in reads.iter().map(|r| r.borrow()) {
         for node in read.nodes.iter() {
             let tuple = (node.unit, node.cluster);
             nodes.entry(tuple).or_default().push(node);
@@ -593,7 +591,11 @@ impl<'a> DitchGraph<'a> {
         self.remove_zero_copy_path(0.3);
         // graph.transitive_edge_reduction();
     }
-    pub fn new(reads: &[&'a EncodedRead], units: Option<&[Unit]>, c: &AssembleConfig) -> Self {
+    pub fn new<R: std::borrow::Borrow<EncodedRead>>(
+        reads: &'a [R],
+        units: Option<&[Unit]>,
+        c: &AssembleConfig,
+    ) -> Self {
         // Take a consensus of nodes and edges.
         let (nodes_seq, edge_seq) = take_consensus(reads, units, c);
         // Allocate all nodes.
@@ -608,7 +610,7 @@ impl<'a> DitchGraph<'a> {
         }
         let mut graph = Self { nodes };
         // Append edges.
-        for read in reads.iter() {
+        for read in reads.iter().map(|r| r.borrow()) {
             graph.append_read(read, c);
             graph.append_tip(read, c);
         }
@@ -782,15 +784,9 @@ impl<'a> DitchGraph<'a> {
                 from_deg == 1 && to_deg == 1
             })
     }
-    /// Estimoate copy number of nodes and edges.
-    /// *This function does not modify the graph content*. If you want
-    /// to assign copy number to each node, call `assign_copy_number` instead.
-    pub fn copy_number_estimation(
-        &self,
-        naive_cov: f64,
-        lens: &[usize],
-    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
-        // Create simple-path reduced graph.
+    // Return Node->serialized simple-path id hashmapping and
+    // edges between simple paths.
+    fn reduce_simple_path(&self) -> (HashMap<Node, usize>, Vec<&DitchEdge>) {
         let keys = self.nodes.keys().cloned().enumerate();
         let node_index: HashMap<_, _> = keys.map(|(i, k)| (k, i)).collect();
         let (edges_in_simple_path, edges_between_simple_path) =
@@ -817,79 +813,106 @@ impl<'a> DitchGraph<'a> {
                 assert!(plugs.len() <= 2, "{:?}", plugs);
             }
         }
-        use super::copy_number::CoverageCalibrator;
-        let calibrator = CoverageCalibrator::new(lens);
-        let unit_len_sum: usize = self.nodes.values().map(|n| n.seq().len()).sum();
-        let cov = calibrator.calib_f64(naive_cov, unit_len_sum / self.nodes.len());
-        debug!("COVERAGE\t{:.3}\t{:.3}", naive_cov, cov,);
-        // if (from, true, _, _) that read is in plugs[from][1].
-        let mut plugs: Vec<_> = vec![vec![]; cluster_index.len()];
-        let edges: Vec<_> = edges_between_simple_path
+        let node_to_cluster: HashMap<_, _> = node_index
+            .iter()
+            .map(|(&node, &index)| {
+                let cluster = fu.find(index).unwrap();
+                (node, cluster_index[&cluster])
+            })
+            .collect();
+        (node_to_cluster, edges_between_simple_path)
+    }
+    fn convert_connecting_edges(
+        &self,
+        node_to_pathid: &HashMap<Node, usize>,
+        edges: &[&DitchEdge],
+        calibrator: &CoverageCalibrator,
+    ) -> (
+        Vec<Vec<(Node, Position)>>,
+        Vec<(usize, bool, usize, bool, f64)>,
+    ) {
+        let path_num: usize = *node_to_pathid.values().max().unwrap_or(&0) + 1;
+        let mut terminals: Vec<_> = vec![vec![]; path_num];
+        let edges: Vec<_> = edges
             .iter()
             .map(|edge| {
-                let from_index = cluster_index[&fu.find(node_index[&edge.from]).unwrap()];
-                let to_index = cluster_index[&fu.find(node_index[&edge.to]).unwrap()];
+                let from_index = node_to_pathid[&edge.from];
+                let to_index = node_to_pathid[&edge.to];
                 // Decide the "position" of these nodes.
                 // There should not be more than two plugs on each simple path.
                 let from_node = (edge.from, edge.from_position);
-                let fp = match plugs[from_index].iter().position(|n| n == &from_node) {
+                let fp = match terminals[from_index].iter().position(|n| n == &from_node) {
                     Some(idx) => idx == 1,
                     None => {
-                        plugs[from_index].push(from_node);
-                        plugs[from_index].len() == 2
+                        terminals[from_index].push(from_node);
+                        terminals[from_index].len() == 2
                     }
                 };
-                assert!(plugs[from_index].len() <= 2, "{:?}", plugs[from_index]);
+                assert!(
+                    terminals[from_index].len() <= 2,
+                    "{:?}",
+                    terminals[from_index]
+                );
                 let to_node = (edge.to, edge.to_position);
-                let tp = match plugs[to_index].iter().position(|n| n == &to_node) {
+                let tp = match terminals[to_index].iter().position(|n| n == &to_node) {
                     Some(idx) => idx == 1,
                     None => {
-                        plugs[to_index].push(to_node);
-                        plugs[to_index].len() == 2
+                        terminals[to_index].push(to_node);
+                        terminals[to_index].len() == 2
                     }
                 };
-                assert!(plugs[to_index].len() <= 2);
+                assert!(terminals[to_index].len() <= 2);
                 let unit_len =
                     self.nodes[&edge.from].seq().len() + self.nodes[&edge.to].seq().len();
                 let gap_len = (unit_len as i64 + edge.seq.len()) as usize;
-                let weight = calibrator.calib(edge.occ, gap_len) / cov;
+                let weight = calibrator.calib(edge.occ, gap_len);
                 // debug!("CALIB\t{:.1}\t{}\t{}\tEDGE", edge.occ, gap_len, weight);
                 (from_index, fp, to_index, tp, weight)
             })
             .collect();
-        let mut node_weights = vec![(0f64, 0usize); cluster_index.len()];
+        (terminals, edges)
+    }
+    fn convert_path_weight(
+        &self,
+        node_to_pathid: &HashMap<Node, usize>,
+        calibrator: &CoverageCalibrator,
+    ) -> Vec<f64> {
+        let path_num: usize = *node_to_pathid.values().max().unwrap_or(&0) + 1;
+        let mut node_weights = vec![(0f64, 0usize); path_num];
         for node in self.nodes.values() {
-            let cluster = fu.find(node_index[&node.node]).unwrap();
-            let simple_path_index = cluster_index[&cluster];
+            let simple_path_index = node_to_pathid[&node.node];
             node_weights[simple_path_index].1 += 1;
             let unit_len = node.seq().len();
-            let weight = calibrator.calib(node.occ, unit_len) / cov;
-            // debug!("CALIB\t{:.1}\t{}\t{}\tNODE", node.occ, unit_len, weight);
+            let weight = calibrator.calib(node.occ, unit_len);
             node_weights[simple_path_index].0 += weight;
         }
-        let nodes: Vec<_> = node_weights
+        node_weights
             .iter()
             .map(|&(sum, len)| sum / len as f64)
-            .collect();
-        let (node_cp, edge_cp) = super::copy_number::estimate_copy_number(&nodes, &edges);
-        let node_copy_number: HashMap<_, _> = self
-            .nodes
-            .values()
-            .map(|node| {
-                let cluster = fu.find(node_index[&node.node]).unwrap();
-                (node.node, node_cp[cluster_index[&cluster]])
-            })
+            .collect()
+    }
+    fn gather_answer(
+        &self,
+        edges: &[(usize, bool, usize, bool, f64)],
+        node_cp: &[usize],
+        edge_cp: &[usize],
+        node_to_pathid: &HashMap<Node, usize>,
+        terminals: &[Vec<(Node, Position)>],
+    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
+        let node_copy_number: HashMap<_, _> = node_to_pathid
+            .iter()
+            .map(|(&node, &pathid)| (node, node_cp[pathid]))
             .collect();
         let mut edge_copy_number = HashMap::new();
         for (&edge_cp, &(from, fplus, to, tplus, _)) in edge_cp.iter().zip(edges.iter()) {
-            let from = plugs[from][fplus as usize];
-            let to = plugs[to][tplus as usize];
+            let from = terminals[from][fplus as usize];
+            let to = terminals[to][tplus as usize];
             edge_copy_number.insert((from, to), edge_cp);
             edge_copy_number.insert((to, from), edge_cp);
         }
         for edge in self.nodes.values().flat_map(|node| node.edges.iter()) {
-            let from = cluster_index[&fu.find(node_index[&edge.from]).unwrap()];
-            let to = cluster_index[&fu.find(node_index[&edge.to]).unwrap()];
+            let from = node_to_pathid[&edge.from];
+            let to = node_to_pathid[&edge.to];
             if from == to {
                 let cp = node_cp[from];
                 let from = (edge.from, edge.from_position);
@@ -899,9 +922,64 @@ impl<'a> DitchGraph<'a> {
         }
         (node_copy_number, edge_copy_number)
     }
+    fn generate_coverage_calib(&self, naive_cov: f64, lens: &[usize]) -> (CoverageCalibrator, f64) {
+        let calibrator = CoverageCalibrator::new(lens);
+        let unit_len_sum: usize = self.nodes.values().map(|n| n.seq().len()).sum();
+        let cov = calibrator.calib_f64(naive_cov, unit_len_sum / self.nodes.len());
+        debug!("COPYNUM\tCOVERAGE\t{:.3}\t{:.3}", naive_cov, cov,);
+        (calibrator, cov)
+    }
+    /// Estimoate copy number of nodes and edges.
+    /// *This function does not modify the graph content*. If you want
+    /// to assign copy number to each node, call `assign_copy_number` instead.
+    pub fn copy_number_estimation(
+        &self,
+        naive_cov: f64,
+        lens: &[usize],
+    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
+        let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
+        let (calibrator, cov) = self.generate_coverage_calib(naive_cov, lens);
+        let (terminals, mut edges) =
+            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, &calibrator);
+        let mut nodes = self.convert_path_weight(&node_to_pathid, &calibrator);
+        edges.iter_mut().for_each(|x| x.4 /= cov);
+        nodes.iter_mut().for_each(|x| *x /= cov);
+        let (node_cp, edge_cp) = super::copy_number::estimate_copy_number(&nodes, &edges);
+        self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
+    }
     /// (Re-)estimate copy number on each node and edge.
     pub fn assign_copy_number(&mut self, naive_cov: f64, lens: &[usize]) {
         let (node_copy_number, edge_copy_number) = self.copy_number_estimation(naive_cov, lens);
+        let get_edge_cn = |e: &DitchEdge| {
+            let edge = ((e.from, e.from_position), (e.to, e.to_position));
+            edge_copy_number.get(&edge).copied()
+        };
+        for (key, node) in self.nodes.iter_mut() {
+            node.copy_number = node_copy_number.get(key).cloned();
+            for edge in node.edges.iter_mut() {
+                edge.copy_number = get_edge_cn(edge);
+            }
+        }
+    }
+    /// Estimoate copy number of nodes and edges by a gibbs sampler.
+    /// *This function does not modify the graph content*.
+    /// If you want to assign copy number to each node, call `assign_copy_number_gbs` instead.
+    pub fn copy_number_estimation_gbs(
+        &self,
+        naive_cov: f64,
+        lens: &[usize],
+    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
+        let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
+        let (calibrator, cov) = self.generate_coverage_calib(naive_cov, lens);
+        let (terminals, edges) =
+            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, &calibrator);
+        let nodes = self.convert_path_weight(&node_to_pathid, &calibrator);
+        let (node_cp, edge_cp) = super::copy_number::estimate_copy_number_gbs(&nodes, &edges, cov);
+        self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
+    }
+    /// (Re-)estimate copy number on each node and edge.
+    pub fn assign_copy_number_gbs(&mut self, naive_cov: f64, lens: &[usize]) {
+        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_gbs(naive_cov, lens);
         let get_edge_cn = |e: &DitchEdge| {
             let edge = ((e.from, e.from_position), (e.to, e.to_position));
             edge_copy_number.get(&edge).copied()
@@ -952,7 +1030,6 @@ impl<'a> DitchGraph<'a> {
             })
             .collect();
         debug!("UNSOUND\t{}\t{}", unsound_nodes.len(), self.nodes.len());
-        use super::copy_number::CoverageCalibrator;
         let calibrator = CoverageCalibrator::new(lens);
         let ave_unit_len = {
             let sum_unit_len: usize = self.nodes.values().map(|node| node.seq().len()).sum();
@@ -2330,13 +2407,125 @@ fn get_bridge(nodes: usize, edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
     bridges
 }
 
-// #[cfg(test)]
-// mod tests{
-//     use super::*;
-//     use definitions::EncodedRead;
-
-//     #[test]
-//     fn repeats(){
-//         let nodes = vec![];
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use definitions::EncodedRead;
+    use rand::Rng;
+    use rand::SeedableRng;
+    use rand_xoshiro::Xoroshiro128StarStar;
+    fn gen_read<R: Rng>(id: u64, rng: &mut R, hap: &[u64]) -> EncodedRead {
+        let original_length = 5_000 + rng.gen_range(0..10_000);
+        let start_pos = rng.gen_range(0..hap.len());
+        let seq = vec![b'A'; 2_000];
+        let nodes: Vec<_> = hap
+            .iter()
+            .cycle()
+            .skip(start_pos)
+            .take(original_length / 2_000)
+            .enumerate()
+            .map(|(idx, &unit)| {
+                let position = idx as usize * 2_000;
+                let cigar = vec![definitions::Op::Match(2_000)];
+                definitions::Node::new(unit, true, &seq, cigar, position)
+            })
+            .collect();
+        let edges = nodes
+            .windows(2)
+            .map(|ns| {
+                let (from, to) = match *ns {
+                    [ref from, ref to] => (from, to),
+                    _ => unreachable!(),
+                };
+                let end = from.position_from_start + from.query_length();
+                let start = to.position_from_start;
+                let label = String::new();
+                definitions::Edge {
+                    from: from.unit,
+                    to: to.unit,
+                    offset: start as i64 - end as i64,
+                    label,
+                }
+            })
+            .collect();
+        let rem = original_length - original_length / 2_000 * 2_000;
+        EncodedRead {
+            id,
+            original_length,
+            leading_gap: vec![],
+            trailing_gap: vec![b'A'; rem],
+            edges,
+            nodes,
+        }
+    }
+    #[test]
+    fn from_reads_1() {
+        // Generating reads from looping_case
+        let node_cp: Vec<_> = vec![2, 2, 8, 2, 2, 4, 4, 2, 2];
+        let hap: Vec<_> = vec![0, 1, 2, 4, 3, 2, 6, 5, 2, 6, 5, 2, 7, 8];
+        let read_num = 2 * 2_000 * 30 * hap.len() / 10_000;
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
+        let reads: Vec<_> = (0..read_num)
+            .map(|i| gen_read(i as u64, &mut rng, &hap))
+            .collect();
+        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let cov = (total_units / hap.len() / 2) as f64;
+        let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
+        let assemble_config = AssembleConfig::new(1, 100, false, false, 6);
+        let graph = DitchGraph::new(&reads, None, &assemble_config);
+        let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
+        for (i, &cp) in node_cp.iter().enumerate() {
+            assert_eq!(cp, nodes[&(i as u64, 0)]);
+        }
+    }
+    #[test]
+    fn from_reads_2() {
+        let node_cp: Vec<_> = vec![2, 3, 2, 3, 2, 3, 2, 2];
+        let hap1: Vec<_> = vec![0, 1, 3, 5, 6, 7];
+        let hap2: Vec<_> = vec![0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 7];
+        let prob_1 = (hap1.len() as f64) / ((hap1.len() + hap2.len()) as f64);
+        let read_num = 2_000 * 30 * (hap1.len() + hap2.len()) / 10_000;
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(82304);
+        let mut hap1c = 0;
+        let reads: Vec<_> = (0..read_num)
+            .map(|i| {
+                if rng.gen_bool(prob_1) {
+                    hap1c += 1;
+                    gen_read(i as u64, &mut rng, &hap1)
+                } else {
+                    gen_read(i as u64, &mut rng, &hap2)
+                }
+            })
+            .collect();
+        println!("{},{},{}", read_num, hap1c, read_num - hap1c);
+        let count: usize = reads
+            .iter()
+            .map(|r| {
+                r.nodes
+                    .windows(2)
+                    .filter(|w| w[0].unit == 1 && w[1].unit == 3)
+                    .count()
+            })
+            .sum();
+        println!("(1,3)\t{}", count);
+        let count: usize = reads
+            .iter()
+            .map(|r| {
+                r.nodes
+                    .windows(2)
+                    .filter(|w| w[0].unit == 1 && w[1].unit == 2)
+                    .count()
+            })
+            .sum();
+        println!("(1,2)\t{}", count);
+        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let cov = (total_units / (hap1.len() + hap2.len())) as f64;
+        let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
+        let assemble_config = AssembleConfig::new(1, 100, false, false, 6);
+        let graph = DitchGraph::new(&reads, None, &assemble_config);
+        let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
+        for (i, &cp) in node_cp.iter().enumerate() {
+            assert_eq!(cp, nodes[&(i as u64, 0)]);
+        }
+    }
+}

@@ -3,6 +3,7 @@ use rand_xoshiro::Xoroshiro128StarStar;
 use std::collections::HashMap;
 // Each edge has its direction to either "plus" or "minus" direction of the node.
 type Edge = (usize, bool, usize, bool, f64);
+type GbsEdge = (usize, bool, usize, bool, u64);
 
 #[derive(Debug, Clone)]
 pub struct CoverageCalibrator {
@@ -100,10 +101,16 @@ const SAMPLE_LEN: usize = 1_000;
 #[derive(Debug, Clone)]
 pub struct GibbsSampler {
     nodes: Vec<u64>,
-    edges: Vec<(usize, bool, usize, bool, u64)>,
+    edges: Vec<GbsEdge>,
     // i->(indices of edges with (i,true), indices of edges with (i,false));
     node_terminals: Vec<(Vec<usize>, Vec<usize>)>,
     haploid_coverage: f64,
+}
+
+impl std::fmt::Display for GibbsSampler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "N:{}\tE:{}", self.nodes.len(), self.edges.len())
+    }
 }
 
 /// The structure to configure the parameters in copy number estimation.
@@ -125,7 +132,7 @@ impl std::default::Default for Config {
 }
 
 impl GibbsSampler {
-    pub fn new(nodes: &[u64], edges: &[(usize, bool, usize, bool, u64)], cov: f64) -> Self {
+    pub fn new(nodes: &[f64], edges: &[Edge], cov: f64) -> Self {
         let mut node_terminals = vec![(vec![], vec![]); nodes.len()];
         for (idx, &(from, fd, to, td, _)) in edges.iter().enumerate() {
             match fd {
@@ -137,13 +144,19 @@ impl GibbsSampler {
                 false => node_terminals[to].1.push(idx),
             }
         }
+        let nodes: Vec<_> = nodes.iter().map(|x| x.round() as u64).collect();
+        let edges: Vec<_> = edges
+            .iter()
+            .map(|&(f, fd, t, td, w)| (f, fd, t, td, w.round() as u64))
+            .collect();
         Self {
-            nodes: nodes.to_vec(),
-            edges: edges.to_vec(),
+            nodes,
+            edges,
             node_terminals,
             haploid_coverage: cov,
         }
     }
+    /// Sample copy number of nodes and edges.
     pub fn sample_copy_numer(&self, config: &Config) -> (Vec<usize>, Vec<usize>) {
         let mut node_cp: Vec<usize> = self
             .nodes
@@ -187,6 +200,12 @@ impl GibbsSampler {
             }
         }
         let argmax = |buf: &Vec<u32>| buf.iter().enumerate().max_by_key(|x| x.1).unwrap().0;
+        // for (dist, w) in node_cp_dist.iter().zip(self.nodes.iter()) {
+        //     debug!("COPYNUM\tDump\tN\t{}\t{}\t{:?}", w, argmax(dist), dist);
+        // }
+        // for (dist, w) in edge_cp_dist.iter().zip(self.edges.iter()) {
+        //     debug!("COPYNUM\tDump\tE\t{}\t{}\t{:?}", w.4, argmax(dist), dist);
+        // }
         let node_cp: Vec<_> = node_cp_dist.iter().map(argmax).collect();
         let edge_cp: Vec<_> = edge_cp_dist.iter().map(argmax).collect();
         (node_cp, edge_cp)
@@ -218,7 +237,7 @@ impl GibbsSampler {
             cps.push(down.iter().map(|&j| edge_cp[j]).sum());
         }
         if !up.is_empty() {
-            cps.push(down.iter().map(|&j| edge_cp[j]).sum());
+            cps.push(up.iter().map(|&j| edge_cp[j]).sum());
         }
         let w = self.nodes[node];
         *node_cp = choose_copy_num(w, &cps, self.haploid_coverage, confidence, rng);
@@ -302,6 +321,17 @@ fn choose_copy_num<R: Rng>(
     }
     let sum: f64 = choises.iter().map(|x| x.1).sum();
     choises.choose_weighted(rng, |&(_, w)| w / sum).unwrap().0
+}
+
+pub fn estimate_copy_number_gbs(
+    nodes: &[f64],
+    edges: &[Edge],
+    cov: f64,
+) -> (Vec<usize>, Vec<usize>) {
+    let graph = GibbsSampler::new(nodes, edges, cov);
+    debug!("COPYNUM\tGraph\t{}", graph);
+    let config = Config::new(4382094);
+    graph.sample_copy_numer(&config)
 }
 
 // Optimizer.
@@ -816,5 +846,189 @@ mod cpe_test {
         let (nc, ec) = estimate_copy_number(&n, &e);
         assert_eq!(nc, na);
         assert_eq!(ec, ea);
+    }
+    #[test]
+    fn poisson_test() {
+        let test_p = poisson(10, 1, 10f64);
+        assert!((test_p - 0.12511).abs() < 0.0001, "{}", test_p);
+        let test_p = poisson(1, 2, 0.3f64);
+        assert!((test_p - 0.329287).abs() < 0.0001, "{}", test_p);
+        let test_p = poisson(5, 0, 14f64);
+        assert!((test_p - 0.1321686).abs() < 0.0001, "{}", test_p);
+    }
+    #[test]
+    fn simple_case() {
+        let nodes: Vec<_> = vec![10f64; 4];
+        let edges: Vec<_> = (0..3)
+            .map(|from| (from, true, from + 1, false, 10f64))
+            .collect();
+        let cov = 10f64;
+        let graph = GibbsSampler::new(&nodes, &edges, cov);
+        let config = Config::default();
+        let (node_cp, edge_cp) = graph.sample_copy_numer(&config);
+        assert_eq!(node_cp, vec![1; 4]);
+        assert_eq!(edge_cp, vec![1; 3]);
+    }
+    #[test]
+    fn long_case_with_rand() {
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
+        let mean_cov = 20f64;
+        let div = 5f64;
+        let loss = 4f64;
+        let nodes: Vec<_> = (0..100)
+            .map(|_| rng.gen_range(mean_cov - div..mean_cov + div))
+            .collect();
+        let edges: Vec<_> = (0..99)
+            .map(|from| {
+                let w = rng.gen_range(mean_cov - div - loss..mean_cov + div - loss);
+                (from, true, from + 1, false, w)
+            })
+            .collect();
+        let graph = GibbsSampler::new(&nodes, &edges, mean_cov);
+        let config = Config::default();
+        let (node_cp, edge_cp) = graph.sample_copy_numer(&config);
+        for (i, cp) in node_cp.iter().enumerate().filter(|&(_, &cp)| cp != 1) {
+            println!("{}\t{}", cp, graph.nodes[i]);
+        }
+        for (i, cp) in edge_cp.iter().enumerate().filter(|&(_, &cp)| cp != 1) {
+            println!("{}\t{}", cp, edges[i].4);
+        }
+        assert_eq!(node_cp, vec![1; 100]);
+        assert_eq!(edge_cp, vec![1; 99]);
+    }
+    #[test]
+    fn branching_case() {
+        // Two branchings and reducings.
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
+        let mean_cov = 20f64;
+        let div = 5f64;
+        let node_cp: Vec<usize> =
+            vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
+        let nodes: Vec<f64> = node_cp
+            .iter()
+            .map(|&copy| {
+                let copy = copy as f64;
+                rng.gen_range(mean_cov * copy - div..mean_cov * copy + div)
+            })
+            .collect();
+        let edge_cp: Vec<_> = vec![
+            (0, true, 1, false, 2),
+            (1, true, 2, false, 1),
+            (2, true, 3, false, 1),
+            (3, true, 6, false, 1),
+            (1, true, 4, false, 1),
+            (4, true, 5, false, 1), // 5
+            (5, true, 6, false, 1),
+            (6, true, 7, false, 2),
+            (7, true, 8, false, 2),
+            (8, true, 9, false, 1),
+            (9, true, 10, false, 1), //10
+            (10, true, 11, false, 1),
+            (11, true, 12, false, 1),
+            (12, true, 13, false, 1),
+            (8, true, 14, false, 1),
+            (14, true, 15, false, 1), //15
+            (15, true, 16, false, 1),
+            (16, true, 17, false, 1),
+            (17, true, 18, false, 2),
+            (18, true, 19, false, 2),
+            (19, true, 20, false, 2), //20
+            (13, true, 18, false, 1), //21
+        ];
+        let edges: Vec<_> = edge_cp
+            .iter()
+            .map(|&(f, fd, t, td, copy)| {
+                let copy = copy as f64;
+                let w = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div);
+                (f, fd, t, td, w)
+            })
+            .collect();
+        let graph = GibbsSampler::new(&nodes, &edges, mean_cov);
+        let config = Config::default();
+        let (node_cp_e, edge_cp_e) = graph.sample_copy_numer(&config);
+        let edge_cp: Vec<_> = edge_cp.iter().map(|x| x.4).collect();
+        assert_eq!(node_cp_e, node_cp);
+        assert_eq!(edge_cp_e, edge_cp);
+    }
+    #[test]
+    fn looping_case() {
+        let node_cp: Vec<_> = vec![2, 2, 8, 2, 2, 4, 4, 2, 2];
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
+        let mean_cov = 20f64;
+        let div = 5f64;
+        let nodes: Vec<_> = node_cp
+            .iter()
+            .map(|&copy| rng.gen_range(mean_cov * copy as f64 - div..mean_cov * copy as f64 + div))
+            .collect();
+        let edge_cp: Vec<_> = vec![2, 2, 2, 2, 2, 4, 4, 4, 2, 2];
+        let edges = vec![
+            (0, true, 1, false),
+            (1, true, 2, false),
+            (2, false, 3, true),
+            (4, true, 3, false),
+            (2, true, 4, false),
+            (5, true, 2, false), //5
+            (6, true, 5, false),
+            (2, true, 6, false),
+            (2, true, 7, false),
+            (7, true, 8, false),
+        ];
+        let edges: Vec<_> = edges
+            .iter()
+            .zip(edge_cp.iter())
+            .map(|(&(f, fd, t, td), &cp)| {
+                let copy = cp as f64;
+                let w = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div);
+                (f, fd, t, td, w)
+            })
+            .collect();
+        println!("{:?}", nodes);
+        println!("{:?}", edges);
+        let graph = GibbsSampler::new(&nodes, &edges, mean_cov);
+        let config = Config::default();
+        let (node_cp_e, edge_cp_e) = graph.sample_copy_numer(&config);
+        assert_eq!(node_cp_e, node_cp);
+        assert_eq!(edge_cp_e, edge_cp);
+    }
+    #[test]
+    fn complex_case() {
+        let node_cp: Vec<_> = vec![2, 3, 2, 3, 2, 3, 2, 2];
+        let edge_cp: Vec<_> = vec![2, 2, 2, 2, 2, 1, 1, 1, 2, 2];
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
+        let mean_cov = 20f64;
+        let div = 5f64;
+        let edges = vec![
+            (0, true, 1, false),
+            (1, true, 2, false),
+            (2, true, 3, false),
+            (4, true, 4, false),
+            (3, true, 5, false),
+            (1, true, 3, false), //5
+            (3, true, 5, false),
+            (5, true, 1, false),
+            (5, true, 6, false),
+            (6, true, 7, false),
+        ];
+        let nodes: Vec<_> = node_cp
+            .iter()
+            .map(|&copy| {
+                let copy = copy as f64;
+                rng.gen_range(mean_cov * copy - div..mean_cov * copy + div)
+            })
+            .collect();
+        let edges: Vec<_> = edges
+            .iter()
+            .zip(edge_cp.iter())
+            .map(|(&(f, fd, t, td), &cp)| {
+                let copy = cp as f64;
+                let w = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div);
+                (f, fd, t, td, w)
+            })
+            .collect();
+        let graph = GibbsSampler::new(&nodes, &edges, mean_cov);
+        let config = Config::default();
+        let (node_cp_e, edge_cp_e) = graph.sample_copy_numer(&config);
+        assert_eq!(node_cp_e, node_cp);
+        assert_eq!(edge_cp_e, edge_cp);
     }
 }
