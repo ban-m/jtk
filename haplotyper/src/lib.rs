@@ -34,7 +34,6 @@ pub use repeat_masking::{RepeatMask, RepeatMaskConfig};
 pub use view::View;
 pub mod stats;
 pub use determine_units::*;
-// pub use em_correction::ClusteringCorrection;
 pub use global_clustering::*;
 pub use local_clustering::*;
 pub use multiplicity_estimation::*;

@@ -12,8 +12,9 @@ fn main() -> std::io::Result<()> {
         .map(|r| (r.id, r.name.clone()))
         .collect();
     let units: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    let range = 10;
     for read in ds.encoded_reads.iter() {
-        let mut dumps = vec![format!("{:<5}", 0); 7];
+        let mut dumps = vec![format!("{:<5}", 0); range];
         for (idx, node) in read
             .nodes
             .iter()
@@ -31,13 +32,13 @@ fn main() -> std::io::Result<()> {
                     }
                 }
             };
-            for i in (0..7).filter(|&i| 3 <= idx + i) {
-                if let Some(unit) = nodes.get(idx + i - 3) {
+            for i in (0..range).filter(|&i| range / 2 <= idx + i) {
+                if let Some(unit) = nodes.get(idx + i - range / 2) {
                     dumps[i] = format!("{:<5}", unit);
                 }
             }
-            //let is_hap1 = id2desc[&read.id].contains("251v2");
-            let is_hap1 = id2desc[&read.id].contains("hapA");
+            let is_hap1 = id2desc[&read.id].contains("251v2");
+            // let is_hap1 = id2desc[&read.id].contains("hapA");
             // println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
             println!(
                 "{}\t{}\t{}\t{}",

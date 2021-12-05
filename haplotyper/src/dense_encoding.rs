@@ -22,87 +22,87 @@ impl DenseEncodingConfig {
 }
 pub trait DenseEncoding {
     fn dense_encoding(self, config: &DenseEncodingConfig) -> Self;
-    fn dense_encoding_hapcut(self, config: &DenseEncodingConfig) -> Self;
+    // fn dense_encoding_hapcut(self, config: &DenseEncodingConfig) -> Self;
 }
 
 impl DenseEncoding for DataSet {
-    fn dense_encoding_hapcut(mut self, _config: &DenseEncodingConfig) -> Self {
-        use super::hapcut::HapCut;
-        use super::hapcut::HapCutConfig;
-        let ave_unit_len = get_average_unit_length(&self);
-        let copy_number: HashMap<_, _> = self
-            .selected_chunks
-            .iter()
-            .map(|x| (x.id, x.cluster_num))
-            .collect();
-        let hapcut_config = HapCutConfig::new(4329, 0.7, 0.8, 1, 0, copy_number);
-        // They are all diplotig.
-        let squished = self.hapcut_squish_diplotig(&hapcut_config);
-        let cov = self
-            .coverage
-            .unwrap_or_else(|| panic!("do not have coverage"));
-        let read_seq: HashMap<u64, &[u8]> =
-            self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
-        let nodes: Vec<_> = {
-            let mut neighbors: HashSet<_> = HashSet::new();
-            for w in self.encoded_reads.iter().flat_map(|r| r.nodes.windows(2)) {
-                if squished.contains(&w[0].unit) {
-                    neighbors.insert((w[1].unit, w[1].cluster));
-                }
-                if squished.contains(&w[1].unit) {
-                    neighbors.insert((w[0].unit, w[0].cluster));
-                }
-            }
-            squished.iter().map(|&x| (x, 0)).chain(neighbors).collect()
-        };
-        let cluster_num = 2;
-        let mut reads: Vec<_> = self
-            .encoded_reads
-            .iter_mut()
-            .filter(|r| r.nodes.iter().any(|n| nodes.contains(&(n.unit, n.cluster))))
-            .collect();
-        // Create new nodes between nodes to make this region "dense."
-        // (unit,cluster,is_tail).
-        let discard_thr = cov.floor() as usize / 2;
-        let edge_consensus = take_consensus_between_nodes(&reads, &nodes, discard_thr);
-        let max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
-        let edge_encoding_patterns =
-            split_edges_into_units(&edge_consensus, ave_unit_len, max_unit_id);
-        for (key, new_units) in edge_encoding_patterns.iter() {
-            let contig = &edge_consensus[key];
-            let mut prev_bp = 0;
-            log::debug!("NEWUNIT\t{:?}\t{:?}\t{}", key, new_units, contig.len());
-            for &(break_point, id) in new_units {
-                let seq = String::from_utf8_lossy(&contig[prev_bp..break_point]).to_string();
-                let unit = Unit::new(id, seq, cluster_num);
-                self.selected_chunks.push(unit);
-                prev_bp = break_point;
-            }
-        }
-        // Encoding.
-        for read in reads.iter_mut() {
-            let seq = &read_seq[&read.id];
-            let inserts =
-                fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &edge_consensus);
-            // Encode.
-            for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
-                read.nodes.insert(idx + accum_inserts, node);
-            }
-            // Formatting.
-            re_encode_read(read, seq);
-        }
-        let to_clustering_nodes: HashSet<_> = edge_encoding_patterns
-            .values()
-            .flat_map(|new_units| new_units.iter().map(|(_, id)| *id))
-            .chain(squished.iter().copied())
-            .collect();
-        use crate::encode::deletion_fill::correct_unit_deletion;
-        self = correct_unit_deletion(self, CLR_CLR_SIM);
-        // Local clustering.
-        debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
-        crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
-        self
-    }
+    // fn dense_encoding_hapcut(mut self, _config: &DenseEncodingConfig) -> Self {
+    //     use super::hapcut::HapCut;
+    //     use super::hapcut::HapCutConfig;
+    //     let ave_unit_len = get_average_unit_length(&self);
+    //     let copy_number: HashMap<_, _> = self
+    //         .selected_chunks
+    //         .iter()
+    //         .map(|x| (x.id, x.cluster_num))
+    //         .collect();
+    //     let hapcut_config = HapCutConfig::new(4329, 0.7, 0.8, 1, 0, copy_number);
+    //     // They are all diplotig.
+    //     let squished = self.hapcut_squish_diplotig(&hapcut_config);
+    //     let cov = self
+    //         .coverage
+    //         .unwrap_or_else(|| panic!("do not have coverage"));
+    //     let read_seq: HashMap<u64, &[u8]> =
+    //         self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    //     let nodes: Vec<_> = {
+    //         let mut neighbors: HashSet<_> = HashSet::new();
+    //         for w in self.encoded_reads.iter().flat_map(|r| r.nodes.windows(2)) {
+    //             if squished.contains(&w[0].unit) {
+    //                 neighbors.insert((w[1].unit, w[1].cluster));
+    //             }
+    //             if squished.contains(&w[1].unit) {
+    //                 neighbors.insert((w[0].unit, w[0].cluster));
+    //             }
+    //         }
+    //         squished.iter().map(|&x| (x, 0)).chain(neighbors).collect()
+    //     };
+    //     let cluster_num = 2;
+    //     let mut reads: Vec<_> = self
+    //         .encoded_reads
+    //         .iter_mut()
+    //         .filter(|r| r.nodes.iter().any(|n| nodes.contains(&(n.unit, n.cluster))))
+    //         .collect();
+    //     // Create new nodes between nodes to make this region "dense."
+    //     // (unit,cluster,is_tail).
+    //     let discard_thr = cov.floor() as usize / 2;
+    //     let edge_consensus = take_consensus_between_nodes(&reads, &nodes, discard_thr);
+    //     let max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
+    //     let edge_encoding_patterns =
+    //         split_edges_into_units(&edge_consensus, ave_unit_len, max_unit_id);
+    //     for (key, new_units) in edge_encoding_patterns.iter() {
+    //         let contig = &edge_consensus[key];
+    //         let mut prev_bp = 0;
+    //         log::debug!("NEWUNIT\t{:?}\t{:?}\t{}", key, new_units, contig.len());
+    //         for &(break_point, id) in new_units {
+    //             let seq = String::from_utf8_lossy(&contig[prev_bp..break_point]).to_string();
+    //             let unit = Unit::new(id, seq, cluster_num);
+    //             self.selected_chunks.push(unit);
+    //             prev_bp = break_point;
+    //         }
+    //     }
+    //     // Encoding.
+    //     for read in reads.iter_mut() {
+    //         let seq = &read_seq[&read.id];
+    //         let inserts =
+    //             fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &edge_consensus);
+    //         // Encode.
+    //         for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+    //             read.nodes.insert(idx + accum_inserts, node);
+    //         }
+    //         // Formatting.
+    //         re_encode_read(read, seq);
+    //     }
+    //     let to_clustering_nodes: HashSet<_> = edge_encoding_patterns
+    //         .values()
+    //         .flat_map(|new_units| new_units.iter().map(|(_, id)| *id))
+    //         .chain(squished.iter().copied())
+    //         .collect();
+    //     use crate::encode::deletion_fill::correct_unit_deletion;
+    //     self = correct_unit_deletion(self, CLR_CLR_SIM);
+    //     // Local clustering.
+    //     debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
+    //     crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
+    //     self
+    // }
     fn dense_encoding(mut self, config: &DenseEncodingConfig) -> Self {
         let ave_unit_len = get_average_unit_length(&self);
         let original_assignments = log_original_assignments(&self);
@@ -138,23 +138,24 @@ impl DenseEncoding for DataSet {
             let edge_consensus = take_consensus_between_nodes(&reads, &nodes, discard_thr);
             let max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
             let edge_encoding_patterns =
-                split_edges_into_units(&edge_consensus, ave_unit_len, max_unit_id);
-            for (key, new_units) in edge_encoding_patterns.iter() {
-                let contig = &edge_consensus[key];
-                let mut prev_bp = 0;
-                log::debug!("NEWUNIT\t{:?}\t{:?}\t{}", key, new_units, contig.len());
-                for &(break_point, id) in new_units {
-                    let seq = String::from_utf8_lossy(&contig[prev_bp..break_point]).to_string();
-                    let unit = Unit::new(id, seq, cluster_num);
-                    self.selected_chunks.push(unit);
-                    prev_bp = break_point;
-                }
-            }
+                split_edges_into_units(&edge_consensus, ave_unit_len, cluster_num, max_unit_id);
+            // for (key, new_units) in edge_encoding_patterns.iter() {
+            //     let contig = &edge_consensus[key];
+            //     let mut prev_bp = 0;
+            //     log::debug!("NEWUNIT\t{:?}\t{:?}\t{}", key, new_units, contig.len());
+            // for &(break_point, id) in new_units {
+            //     let seq = String::from_utf8_lossy(&contig[prev_bp..break_point]).to_string();
+            //     let unit = Unit::new(id, seq, cluster_num);
+            //     self.selected_chunks.push(unit);
+            //     prev_bp = break_point;
+            // }
+            // }
             // Encoding.
             for read in reads.iter_mut() {
                 let seq = &read_seq[&read.id];
-                let inserts =
-                    fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &edge_consensus);
+                let inserts = fill_edges_by_new_units(read, seq, &edge_encoding_patterns);
+                // let inserts =
+                //     fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &edge_consensus);
                 // Encode.
                 for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
                     read.nodes.insert(idx + accum_inserts, node);
@@ -163,9 +164,20 @@ impl DenseEncoding for DataSet {
                 re_encode_read(read, seq);
             }
             to_clustering_nodes.extend(nodes.iter().map(|x| x.0));
-            edge_encoding_patterns.values().for_each(|new_units| {
-                to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
-            });
+            to_clustering_nodes.extend(
+                edge_encoding_patterns
+                    .values()
+                    .flat_map(std::convert::identity)
+                    .map(|x| x.id),
+            );
+            self.selected_chunks.extend(
+                edge_encoding_patterns
+                    .into_iter()
+                    .flat_map(|(_, units)| units),
+            );
+            // edge_encoding_patterns.values().for_each(|new_units| {
+            //     to_clustering_nodes.extend(new_units.iter().map(|(_, id)| *id))
+            // });
         }
         use crate::encode::deletion_fill::correct_unit_deletion;
         self = correct_unit_deletion(self, CLR_CLR_SIM);
@@ -176,7 +188,6 @@ impl DenseEncoding for DataSet {
         // Local clustering.
         debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
         crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
-        // squish_bad_clustering(&mut self, &to_clustering_nodes, 1f64);
         self
     }
 }
@@ -228,8 +239,9 @@ fn get_average_unit_length(ds: &DataSet) -> usize {
 pub fn fill_edges_by_new_units(
     read: &EncodedRead,
     seq: &[u8],
-    edge_encoding_patterns: &HashMap<DEdge, Vec<(usize, u64)>>,
-    edge_consensus: &HashMap<DEdge, Vec<u8>>,
+    // edge_encoding_patterns: &HashMap<DEdge, Vec<(usize, u64)>>,
+    edge_encoding_patterns: &HashMap<DEdge, Vec<Unit>>,
+    // edge_consensus: &HashMap<DEdge, Vec<u8>>,
 ) -> Vec<(usize, Node)> {
     let mut inserts = vec![];
     for (idx, window) in read.nodes.windows(2).enumerate() {
@@ -239,12 +251,16 @@ pub fn fill_edges_by_new_units(
             window[1].position_from_start,
         );
         let (edge, direction) = edge_and_direction(window);
-        let contig = match edge_consensus.get(&edge) {
-            Some(contig) => contig,
+        // let contig = match edge_consensus.get(&edge) {
+        //     Some(contig) => contig,
+        //     None => continue,
+        // };
+        let unit_info = match edge_encoding_patterns.get(&edge) {
+            Some(units) => units,
             None => continue,
         };
-        let unit_info = &edge_encoding_patterns[&edge];
-        for node in encode_edge(seq, start, end, direction, contig, unit_info) {
+        // for node in encode_edge(seq, start, end, direction, contig, unit_info) {
+        for node in encode_edge(seq, start, end, direction, unit_info) {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
         }
@@ -255,23 +271,45 @@ pub fn fill_edges_by_new_units(
 fn split_edges_into_units(
     edges: &HashMap<DEdge, Vec<u8>>,
     ave_unit_len: usize,
+    cluster_num: usize,
     mut max_unit_id: u64,
-) -> HashMap<DEdge, Vec<(usize, u64)>> {
-    edges
-        .iter()
-        .map(|(&key, consensus)| {
-            let break_positions: Vec<_> = (1..)
-                .map(|i| i * ave_unit_len)
-                .take_while(|&break_pos| break_pos + ave_unit_len < consensus.len())
-                .chain(std::iter::once(consensus.len()))
-                .map(|break_pos| {
-                    max_unit_id += 1;
-                    (break_pos, max_unit_id)
-                })
-                .collect();
-            (key, break_positions)
-        })
-        .collect()
+    // ) -> HashMap<DEdge, Vec<(usize, u64)>> {
+) -> HashMap<DEdge, Vec<Unit>> {
+    let mut units_in_edges = HashMap::new();
+    for (key, consensus) in edges.iter() {
+        let mut units_in_edge = vec![];
+        let mut prev_bp = 0;
+        for break_pos in (1..)
+            .map(|i| i * ave_unit_len)
+            .take_while(|&break_pos| break_pos + ave_unit_len < consensus.len())
+            .chain(std::iter::once(consensus.len()))
+        {
+            max_unit_id += 1;
+            let seq = String::from_utf8_lossy(&consensus[prev_bp..break_pos]).to_string();
+            let unit = Unit::new(max_unit_id, seq, cluster_num);
+            prev_bp = break_pos;
+            units_in_edge.push(unit)
+        }
+        let count = units_in_edge.len();
+        log::debug!("NEWUNIT\t{:?}\t{}\t{}", key, count, consensus.len());
+        units_in_edges.insert(*key, units_in_edge);
+    }
+    units_in_edges
+    // edges
+    //     .iter()
+    //     .map(|(&key, consensus)| {
+    //         let break_positions: Vec<_> = (1..)
+    //             .map(|i| i * ave_unit_len)
+    //             .take_while(|&break_pos| break_pos + ave_unit_len < consensus.len())
+    //             .chain(std::iter::once(consensus.len()))
+    //             .map(|break_pos| {
+    //                 max_unit_id += 1;
+    //                 (break_pos, max_unit_id)
+    //             })
+    //             .collect();
+    //         (key, break_positions)
+    //     })
+    //     .collect()
 }
 
 fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
@@ -424,8 +462,9 @@ fn encode_edge(
     start: usize,
     end: usize,
     is_forward: bool,
-    contig: &[u8],
-    unit_info: &[(usize, u64)],
+    // contig: &[u8],
+    // unit_info: &[(usize, u64)],
+    units: &[Unit],
 ) -> Vec<definitions::Node> {
     let mut seq = if is_forward {
         seq[start..end].to_vec()
@@ -433,10 +472,22 @@ fn encode_edge(
         bio_utils::revcmp(&seq[start..end])
     };
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
+    let contig: Vec<_> = units.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
+        x.extend(y);
+        x
+    });
+    let (break_points, _): (Vec<_>, _) =
+        units
+            .iter()
+            .map(|x| x.seq().len())
+            .fold((Vec::new(), 0), |(mut acc, x), y| {
+                acc.push(x + y);
+                (acc, x + y)
+            });
     // debug!("Encoding\t{}\t{}\t{:?}", seq.len(), contig.len(), unit_info);
     let band = contig.len() / 20;
     // TODO: These parameters shoule be changed depending on the sequencing tech.
-    let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, band);
+    let (_, ops) = kiley::bialignment::global_banded(&contig, &seq, 2, -5, -6, -1, band);
     // Split the alignment into encoded nodes.
     // Current position on the contg and the query.
     let (mut xpos, mut ypos) = (0, 0);
@@ -459,13 +510,16 @@ fn encode_edge(
             }
         }
         alignments.push(op);
-        if xpos == unit_info[target_idx].0 {
+        // if xpos == unit_info[target_idx].0 {
+        if xpos == break_points[target_idx] {
             // Reached the boundary.
-            let (break_point, uid) = unit_info[target_idx];
-            let unitlen = match target_idx {
-                0 => break_point,
-                _ => break_point - unit_info[target_idx - 1].0,
-            };
+            let unit = &units[target_idx];
+            let (uid, unitlen) = (unit.id, unit.seq().len());
+            // let (break_point, uid) = unit_info[target_idx];
+            // let unitlen = match target_idx {
+            //     0 => break_point,
+            //     _ => break_point - unit_info[target_idx - 1].0,
+            // };
             let ylen = alignments
                 .iter()
                 .filter(|&&x| x != kiley::bialignment::Op::Del)
@@ -489,13 +543,16 @@ fn encode_edge(
                     false => end - ypos,
                 };
                 let seq = &seq[ypos - ylen..ypos];
-                nodes.push(Node::new(uid, is_forward, seq, cigar, position_from_start));
+                let cl = unit.cluster_num;
+                let node = Node::new(uid, is_forward, seq, cigar, position_from_start, cl);
+                nodes.push(node);
             }
             // Refresh.
             target_idx += 1;
             alignments.clear();
         }
-        if target_idx == unit_info.len() {
+        // if target_idx == unit_info.len() {
+        if target_idx == units.len() {
             // This is needed, as sometimes only insertions would be remain.
             break;
         }

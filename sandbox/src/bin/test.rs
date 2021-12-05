@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use definitions::*;
+use haplotyper::Encode;
 // use haplotyper::DetermineUnit;
 use rand::SeedableRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
@@ -8,34 +9,49 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    use haplotyper::encode::deletion_fill;
-    ds = deletion_fill::correct_unit_deletion(ds, 0.35);
-    use haplotyper::re_clustering::*;
-    let config = ReClusteringConfig::new(24, 7, 5);
-    ds = ds.re_clustering(&config);
-    use std::io::{BufWriter, Write};
-    if let Ok(mut wtr) = std::fs::File::create("bf.json").map(BufWriter::new) {
-        writeln!(
-            &mut wtr,
-            "{}",
-            serde_json::ser::to_string_pretty(&ds).unwrap()
-        )?;
+    use haplotyper::dirichlet_correction;
+    let config = dirichlet_correction::Config::new(20, 5);
+    let corrected = dirichlet_correction::correct_unit(&ds, 63, 2, &config);
+    let id2desc: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .map(|r| (r.id, r.name.clone()))
+        .collect();
+    for (id, _, post) in corrected.iter() {
+        let is_hap1 = id2desc[id].contains("251v2");
+        println!("{}\t{:?}", is_hap1, post);
     }
-    use haplotyper::dense_encoding::*;
-    let config = DenseEncodingConfig::new(5, 5);
-    ds = ds.dense_encoding_hapcut(&config);
-    if let Ok(mut wtr) = std::fs::File::create("af.json").map(BufWriter::new) {
-        writeln!(
-            &mut wtr,
-            "{}",
-            serde_json::ser::to_string_pretty(&ds).unwrap()
-        )?;
-    }
-    ds = deletion_fill::correct_unit_deletion(ds, 0.35);
-    println!("{}", serde_json::ser::to_string_pretty(&ds).unwrap());
+    // let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
+    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    // for read in ds.encoded_reads.iter() {
+    //     let ans = id2desc[&read.id].contains("000251v2") as usize;
+    //     for node in read.nodes.iter() {
+    //         counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
+    //     }
+    // }
+    // let low_purity_nodes: HashSet<_> = counts
+    //     .iter()
+    //     .filter_map(|(&(node, _), count)| {
+    //         let total = count[0] + count[1];
+    //         (count[0].max(count[1]) < 8 * total / 10).then(|| node)
+    //     })
+    //     .collect();
+    // let squish_node: HashSet<_> = ds
+    //     .selected_chunks
+    //     .iter()
+    //     .filter(|c| c.cluster_num == 2 && low_purity_nodes.contains(&c.id))
+    //     .map(|c| c.id)
+    //     .collect();
+    // for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+    //     if squish_node.contains(&node.unit) {
+    //         node.cluster = 0;
+    //         node.posterior = vec![1f64, 0f64];
+    //     }
+    // }
+    // println!("{}", serde_json::ser::to_string(&ds).unwrap());
     // // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     // for read in ds.encoded_reads.iter_mut() {
     //     for node in read.nodes.iter_mut() {

@@ -56,6 +56,10 @@ impl MultiplicityEstimation for DataSet {
                 c.cluster_num += cp;
             }
         }
+        // Rescue 0-copy number chunks.
+        chunks
+            .values_mut()
+            .for_each(|c| c.cluster_num = c.cluster_num.max(1));
         let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
         for ((node, _), cp) in nodes.iter() {
             let occ = counts.get(node).unwrap_or(&0);

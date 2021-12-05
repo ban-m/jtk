@@ -1035,9 +1035,11 @@ fn clustering_correction(
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    use haplotyper::dirichlet_correction::*;
-    let config = Config::new(repeat_num, threshold);
-    dataset.correct_clustering(&config);
+    // use haplotyper::dirichlet_correction::*;
+    // let config = Config::new(repeat_num, threshold);
+    // dataset.correct_clustering(&config);
+    use haplotyper::em_correction::ClusteringCorrection;
+    dataset = dataset.correct_clustering_em(repeat_num, threshold, true);
     Ok(dataset)
 }
 

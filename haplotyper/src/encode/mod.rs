@@ -233,7 +233,15 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         })
         .sum::<usize>();
     assert_eq!(query_length, leading.len());
-    let node = Node::new(unit.id, aln.relstrand, &leading, ops, position_from_start);
+    let cl = unit.cluster_num;
+    let node = Node::new(
+        unit.id,
+        aln.relstrand,
+        &leading,
+        ops,
+        position_from_start,
+        cl,
+    );
     Some(node)
     // let aligned = String::from_utf8(leading).unwrap();
     // Some(Node {

@@ -45,6 +45,17 @@ impl std::default::Default for Config {
 
 impl DirichletCorrection for DataSet {
     fn correct_clustering(&mut self, config: &Config) {
+        for chunk in self.selected_chunks.iter() {
+            assert!(chunk.cluster_num > 0, "{},{}", chunk.id, chunk.cluster_num);
+        }
+        let cl_num: HashMap<u64, usize> = self
+            .selected_chunks
+            .iter()
+            .map(|c| (c.id, c.cluster_num))
+            .collect();
+        for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            assert_eq!(node.posterior.len(), cl_num[&node.unit]);
+        }
         let posterior_distributions: Vec<_> = self
             .selected_chunks
             .par_iter()
@@ -77,7 +88,8 @@ impl DirichletCorrection for DataSet {
         }
     }
 }
-fn correct_unit(
+
+pub fn correct_unit(
     ds: &DataSet,
     unit_id: u64,
     k: usize,
@@ -91,7 +103,7 @@ fn correct_unit(
     if reads.is_empty() {
         return vec![];
     }
-    let (new_clustering, lk, _new_k) = (1..=k)
+    let (mut new_clustering, lk, new_k) = (1..=k)
         .flat_map(|k| match k {
             1 => std::iter::repeat(k).take(1),
             _ => std::iter::repeat(k).take(config.repeat_num),
@@ -104,6 +116,10 @@ fn correct_unit(
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
         .unwrap();
     trace!("CORRECT\tPickedLK\t{}", lk);
+    let pad_len = k.saturating_sub(new_k);
+    for (_, _, prob) in new_clustering.iter_mut() {
+        prob.extend(std::iter::repeat(0f64).take(pad_len));
+    }
     new_clustering
 }
 

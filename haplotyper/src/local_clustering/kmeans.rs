@@ -6,6 +6,8 @@ const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
 const AVERAGE_LK: f64 = 1.1;
+// See `clustering_dev`for detail.
+const SMALL_LK: f64 = -1000f64;
 // const DEL_LK: f64 = 3f64;
 // return expected number of variants under the null hypothesis.
 // fn expected_mis_num(cov: usize) -> f64 {
@@ -178,17 +180,19 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
     let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
-    let (assignments, score) = (init_cluster_num..=cluster_num)
+    let (assignments, score, _k) = (init_cluster_num..=cluster_num)
         .filter_map(|k| {
             let (asn, score) = (0..num)
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
             let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
-            Some((asn, score - expected_gain))
+            Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    let posterior_probs = get_posterior_probability(&selected_variants, &assignments);
+    // let mut posterior_probs = get_posterior_probability(&selected_variants, &assignments);
+    let likelihood_gains = get_likelihood_gain(&selected_variants, &assignments, cluster_num);
+    assert!(likelihood_gains.iter().all(|lks| lks.len() == cluster_num));
     trace!("MAXLK\t{:.3}", score);
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
@@ -196,9 +200,11 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
             trace!("ASN\t{}\t{}\t{}\t{}", cluster_num, id, i, prf.join("\t"));
         }
     }
-    Some((assignments, posterior_probs, score))
+    Some((assignments, likelihood_gains, score))
+    // Some((assignments, posterior_probs, score))
 }
 
+#[allow(dead_code)]
 fn get_posterior_probability(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<Vec<f64>> {
     let max_asn = *assignments.iter().max().unwrap() as usize;
     let mut count = vec![0; max_asn + 1];
@@ -232,6 +238,48 @@ fn get_posterior_probability(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<V
             let total = logsumexp(&lks);
             lks.iter_mut().for_each(|x| *x = (*x - total).exp());
             lks
+        })
+        .collect()
+}
+
+// i->k->the likelihood gain of the i-th read when clustered in the k-th cluster.
+// `copy_num` is the copy number of this unit, not the *cluster number*.
+// Usually, they are the same but sometimes there are exact repeats, and the number of the cluster
+// would be smaller than the copy number.
+fn get_likelihood_gain(
+    variants: &[Vec<f64>],
+    assignments: &[u8],
+    copy_num: usize,
+) -> Vec<Vec<f64>> {
+    let cluster_size = *assignments.iter().max().unwrap_or(&0) as usize + 1;
+    let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; cluster_size];
+    for (vars, &asn) in variants.iter().zip(assignments.iter()) {
+        for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
+            *total += var;
+        }
+    }
+    let is_used_position: Vec<Vec<_>> = total_lk_gain
+        .iter()
+        .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
+        .collect();
+    // Padding -infinity to make sure that there are exactly k-slots.
+    // This is mainly because we do not want to these `mock` slots.
+    // Do NOT use std:;f64::NEG_INFINITY as it must cause under flows.
+    let pad = std::iter::repeat(SMALL_LK).take(copy_num.saturating_sub(cluster_size));
+    fn pick_vars(ps: &[bool], vars: &[f64]) -> f64 {
+        vars.iter()
+            .zip(ps)
+            .filter_map(|(lk, &p)| p.then(|| lk))
+            .sum()
+    }
+    variants
+        .iter()
+        .map(|vars| {
+            is_used_position
+                .iter()
+                .map(|ps| pick_vars(ps, vars))
+                .chain(pad.clone())
+                .collect()
         })
         .collect()
 }

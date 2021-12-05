@@ -388,7 +388,8 @@ pub struct Node {
     pub seq: String,
     pub is_forward: bool,
     pub cigar: Vec<Op>,
-    // TODO: This is temporary.
+    // TODO: This member should have a different name, such as
+    // `likelihood gain` or something.
     pub posterior: Vec<f64>,
 }
 
@@ -416,6 +417,7 @@ impl Node {
         seq: &[u8],
         cigar: Vec<Op>,
         position_from_start: usize,
+        cluster_num: usize,
     ) -> Self {
         Self {
             position_from_start,
@@ -424,7 +426,8 @@ impl Node {
             seq: String::from_utf8_lossy(seq).to_string(),
             is_forward,
             cigar,
-            posterior: Vec::new(),
+            posterior: vec![0f64; cluster_num],
+            // posterior: vec![(cluster_num as f64).recip(); cluster_num],
         }
     }
     pub fn seq(&self) -> &[u8] {

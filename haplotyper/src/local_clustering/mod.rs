@@ -110,11 +110,10 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             // Maybe it is better to use the original alignment, right?
             let consensus = take_consensus(ref_unit, &seqs, &hmm);
             let (asn, pss, score) = if 1 < ref_unit.cluster_num {
-                // kmeans::clustering_with_template(&consensus, &seqs, &mut rng, &hmm, &config)
                 kmeans::clustering_dev(&consensus, &seqs, &mut rng, &hmm, &config)
                     .unwrap_or_else(|| panic!("RECORD\t{}", unit_id))
             } else {
-                (vec![0; units.len()], vec![vec![1f64]; units.len()], 0f64)
+                (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64)
             };
             for (node, ps) in units.iter_mut().zip(pss) {
                 node.posterior = ps;

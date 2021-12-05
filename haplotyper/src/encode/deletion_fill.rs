@@ -24,13 +24,9 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
     let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
     const OUTER_LOOP: usize = 3;
     const INNER_LOOP: usize = 15;
-    let cluster_num: HashMap<_, _> = ds
-        .selected_chunks
-        .iter()
-        .map(|x| (x.id, x.cluster_num))
-        .collect();
     'outer: for t in 0..OUTER_LOOP {
         let representative = take_consensus_sequence(&ds);
+        let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
         // i->vector of failed index and units.
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
         for i in 0..INNER_LOOP {
@@ -46,16 +42,10 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
                         (r, &seq),
                         fails,
                         &representative,
+                        &units,
                         &read_skeltons,
                         sim_thr,
                     );
-                    for node in r.nodes.iter_mut().filter(|r| r.posterior.is_empty()) {
-                        let cluster_num = cluster_num[&node.unit].max(2);
-                        let correct = 0.8;
-                        let err = (1f64 - correct) / (cluster_num as f64 - 1f64);
-                        node.posterior = vec![err; cluster_num];
-                        node.posterior[node.cluster as usize] = correct;
-                    }
                 });
             let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
             debug!("Filled:{}\t{}", current, after);
@@ -109,7 +99,6 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
 
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
-#[allow(dead_code)]
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
     fn polish(xs: &[&[u8]], unit: &Unit) -> Vec<u8> {
         // use kiley::gphmm::*;
@@ -164,7 +153,8 @@ const OFFSET: usize = 300;
 pub fn correct_deletion_error(
     (read, seq): (&mut EncodedRead, &[u8]),
     failed_trials: &mut Vec<(usize, u64)>,
-    units: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
+    consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
+    units: &HashMap<u64, &Unit>,
     reads: &[ReadSkelton],
     sim_thr: f64,
 ) {
@@ -183,17 +173,18 @@ pub fn correct_deletion_error(
             .iter()
             .filter(|&&(_, _, id)| !failed_trials.contains(&(idx, id)))
             .filter_map(|&(start_position, direction, uid)| {
-                units
+                let unit = *units.get(&uid)?;
+                consensi
                     .get(&uid)?
                     .iter()
-                    .filter_map(|&(cluster, ref unit)| {
+                    .filter_map(|&(cluster, ref cons)| {
                         let end_position =
-                            (start_position + unit.len() + 2 * OFFSET).min(seq.len());
+                            (start_position + cons.len() + 2 * OFFSET).min(seq.len());
                         let is_the_same_encode = nodes[idx].unit == uid
-                            && abs(nodes[idx].position_from_start, start_position) < unit.len();
+                            && abs(nodes[idx].position_from_start, start_position) < cons.len();
                         if start_position < end_position && !is_the_same_encode {
                             let position = (start_position, end_position, direction);
-                            let unit_info = (unit.as_slice(), uid, cluster);
+                            let unit_info = (unit, cluster, cons.as_slice());
                             encode_node(seq, position, unit_info, sim_thr)
                         } else {
                             None
@@ -211,15 +202,16 @@ pub fn correct_deletion_error(
             .iter()
             .filter(|&&(_, _, id)| !failed_trials.contains(&(idx, id)))
             .filter_map(|&(end_position, direction, uid)| {
-                units
+                let unit = *units.get(&uid)?;
+                consensi
                     .get(&uid)?
                     .iter()
-                    .filter_map(|&(cluster, ref unit)| {
+                    .filter_map(|&(cluster, ref cons)| {
                         let end_position = end_position.min(seq.len());
-                        let start_position = end_position.saturating_sub(unit.len() + 2 * OFFSET);
+                        let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
                         if start_position < end_position {
                             let positions = (start_position, end_position, direction);
-                            let unit_info = (unit.as_slice(), uid, cluster);
+                            let unit_info = (unit, cluster, cons.as_slice());
                             encode_node(seq, positions, unit_info, sim_thr)
                         } else {
                             None
@@ -255,7 +247,7 @@ pub fn correct_deletion_error(
 fn encode_node(
     seq: &[u8],
     (start, end, is_forward): (usize, usize, bool),
-    (unitseq, uid, cluster): (&[u8], u64, u64),
+    (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<(Node, i32)> {
     let mut query = if is_forward {
@@ -300,7 +292,7 @@ fn encode_node(
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
     if dist_thr < aln_dist || indel_thr < max_indel {
         if log_enabled!(log::Level::Trace) {
-            trace!("{}\t{}\t{}\t{}\tNG", uid, cluster, max_indel, aln_dist);
+            trace!("{}\t{}\t{}\t{}\tNG", unit.id, cluster, max_indel, aln_dist);
             let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
             for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                 eprintln!("{}", String::from_utf8_lossy(xr));
@@ -310,12 +302,15 @@ fn encode_node(
         }
         return None;
     }
-    trace!("{}\t{}\t{}\t{}\tOK", uid, cluster, max_indel, aln_dist);
+    trace!("{}\t{}\t{}\t{}\tOK", unit.id, cluster, max_indel, aln_dist);
     let ops = super::compress_kiley_ops(&ops);
-    let mut node = Node::new(uid, is_forward, &seq, ops, position_from_start);
+    let cl = unit.cluster_num;
+    // I think we should NOT make likelihood gain to some biased value,
+    // as 1. if the alignment gives the certaintly, then we can impute the clustering by the alignment,
+    // 2. if `cluster` assignment is just by chance,
+    // then we just should not introduce any bias into the likelihood gain.
+    let mut node = Node::new(unit.id, is_forward, &seq, ops, position_from_start, cl);
     node.cluster = cluster;
-    // TODO:Here we should know the number of cluster in `uid` chunk.
-    // node.posterior = vec![0f64;cluster_num];
     Some((node, score))
 }
 
