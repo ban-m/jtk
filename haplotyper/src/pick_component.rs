@@ -13,11 +13,11 @@ impl ComponentPickingConfig {
 }
 
 pub trait ComponentPicking {
-    fn pick_top_n_component(self, c: &ComponentPickingConfig) -> Self;
+    fn pick_top_n_component(&mut self, c: &ComponentPickingConfig);
 }
 
 impl ComponentPicking for DataSet {
-    fn pick_top_n_component(mut self, c: &ComponentPickingConfig) -> Self {
+    fn pick_top_n_component(&mut self, c: &ComponentPickingConfig) {
         use crate::assemble::Assemble;
         use crate::assemble::AssembleConfig;
         let asm_config = AssembleConfig::new(1, 100, false, false, 6);
@@ -75,7 +75,5 @@ impl ComponentPicking for DataSet {
             len,
             self.encoded_reads.len(),
         );
-        // TODO: Maybe we need to fill the spase regions, right?
-        self
     }
 }

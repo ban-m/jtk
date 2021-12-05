@@ -28,19 +28,18 @@ pub fn rand_index(label: &[u8], pred: &[u8]) -> f64 {
 
 pub trait LocalClustering {
     fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-        self,
+        &mut self,
         c: &ClusteringConfig<F>,
-    ) -> Self;
+    );
 }
 
 impl LocalClustering for DataSet {
     fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-        mut self,
+        &mut self,
         _c: &ClusteringConfig<F>,
-    ) -> Self {
+    ) {
         let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
-        local_clustering_selected(&mut self, &selection);
-        self
+        local_clustering_selected(self, &selection);
     }
 }
 
@@ -88,7 +87,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         let (unit_id, units) = pileups.iter().find(|(_, us)| us.len() == *cov).unwrap();
         debug!("LOCAL\tSAMPLE\t{}\t{}", unit_id, units.len());
         let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-        let ref_unit = chunks.get(&unit_id).unwrap();
+        let ref_unit = chunks.get(unit_id).unwrap();
         let mut hmm = kiley::gphmm::GPHMM::<Cond>::clr();
         let band_width = 200;
         use kiley::gphmm::*;

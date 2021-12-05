@@ -18,14 +18,14 @@ impl ReClusteringConfig {
 }
 
 pub trait ReClustering {
-    fn re_clustering(self, c: &ReClusteringConfig) -> Self;
+    fn re_clustering(&mut self, c: &ReClusteringConfig);
 }
 
 impl ReClustering for DataSet {
     /// Assemble the dataset, re-clustering units with copy number more than 2.
     /// Note that it would not do clustering on chunks with estimated copy-number equal to 2.
     /// As these chunks are already "tried and failed."
-    fn re_clustering(mut self, c: &ReClusteringConfig) -> DataSet {
+    fn re_clustering(&mut self, c: &ReClusteringConfig) {
         // Remember the initial read clustering.
         let init_clustering: Vec<_> = self
             .encoded_reads
@@ -38,9 +38,9 @@ impl ReClustering for DataSet {
             .collect();
         // Polish clusering.
         use crate::em_correction::ClusteringCorrection;
-        self = self.correct_clustering_em(c.repeat_num, c.coverage_thr, true);
+        self.correct_clustering_em(c.repeat_num, c.coverage_thr, true);
         // The set of the ((unit,cluster), (copy_num, offset)) to be clustered into `cluster_num` clusters.
-        let re_cluster = get_units_to_cluster(&self, c);
+        let re_cluster = get_units_to_cluster(self, c);
         // Allocate them in HashMap or recover the initial clustering.
         let mut to_clustered_nodes: HashMap<_, Vec<&mut Node>> =
             re_cluster.keys().map(|&node| (node, Vec::new())).collect();
@@ -149,8 +149,6 @@ impl ReClustering for DataSet {
         // let target_units: HashSet<_> = re_cluster.keys().copied().collect();
         // debug!("RECLUSTRE\t{}", target_units.len());
         // crate::local_clustering::local_clustering_selected(&mut self, &target_units);
-        // self
-        self
     }
 }
 

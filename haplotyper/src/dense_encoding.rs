@@ -21,7 +21,7 @@ impl DenseEncodingConfig {
     }
 }
 pub trait DenseEncoding {
-    fn dense_encoding(self, config: &DenseEncodingConfig) -> Self;
+    fn dense_encoding(&mut self, config: &DenseEncodingConfig);
     // fn dense_encoding_hapcut(self, config: &DenseEncodingConfig) -> Self;
 }
 
@@ -103,9 +103,9 @@ impl DenseEncoding for DataSet {
     //     crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
     //     self
     // }
-    fn dense_encoding(mut self, config: &DenseEncodingConfig) -> Self {
-        let ave_unit_len = get_average_unit_length(&self);
-        let original_assignments = log_original_assignments(&self);
+    fn dense_encoding(&mut self, config: &DenseEncodingConfig) {
+        let ave_unit_len = get_average_unit_length(self);
+        let original_assignments = log_original_assignments(self);
         use crate::em_correction::ClusteringCorrection;
         let units: HashSet<_> = self
             .selected_chunks
@@ -113,11 +113,11 @@ impl DenseEncoding for DataSet {
             .filter_map(|u| (1.0 < u.score).then(|| u.id))
             .collect();
         debug!("DE\t{}\tEMCorrection", units.len());
-        self = self.correct_clustering_em_on_selected(10, 3, true, &units);
+        self.correct_clustering_em_on_selected(10, 3, true, &units);
         debug!("DE\t{:?}\tEnumDiplotig", config);
         // The maximum value of the previous unit.
         // If the unit id is greater than this, it is newly added one.
-        let multi_tig = enumerate_multitigs(&mut self, config);
+        let multi_tig = enumerate_multitigs(self, config);
         // Nodes to be clustered, or node newly added by filling edge.
         let mut to_clustering_nodes = HashSet::new();
         let cov = self
@@ -164,12 +164,7 @@ impl DenseEncoding for DataSet {
                 re_encode_read(read, seq);
             }
             to_clustering_nodes.extend(nodes.iter().map(|x| x.0));
-            to_clustering_nodes.extend(
-                edge_encoding_patterns
-                    .values()
-                    .flat_map(std::convert::identity)
-                    .map(|x| x.id),
-            );
+            to_clustering_nodes.extend(edge_encoding_patterns.values().flatten().map(|x| x.id));
             self.selected_chunks.extend(
                 edge_encoding_patterns
                     .into_iter()
@@ -180,15 +175,14 @@ impl DenseEncoding for DataSet {
             // });
         }
         use crate::encode::deletion_fill::correct_unit_deletion;
-        self = correct_unit_deletion(self, CLR_CLR_SIM);
+        correct_unit_deletion(self, CLR_CLR_SIM);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
         }
         // Local clustering.
         debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
-        crate::local_clustering::local_clustering_selected(&mut self, &to_clustering_nodes);
-        self
+        crate::local_clustering::local_clustering_selected(self, &to_clustering_nodes);
     }
 }
 

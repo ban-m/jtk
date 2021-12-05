@@ -74,7 +74,7 @@ impl DirichletCorrection for DataSet {
         let argmax = |xs: &[f64]| {
             xs.iter()
                 .enumerate()
-                .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
+                .max_by(|x, y| (x.1).partial_cmp(y.1).unwrap())
                 .unwrap()
                 .0
         };
@@ -111,7 +111,7 @@ pub fn correct_unit(
         .enumerate()
         .map(|(i, k)| {
             let seed = unit_id * (i * k) as u64;
-            clustering(&reads, unit_id, seed, k, &config)
+            clustering(&reads, unit_id, seed, k, config)
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
         .unwrap();
@@ -317,7 +317,7 @@ impl DirichletModel {
             sum_of_weights
         };
         let consensus: Vec<_> = (0..cluster_num)
-            .map(|cl| Consensus::new(&contexts, weights, cl))
+            .map(|cl| Consensus::new(contexts, weights, cl))
             .collect();
         Self {
             unit,
@@ -432,7 +432,7 @@ impl Consensus {
             xs.iter_mut().for_each(|x| *x /= sum);
             sum
         }
-        let forward_sum = forward.values().flat_map(|x| x).sum::<f64>().max(1f64);
+        let forward_sum = forward.values().flatten().sum::<f64>().max(1f64);
         let forward: HashMap<u64, (f64, Vec<f64>)> = forward
             .into_iter()
             .map(|(unit, mut prob)| {
@@ -440,7 +440,7 @@ impl Consensus {
                 (unit, (sum / forward_sum, prob))
             })
             .collect();
-        let backward_sum = backward.values().flat_map(|x| x).sum::<f64>().max(1f64);
+        let backward_sum = backward.values().flatten().sum::<f64>().max(1f64);
         let backward: HashMap<u64, (f64, Vec<f64>)> = backward
             .into_iter()
             .map(|(unit, mut prob)| {

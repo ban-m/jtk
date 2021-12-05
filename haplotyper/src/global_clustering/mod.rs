@@ -109,14 +109,14 @@ impl GlobalClusteringConfig {
     }
 }
 pub trait GlobalClustering {
-    fn global_clustering_graph(self, c: &GlobalClusteringConfig) -> Self;
-    fn global_clustering(self, c: &GlobalClusteringConfig) -> Self;
+    fn global_clustering_graph(&mut self, c: &GlobalClusteringConfig);
+    fn global_clustering(&mut self, c: &GlobalClusteringConfig);
 }
 
 impl GlobalClustering for definitions::DataSet {
-    fn global_clustering_graph(mut self, _c: &GlobalClusteringConfig) -> Self {
+    fn global_clustering_graph(&mut self, _c: &GlobalClusteringConfig) {
         let c = GlobalClusteringConfig::new(3, 10, 1, -1, -2);
-        let reads = error_correction::local_correction(&self, &c);
+        let reads = error_correction::local_correction(self, &c);
         let paths: Vec<_> = reads
             .into_iter()
             .map(|read| {
@@ -134,9 +134,8 @@ impl GlobalClustering for definitions::DataSet {
                 definitions::Assignment { id, cluster }
             })
             .collect();
-        self
     }
-    fn global_clustering(mut self, c: &GlobalClusteringConfig) -> Self {
+    fn global_clustering(&mut self, c: &GlobalClusteringConfig) {
         if log_enabled!(log::Level::Debug) {
             debug!("------Raw reads------");
             let reads: Vec<_> = self.encoded_reads.iter().map(ReadWrapper::new).collect();
@@ -153,7 +152,7 @@ impl GlobalClustering for definitions::DataSet {
             count.sort_by_key(|x| x.0);
             eprintln!("Degree Count\n{:?}", count);
         }
-        let clustered_units = super::unit_correlation::select_informative_units(&self, 0.005);
+        let clustered_units = super::unit_correlation::select_informative_units(self, 0.005);
         for read in self.encoded_reads.iter_mut() {
             for node in read.nodes.iter_mut() {
                 if !clustered_units[&node.unit] {
@@ -161,7 +160,7 @@ impl GlobalClustering for definitions::DataSet {
                 }
             }
         }
-        let reads = error_correction::local_correction(&self, c);
+        let reads = error_correction::local_correction(self, c);
         let mut graph = DeBruijnGraph::from(&reads, c.k_mer);
         if log_enabled!(log::Level::Debug) {
             debug!("------Corrected reads------");
@@ -214,7 +213,6 @@ impl GlobalClustering for definitions::DataSet {
                 debug!("{}\t{}", cl, count);
             }
         }
-        self
     }
 }
 

@@ -18,7 +18,7 @@ fn main() {
     use haplotyper::multiplicity_estimation::MultiplicityEstimation;
     use haplotyper::multiplicity_estimation::MultiplicityEstimationConfig;
     let config = MultiplicityEstimationConfig::new(24, 4382094, Some("temp.gfa"));
-    ds = ds.estimate_multiplicity(&config);
+    ds.estimate_multiplicity(&config);
     println!("NODE\tunit\tcluster\tcopy.number\tprev.estim");
     let mut node_count: HashMap<_, u32> = HashMap::new();
     let mut edge_count: HashMap<_, u32> = HashMap::new();

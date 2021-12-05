@@ -19,11 +19,11 @@ impl std::default::Default for ResolveUnitRepeatsConfig {
 impl ResolveUnitRepeatsConfig {}
 
 pub trait ResolveUnitRepeats {
-    fn resolve_units(self, config: &ResolveUnitRepeatsConfig) -> Self;
+    fn resolve_units(&mut self, config: &ResolveUnitRepeatsConfig);
 }
 
 impl ResolveUnitRepeats for DataSet {
-    fn resolve_units(mut self, config: &ResolveUnitRepeatsConfig) -> Self {
+    fn resolve_units(&mut self, config: &ResolveUnitRepeatsConfig) {
         // Take unit id, return conversion information.
         let mut current_max_unit = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
         let conversion_information: HashMap<_, _> = self
@@ -47,7 +47,6 @@ impl ResolveUnitRepeats for DataSet {
         for graph in conversion_information.values() {
             self.selected_chunks.extend(graph.new_units());
         }
-        self
     }
 }
 

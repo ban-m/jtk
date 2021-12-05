@@ -517,7 +517,7 @@ impl Phase {
         //         .collect();
         //     trace!("HAPCUT\tGRAPH\t{}\t{}", from, edge.join("\t"))
         // }
-        Self::find_cut(&consistency_graph, &c)
+        Self::find_cut(&consistency_graph, c)
     }
     // Make the adjacency graph for the given dataset.
     fn to_consistency_graph(
@@ -839,7 +839,7 @@ pub fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>
     for phase in phases.iter_mut().filter(|p| p.phase.len() > 2) {
         phase.phase.iter_mut().for_each(|x| *x = 0);
     }
-    Phase::flip_local(&mut phases, &reads, &c);
+    Phase::flip_local(&mut phases, reads, c);
     let mut c = c.clone();
     debug!("HAPCUT\tCONSIS\titer\tconsis\tloop");
     for t in 0..100 {
@@ -861,7 +861,7 @@ pub fn hapcut(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> (Vec<Phase>
         if cut.iter().all(|&b| !b) {
             Phase::shuffle(&mut phases, &c);
         }
-        Phase::flip_local(&mut phases, &reads, &c);
+        Phase::flip_local(&mut phases, reads, &c);
         if 20 < t {
             Phase::optimize_unit_mc(&mut phases, reads, &c);
         }
@@ -928,7 +928,7 @@ fn gen_random_phase(reads: &[(u64, Vec<(u64, u64)>)], c: &HapCutConfig) -> Optio
 
 fn quantile<T: Copy + PartialOrd>(xs: &[T], quantile: f64) -> T {
     let mut xs = xs.to_vec();
-    xs.sort_by(|x, y| x.partial_cmp(&y).unwrap());
+    xs.sort_by(|x, y| x.partial_cmp(y).unwrap());
     xs[(xs.len() as f64 * quantile).ceil() as usize]
 }
 
@@ -1027,7 +1027,7 @@ pub fn reads_into_phased_block(
     reads
         .iter()
         .filter_map(|&(id, ref read)| {
-            read_into_phased_block(read, &phased_blocks, config)
+            read_into_phased_block(read, phased_blocks, config)
                 .map(|block_id| Assignment::new(id, block_id))
         })
         .collect()

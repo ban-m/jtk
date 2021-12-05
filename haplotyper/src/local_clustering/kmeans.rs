@@ -49,7 +49,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let band_width = 100;
     use kiley::gphmm::*;
     let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    let hmm = hmm.fit_banded(&cons_template, &reads, band_width);
+    let hmm = hmm.fit_banded(&cons_template, reads, band_width);
     clustering_with_template(&cons_template, reads, rng, &hmm, config)
         .map(|(x, y)| (x, cons_template, y))
 }
@@ -491,7 +491,7 @@ fn get_profiles<T: std::borrow::Borrow<[u8]>>(
     let mut profiles = vec![];
     for read in reads.iter() {
         let read = kiley::padseq::PadSeq::new(read.borrow());
-        let prof = match banded::ProfileBanded::new(&hmm, &template, &read, band_width) {
+        let prof = match banded::ProfileBanded::new(hmm, &template, &read, band_width) {
             Some(res) => res,
             None => {
                 for read in reads.iter() {
@@ -1241,13 +1241,13 @@ fn em_cl(data: &[Vec<f64>], weights: &mut [Vec<f64>], k: usize) -> f64 {
         }
     }
     // how many instance in a cluster.
-    let (mut models, mut fractions) = model_fraction(data, &weights, k);
+    let (mut models, mut fractions) = model_fraction(data, weights, k);
     let mut lk = get_lk(data, &models, &fractions);
     loop {
         for (ws, xs) in weights.iter_mut().zip(data.iter()) {
             update_weight(ws, xs, &models, &fractions);
         }
-        let (new_models, new_fractions) = model_fraction(data, &weights, k);
+        let (new_models, new_fractions) = model_fraction(data, weights, k);
         let new_lk = get_lk(data, &new_models, &new_fractions);
         // debug!("LK\t{:.3}\t{:.3}", lk, new_lk);
         if lk + 0.00001 < new_lk {

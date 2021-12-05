@@ -104,13 +104,13 @@ impl UnitConfig {
 }
 
 pub trait DetermineUnit {
-    fn select_chunks(self, config: &UnitConfig) -> Self;
+    fn select_chunks(&mut self, config: &UnitConfig);
 }
 
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
     // TODO: Parametrize the number of reads used in consensus generation.
-    fn select_chunks(mut self, config: &UnitConfig) -> Self {
+    fn select_chunks(&mut self, config: &UnitConfig) {
         let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
         reads.sort_by_key(|r| r.seq().len());
         reads.reverse();
@@ -147,11 +147,11 @@ impl DetermineUnit for definitions::DataSet {
                 })
                 .collect();
             debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
-            self.selected_chunks = remove_overlapping_units(&self, config.threads).unwrap();
+            self.selected_chunks = remove_overlapping_units(self, config.threads).unwrap();
             // 1st polishing.
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
-            self = self.encode(config.threads, CLR_CLR_SIM);
-            self = remove_frequent_units(self, config.upper_count);
+            self.encode(config.threads, CLR_CLR_SIM);
+            remove_frequent_units(self, config.upper_count);
             {
                 let mut counts: HashMap<_, usize> = HashMap::new();
                 for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
@@ -169,17 +169,17 @@ impl DetermineUnit for definitions::DataSet {
             //     writeln!(&mut wtr, "{}", serde_json::ser::to_string(&self).unwrap()).unwrap();
             // }
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 3, 10);
-            self = self.consensus_unit(&polish_config);
+            self.consensus_unit(&polish_config);
             // TODO: Rather than calling self.encode many times,
             // use the initial encoding, calling self.deletion_fill many times.
             // It would be much faster.
             // Filling gappy region.
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
-            self = self.encode(config.threads, CLR_CLR_SIM);
-            self = fill_sparse_region(self, config);
+            self.encode(config.threads, CLR_CLR_SIM);
+            fill_sparse_region(self, config);
             // 2nd polishing.
-            self = self.encode(config.threads, CLR_CLR_SIM);
-            self = remove_frequent_units(self, config.upper_count);
+            self.encode(config.threads, CLR_CLR_SIM);
+            remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(ReadType::CLR, 5, 20);
             {
                 let mut counts: HashMap<_, usize> = HashMap::new();
@@ -191,7 +191,7 @@ impl DetermineUnit for definitions::DataSet {
                 let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
                 debug!("Histgrapm\n{}", hist.format(40, 20));
             }
-            self = self.polish_unit(&polish_config);
+            self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
             self.selected_chunks
                 .retain(|unit| config.chunk_len < unit.seq.len());
@@ -209,12 +209,12 @@ impl DetermineUnit for definitions::DataSet {
         };
         debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
         // This encoding is inevitable.
-        self = self.encode(config.threads, sim_thr);
-        self = remove_frequent_units(self, config.upper_count);
-        self = filter_unit_by_ovlp(self, config);
+        self.encode(config.threads, sim_thr);
+        remove_frequent_units(self, config.upper_count);
+        filter_unit_by_ovlp(self, config);
         debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
         // This IS avoidable.
-        self = self.encode(config.threads, sim_thr);
+        self.encode(config.threads, sim_thr);
         // Final polishing.
         let polish_config = PolishUnitConfig::new(ReadType::CLR, 10, 100);
         {
@@ -227,18 +227,17 @@ impl DetermineUnit for definitions::DataSet {
             let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
             debug!("Histgrapm\n{}", hist.format(40, 20));
         }
-        self = self.polish_unit(&polish_config);
+        self.polish_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         for (idx, chunk) in self.selected_chunks.iter_mut().enumerate() {
             chunk.seq.truncate(config.chunk_len);
             chunk.id = idx as u64;
         }
-        self = self.encode(config.threads, sim_thr);
-        self
+        self.encode(config.threads, sim_thr);
     }
 }
 
-fn remove_frequent_units(mut ds: DataSet, upper_count: usize) -> DataSet {
+fn remove_frequent_units(ds: &mut DataSet, upper_count: usize) {
     let mut counts: HashMap<_, usize> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         *counts.entry(node.unit).or_default() += 1;
@@ -257,7 +256,6 @@ fn remove_frequent_units(mut ds: DataSet, upper_count: usize) -> DataSet {
             break;
         }
     }
-    ds
 }
 
 const MIN_OCC: usize = 5;
@@ -349,7 +347,7 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
 // }
 
 // TODO: This should be much more efficient!
-fn fill_sparse_region(mut ds: DataSet, config: &UnitConfig) -> DataSet {
+fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
     let mut edge_count: HashMap<_, (usize, i64)> = HashMap::new();
     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
         let len = if edge.label.is_empty() {
@@ -403,7 +401,6 @@ fn fill_sparse_region(mut ds: DataSet, config: &UnitConfig) -> DataSet {
             cluster_num: config.min_cluster,
             score: 0f64,
         }));
-    ds
 }
 
 fn is_repetitive(unit: &[u8], config: &UnitConfig) -> bool {
@@ -432,7 +429,7 @@ fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
 // length of chunk can be configured.
 const OVERLAP_THR: usize = 500;
 
-fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
+fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     let unit_len = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
     let unit_len = unit_len as usize + 1;
     assert!(ds.selected_chunks.len() <= unit_len);
@@ -475,7 +472,6 @@ fn filter_unit_by_ovlp(mut ds: DataSet, config: &UnitConfig) -> DataSet {
         idx += 1;
     });
     ds.encoded_reads.clear();
-    ds
 }
 
 fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {

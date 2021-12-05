@@ -404,3 +404,4 @@ cov.flip.unit.summary %>%
 cov.flip.unit.summary %>%  ggplot() + geom_histogram(aes(x=flip))
 cov.flip.unit.summary %>% filter(score < 500) %>%  ggplot() + geom_histogram(aes(x=score), bins=100)
 
+

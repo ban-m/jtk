@@ -1,4 +1,4 @@
-use haplotyper::ClusteringConfig;
+use haplotyper::local_clustering::ClusteringConfig;
 use log::*;
 use poa_hmm::*;
 use rand::Rng;
@@ -72,7 +72,7 @@ fn main() -> std::io::Result<()> {
         use haplotyper::local_clustering::kmeans;
         let (preds, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();
-        let score = haplotyper::rand_index(&preds, &answer);
+        let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();
         let acc = preds
             .iter()

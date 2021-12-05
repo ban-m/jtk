@@ -1,6 +1,5 @@
 use clap::{App, Arg, SubCommand};
 use definitions::*;
-use haplotyper::*;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
 #[macro_use]
@@ -693,6 +692,7 @@ fn subcommand_assemble() -> App<'static, 'static> {
 }
 
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
+    use haplotyper::entry::Entry;
     debug!("START\tEntry");
     let file = matches.value_of("input").unwrap();
     let reader = std::fs::File::open(file).map(BufReader::new)?;
@@ -702,7 +702,8 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     Ok(DataSet::entry(file, &seqs, read_type))
 }
 
-fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
+    use haplotyper::extract::{Extract, ExtractTarget};
     debug!("START\tExtract");
     debug!("Target is {}", matches.value_of("target").unwrap());
     let file = std::fs::File::create(matches.value_of("output").unwrap())?;
@@ -734,17 +735,18 @@ fn extract(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Data
         }
         &_ => unreachable!(),
     };
-    Ok(dataset)
+    Ok(())
 }
 
-fn stats(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn stats(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
+    use haplotyper::stats::Stats;
     debug!("START\tStats step");
     let wtr = std::io::BufWriter::new(std::fs::File::create(matches.value_of("file").unwrap())?);
     dataset.stats(wtr)?;
-    Ok(dataset)
+    Ok(())
 }
 
-fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tSelecting Units");
     let chunk_len: usize = matches
         .value_of("chunk_len")
@@ -784,6 +786,7 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
     {
         debug!("{:?}:If you run `pipeline` module, this is Harmless.", why);
     }
+    use haplotyper::determine_units::{DetermineUnit, UnitConfig};
     use ReadType::*;
     let (cl, tn) = (chunk_len, take_num);
     let config = match dataset.read_type {
@@ -791,10 +794,10 @@ fn select_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
         CLR => UnitConfig::new_clr(cl, tn, skip_len, margin, thrds, filter, upper, lower),
         _ => UnitConfig::new_ont(cl, tn, skip_len, margin, thrds, filter, upper, lower),
     };
-    Ok(dataset.select_chunks(&config))
+    dataset.select_chunks(&config);
 }
 
-fn repeat_masking(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn repeat_masking(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tmasking repeat.");
     let threads: usize = matches
         .value_of("threads")
@@ -818,11 +821,12 @@ fn repeat_masking(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = haplotyper::RepeatMaskConfig::new(k, freq, min);
-    Ok(dataset.mask_repeat(&config))
+    use haplotyper::repeat_masking::*;
+    let config = RepeatMaskConfig::new(k, freq, min);
+    dataset.mask_repeat(&config)
 }
 
-fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tEncoding step");
     let threads: usize = matches
         .value_of("threads")
@@ -835,10 +839,11 @@ fn encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataS
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     // TODO:Branching by read type.
-    Ok(dataset.encode(threads, haplotyper::encode::CLR_CLR_SIM))
+    use haplotyper::encode::Encode;
+    dataset.encode(threads, haplotyper::encode::CLR_CLR_SIM)
 }
 
-fn polish_encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn polish_encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tPolish encoding.");
     let threads: usize = matches
         .value_of("threads")
@@ -851,10 +856,10 @@ fn polish_encode(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resul
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     use haplotyper::remove_erroneous_nodes::RemoveErroneousNodes;
-    Ok(dataset.remove_erroneous_nodes())
+    dataset.remove_erroneous_nodes();
 }
 
-fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn pick_components(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tpicking components.");
     let threads: usize = matches
         .value_of("threads")
@@ -870,11 +875,12 @@ fn pick_components(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Res
         .value_of("component_num")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    use haplotyper::pick_component::*;
     let config = ComponentPickingConfig::new(component_num);
-    Ok(dataset.pick_top_n_component(&config))
+    dataset.pick_top_n_component(&config);
 }
 
-fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn polish_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tpolishing units");
     let threads: usize = matches
         .value_of("threads")
@@ -894,13 +900,11 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
+    use haplotyper::polish_units::*;
     let config = PolishUnitConfig::new(dataset.read_type, filter_size, consensus_size);
-    Ok(dataset.polish_unit(&config))
+    dataset.polish_unit(&config);
 }
-fn multiplicity_estimation(
-    matches: &clap::ArgMatches,
-    dataset: DataSet,
-) -> std::io::Result<DataSet> {
+fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tmultiplicity estimation");
     let threads: usize = matches
         .value_of("threads")
@@ -921,11 +925,12 @@ fn multiplicity_estimation(
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
+    use haplotyper::multiplicity_estimation::*;
     let config = MultiplicityEstimationConfig::new(threads, seed, path);
-    Ok(dataset.estimate_multiplicity(&config))
+    dataset.estimate_multiplicity(&config);
 }
 
-fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tLocal Clustering step");
     let threads: usize = matches
         .value_of("threads")
@@ -941,11 +946,12 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Re
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = ClusteringConfig::with_default(&dataset, 2, length);
-    Ok(dataset.local_clustering(&config))
+    use haplotyper::local_clustering::*;
+    let config = ClusteringConfig::with_default(dataset, 2, length);
+    dataset.local_clustering(&config);
 }
 
-fn correct_deletion(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tCorrectDeletion");
     let threads: usize = matches
         .value_of("threads")
@@ -962,10 +968,10 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Re
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     use haplotyper::encode::deletion_fill;
-    Ok(deletion_fill::correct_unit_deletion(dataset, sim_thr))
+    deletion_fill::correct_unit_deletion(dataset, sim_thr);
 }
 
-fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn global_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tGlobal Clustering step");
     let threads: usize = matches
         .value_of("threads")
@@ -998,24 +1004,17 @@ fn global_clustering(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::R
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let config = haplotyper::GlobalClusteringConfig::new(
-        kmer,
-        min_cluster_size,
-        mat_score,
-        mismat_score,
-        gap_score,
-    );
+    use haplotyper::global_clustering::*;
+    let config =
+        GlobalClusteringConfig::new(kmer, min_cluster_size, mat_score, mismat_score, gap_score);
     if matches.is_present("graph") {
-        Ok(dataset.global_clustering_graph(&config))
+        dataset.global_clustering_graph(&config);
     } else {
-        Ok(dataset.global_clustering(&config))
+        dataset.global_clustering(&config);
     }
 }
 
-fn clustering_correction(
-    matches: &clap::ArgMatches,
-    mut dataset: DataSet,
-) -> std::io::Result<DataSet> {
+fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tClustering Correction step");
     let threads: usize = matches
         .value_of("threads")
@@ -1039,11 +1038,10 @@ fn clustering_correction(
     // let config = Config::new(repeat_num, threshold);
     // dataset.correct_clustering(&config);
     use haplotyper::em_correction::ClusteringCorrection;
-    dataset = dataset.correct_clustering_em(repeat_num, threshold, true);
-    Ok(dataset)
+    dataset.correct_clustering_em(repeat_num, threshold, true);
 }
 
-fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn resolve_tangle(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tClustering Correction step");
     let threads: usize = matches
         .value_of("threads")
@@ -1065,10 +1063,10 @@ fn resolve_tangle(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
     }
     use haplotyper::re_clustering::*;
     let config = ReClusteringConfig::new(threads, repeat_num, threshold);
-    Ok(dataset.re_clustering(&config))
+    dataset.re_clustering(&config);
 }
 
-fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tEncode densely");
     let threads: usize = matches
         .value_of("threads")
@@ -1090,10 +1088,10 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Resu
         .unwrap();
     use haplotyper::dense_encoding::*;
     let config = DenseEncodingConfig::new(length, min_span_reads);
-    Ok(dataset.dense_encoding(&config))
+    dataset.dense_encoding(&config);
 }
 
-fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<DataSet> {
+fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
     debug!("START\tAssembly step");
     let threads: usize = matches
         .value_of("threads")
@@ -1117,6 +1115,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
+    use haplotyper::assemble::*;
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
     // TODO:Parametrize here.
     // 1. Zip up errorneous clustering.
@@ -1137,7 +1136,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: DataSet) -> std::io::Result<Dat
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;
-    Ok(dataset)
+    Ok(())
 }
 
 fn get_input_file() -> std::io::Result<DataSet> {
@@ -1202,8 +1201,9 @@ fn main() -> std::io::Result<()> {
     if let ("entry", Some(sub_m)) = matches.subcommand() {
         return entry(sub_m).and_then(|x| flush_file(&x));
     }
-    let ds = get_input_file()?;
-    let result = match matches.subcommand() {
+    let mut ds = get_input_file()?;
+    let ds = &mut ds;
+    match matches.subcommand() {
         ("select_unit", Some(sub_m)) => select_unit(sub_m, ds),
         ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
         ("encode", Some(sub_m)) => encode(sub_m, ds),
@@ -1217,10 +1217,10 @@ fn main() -> std::io::Result<()> {
         ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
         ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),
         ("encode_densely", Some(sub_m)) => encode_densely(sub_m, ds),
-        ("assemble", Some(sub_m)) => assembly(sub_m, ds),
-        ("extract", Some(sub_m)) => extract(sub_m, ds),
-        ("stats", Some(sub_m)) => stats(sub_m, ds),
+        ("assemble", Some(sub_m)) => assembly(sub_m, ds).unwrap(),
+        ("extract", Some(sub_m)) => extract(sub_m, ds).unwrap(),
+        ("stats", Some(sub_m)) => stats(sub_m, ds).unwrap(),
         _ => unreachable!(),
     };
-    result.and_then(|x| flush_file(&x))
+    flush_file(ds)
 }

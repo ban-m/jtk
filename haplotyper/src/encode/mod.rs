@@ -23,21 +23,20 @@ const ALLOWED_END_GAP: usize = 50;
 pub const INDEL_FRACTION: f64 = 1f64 / 40f64;
 pub const MIN_INDEL_SIZE: usize = 10;
 pub trait Encode {
-    fn encode(self, threads: usize, sim_thr: f64) -> Self;
+    fn encode(&mut self, threads: usize, sim_thr: f64);
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(mut self, threads: usize, sim_thr: f64) -> Self {
-        self = encode_by_mm2(self, threads, sim_thr).unwrap();
-        self = deletion_fill::correct_unit_deletion(self, sim_thr);
+    fn encode(&mut self, threads: usize, sim_thr: f64) {
+        encode_by_mm2(self, threads, sim_thr).unwrap();
+        deletion_fill::correct_unit_deletion(self, sim_thr);
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
-        self
     }
 }
 
-pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::io::Result<DataSet> {
-    let mm2 = mm2_alignment(&ds, p)?;
+pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> std::io::Result<()> {
+    let mm2 = mm2_alignment(ds, p)?;
     let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
@@ -70,10 +69,11 @@ pub fn encode_by_mm2(ds: definitions::DataSet, p: usize, sim_thr: f64) -> std::i
             (no_large_indel && dist < dist_thr).then(|| aln)
         })
         .collect();
-    Ok(encode_by(ds, &alignments))
+    encode_by(ds, &alignments);
+    Ok(())
 }
 
-pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet {
+pub fn encode_by(ds: &mut DataSet, alignments: &[bio_utils::paf::PAF]) {
     let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
     for aln in alignments.iter() {
@@ -97,7 +97,6 @@ pub fn encode_by(mut ds: DataSet, alignments: &[bio_utils::paf::PAF]) -> DataSet
                 .and_then(|alns| encode_read_by_paf(read, alns, &chunks))
         })
         .collect::<Vec<_>>();
-    ds
 }
 
 fn encode_read_by_paf(
@@ -309,10 +308,8 @@ pub fn remove_slippy_alignment(nodes: Vec<Node>) -> Vec<Node> {
         if prev.unit != node.unit || prev.is_forward != node.is_forward || is_disjoint {
             deduped_nodes.push(prev);
             prev = node;
-        } else {
-            if score(&prev) < score(&node) {
-                prev = node;
-            }
+        } else if score(&prev) < score(&node) {
+            prev = node;
         }
     }
     deduped_nodes.push(prev);

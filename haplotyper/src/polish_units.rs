@@ -28,12 +28,12 @@ impl PolishUnitConfig {
 /// This removal is to force users to encode reads by aligning the
 /// newly poilished units again.
 pub trait PolishUnit {
-    fn polish_unit(self, c: &PolishUnitConfig) -> Self;
-    fn consensus_unit(self, c: &PolishUnitConfig) -> Self;
+    fn polish_unit(&mut self, c: &PolishUnitConfig);
+    fn consensus_unit(&mut self, c: &PolishUnitConfig);
 }
 
 impl PolishUnit for DataSet {
-    fn polish_unit(mut self, c: &PolishUnitConfig) -> Self {
+    fn polish_unit(&mut self, c: &PolishUnitConfig) {
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks
             .iter()
@@ -60,9 +60,8 @@ impl PolishUnit for DataSet {
         // 1. Change alignment in the encoded read.
         // 2. Filtering out errorneous nodes by consider the distance and the indel patterns.
         self.encoded_reads.clear();
-        self
     }
-    fn consensus_unit(mut self, c: &PolishUnitConfig) -> Self {
+    fn consensus_unit(&mut self, c: &PolishUnitConfig) {
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks
             .iter()
@@ -101,7 +100,6 @@ impl PolishUnit for DataSet {
         // 1. Change alignment in the encoded read.
         // 2. Filtering out errorneous nodes by consider the distance and the indel patterns.
         self.encoded_reads.clear();
-        self
     }
 }
 

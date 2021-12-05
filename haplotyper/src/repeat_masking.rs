@@ -14,11 +14,11 @@ impl RepeatMaskConfig {
 }
 
 pub trait RepeatMask {
-    fn mask_repeat(self, config: &RepeatMaskConfig) -> Self;
+    fn mask_repeat(&mut self, config: &RepeatMaskConfig);
 }
 
 impl RepeatMask for definitions::DataSet {
-    fn mask_repeat(mut self, config: &RepeatMaskConfig) -> Self {
+    fn mask_repeat(&mut self, config: &RepeatMaskConfig) {
         let mask = {
             debug!("Counting {}-mers", config.k);
             let kmer_count = kmer_counting(&self.raw_reads, config);
@@ -50,7 +50,6 @@ impl RepeatMask for definitions::DataSet {
             num_lower_base, num_bases,
         );
         debug!("{} Masked {}-mers", mask.len(), config.k);
-        self
     }
 }
 

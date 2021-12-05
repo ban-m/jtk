@@ -41,30 +41,30 @@ impl Config {
 
 pub trait ClusteringCorrection {
     fn correct_clustering_em(
-        self,
+        &mut self,
         repeat_num: usize,
         coverage_thr: usize,
         to_regularize: bool,
-    ) -> Self;
+    );
     fn correct_clustering_em_on_selected(
-        self,
+        &mut self,
         repeat_num: usize,
         coverage_thr: usize,
         to_regularize: bool,
         selection: &HashSet<u64>,
-    ) -> Self;
+    );
 }
 
 impl ClusteringCorrection for DataSet {
     fn correct_clustering_em(
-        mut self,
+        &mut self,
         repeat_num: usize,
         coverage_thr: usize,
         to_regularize: bool,
-    ) -> Self {
+    ) {
         // First, try to "squish" all the units with no variants.
         let to_squish = {
-            let mut pvalues = crate::unit_correlation::calc_p_values(&self, coverage_thr as u32);
+            let mut pvalues = crate::unit_correlation::calc_p_values(self, coverage_thr as u32);
             pvalues.retain(|_, pvalue| 0.05 < *pvalue);
             pvalues
         };
@@ -88,15 +88,15 @@ impl ClusteringCorrection for DataSet {
             targets.len(),
             self.selected_chunks.len(),
         );
-        self.correct_clustering_em_on_selected(repeat_num, coverage_thr, to_regularize, &targets)
+        self.correct_clustering_em_on_selected(repeat_num, coverage_thr, to_regularize, &targets);
     }
     fn correct_clustering_em_on_selected(
-        mut self,
+        &mut self,
         repeat_num: usize,
         coverage_thr: usize,
         to_regularize: bool,
         selection: &HashSet<u64>,
-    ) -> Self {
+    ) {
         let result: Vec<_> = self
             .selected_chunks
             .par_iter()
@@ -145,7 +145,6 @@ impl ClusteringCorrection for DataSet {
                 }
             }
         }
-        self
     }
 }
 
@@ -316,7 +315,7 @@ pub fn em_clustering_inner<R: Rng>(
             lk = next_lk;
         }
     }
-    let predictions = predict_from_weights(&contexts, &weights, k, rng);
+    let predictions = predict_from_weights(contexts, &weights, k, rng);
     trace!("MODEL:{}", model);
     let (flen, blen) = contexts
         .iter()
@@ -857,7 +856,7 @@ pub fn simple_clustering_inner<R: Rng>(
     for ws in weights.iter() {
         trace!("WEIGHTS\t{}\t{:?}", id, ws);
     }
-    let predictions = predict_from_weights(&contexts, &weights, k, rng);
+    let predictions = predict_from_weights(contexts, &weights, k, rng);
     for ((_, _, cluster), context) in predictions.iter().zip(contexts.iter()) {
         let unit = context.unit;
         let dump = context.dump_with(flen, blen);

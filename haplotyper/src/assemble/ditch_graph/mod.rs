@@ -574,20 +574,20 @@ impl<'a> DitchGraph<'a> {
         reads: &[&EncodedRead],
         c: &super::AssembleConfig,
     ) {
-        self.assign_copy_number(cov, &lens);
-        self.remove_zero_copy_elements(&lens, 0.2);
-        self.assign_copy_number(cov, &lens);
-        self.remove_zero_copy_elements(&lens, 0.5);
-        self.assign_copy_number(cov, &lens);
+        self.assign_copy_number(cov, lens);
+        self.remove_zero_copy_elements(lens, 0.2);
+        self.assign_copy_number(cov, lens);
+        self.remove_zero_copy_elements(lens, 0.5);
+        self.assign_copy_number(cov, lens);
         self.zip_up_overclustering();
         // From good Likelihood ratio focus, to weaker ones.
         for llr in (3..15).filter(|x| x % 3 == 0).rev() {
-            self.resolve_repeats(&reads, c, llr as f64);
+            self.resolve_repeats(reads, c, llr as f64);
         }
         self.zip_up_overclustering();
         // self.remove_tips(0.5, 5);
         // self.z_edge_selection();
-        self.assign_copy_number(cov, &lens);
+        self.assign_copy_number(cov, lens);
         self.remove_zero_copy_path(0.3);
         // graph.transitive_edge_reduction();
     }

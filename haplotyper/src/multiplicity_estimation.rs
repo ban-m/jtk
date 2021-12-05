@@ -22,11 +22,11 @@ impl MultiplicityEstimationConfig {
 }
 
 pub trait MultiplicityEstimation {
-    fn estimate_multiplicity(self, config: &MultiplicityEstimationConfig) -> Self;
+    fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig);
 }
 
 impl MultiplicityEstimation for DataSet {
-    fn estimate_multiplicity(mut self, config: &MultiplicityEstimationConfig) -> Self {
+    fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig) {
         let mut counts: HashMap<_, u32> = HashMap::new();
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             *counts.entry(node.unit).or_default() += 1;
@@ -85,7 +85,6 @@ impl MultiplicityEstimation for DataSet {
             let gfa = convert_to_gfa(&graph, &assemble_config);
             writeln!(&mut file, "{}", gfa).unwrap();
         }
-        self
         // self.assignments = self
         //     .encoded_reads
         //     .iter()

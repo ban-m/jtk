@@ -24,11 +24,11 @@ impl PolishClusteringConfig {
 }
 /// Polishing local clustering by all vs all alignment.
 pub trait PolishClustering {
-    fn polish_clustering(self, c: &PolishClusteringConfig) -> Self;
+    fn polish_clustering(&mut self, c: &PolishClusteringConfig);
 }
 
 impl PolishClustering for DataSet {
-    fn polish_clustering(mut self, c: &PolishClusteringConfig) -> Self {
+    fn polish_clustering(&mut self, c: &PolishClusteringConfig) {
         let reads_summary: Vec<Vec<(u64, u64)>> = self
             .encoded_reads
             .iter()
@@ -53,7 +53,6 @@ impl PolishClustering for DataSet {
                 node.cluster = cluster;
             }
         }
-        self
     }
 }
 

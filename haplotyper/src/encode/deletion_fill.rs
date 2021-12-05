@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 /// Note that, in the first - unit resolution - alignment, there's no distinction between clusters.
 /// However, in the second alignment, it tries to encode the putative region by each cluster's representative.
 /// Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
-pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
+pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) {
     let raw_seq: HashMap<_, _> = ds
         .raw_reads
         .iter()
@@ -25,7 +25,7 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
     const OUTER_LOOP: usize = 3;
     const INNER_LOOP: usize = 15;
     'outer: for t in 0..OUTER_LOOP {
-        let representative = take_consensus_sequence(&ds);
+        let representative = take_consensus_sequence(ds);
         let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
         // i->vector of failed index and units.
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
@@ -61,7 +61,6 @@ pub fn correct_unit_deletion(mut ds: DataSet, sim_thr: f64) -> DataSet {
             current = after;
         }
     }
-    ds
 }
 
 // /// Same as `correct unit deletion selected`. The only difference is that this function controls which read
@@ -269,8 +268,7 @@ fn encode_node(
         let seq = &query[aln_start..=aln_end];
         let band = (seq.len() / 10).max(20);
         // TODO: Infix alignment would be better, but it is still OK.
-        let (score, mut ops) =
-            kiley::bialignment::global_banded(unitseq, &seq, 2, -6, -5, -1, band);
+        let (score, mut ops) = kiley::bialignment::global_banded(unitseq, seq, 2, -6, -5, -1, band);
         let (aln_start, aln_end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
         let query = query[aln_start..=aln_end].to_vec();
         (query, aln_start, aln_end, ops, score)

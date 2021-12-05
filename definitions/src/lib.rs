@@ -38,6 +38,22 @@ pub enum ReadType {
     None,
 }
 
+impl std::default::Default for DataSet {
+    fn default() -> Self {
+        Self {
+            input_file: String::new(),
+            coverage: None,
+            raw_reads: vec![],
+            hic_pairs: vec![],
+            selected_chunks: vec![],
+            encoded_reads: vec![],
+            hic_edges: vec![],
+            assignments: vec![],
+            read_type: ReadType::None,
+        }
+    }
+}
+
 impl DataSet {
     /// Return an empty dataset.
     pub fn new() -> Self {

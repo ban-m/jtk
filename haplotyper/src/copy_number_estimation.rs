@@ -1,3 +1,4 @@
+//! *DISCARDED* 2021/12/06
 //! Estimate copy number of chunks based on coverages.
 //! # Example
 //! ```rust
@@ -67,6 +68,7 @@ pub trait CopyNumberEstimation {
     fn update_copy_numbers(&mut self, config: &Config);
     fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>);
 }
+
 use definitions::DataSet;
 use definitions::EncodedRead;
 use rand::{seq::SliceRandom, Rng, SeedableRng};

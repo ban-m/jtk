@@ -1,7 +1,7 @@
 pub const MEDIAN_FRAC: usize = 4;
 pub const IMPROVE_THR: f64 = 3f64;
 pub trait RemoveErroneousNodes {
-    fn remove_erroneous_nodes(self) -> Self;
+    fn remove_erroneous_nodes(&mut self);
 }
 
 use crate::assemble::copy_number::CoverageCalibrator;
@@ -9,7 +9,7 @@ use definitions::*;
 use std::collections::{HashMap, HashSet};
 impl RemoveErroneousNodes for DataSet {
     #[allow(clippy::needless_collect)]
-    fn remove_erroneous_nodes(mut self) -> Self {
+    fn remove_erroneous_nodes(&mut self) {
         let mut counts: HashMap<_, (usize, i64)> = HashMap::new();
         let normalize = |from: &Node, to: &Node| -> (u64, u64) {
             match from.unit <= to.unit {
@@ -130,6 +130,5 @@ impl RemoveErroneousNodes for DataSet {
                 read.remove(i - offset);
             }
         }
-        self
     }
 }

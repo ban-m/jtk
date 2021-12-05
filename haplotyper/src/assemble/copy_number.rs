@@ -200,12 +200,6 @@ impl GibbsSampler {
             }
         }
         let argmax = |buf: &Vec<u32>| buf.iter().enumerate().max_by_key(|x| x.1).unwrap().0;
-        // for (dist, w) in node_cp_dist.iter().zip(self.nodes.iter()) {
-        //     debug!("COPYNUM\tDump\tN\t{}\t{}\t{:?}", w, argmax(dist), dist);
-        // }
-        // for (dist, w) in edge_cp_dist.iter().zip(self.edges.iter()) {
-        //     debug!("COPYNUM\tDump\tE\t{}\t{}\t{:?}", w.4, argmax(dist), dist);
-        // }
         let node_cp: Vec<_> = node_cp_dist.iter().map(argmax).collect();
         let edge_cp: Vec<_> = edge_cp_dist.iter().map(argmax).collect();
         (node_cp, edge_cp)
@@ -319,8 +313,18 @@ fn choose_copy_num<R: Rng>(
             choises.push((cp + 1, plus_one));
         }
     }
-    let sum: f64 = choises.iter().map(|x| x.1).sum();
-    choises.choose_weighted(rng, |&(_, w)| w / sum).unwrap().0
+    if !choises.is_empty() {
+        let sum: f64 = choises.iter().map(|x| x.1).sum();
+        choises.choose_weighted(rng, |&(_, w)| w / sum).unwrap().0
+    } else {
+        // This node is isolated.
+        let copy_num = (w as f64 / hap_cov).floor() as usize;
+        (copy_num.saturating_sub(2)..copy_num + 2)
+            .map(|cp| (cp, poisson(w, cp, hap_cov)))
+            .max_by(|x, y| x.1.partial_cmp(&(y.1)).unwrap())
+            .unwrap()
+            .0
+    }
 }
 
 pub fn estimate_copy_number_gbs(
