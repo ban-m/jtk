@@ -190,6 +190,7 @@ struct Context<'a> {
     id: u64,
     // The original index of this context.
     index: usize,
+    #[allow(dead_code)]
     unit: u64,
     cluster: &'a [f64],
     // Only upstream/downstream information is preversed, the
@@ -204,6 +205,7 @@ impl std::fmt::Display for Context<'_> {
             .upstream
             .iter()
             .map(|(u, c)| format!("({},{:?})", u, c))
+            .rev()
             .collect();
         let downstream: Vec<_> = self
             .downstream
@@ -212,11 +214,10 @@ impl std::fmt::Display for Context<'_> {
             .collect();
         write!(
             f,
-            "{}\t({},{:?})\t{}",
+            "{}\t({:?})\t{}",
             upstream.join("-"),
-            self.unit,
             self.cluster,
-            downstream.join("-")
+            downstream.join("\t")
         )
     }
 }
@@ -358,7 +359,7 @@ impl ReadClusteringModel {
             .iter()
             .zip(param.consensus.iter())
             .zip(fractions.iter())
-            .map(|((w, cons), fs)| (w - total).exp() * cons.diff(fs, context))
+            .map(|((w, cons), fs)| (w - total).exp() * cons.loss(fs, context))
             .sum()
     }
     fn update_learn_rate(&mut self) {
@@ -367,8 +368,15 @@ impl ReadClusteringModel {
     }
     // TODO: Numerical -> hand-written differential
     fn update(&self, param: &mut ReadClusteringParam, data: &Context, i: usize) {
+        for (k, cons) in param.consensus.iter().enumerate() {
+            println!("{}\t{}", k, cons);
+        }
+        println!();
         // Calc gradient.
-        let grad_weight = self.get_weight_grad(param, data, i);
+        let mut grad_weight = self.get_weight_grad(param, data, i);
+        grad_weight
+            .iter_mut()
+            .for_each(|x| *x *= self.learning_rate);
         let mut grad_cons = self.get_consensus_grad(param, data, i);
         grad_cons.iter_mut().for_each(|cons| {
             cons.add_scalar(2f64 * self.reg_term / self.data_size as f64);
@@ -381,7 +389,7 @@ impl ReadClusteringModel {
         param.weights[i]
             .iter_mut()
             .zip(grad_weight.iter())
-            .for_each(|(x, y)| *x -= self.learning_rate * y);
+            .for_each(|(x, y)| *x -= y);
     }
     fn get_weight_grad(
         &self,
@@ -400,7 +408,7 @@ impl ReadClusteringModel {
             .consensus
             .iter()
             .zip(fractions.iter())
-            .map(|(cons, fs)| cons.diff(fs, data))
+            .map(|(cons, fs)| cons.loss(fs, data))
             .collect();
         let mean_loss: f64 = weights.iter().zip(loss.iter()).map(|(x, y)| x * y).sum();
         weights
@@ -416,23 +424,23 @@ impl ReadClusteringModel {
         data: &Context,
         i: usize,
     ) -> Vec<Consensus> {
-        (0..param.consensus.len())
-            .map(|k| self.get_consensus_grad_of(param, data, i, k))
-            .collect()
-    }
-    fn get_consensus_grad_of(
-        &self,
-        param: &mut ReadClusteringParam,
-        data: &Context,
-        i: usize,
-        k: usize,
-    ) -> Consensus {
         let total = logsumexp(&param.weights[i]);
-        let z_ik = (param.weights[i][k].clone() - total).exp();
-        assert!(0f64 <= z_ik && z_ik <= 1f64);
-        let mut grad = param.consensus[k].get_grad(data);
-        grad.mul_scalar(z_ik);
-        grad
+        let ws: Vec<_> = param.weights[i].clone();
+        param
+            .consensus
+            .iter_mut()
+            .zip(ws)
+            .map(|(cons, w)| {
+                let z_ik = (w - total).exp();
+                assert!(0f64 <= z_ik && z_ik <= 1f64);
+                let mut grad = cons.get_grad(data);
+                println!("Data\t{:.3}\t{}", z_ik, data);
+                println!("Cons\t{}", cons);
+                println!("Grad\t{}\n", grad);
+                grad.mul_scalar(z_ik);
+                grad
+            })
+            .collect()
     }
     fn predict(
         &self,
@@ -502,9 +510,7 @@ impl ReadClusteringParam {
         in_down_units: &[usize],
         rng: &mut R,
     ) -> Self {
-        let weights: Vec<_> = (0..num_data)
-            .map(|_| (0..k).map(|_| rng.gen_range(0f64..5f64)).collect())
-            .collect();
+        let weights: Vec<_> = (0..num_data).map(|_| Consensus::gen_prob(k, rng)).collect();
         let consensus: Vec<_> = (0..k)
             .map(|_| Consensus::new(num_cluster, in_up_units, in_down_units, rng))
             .collect();
@@ -512,6 +518,7 @@ impl ReadClusteringParam {
     }
 }
 
+// It can be regarded as "log-ed" version of the posterior probabilites.
 #[derive(Debug, Clone)]
 pub struct Consensus {
     upstream: Vec<Vec<f64>>,
@@ -519,7 +526,30 @@ pub struct Consensus {
     center: Vec<f64>,
 }
 
+impl std::fmt::Display for Consensus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, probs) in self.upstream.iter().enumerate().rev() {
+            let probs: Vec<_> = probs.iter().map(|x| format!("{:.2}", x)).collect();
+            write!(f, "({},[{}])", i, probs.join(","))?;
+        }
+        let probs: Vec<_> = self.center.iter().map(|x| format!("{:.2}", x)).collect();
+        write!(f, "\t([{}])\t", probs.join(","))?;
+        for (i, probs) in self.downstream.iter().enumerate() {
+            let probs: Vec<_> = probs.iter().map(|x| format!("{:.2}", x)).collect();
+            write!(f, "({},[{}])", i, probs.join(","))?;
+        }
+        Ok(())
+    }
+}
+
 impl Consensus {
+    fn with(upstream: Vec<Vec<f64>>, center: Vec<f64>, downstream: Vec<Vec<f64>>) -> Self {
+        Self {
+            upstream,
+            center,
+            downstream,
+        }
+    }
     fn to_fraction(&self) -> Fraction {
         let mut center = logsumexp(&self.center);
         let mut upstream: Vec<_> = self.upstream.iter().map(|logs| logsumexp(logs)).collect();
@@ -554,11 +584,7 @@ impl Consensus {
             .iter()
             .map(|&dim| Self::gen_prob(dim, rng))
             .collect();
-        Self {
-            upstream,
-            downstream,
-            center,
-        }
+        Self::with(upstream, center, downstream)
     }
     // Log-prob of dim-dimentional probability.
     fn gen_prob<R: Rng>(dim: usize, rng: &mut R) -> Vec<f64> {
@@ -586,7 +612,7 @@ impl Consensus {
             .chain(downstream)
             .for_each(|x| *x *= factor);
     }
-    fn diff(&self, fs: &Fraction, context: &Context) -> f64 {
+    fn loss(&self, fs: &Fraction, context: &Context) -> f64 {
         let center = fs.center * sq_diff(&self.center, &context.cluster);
         let upstream: f64 = context
             .upstream
@@ -602,20 +628,20 @@ impl Consensus {
     }
     // TODO: This is numerical diff.( f(x+h) - f(x-h) ) / 2h
     fn get_grad(&mut self, data: &Context) -> Self {
-        let mut prev = self.clone();
         let diff = 0.00001;
         let center: Vec<_> = (0..self.center.len())
             .map(|i| {
                 let loss_b = {
                     self.center[i] -= diff;
                     let frac = self.to_fraction();
-                    self.diff(&frac, data)
+                    self.loss(&frac, data)
                 };
                 let loss_f = {
                     self.center[i] += 2f64 * diff;
                     let frac = self.to_fraction();
-                    self.diff(&frac, data)
+                    self.loss(&frac, data)
                 };
+                println!("C\t{}\t{}-{}", i, loss_f, loss_b);
                 self.center[i] -= diff;
                 (loss_f - loss_b) / 2f64 / diff
             })
@@ -627,12 +653,12 @@ impl Consensus {
                         let loss_b = {
                             self.upstream[j][m] -= diff;
                             let frac = self.to_fraction();
-                            self.diff(&frac, data)
+                            self.loss(&frac, data)
                         };
                         let loss_f = {
                             self.upstream[j][m] += 2f64 * diff;
                             let frac = self.to_fraction();
-                            self.diff(&frac, data)
+                            self.loss(&frac, data)
                         };
                         self.upstream[j][m] += diff;
                         (loss_f - loss_b) / 2f64 / diff
@@ -647,12 +673,12 @@ impl Consensus {
                         let loss_b = {
                             self.downstream[j][m] -= diff;
                             let frac = self.to_fraction();
-                            self.diff(&frac, data)
+                            self.loss(&frac, data)
                         };
                         let loss_f = {
                             self.downstream[j][m] += 2f64 * diff;
                             let frac = self.to_fraction();
-                            self.diff(&frac, data)
+                            self.loss(&frac, data)
                         };
                         self.downstream[j][m] += diff;
                         (loss_f - loss_b) / 2f64 / diff
@@ -660,13 +686,7 @@ impl Consensus {
                     .collect()
             })
             .collect();
-        prev.sub(self);
-        assert!(prev.norm() < 0.001);
-        Self {
-            center,
-            upstream,
-            downstream,
-        }
+        Self::with(upstream, center, downstream)
     }
     fn add_scalar(&mut self, grad: f64) {
         let center = self.center.iter_mut();
@@ -760,7 +780,7 @@ pub mod tests {
                 Context::with_attrs(*id, 0, 2, cluster.as_slice(), forward, backward)
             })
             .collect();
-        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(942830);
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(94);
         let config = ReadClusteringConfig::default();
         let (asn, _likelihood) = simple_clustering_inner(&contexts, 2, &config, &mut rng);
         let num_correct = asn
@@ -775,5 +795,48 @@ pub mod tests {
             .count();
         let num_correct = num_correct as u64;
         assert!(num_correct.max(len - num_correct) > len * 8 / 10);
+    }
+    #[test]
+    fn test_sq_diff_test() {
+        let test = sq_diff(&[0.1, 0.9], &[0.5, 0.5]);
+        let answer = 0.4 * 0.4 * 2f64;
+        assert!((test - answer).abs() < 0.0001);
+    }
+    #[test]
+    fn test_cons_sub() {
+        let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(5945);
+        let mut cons = Consensus::new(2, &[2, 2, 2], &[3, 3, 3], &mut rng);
+        let cons_2 = cons.clone();
+        cons.sub(&cons_2);
+        assert!(cons.norm() < 0.0001);
+    }
+    #[test]
+    fn test_cons_add_scalar() {
+        let center = vec![0f64, 0f64];
+        let upstream = vec![vec![0f64; 3], vec![0f64; 3], vec![0f64; 3]];
+        let downstream = vec![vec![0f64; 2]; 3];
+        let mut cons = Consensus::with(upstream, center, downstream);
+        cons.add_scalar(1f64);
+        let answer = (2 + 3 * 3 + 2 * 3) as f64;
+        assert!((answer - cons.norm()).abs() < 0.0001);
+    }
+    #[test]
+    fn test_cons_loss() {
+        let cluster = vec![0.9f64.ln(), 0.1f64.ln()];
+        let upstream: Vec<_> = vec![(0, vec![0.1f64.ln(), 0.9f64.ln()])];
+        let downstream: Vec<_> = vec![(0, vec![0.1f64.ln(), 0.9f64.ln()])];
+        let upstream: Vec<_> = upstream.iter().map(|(x, y)| (*x, y.as_slice())).collect();
+        let cons = {
+            let upstream: Vec<_> = upstream.iter().map(|x| x.1.to_vec()).collect();
+            let downstream: Vec<_> = downstream.iter().map(|x| x.1.to_vec()).collect();
+            let center = cluster.clone();
+            Consensus::with(upstream, center, downstream)
+        };
+        let downstream: Vec<_> = downstream.iter().map(|(x, y)| (*x, y.as_slice())).collect();
+        let context = Context::with_attrs(0, 0, 0, &cluster, upstream, downstream);
+        let fraction = cons.to_fraction();
+        let loss = cons.loss(&fraction, &context);
+        let answer = 0f64;
+        assert!((loss - answer).abs() < 0.0001);
     }
 }
