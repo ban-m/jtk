@@ -71,7 +71,6 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
         if log_enabled!(log::Level::Trace) {
-            // DUMP Hot columns.
             for (pos, lk) in probes.iter() {
                 let (idx, t) = (pos / 9, pos % 9);
                 if idx < template.len() {
@@ -127,6 +126,10 @@ pub fn clustering_with_template<R: Rng, T: std::borrow::Borrow<[u8]>>(
     Some((assignments, score))
 }
 
+/// If everything goes fine, return the assignment of each read,
+/// likelihood vectors and its total likelihood gain.
+/// Specifically, if the returned value is `(asms,lks,lk),
+/// then, `lks[i][k]` is equal to the gain of the likelihood of the i-th read when in the k-th cluster.
 pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
@@ -190,8 +193,8 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
             Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    // let mut posterior_probs = get_posterior_probability(&selected_variants, &assignments);
-    let likelihood_gains = get_likelihood_gain(&selected_variants, &assignments, cluster_num);
+    let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments, cluster_num);
+    to_posterior_probability(&mut likelihood_gains);
     assert!(likelihood_gains.iter().all(|lks| lks.len() == cluster_num));
     trace!("MAXLK\t{:.3}", score);
     if log_enabled!(log::Level::Trace) {
@@ -201,45 +204,14 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         }
     }
     Some((assignments, likelihood_gains, score))
-    // Some((assignments, posterior_probs, score))
 }
 
-#[allow(dead_code)]
-fn get_posterior_probability(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<Vec<f64>> {
-    let max_asn = *assignments.iter().max().unwrap() as usize;
-    let mut count = vec![0; max_asn + 1];
-    let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; max_asn + 1];
-    for (vars, &asn) in variants.iter().zip(assignments.iter()) {
-        count[asn as usize] += 1;
-        for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
-            *total += var;
-        }
+// LK->LK-logsumexp(LK).
+fn to_posterior_probability(lks: &mut [Vec<f64>]) {
+    for xs in lks.iter_mut() {
+        let total = logsumexp(&xs);
+        xs.iter_mut().for_each(|x| *x -= total);
     }
-    let is_used_position: Vec<Vec<_>> = total_lk_gain
-        .iter()
-        .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
-        .collect();
-    let len = variants.len() as f64;
-    let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len).ln()).collect();
-    variants
-        .iter()
-        .map(|vars| {
-            let mut lks: Vec<_> = is_used_position
-                .iter()
-                .zip(fractions.iter())
-                .map(|(ps, f)| {
-                    let lk = vars
-                        .iter()
-                        .zip(ps)
-                        .fold(0f64, |acc, (v, &p)| if p { acc + v } else { acc });
-                    lk + f
-                })
-                .collect();
-            let total = logsumexp(&lks);
-            lks.iter_mut().for_each(|x| *x = (*x - total).exp());
-            lks
-        })
-        .collect()
 }
 
 // i->k->the likelihood gain of the i-th read when clustered in the k-th cluster.
@@ -253,7 +225,9 @@ fn get_likelihood_gain(
 ) -> Vec<Vec<f64>> {
     let cluster_size = *assignments.iter().max().unwrap_or(&0) as usize + 1;
     let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; cluster_size];
+    let mut count = vec![0; cluster_size];
     for (vars, &asn) in variants.iter().zip(assignments.iter()) {
+        count[asn as usize] += 1;
         for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
             *total += var;
         }
@@ -262,6 +236,8 @@ fn get_likelihood_gain(
         .iter()
         .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
         .collect();
+    let len = variants.len() as f64;
+    let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len).ln()).collect();
     // Padding -infinity to make sure that there are exactly k-slots.
     // This is mainly because we do not want to these `mock` slots.
     // Do NOT use std:;f64::NEG_INFINITY as it must cause under flows.
@@ -277,7 +253,8 @@ fn get_likelihood_gain(
         .map(|vars| {
             is_used_position
                 .iter()
-                .map(|ps| pick_vars(ps, vars))
+                .zip(fractions.iter())
+                .map(|(ps, f)| f.ln() + pick_vars(ps, vars))
                 .chain(pad.clone())
                 .collect()
         })

@@ -38,7 +38,7 @@ impl std::default::Default for Config {
     fn default() -> Self {
         Self {
             repeat_num: 20,
-            coverage_thr: 4,
+            coverage_thr: 5,
         }
     }
 }
@@ -164,9 +164,11 @@ struct Context<'a> {
     // The original index of this context.
     index: usize,
     unit: u64,
+    // This is log-scaled.
     cluster: &'a [f64],
     // Only forward/backward information is preversed, the
     // ordering is arbitrary.
+    // LOG posterior probabilities.
     forward: Vec<(u64, &'a [f64])>,
     backward: Vec<(u64, &'a [f64])>,
 }
@@ -288,6 +290,7 @@ fn simple_clustering_inner<R: Rng>(
 #[derive(Debug, Clone)]
 struct DirichletModel {
     unit: u64,
+    // fraction of each cluster, not-logged.
     fraction: Vec<f64>,
     // Consensus of each cluster. Actually, it is a bug of dirichlet distributions on chunks.
     consensus: Vec<Consensus>,
@@ -338,9 +341,7 @@ impl DirichletModel {
     }
     fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context]) {
         for (weight, context) in weights.iter_mut().zip(contexts.iter()) {
-            // let prev = weight.clone();
             self.update_weight(weight, context);
-            // trace!("[{}]->[{}]", vec2str(&prev), vec2str(weight));
         }
     }
     fn update_weight(&self, weight: &mut [f64], context: &Context<'_>) {
@@ -404,7 +405,7 @@ impl Consensus {
                 center
                     .iter_mut()
                     .zip(ctx.cluster.iter())
-                    .for_each(|(x, y)| *x += w * y);
+                    .for_each(|(x, y)| *x += w * y.exp());
             }
             let sum: f64 = center.iter().sum();
             center.iter_mut().for_each(|x| *x /= sum);
@@ -415,13 +416,13 @@ impl Consensus {
         for (ctx, w) in xs.iter().zip(weights.iter()).map(|(ctx, ws)| (ctx, ws[cl])) {
             for &(unit, post) in ctx.forward.iter() {
                 let insert = || vec![CLUSTER_PRIOR; post.len()];
-                let post = post.iter().map(|x| x * w);
+                let post = post.iter().map(|x| w * x.exp());
                 let dirichlet = forward.entry(unit).or_insert_with(insert);
                 dirichlet.iter_mut().zip(post).for_each(|(x, y)| *x += y)
             }
             for &(unit, post) in ctx.backward.iter() {
                 let insert = || vec![CLUSTER_PRIOR; post.len()];
-                let post = post.iter().map(|x| x * w);
+                let post = post.iter().map(|x| w * x.exp());
                 let dirichlet = backward.entry(unit).or_insert_with(insert);
                 dirichlet.iter_mut().zip(post).for_each(|(x, y)| *x += y);
             }
@@ -486,12 +487,14 @@ impl Consensus {
 // Log Dir(p|q) = log ( G(sum(q_i))/prod(G(q_i)) prod(p_i^{q_i-1}))
 // = log G(sum(q_i)) - sum(log(G(q_i))) + sum((q_i-1)log(p_i)).
 // here, G is the gamma function.
+// `prob` is log-scaled.
 fn dirichlet(prob: &[f64], param: &[f64]) -> f64 {
+    assert!(prob.iter().all(|&x| x <= 0f64));
     assert_eq!(prob.len(), param.len());
     let without_scale: f64 = prob
         .iter()
         .zip(param.iter())
-        .map(|(p, q)| (q - 1f64) * p.max(SMALL).ln())
+        .map(|(p, q)| (q - 1f64) * p)
         .sum();
     let sum: f64 = param.iter().sum();
     let coef = unsafe {
@@ -539,23 +542,6 @@ mod tests {
                 backward,
             }
         }
-        // fn dump_with(&self, fdigit: usize, bdigit: usize) -> String {
-        //     let mut f_slots = vec!["---".to_string(); fdigit];
-        //     let mut b_slots = vec!["---".to_string(); bdigit];
-        //     for (i, (u, c)) in self.forward.iter().enumerate().take(fdigit) {
-        //         f_slots[i] = format!("{}-{:?}", u, c);
-        //     }
-        //     for (i, (u, c)) in self.backward.iter().enumerate().take(bdigit) {
-        //         b_slots[bdigit - i - 1] = format!("{}-{:?}", u, c);
-        //     }
-        //     format!(
-        //         "{}\t{}-{:?}\t{}",
-        //         b_slots.join("\t"),
-        //         self.unit,
-        //         self.cluster,
-        //         f_slots.join("\t")
-        //     )
-        // }
     }
     use super::*;
     #[test]
@@ -565,9 +551,9 @@ mod tests {
             .map(|i| {
                 let forward: Vec<(u64, Vec<f64>)> = vec![];
                 let (backward, cluster) = if i < len / 2 {
-                    (vec![(0, vec![1f64])], vec![1f64, 0f64])
+                    (vec![(0, vec![0f64])], vec![0f64, -1000f64])
                 } else {
-                    (vec![(1, vec![1f64])], vec![0f64, 1f64])
+                    (vec![(1, vec![0f64])], vec![-1000f64, 0f64])
                 };
                 (i, cluster, forward, backward)
             })
@@ -598,22 +584,28 @@ mod tests {
     }
     #[test]
     fn dirichlet_test() {
-        let pdf = dirichlet(&[0.1, 0.9], &[1f64, 100f64]);
+        let pdf = dirichlet(&[0.1f64.ln(), 0.9f64.ln()], &[1f64, 100f64]);
         let answer = -5.8255;
         eprintln!("{}\n{}", pdf, answer);
         assert!((pdf - answer).abs() < 0.0001);
 
-        let pdf = dirichlet(&[0.5, 0.5], &[1f64, 1f64]);
+        let pdf = dirichlet(&[0.5f64.ln(), 0.5f64.ln()], &[1f64, 1f64]);
         let answer = 0f64;
         eprintln!("{}\n{}", pdf, answer);
         assert!((pdf - answer).abs() < 0.0001);
 
-        let pdf = dirichlet(&[0.2, 0.6, 0.2], &[1f64, 1f64, 1f64]);
+        let pdf = dirichlet(
+            &[0.2f64.ln(), 0.6f64.ln(), 0.2f64.ln()],
+            &[1f64, 1f64, 1f64],
+        );
         let answer = 0.693147;
         eprintln!("{}\n{}", pdf, answer);
         assert!((pdf - answer).abs() < 0.0001);
 
-        let pdf = dirichlet(&[0.2, 0.6, 0.2], &[2f64, 6f64, 2f64]);
+        let pdf = dirichlet(
+            &[0.2f64.ln(), 0.6f64.ln(), 0.2f64.ln()],
+            &[2f64, 6f64, 2f64],
+        );
         let answer = 2.2413317;
         let diff = (pdf - answer).abs();
         eprintln!("{}\n{}", pdf, answer);

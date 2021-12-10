@@ -910,10 +910,6 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("threads")
         .and_then(|e| e.parse().ok())
         .unwrap();
-    // let max_cluster_size: usize = matches
-    //     .value_of("max_cluster_size")
-    //     .and_then(|e| e.parse().ok())
-    //     .unwrap();
     let seed: u64 = matches
         .value_of("seed")
         .and_then(|e| e.parse().ok())
@@ -1034,11 +1030,9 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    // use haplotyper::dirichlet_correction::*;
-    // let config = Config::new(repeat_num, threshold);
-    // dataset.correct_clustering(&config);
-    use haplotyper::em_correction::ClusteringCorrection;
-    dataset.correct_clustering_em(repeat_num, threshold, true);
+    use haplotyper::read_clustering::*;
+    let config = ReadClusteringConfig::new(repeat_num, threshold);
+    dataset.read_clustering(&config);
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -1117,7 +1111,6 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
-    // TODO:Parametrize here.
     // 1. Zip up errorneous clustering.
     // let min_count = 6;
     // let max_tig_length = 20;

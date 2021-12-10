@@ -2418,6 +2418,7 @@ mod tests {
         let original_length = 5_000 + rng.gen_range(0..10_000);
         let start_pos = rng.gen_range(0..hap.len());
         let seq = vec![b'A'; 2_000];
+        let cl = 2;
         let nodes: Vec<_> = hap
             .iter()
             .cycle()
@@ -2427,7 +2428,7 @@ mod tests {
             .map(|(idx, &unit)| {
                 let position = idx as usize * 2_000;
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, &seq, cigar, position)
+                definitions::Node::new(unit, true, &seq, cigar, position, cl)
             })
             .collect();
         let edges = nodes

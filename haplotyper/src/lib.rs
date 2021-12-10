@@ -17,6 +17,8 @@ pub mod pick_component;
 pub mod polish_clustering;
 pub mod polish_units;
 pub mod re_clustering;
+pub mod read_clustering;
+pub mod read_clustering_sgd;
 pub mod remove_erroneous_nodes;
 pub mod repeat_masking;
 pub mod stats;

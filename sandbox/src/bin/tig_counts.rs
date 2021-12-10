@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
         }
     }
     let score: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.score)).collect();
-    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore\tentropy");
+    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore");
     for ((unit, cluster), counts) in counts.iter() {
         let score = score[unit];
         let total = counts[0] + counts[1];
