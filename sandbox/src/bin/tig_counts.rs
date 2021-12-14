@@ -1,4 +1,4 @@
-const IS_MOCK: bool = false;
+const IS_MOCK: bool = true;
 use definitions::*;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {

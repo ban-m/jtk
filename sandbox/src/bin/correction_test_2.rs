@@ -8,12 +8,12 @@ fn main() -> std::io::Result<()> {
             .unwrap();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         let sum = logsumexp(&node.posterior);
-        node.posterior.iter_mut().for_each(|x| *x = *x - sum);
+        node.posterior
+            .iter_mut()
+            .for_each(|x| *x = (*x - sum).exp());
+        assert!((1f64 - node.posterior.iter().sum::<f64>()).abs() < 0.000001);
     }
-    // use haplotyper::dirichlet_correction::*;
-    // let config = Config::default();
-    // ds.correct_clustering(&config);
-    use haplotyper::read_clustering::*;
+    use haplotyper::read_clustering_sgd::*;
     let config = ReadClusteringConfig::default();
     ds.read_clustering(&config);
     println!("{}", serde_json::ser::to_string(&ds).unwrap());
