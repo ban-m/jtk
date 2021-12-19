@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 poa_hmm = {version = "0.2.0", git = "https://github.com/ban-m/partial_order_alignment.git", branch = "master", features = ["poa_simd"]}
+dirichlet_fit = {version = "0.1.0", git = "https://github.com/ban-m/dirichlet_fit.git"} 
 rand = "*"
 rand_xoshiro = "*"
 rand_distr = "*"
