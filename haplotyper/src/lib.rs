@@ -3,6 +3,7 @@ pub mod assemble;
 pub mod dense_encoding;
 pub mod determine_units;
 pub mod dirichlet_correction;
+pub mod dirichlet_mixture;
 pub mod em_correction;
 pub mod encode;
 pub mod entry;
@@ -26,7 +27,6 @@ pub mod unit_correlation;
 pub mod view;
 #[macro_use]
 extern crate log;
-
 #[cfg(test)]
 mod tests {
     #[test]

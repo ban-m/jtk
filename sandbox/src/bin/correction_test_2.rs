@@ -7,11 +7,13 @@ fn main() -> std::io::Result<()> {
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        let sum = logsumexp(&node.posterior);
-        node.posterior
-            .iter_mut()
-            .for_each(|x| *x = (*x - sum).exp());
-        assert!((1f64 - node.posterior.iter().sum::<f64>()).abs() < 0.000001);
+        let sum: f64 = node.posterior.iter().map(|x| x.exp()).sum();
+        assert!((1f64 - sum).abs() < 0.0001);
+        // let sum = logsumexp(&node.posterior);
+        // node.posterior
+        //     .iter_mut()
+        //     .for_each(|x| *x = (*x - sum).exp());
+        // assert!((1f64 - node.posterior.iter().sum::<f64>()).abs() < 0.000001);
     }
     use haplotyper::read_clustering_sgd::*;
     let config = ReadClusteringConfig::default();
@@ -20,15 +22,15 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        0.
-    } else if xs.len() == 1 {
-        xs[0]
-    } else {
-        let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-        assert!(sum >= 0., "{:?}->{}", xs, sum);
-        max + sum
-    }
-}
+// fn logsumexp(xs: &[f64]) -> f64 {
+//     if xs.is_empty() {
+//         0.
+//     } else if xs.len() == 1 {
+//         xs[0]
+//     } else {
+//         let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
+//         let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
+//         assert!(sum >= 0., "{:?}->{}", xs, sum);
+//         max + sum
+//     }
+// }

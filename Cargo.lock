@@ -253,7 +253,6 @@ dependencies = [
 [[package]]
 name = "dirichlet_fit"
 version = "0.1.0"
-source = "git+https://github.com/ban-m/dirichlet_fit.git#e4fa27255d9f0d781501f6de8617ed21de7cffe4"
 dependencies = [
  "log",
  "rand",
@@ -614,9 +613,9 @@ dependencies = [
 
 [[package]]
 name = "num_cpus"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05499f3756671c15885fee9034446956fff3f243d6077b91e5767df161f766b3"
+checksum = "19e64526ebdee182341572e50e9ad03965aa510cd94427a4549448f285e957a1"
 dependencies = [
  "hermit-abi",
  "libc",
