@@ -249,17 +249,17 @@ fn simple_clustering_inner<R: Rng>(
     _config: &ReadClusteringConfig,
     rng: &mut R,
 ) -> (Vec<(u64, usize, Vec<f64>)>, f64) {
-    let id: u64 = rng.gen::<u64>() % 1_000_000;
+    let _id: u64 = rng.gen::<u64>() % 1_000_000;
     // Current (un-modified) likelihoods.
     let mut partition = ReadPartition::new(&contexts, k, cov, rng);
     let total = 100_000 * k as usize;
     // MAP estimation.
     let (mut max, mut argmax) = (partition.lk(), partition.clone());
     let mut no_improve = 0;
-    for t in 0..total {
+    for _t in 0..total {
         match partition.flip(rng) {
             Some(new_lk) if max < new_lk => {
-                trace!("ReadPart\t{}\t{}\t{:.3}", id, t, new_lk);
+                // trace!("ReadPart\t{}\t{}\t{:.3}", id, t, new_lk);
                 max = new_lk;
                 argmax = partition.clone();
                 no_improve = 0;

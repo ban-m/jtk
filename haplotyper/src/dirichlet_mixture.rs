@@ -32,9 +32,10 @@ impl DirichletMixtureCorrection for DataSet {
         }
         let posterior_distributions: Vec<_> = self
             .selected_chunks
-            //.par_iter()
+            // .par_iter()
             .iter()
             .map(|c| (c.id, c.cluster_num))
+            .filter(|&(id, _)| id == 382)
             .map(|(id, cluster_num)| correct_unit(self, id, cluster_num, config))
             .collect();
         let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
@@ -80,10 +81,11 @@ pub fn correct_unit(
     let start = std::time::Instant::now();
     let (contexts, _up_units, _down_units) = convert_to_contexts(&reads, unit_id, config);
     trace!("ReadClusteirng\t{}\tBEGIN", unit_id);
-    let (mut new_clustering, _lk, new_k) = (1..=k)
+    let (mut new_clustering, lk, new_k) = (1..=k)
         .map(|k| clustering(&contexts, unit_id, k, config))
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
         .unwrap();
+    trace!("ReadClustering\tFinal\t{}\t{}\t{:.4}", unit_id, new_k, lk);
     let pad_len = k.saturating_sub(new_k);
     for (_, _, prob) in new_clustering.iter_mut() {
         prob.extend(std::iter::repeat(0f64).take(pad_len));
@@ -319,9 +321,10 @@ pub fn clustering_inner<R: Rng>(
     }
     let mut model = HMMixtureModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
+    trace!("CORRECT\tModel\t{}\n{}", id, model);
     trace!("CORRECT\tLikelihood\t{}\t0\t{}", id, lk);
-    for t in 1..20 {
-        trace!("CORRECT\tModel\t{}\t{}\n{}", t, id, model);
+    for t in 1..200 {
+        // trace!("CORRECT\tModel\t{}\t{}\n{}", t, id, model);
         model.update(&mut weights, contexts, t);
         let next_lk = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
         trace!("CORRECT\tLikelihood\t{}\t{}\t{}", id, t, next_lk);
@@ -337,7 +340,6 @@ pub fn clustering_inner<R: Rng>(
         .zip(weights.into_iter())
         .map(|(ctx, weight)| (ctx.id, ctx.index, weight))
         .collect();
-    trace!("CORRECT\tFinal\t{}\t{}\t{:.4}", id, k, lk);
     (predictions, lk)
 }
 
@@ -424,10 +426,10 @@ impl HMMixtureModel {
         // E-step
         // Posterior prob and alignment expectation.
         let (posterior_prob, align_expt) = self.e_step(contexts);
-        for (i, post) in posterior_prob.iter().enumerate() {
-            let post: Vec<_> = post.iter().map(|x| x.log10()).collect();
-            trace!("{}\t{}", i, vec2str(&post));
-        }
+        // for (i, post) in posterior_prob.iter().enumerate() {
+        //     let post: Vec<_> = post.iter().map(|x| x.log10()).collect();
+        //     trace!("{}\t{}", i, vec2str(&post));
+        // }
         // M-step
         self.fractions = sum_and_normalize(&posterior_prob);
         for (cl, model) in self.models.iter_mut().enumerate() {
@@ -507,7 +509,7 @@ fn sum_and_normalize(xss: &[Vec<f64>]) -> Vec<f64> {
 
 impl std::fmt::Display for HMModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for up in self.upstream.iter() {
+        for up in self.upstream.iter().rev() {
             writeln!(f, "{}", up)?;
         }
         writeln!(f, "Center\t{}", self.center)?;
@@ -675,8 +677,13 @@ impl HMModel {
                     Some(res) => res,
                     None => {
                         eprintln!("{:?}", lks);
+                        for r in refr.iter() {
+                            for (i, obs) in query.iter().enumerate() {
+                                eprintln!("{}\t{}\t{:.3}", r, i, r.mat(obs));
+                            }
+                        }
                         for m in refr.iter() {
-                            eprintln!("{}", m);
+                            eprintln!("MODEL\t{}", m);
                         }
                         let query: Vec<_> = query
                             .iter()
@@ -759,7 +766,7 @@ impl HMModel {
                 .sum();
             dir.del_prob = (del_ws / total_ws).max(SMALL_VALUE);
             // First re-estimate parameters on categorical distributions.
-            let mut fraction = vec![0f64; dir.dirichlets.len()];
+            let mut fraction = vec![SMALL_VALUE; dir.dirichlets.len()];
             for ((w, ctx), alns) in weights.iter().zip(contexts.iter()).zip(alns.clone()) {
                 for (&(unit, _), weight) in ctx.iter().zip(alns) {
                     fraction[unit] += w * weight;
@@ -793,7 +800,7 @@ impl HMModel {
                     })
                     .unzip();
                 assert!(dir.dim > 1);
-                trace!("MSTEP\t{}\t{}\t{}", j, target, weights.len());
+                // trace!("MSTEP\t{}\t{}\t{}", j, target, weights.len());
                 if !weights.is_empty() {
                     let mut opt = dirichlet_fit::GreedyOptimizer::new(dir.dim).set_norm(DIR_NORM);
                     dir.param =
@@ -838,7 +845,7 @@ impl DirichletMixture {
         let mut post_probs = vec![vec![]; dims.len()];
         let mut prob_weights = vec![vec![]; dims.len()];
         // TODO: Maybe 1 would be better?
-        let mut fractions = vec![0f64; dims.len()];
+        let mut fractions = vec![SMALL_VALUE; dims.len()];
         for &(unit, w, prob) in observed {
             fractions[unit] += w;
             post_probs[unit].push(prob);
@@ -879,18 +886,12 @@ impl Dirichlet {
     fn update<T: std::borrow::Borrow<[f64]>>(&mut self, obs: &[T], weights: &[f64], _t: usize) {
         if 1 < self.dim {
             let (data, weights) = (&[obs], &[(1f64, weights)]);
-            // let mut optimizer = dirichlet_fit::AdamOptimizer::new(self.dim)
-            //     .norm(DIR_NORM)
-            //     .learning_rate(0.01 / t as f64);
             let mut optimizer = dirichlet_fit::GreedyOptimizer::new(self.dim).set_norm(DIR_NORM);
             self.param =
                 dirichlet_fit::fit_multiple_with(data, weights, &mut optimizer, &self.param);
         }
     }
     fn new<T: std::borrow::Borrow<[f64]>>(obs: &[T], weights: &[f64], dim: usize) -> Self {
-        // If there is no observation, return uniformal distribution.
-        // let param = vec![DIR_NORM * (dim as f64).recip().sqrt(); dim];
-        // let mut optimizer = AdamOptimizer::new(dim).norm(DIR_NORM);
         let mut param = vec![DIR_NORM * (dim as f64).recip(); dim];
         if !obs.is_empty() && !weights.is_empty() {
             let mut optimizer = GreedyOptimizer::new(dim).set_norm(DIR_NORM);
@@ -1083,7 +1084,7 @@ mod tests {
         let num = 10;
         let reads = gen_reads(&hap1s, &hap2s, &cl_num, &is_uninformative, &mut rng, num);
         for (i, read) in reads.iter().enumerate() {
-            trace!("{}\t{}\t{}", i, read.upstream.len(), read.downstream.len());
+            eprintln!("{}\t{}\t{}", i, read.upstream.len(), read.downstream.len());
         }
         let (result, _) = clustering_inner(&reads, 2, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
