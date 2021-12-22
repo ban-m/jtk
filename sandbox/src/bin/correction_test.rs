@@ -1,14 +1,75 @@
+const IS_MOCK: bool = true;
 use definitions::*;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet =
+    let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    use haplotyper::read_clustering::*;
-    let config = ReadClusteringConfig::default();
-    ds.read_clustering(&config);
-    println!("{}", serde_json::ser::to_string_pretty(&ds).unwrap());
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        assert!(node.posterior.iter().all(|x| !x.is_nan()));
+    }
+    println!("UNIT\tid\tunit\tcluster\thap1\thap2\tpurity\tscore");
+    {
+        let mut ds = ds.clone();
+        use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+        let config = ClusteringConfig::new(20, 5);
+        ds.correct_clustering(&config);
+        dump(&ds, "dir_mixture");
+    }
+    {
+        let mut ds = ds.clone();
+        use haplotyper::read_clustering::*;
+        let config = ReadClusteringConfig::default();
+        ds.read_clustering(&config);
+        dump(&ds, "readcl");
+    }
+    {
+        let mut ds = ds.clone();
+        use haplotyper::em_correction::ClusteringCorrection;
+        ds.correct_clustering_em(20, 5, false);
+        dump(&ds, "em");
+    }
+    {
+        let mut ds = ds.clone();
+        use haplotyper::read_clustering_sgd::{ReadClustering, ReadClusteringConfig};
+        let config = ReadClusteringConfig::new(20, 5);
+        ds.read_clustering(&config);
+        dump(&ds, "dgd");
+    }
+    {
+        let mut ds = ds.clone();
+        use haplotyper::dirichlet_correction::{Config, DirichletCorrection};
+        let config = Config::new(20, 5);
+        ds.correct_clustering(&config);
+        dump(&ds, "dir_corr");
+    }
+    dump(&ds, "before");
     Ok(())
+}
+
+fn dump(ds: &DataSet, id: &str) {
+    use std::collections::HashMap;
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        let ans = match IS_MOCK {
+            true => id2desc[&read.id].contains("hapA") as usize,
+            false => id2desc[&read.id].contains("000251v2") as usize,
+        };
+        for node in read.nodes.iter() {
+            counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
+        }
+    }
+    let score: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.score)).collect();
+    for ((unit, cluster), counts) in counts.iter() {
+        let score = score[unit];
+        let total = counts[0] + counts[1];
+        let pur = counts[0].max(counts[1]) as f64 / total as f64;
+        println!(
+            "UNIT\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}",
+            id, unit, cluster, counts[0], counts[1], pur, score,
+        );
+    }
 }

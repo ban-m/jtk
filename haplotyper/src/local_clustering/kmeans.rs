@@ -225,9 +225,9 @@ fn get_likelihood_gain(
 ) -> Vec<Vec<f64>> {
     let cluster_size = *assignments.iter().max().unwrap_or(&0) as usize + 1;
     let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; cluster_size];
-    let mut count = vec![0; cluster_size];
+    let mut count = vec![0.000000000001; cluster_size];
     for (vars, &asn) in variants.iter().zip(assignments.iter()) {
-        count[asn as usize] += 1;
+        count[asn as usize] += 1.0;
         for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
             *total += var;
         }
@@ -236,8 +236,8 @@ fn get_likelihood_gain(
         .iter()
         .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
         .collect();
-    let len = variants.len() as f64;
-    let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len).ln()).collect();
+    let len: f64 = count.iter().sum();
+    let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len)).collect();
     // Padding -infinity to make sure that there are exactly k-slots.
     // This is mainly because we do not want to these `mock` slots.
     // Do NOT use std:;f64::NEG_INFINITY as it must cause under flows.
@@ -990,67 +990,67 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
     (assignments, lk)
 }
 
-#[allow(dead_code)]
-fn em_clustering<R: Rng>(data: &[Vec<f64>], k: usize, _cov: f64, rng: &mut R) -> (Vec<u8>, f64) {
-    if k == 1 || data.iter().all(|xs| xs.is_empty()) || data.len() <= k {
-        return (vec![0; data.len()], 0f64);
-    }
-    // 1. Construct the first assignments.
-    let mut centers: Vec<&[f64]> = vec![];
-    let indices: Vec<_> = (0..data.len()).collect();
-    // Choosing centers.
-    use rand::seq::SliceRandom;
-    while centers.len() < k as usize {
-        // calculate distance to the most nearest centers.
-        let mut dists: Vec<_> = data
-            .iter()
-            .map(|xs| {
-                centers
-                    .iter()
-                    .map(|c| euclid_norm_f64(xs, c))
-                    .min_by(|x, y| x.partial_cmp(y).unwrap())
-                    .unwrap_or(1f64)
-                    .powi(2)
-            })
-            .collect();
-        let total: f64 = dists.iter().sum();
-        dists.iter_mut().for_each(|x| *x /= total);
-        let idx = match indices.choose_weighted(rng, |&idx| dists[idx]) {
-            Ok(res) => *res,
-            Err(why) => {
-                for d in data.iter() {
-                    error!("{:?}", d);
-                }
-                panic!("{:?}", why);
-            }
-        };
-        centers.push(&data[idx]);
-    }
-    let mut weights: Vec<_> = data
-        .iter()
-        .map(|xs| {
-            let mut ws: Vec<_> = centers
-                .iter()
-                .map(|center| (1f64 + euclid_norm_f64(center, xs)).recip())
-                .collect();
-            let sum: f64 = ws.iter().copied().sum();
-            for w in ws.iter_mut() {
-                *w /= sum;
-            }
-            ws
-        })
-        .collect();
-    let lk = em_cl(data, &mut weights, k);
-    let choises: Vec<_> = (0..k).collect();
-    let assignments: Vec<_> = weights
-        .iter()
-        .map(|ws| *choises.choose_weighted(rng, |&k| ws[k]).unwrap() as u8)
-        .collect();
-    //for (ws, asn) in weights.iter().zip(assignments.iter()) {
-    //     let ws: Vec<_> = ws.iter().map(|x| format!("{:.3}", x)).collect();
-    // }
-    (assignments, lk)
-}
+// #[allow(dead_code)]
+// fn em_clustering<R: Rng>(data: &[Vec<f64>], k: usize, _cov: f64, rng: &mut R) -> (Vec<u8>, f64) {
+//     if k == 1 || data.iter().all(|xs| xs.is_empty()) || data.len() <= k {
+//         return (vec![0; data.len()], 0f64);
+//     }
+//     // 1. Construct the first assignments.
+//     let mut centers: Vec<&[f64]> = vec![];
+//     let indices: Vec<_> = (0..data.len()).collect();
+//     // Choosing centers.
+//     use rand::seq::SliceRandom;
+//     while centers.len() < k as usize {
+//         // calculate distance to the most nearest centers.
+//         let mut dists: Vec<_> = data
+//             .iter()
+//             .map(|xs| {
+//                 centers
+//                     .iter()
+//                     .map(|c| euclid_norm_f64(xs, c))
+//                     .min_by(|x, y| x.partial_cmp(y).unwrap())
+//                     .unwrap_or(1f64)
+//                     .powi(2)
+//             })
+//             .collect();
+//         let total: f64 = dists.iter().sum();
+//         dists.iter_mut().for_each(|x| *x /= total);
+//         let idx = match indices.choose_weighted(rng, |&idx| dists[idx]) {
+//             Ok(res) => *res,
+//             Err(why) => {
+//                 for d in data.iter() {
+//                     error!("{:?}", d);
+//                 }
+//                 panic!("{:?}", why);
+//             }
+//         };
+//         centers.push(&data[idx]);
+//     }
+//     let mut weights: Vec<_> = data
+//         .iter()
+//         .map(|xs| {
+//             let mut ws: Vec<_> = centers
+//                 .iter()
+//                 .map(|center| (1f64 + euclid_norm_f64(center, xs)).recip())
+//                 .collect();
+//             let sum: f64 = ws.iter().copied().sum();
+//             for w in ws.iter_mut() {
+//                 *w /= sum;
+//             }
+//             ws
+//         })
+//         .collect();
+//     let lk = em_cl(data, &mut weights, k);
+//     let choises: Vec<_> = (0..k).collect();
+//     let assignments: Vec<_> = weights
+//         .iter()
+//         .map(|ws| *choises.choose_weighted(rng, |&k| ws[k]).unwrap() as u8)
+//         .collect();
+//     //for (ws, asn) in weights.iter().zip(assignments.iter()) {
+//     //     let ws: Vec<_> = ws.iter().map(|x| format!("{:.3}", x)).collect();
+//     // }
+//     (assignments, lk)
+// }
 
 // Return the P(n_1,...,n_k|theta), where the model behide is Chinese Restaurant Process.
 // Note that the zero-sized cluster would be supressed.
@@ -1160,83 +1160,83 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
 
 // Return the maximum likelihood.
 // Traditional EM clustering.
-fn em_cl(data: &[Vec<f64>], weights: &mut [Vec<f64>], k: usize) -> f64 {
-    fn model_fraction(
-        data: &[Vec<f64>],
-        weights: &[Vec<f64>],
-        k: usize,
-    ) -> (Vec<Vec<bool>>, Vec<f64>) {
-        let mut fractions = vec![0f64; k];
-        for ws in weights.iter() {
-            for (c, w) in fractions.iter_mut().zip(ws.iter()) {
-                *c += w;
-            }
-        }
-        for w in fractions.iter_mut() {
-            *w /= data.len() as f64;
-        }
-        // Current (un-modified) likelihoods.
-        let mut lks = vec![vec![0f64; data[0].len()]; k];
-        for (xs, ws) in data.iter().zip(weights.iter()) {
-            for (w, lks) in ws.iter().zip(lks.iter_mut()) {
-                for (lk, x) in lks.iter_mut().zip(xs.iter()) {
-                    *lk += x * w;
-                }
-            }
-        }
-        let models: Vec<Vec<bool>> = lks
-            .iter()
-            .map(|lks| lks.iter().map(|lk| lk.is_sign_positive()).collect())
-            .collect();
-        (models, fractions)
-    }
-    fn get_lk(data: &[Vec<f64>], models: &[Vec<bool>], fractions: &[f64]) -> f64 {
-        data.iter()
-            .map(|xs| -> f64 {
-                models
-                    .iter()
-                    .map(|ms| -> f64 {
-                        xs.iter()
-                            .zip(ms.iter())
-                            .filter_map(|(x, &b)| b.then(|| x))
-                            .sum()
-                    })
-                    .zip(fractions.iter())
-                    .map(|(lk, w)| lk + w.ln())
-                    .sum()
-            })
-            .sum()
-    }
-    fn update_weight(weights: &mut [f64], xs: &[f64], models: &[Vec<bool>], fractions: &[f64]) {
-        for ((m, f), w) in models.iter().zip(fractions.iter()).zip(weights.iter_mut()) {
-            *w = xs.iter().zip(m).filter_map(|(&x, &b)| b.then(|| x)).sum();
-            *w += f.ln();
-        }
-        let total = logsumexp(weights);
-        for w in weights.iter_mut() {
-            *w = (*w - total).exp();
-        }
-    }
-    // how many instance in a cluster.
-    let (mut models, mut fractions) = model_fraction(data, weights, k);
-    let mut lk = get_lk(data, &models, &fractions);
-    loop {
-        for (ws, xs) in weights.iter_mut().zip(data.iter()) {
-            update_weight(ws, xs, &models, &fractions);
-        }
-        let (new_models, new_fractions) = model_fraction(data, weights, k);
-        let new_lk = get_lk(data, &new_models, &new_fractions);
-        // debug!("LK\t{:.3}\t{:.3}", lk, new_lk);
-        if lk + 0.00001 < new_lk {
-            lk = new_lk;
-            models = new_models;
-            fractions = new_fractions;
-        } else {
-            break;
-        }
-    }
-    lk
-}
+// fn em_cl(data: &[Vec<f64>], weights: &mut [Vec<f64>], k: usize) -> f64 {
+//     fn model_fraction(
+//         data: &[Vec<f64>],
+//         weights: &[Vec<f64>],
+//         k: usize,
+//     ) -> (Vec<Vec<bool>>, Vec<f64>) {
+//         let mut fractions = vec![0f64; k];
+//         for ws in weights.iter() {
+//             for (c, w) in fractions.iter_mut().zip(ws.iter()) {
+//                 *c += w;
+//             }
+//         }
+//         for w in fractions.iter_mut() {
+//             *w /= data.len() as f64;
+//         }
+//         // Current (un-modified) likelihoods.
+//         let mut lks = vec![vec![0f64; data[0].len()]; k];
+//         for (xs, ws) in data.iter().zip(weights.iter()) {
+//             for (w, lks) in ws.iter().zip(lks.iter_mut()) {
+//                 for (lk, x) in lks.iter_mut().zip(xs.iter()) {
+//                     *lk += x * w;
+//                 }
+//             }
+//         }
+//         let models: Vec<Vec<bool>> = lks
+//             .iter()
+//             .map(|lks| lks.iter().map(|lk| lk.is_sign_positive()).collect())
+//             .collect();
+//         (models, fractions)
+//     }
+//     fn get_lk(data: &[Vec<f64>], models: &[Vec<bool>], fractions: &[f64]) -> f64 {
+//         data.iter()
+//             .map(|xs| -> f64 {
+//                 models
+//                     .iter()
+//                     .map(|ms| -> f64 {
+//                         xs.iter()
+//                             .zip(ms.iter())
+//                             .filter_map(|(x, &b)| b.then(|| x))
+//                             .sum()
+//                     })
+//                     .zip(fractions.iter())
+//                     .map(|(lk, w)| lk + w.ln())
+//                     .sum()
+//             })
+//             .sum()
+//     }
+//     fn update_weight(weights: &mut [f64], xs: &[f64], models: &[Vec<bool>], fractions: &[f64]) {
+//         for ((m, f), w) in models.iter().zip(fractions.iter()).zip(weights.iter_mut()) {
+//             *w = xs.iter().zip(m).filter_map(|(&x, &b)| b.then(|| x)).sum();
+//             *w += f.ln();
+//         }
+//         let total = logsumexp(weights);
+//         for w in weights.iter_mut() {
+//             *w = (*w - total).exp();
+//         }
+//     }
+//     // how many instance in a cluster.
+//     let (mut models, mut fractions) = model_fraction(data, weights, k);
+//     let mut lk = get_lk(data, &models, &fractions);
+//     loop {
+//         for (ws, xs) in weights.iter_mut().zip(data.iter()) {
+//             update_weight(ws, xs, &models, &fractions);
+//         }
+//         let (new_models, new_fractions) = model_fraction(data, weights, k);
+//         let new_lk = get_lk(data, &new_models, &new_fractions);
+//         // debug!("LK\t{:.3}\t{:.3}", lk, new_lk);
+//         if lk + 0.00001 < new_lk {
+//             lk = new_lk;
+//             models = new_models;
+//             fractions = new_fractions;
+//         } else {
+//             break;
+//         }
+//     }
+//     lk
+// }
 
 // fn kmeans_f64<R: Rng>(data: &[Vec<f64>], k: u8, rng: &mut R) -> Vec<u8> {
 //     let mut assignments: Vec<_> = (0..data.len()).map(|_| rng.gen_range(0..k)).collect();

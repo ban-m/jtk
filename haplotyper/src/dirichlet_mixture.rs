@@ -8,7 +8,7 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
 // If the posterior prob is less than this value, it would be removed...
-const WEIGHT_FILTER: f64 = 0.00001;
+// const WEIGHT_FILTER: f64 = 0.00001;
 // If the likelihood does not improve by this value, stop iteration.
 const THRESHOLD: f64 = 0.0000000001;
 // Small  value, to avoid underflow in .ln().
@@ -32,7 +32,8 @@ impl DirichletMixtureCorrection for DataSet {
         }
         let posterior_distributions: Vec<_> = self
             .selected_chunks
-            .par_iter()
+            //.par_iter()
+            .iter()
             .map(|c| (c.id, c.cluster_num))
             .map(|(id, cluster_num)| correct_unit(self, id, cluster_num, config))
             .collect();
@@ -78,6 +79,7 @@ pub fn correct_unit(
     }
     let start = std::time::Instant::now();
     let (contexts, _up_units, _down_units) = convert_to_contexts(&reads, unit_id, config);
+    trace!("ReadClusteirng\t{}\tBEGIN", unit_id);
     let (mut new_clustering, _lk, new_k) = (1..=k)
         .map(|k| clustering(&contexts, unit_id, k, config))
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
@@ -313,7 +315,7 @@ pub fn clustering_inner<R: Rng>(
     };
     let id: u64 = rng.gen::<u64>() % 1_000_000;
     for (weights, ctx) in weights.iter().zip(contexts.iter()) {
-        trace!("{}\t{}", vec2str(&ctx.center), vec2str(weights));
+        trace!("{}\n{}\n", vec2str(weights), ctx);
     }
     let mut model = HMMixtureModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
@@ -408,7 +410,15 @@ impl HMMixtureModel {
             .zip(self.models.iter())
             .map(|(f, m)| f.ln() + m.lk(context))
             .collect();
-        logsumexp(&lks)
+        match logsumexp(&lks) {
+            Some(res) => res,
+            None => {
+                eprintln!("Model\t{}", self);
+                eprintln!("Query\t{}", context);
+                eprintln!("{:?}", lks);
+                panic!();
+            }
+        }
     }
     fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context], iteration: usize) {
         // E-step
@@ -455,7 +465,8 @@ impl HMMixtureModel {
                     .zip(alignments.iter())
                     .map(|(f, alns)| f.ln() + alns[idx].lk)
                     .collect();
-                let total = logsumexp(&lks);
+                let total = logsumexp(&lks)
+                    .unwrap_or_else(|| panic!("M\t{}\nQ\t{}\n{:?}", self, contexts[idx], lks));
                 lks.iter_mut().for_each(|x| *x = (*x - total).exp());
                 lks
             })
@@ -657,9 +668,32 @@ impl HMModel {
                     let del_probs: Vec<_> = (0..query.len())
                         .map(|i| forward[i][j] + dir.del() + backward[i][j + 1])
                         .collect();
-                    lks.push(logsumexp(&del_probs));
+                    let lk = logsumexp(&del_probs).unwrap_or_else(|| panic!("{:?}", del_probs));
+                    lks.push(lk);
                 }
-                let total = logsumexp(&lks);
+                let total = match logsumexp(&lks) {
+                    Some(res) => res,
+                    None => {
+                        eprintln!("{:?}", lks);
+                        for m in refr.iter() {
+                            eprintln!("{}", m);
+                        }
+                        let query: Vec<_> = query
+                            .iter()
+                            .map(|(u, x)| format!("{}:{}", u, vec2str(x)))
+                            .collect();
+                        eprintln!("{}", query.join("\t"));
+                        eprintln!("FW");
+                        for row in forward.iter() {
+                            eprintln!("{}", vec2str(row));
+                        }
+                        eprintln!("BK");
+                        for row in backward.iter() {
+                            eprintln!("{}", vec2str(row));
+                        }
+                        panic!()
+                    }
+                };
                 lks.iter_mut().for_each(|x| *x = (*x - total).exp());
                 lks
             })
@@ -866,6 +900,13 @@ impl Dirichlet {
                 _ => dirichlet_fit::fit_multiple_with(&[obs], weights, &mut optimizer, &param),
             };
         }
+        if param.iter().any(|x| x.is_nan()) {
+            for (x, w) in obs.iter().zip(weights.iter()) {
+                eprintln!("{}\t{}", w, vec2str(x.borrow()));
+            }
+            eprintln!("{:?}", param);
+            panic!();
+        }
         Self { dim, param }
     }
 }
@@ -884,16 +925,19 @@ impl std::fmt::Display for Dirichlet {
     }
 }
 
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        0.
-    } else if xs.len() == 1 {
-        xs[0]
-    } else {
+// LogSumExp(xs). Return if there's nan or inf.
+// If the vector is empty, it returns zero.
+fn logsumexp(xs: &[f64]) -> Option<f64> {
+    if xs.iter().all(|x| !x.is_nan()) && !xs.is_empty() {
+        // Never panics.
         let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-        assert!(sum >= 0., "{:?}->{}", xs, sum);
-        max + sum
+        // assert!(sum >= 0., "{:?}->{}", xs, sum);
+        Some(max + sum)
+    } else if xs.is_empty() {
+        Some(0f64)
+    } else {
+        None
     }
 }
 // Log(exp(x) + exp(y)) = x + Log(1+exp(y-x)).

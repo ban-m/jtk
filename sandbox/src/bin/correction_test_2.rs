@@ -8,12 +8,7 @@ fn main() -> std::io::Result<()> {
             .unwrap();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         let sum: f64 = node.posterior.iter().map(|x| x.exp()).sum();
-        assert!((1f64 - sum).abs() < 0.0001);
-        // let sum = logsumexp(&node.posterior);
-        // node.posterior
-        //     .iter_mut()
-        //     .for_each(|x| *x = (*x - sum).exp());
-        // assert!((1f64 - node.posterior.iter().sum::<f64>()).abs() < 0.000001);
+        assert!((1f64 - sum).abs() < 0.0001, "{:?}", node.posterior);
     }
     use haplotyper::read_clustering_sgd::*;
     let config = ReadClusteringConfig::default();
