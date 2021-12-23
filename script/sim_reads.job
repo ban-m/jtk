@@ -1,17 +1,10 @@
 #!/bin/bash
 set -ue
 ROOT=${PWD}
-for diploid in  dip-A-D dip-A-DS # dip-G-H dip-A-CS dip-A-C  #
+for diploid in dip-A-CS dip-A-D dip-A-DS dip-A-C 
 do
     output=${ROOT}/result/${diploid}/jtk
     mkdir -p ${output}
-    # cat /data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CCS*.fa \
-        #     > ${PWD}/data/${diploid}.CCS.fa
-    # rm -f ${output}/${diploid}.CCS.log
-    # qsub -j y -o ${output}/${diploid}.CCS.log \
-    #      ./script/pipeline.sh \
-    #      ${PWD}/data/${diploid}.CCS.fa \
-    #      ${output}/${diploid}.CCS
     reads=/data/hacone/randseq/synthetic_diploids/diploids/${diploid}.CLR.fa
     if [ -e ${output}/${diploid}.CLR.log ]
     then

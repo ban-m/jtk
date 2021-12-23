@@ -7,12 +7,11 @@ use rand_distr::{self, Distribution};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
-// If the posterior prob is less than this value, it would be removed...
-// const WEIGHT_FILTER: f64 = 0.00001;
+const LOG_WEIGHT_FILTER: f64 = -50f64;
 // If the likelihood does not improve by this value, stop iteration.
 const THRESHOLD: f64 = 0.0000000001;
 // Small  value, to avoid underflow in .ln().
-const SMALL_VALUE: f64 = 0.00000000000000001f64;
+const SMALL_VALUE: f64 = 0.0000000000000000000001f64;
 pub trait DirichletMixtureCorrection {
     fn correct_clustering(&mut self, config: &ClusteringConfig);
 }
@@ -35,7 +34,7 @@ impl DirichletMixtureCorrection for DataSet {
             .par_iter()
             // .iter()
             .map(|c| (c.id, c.cluster_num))
-            // .filter(|&(id, _)| id == 382)
+            // .filter(|&(id, _)| id == 341)
             .map(|(id, cluster_num)| correct_unit(self, id, cluster_num, config))
             .collect();
         let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
@@ -315,10 +314,7 @@ pub fn clustering_inner<R: Rng>(
         let dir = rand_distr::Dirichlet::new(&vec![1.5f64; k]).unwrap();
         contexts.iter().map(|_| dir.sample(rng)).collect()
     };
-    // let id: u64 = rng.gen::<u64>() % 1_000_000;
-    // for (weights, ctx) in weights.iter().zip(contexts.iter()) {
-    //     trace!("{}\n{}\n", vec2str(weights), ctx);
-    // }
+    let id: u64 = rng.gen::<u64>() % 1_000_000;
     let mut model = HMMixtureModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
     // trace!("CORRECT\tModel\t{}\n{}", id, model);
@@ -412,16 +408,18 @@ impl HMMixtureModel {
             .zip(self.models.iter())
             .map(|(f, m)| f.ln() + m.lk(context))
             .collect();
-        match logsumexp(&lks) {
-            Some(res) => res,
-            None => {
-                eprintln!("Model\t{}", self);
-                eprintln!("Query\t{}", context);
-                eprintln!("{:?}", lks);
-                panic!();
-            }
-        }
+        logsumexp(&lks)
+        // match logsumexp(&lks) {
+        //     Some(res) => res,
+        //     None => {
+        //         eprintln!("Model\t{}", self);
+        //         eprintln!("Query\t{}", context);
+        //         eprintln!("{:?}", lks);
+        //         panic!();
+        //     }
+        // }
     }
+    #[allow(dead_code)]
     fn q_value(&self, weights: &[f64], context: &Context, align_expt: &[&AlignInfo]) -> f64 {
         assert_eq!(weights.len(), align_expt.len());
         self.fractions
@@ -432,6 +430,7 @@ impl HMMixtureModel {
             .map(|(((f, model), w), alns)| w * (f.ln() + model.q_value(context, alns)))
             .sum()
     }
+    #[allow(dead_code)]
     fn calc_q_value(
         &self,
         weights: &[Vec<f64>],
@@ -448,65 +447,50 @@ impl HMMixtureModel {
             })
             .sum()
     }
-    fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context], iteration: usize) {
+    fn update(&mut self, weights: &mut Vec<Vec<f64>>, contexts: &[Context], iteration: usize) {
         // E-step
         // Posterior prob and alignment expectation.
-        let (posterior_prob, align_expt) = self.e_step(contexts);
-        // for (i, post) in posterior_prob.iter().enumerate() {
-        //     let post: Vec<_> = post.iter().map(|x| x.log10()).collect();
-        //     trace!("{}\t{}", i, vec2str(&post));
-        // }
-        for (ws, posterior) in weights.iter_mut().zip(posterior_prob) {
-            *ws = posterior;
-        }
+        // let start = std::time::Instant::now();
+        let align_expt = self.e_step(contexts, weights);
+        // let estep = std::time::Instant::now();
         // M-step
         // Calc current Q-function(E[log P(X,Z|param)]) value.
         // let q_value = self.calc_q_value(&weights, contexts, &align_expt);
         // trace!("CORRECT\tQVAL\t{}\t{}", iteration, q_value);
         self.fractions = sum_and_normalize(&weights);
-        for (cl, (model, alns)) in self.models.iter_mut().zip(align_expt.iter()).enumerate() {
+        let align_expt = align_expt.chunks(contexts.len());
+        for (cl, (model, alns)) in self.models.iter_mut().zip(align_expt).enumerate() {
             let ws: Vec<_> = weights.iter().map(|ws| ws[cl]).collect();
             model.update(&ws, contexts, alns, iteration);
-            // let (mut ws, mut ctces, mut alns) = (vec![], vec![], vec![]);
-            // for ((weight, ctx), align) in weights
-            //     .iter()
-            //     .zip(contexts.iter())
-            //     .zip(align_expt[cl].iter())
-            // .filter(|&((ws, _), _)| WEIGHT_FILTER < ws[cl])
-            // {
-            // ws.push(weight[cl]);
-            // ctces.push(ctx);
-            // alns.push(align);
-            // }
-            // assert_eq!(ws.len(), ctces.len());
-            // assert_eq!(ws.len(), alns.len());
-            // model.update(&ws, &ctces, &alns, iteration);
         }
+        // let mstep = std::time::Instant::now();
+        // trace!(
+        //     "DURATION\t{}\t{}",
+        //     (mstep - estep).as_micros(),
+        //     (estep - start).as_micros()
+        // );
         // let q_value = self.calc_q_value(&weights, contexts, &align_expt);
         // trace!("CORRECT\tQVAL\t{}\t{}", iteration, q_value);
     }
     // 2nd return value: the expectation of aligning information of each cluster k.
-    fn e_step(&self, contexts: &[Context]) -> (Vec<Vec<f64>>, Vec<Vec<AlignInfo>>) {
-        let alignments: Vec<Vec<_>> = self
-            .models
-            .iter()
-            .map(|m| contexts.iter().map(|ctx| m.align(ctx)).collect())
-            .collect();
-        let posterior: Vec<_> = (0..contexts.len())
-            .map(|idx| {
-                let mut lks: Vec<_> = self
-                    .fractions
-                    .iter()
-                    .zip(alignments.iter())
-                    .map(|(f, alns)| f.ln() + alns[idx].lk)
-                    .collect();
-                let total = logsumexp(&lks)
-                    .unwrap_or_else(|| panic!("M\t{}\nQ\t{}\n{:?}", self, contexts[idx], lks));
-                lks.iter_mut().for_each(|x| *x = (*x - total).exp());
-                lks
-            })
-            .collect();
-        (posterior, alignments)
+    fn e_step(&self, contexts: &[Context], weights: &mut Vec<Vec<f64>>) -> Vec<AlignInfo> {
+        let mut alignments = Vec::with_capacity(contexts.len() * self.k + 1);
+        let mut posterior = vec![0f64; contexts.len() * self.k];
+        for (cl, (m, f)) in self.models.iter().zip(self.fractions.iter()).enumerate() {
+            let begin = contexts.len() * cl;
+            let f = f.ln();
+            alignments.extend(contexts.iter().map(|ctx| m.align(ctx)));
+            for (idx, aln) in alignments[begin..].iter().enumerate() {
+                posterior[self.k * idx + cl] = aln.lk + f;
+            }
+        }
+        for (ws, post) in weights.iter_mut().zip(posterior.chunks(self.k)) {
+            let total = logsumexp(&post);
+            ws.iter_mut()
+                .zip(post)
+                .for_each(|(w, &p)| *w = (p - total).exp());
+        }
+        alignments
     }
 }
 
@@ -662,45 +646,29 @@ impl HMModel {
             .sum();
         up_lk + center_lk + down_lk
     }
-
     fn lk(&self, ctx: &Context) -> f64 {
         let up_forward = Self::forward(&self.upstream, &ctx.upstream);
-        let up_lk = up_forward[ctx.upstream.len()][self.upstream_len];
         let down_forward = Self::forward(&self.downstream, &ctx.downstream);
-        let down_lk = down_forward[ctx.downstream.len()][self.downstream_len];
+        let up_lk = up_forward.last().and_then(|xs| xs.last()).unwrap();
+        let down_lk = down_forward.last().and_then(|xs| xs.last()).unwrap();
         let center = self.center.lk(&ctx.center);
         up_lk + center + down_lk
     }
     fn align(&self, ctx: &Context) -> AlignInfo {
         let up_forward = Self::forward(&self.upstream, &ctx.upstream);
         let up_backward = Self::backward(&self.upstream, &ctx.upstream);
+        let upstream = Self::to_align(&self.upstream, &ctx.upstream, &up_forward, &up_backward);
+        let up_lk = up_forward.last().and_then(|xs| xs.last()).unwrap();
         let down_forward = Self::forward(&self.downstream, &ctx.downstream);
         let down_backward = Self::backward(&self.downstream, &ctx.downstream);
-        let up_lk = up_forward[ctx.upstream.len()][self.upstream_len];
-        let down_lk = down_forward[ctx.downstream.len()][self.downstream_len];
-        let center = self.center.lk(&ctx.center);
-        let upstream = Self::to_align(&self.upstream, &ctx.upstream, &up_forward, &up_backward);
+        let down_lk = down_forward.last().and_then(|xs| xs.last()).unwrap();
         let downstream = Self::to_align(
             &self.downstream,
             &ctx.downstream,
             &down_forward,
             &down_backward,
         );
-        // DUMP
-        // eprintln!("{}", ctx);
-        // eprintln!("DOWN_FORWARD");
-        // for (i, row) in down_forward.iter().enumerate() {
-        //     eprintln!("{}\t{}", i, vec2str(row));
-        // }
-        // eprintln!("DOWN_BACKWARD");
-        // for (i, row) in down_backward.iter().enumerate() {
-        //     eprintln!("{}\t{}", i, vec2str(row));
-        // }
-        // eprintln!("ALIGN");
-        // for (i, row) in downstream.iter().enumerate() {
-        //     eprintln!("{}\t{}", i, vec2str(row));
-        // }
-        // eprintln!();
+        let center = self.center.lk(&ctx.center);
         AlignInfo {
             lk: up_lk + center + down_lk,
             upstream,
@@ -708,17 +676,16 @@ impl HMModel {
         }
     }
     fn forward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)]) -> DP {
-        // Init
-        let mut dp = vec![vec![0f64; refr.len() + 1]; query.len() + 1];
-        for i in 1..query.len() + 1 {
-            dp[i][0] = NEG_LARGE;
+        let mut dp = vec![vec![0f64; query.len() + 1]; refr.len() + 1];
+        for j in 1..query.len() + 1 {
+            dp[0][j] = NEG_LARGE;
         }
-        for j in 1..refr.len() + 1 {
-            dp[0][j] = dp[0][j - 1] + refr[j - 1].del();
+        for i in 1..refr.len() + 1 {
+            dp[i][0] = dp[i - 1][0] + refr[i - 1].del();
         }
-        for (i, obs) in query.iter().enumerate().map(|(i, x)| (i + 1, x)) {
-            for (j, dir) in refr.iter().enumerate().map(|(j, x)| (j + 1, x)) {
-                let del_trans = dp[i][j - 1] + dir.del();
+        for (i, dir) in refr.iter().enumerate().map(|(i, x)| (i + 1, x)) {
+            for (j, obs) in query.iter().enumerate().map(|(j, x)| (j + 1, x)) {
+                let del_trans = dp[i - 1][j] + dir.del();
                 let match_trans = dp[i - 1][j - 1] + dir.mat(obs);
                 dp[i][j] = logsumexp2(del_trans, match_trans);
             }
@@ -726,17 +693,16 @@ impl HMModel {
         dp
     }
     fn backward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)]) -> DP {
-        // Init
-        let mut dp = vec![vec![0f64; refr.len() + 1]; query.len() + 1];
-        for i in 0..query.len() + 1 {
-            dp[i][refr.len()] = NEG_LARGE;
+        let mut dp = vec![vec![0f64; query.len() + 1]; refr.len() + 1];
+        for j in 0..query.len() + 1 {
+            dp[refr.len()][j] = NEG_LARGE;
         }
-        for j in 0..refr.len() + 1 {
-            dp[query.len()][j] = 0f64;
+        for i in 0..refr.len() + 1 {
+            dp[i][query.len()] = 0f64;
         }
-        for (i, obs) in query.iter().enumerate().rev() {
-            for (j, dir) in refr.iter().enumerate().rev() {
-                let del_trans = dp[i][j + 1] + dir.del();
+        for (i, dir) in refr.iter().enumerate().rev() {
+            for (j, obs) in query.iter().enumerate().rev() {
+                let del_trans = dp[i + 1][j] + dir.del();
                 let match_trans = dp[i + 1][j + 1] + dir.mat(obs);
                 dp[i][j] = logsumexp2(del_trans, match_trans);
             }
@@ -750,54 +716,99 @@ impl HMModel {
         backward: &DP,
     ) -> Vec<Vec<f64>> {
         refr.iter()
-            .enumerate()
-            .map(|(j, dir)| {
+            .zip(forward.iter())
+            .zip(backward.iter().skip(1))
+            .map(|((dir, forward), backward)| {
                 let mut lks: Vec<_> = query
                     .iter()
-                    .enumerate()
-                    .map(|(i, obs)| forward[i][j] + dir.mat(obs) + backward[i + 1][j + 1])
+                    .zip(forward.iter())
+                    .zip(backward.iter().skip(1))
+                    .map(|((obs, f), b)| f + dir.mat(obs) + b)
                     .collect();
-                // Push deletion
                 {
-                    let del_probs: Vec<_> = (0..query.len() + 1)
-                        .map(|i| forward[i][j] + dir.del() + backward[i][j + 1])
+                    let del_probs: Vec<_> = forward
+                        .iter()
+                        .zip(backward.iter())
+                        .map(|(f, b)| f + dir.del() + b)
                         .collect();
-                    let lk = logsumexp(&del_probs).unwrap_or_else(|| panic!("{:?}", del_probs));
+                    let lk = logsumexp(&del_probs);
                     lks.push(lk);
                 }
-                let total = match logsumexp(&lks) {
-                    Some(res) => res,
-                    None => {
-                        eprintln!("{:?}", lks);
-                        for r in refr.iter() {
-                            for (i, obs) in query.iter().enumerate() {
-                                eprintln!("{}\t{}\t{:.3}", r, i, r.mat(obs));
-                            }
-                        }
-                        for m in refr.iter() {
-                            eprintln!("MODEL\t{}", m);
-                        }
-                        let query: Vec<_> = query
-                            .iter()
-                            .map(|(u, x)| format!("{}:{}", u, vec2str(x)))
-                            .collect();
-                        eprintln!("{}", query.join("\t"));
-                        eprintln!("FW");
-                        for row in forward.iter() {
-                            eprintln!("{}", vec2str(row));
-                        }
-                        eprintln!("BK");
-                        for row in backward.iter() {
-                            eprintln!("{}", vec2str(row));
-                        }
-                        panic!()
-                    }
-                };
+                let total = logsumexp(&lks);
                 lks.iter_mut().for_each(|x| *x = (*x - total).exp());
                 lks
             })
             .collect()
     }
+    // fn forward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)]) -> DP {
+    //     // Init
+    //     let mut dp = vec![vec![0f64; refr.len() + 1]; query.len() + 1];
+    //     for i in 1..query.len() + 1 {
+    //         dp[i][0] = NEG_LARGE;
+    //     }
+    //     for j in 1..refr.len() + 1 {
+    //         dp[0][j] = dp[0][j - 1] + refr[j - 1].del();
+    //     }
+    //     for (i, obs) in query.iter().enumerate().map(|(i, x)| (i + 1, x)) {
+    //         for (j, dir) in refr.iter().enumerate().map(|(j, x)| (j + 1, x)) {
+    //             let del_trans = dp[i][j - 1] + dir.del();
+    //             let match_trans = dp[i - 1][j - 1] + dir.mat(obs);
+    //             dp[i][j] = logsumexp2(del_trans, match_trans);
+    //         }
+    //     }
+    //     dp
+    // }
+    // fn backward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)]) -> DP {
+    //     // Init
+    //     let mut dp = vec![vec![0f64; refr.len() + 1]; query.len() + 1];
+    //     for i in 0..query.len() + 1 {
+    //         dp[i][refr.len()] = NEG_LARGE;
+    //     }
+    //     for j in 0..refr.len() + 1 {
+    //         dp[query.len()][j] = 0f64;
+    //     }
+    //     for (i, obs) in query.iter().enumerate().rev() {
+    //         for (j, dir) in refr.iter().enumerate().rev() {
+    //             let del_trans = dp[i][j + 1] + dir.del();
+    //             let match_trans = dp[i + 1][j + 1] + dir.mat(obs);
+    //             dp[i][j] = logsumexp2(del_trans, match_trans);
+    //         }
+    //     }
+    //     dp
+    // }
+    // fn to_align(
+    //     refr: &[DirichletMixture],
+    //     query: &[(usize, Vec<f64>)],
+    //     forward: &DP,
+    //     backward: &DP,
+    // ) -> Vec<Vec<f64>> {
+    //     refr.iter()
+    //         .enumerate()
+    //         .map(|(j, dir)| {
+    //             let mut lks: Vec<_> = query
+    //                 .iter()
+    //                 .enumerate()
+    //                 .map(|(i, obs)| forward[i][j] + dir.mat(obs) + backward[i + 1][j + 1])
+    //                 .collect();
+    //             // Push deletion
+    //             {
+    //                 let del_probs: Vec<_> = (0..query.len() + 1)
+    //                     .map(|i| forward[i][j] + dir.del() + backward[i][j + 1])
+    //                     .collect();
+    //                 // let lk = logsumexp(&del_probs).unwrap_or_else(|| panic!("{:?}", del_probs));
+    //                 let lk = logsumexp(&del_probs);
+    //                 lks.push(lk);
+    //             }
+    //             let total = logsumexp(&lks);
+    //             // let total = match logsumexp(&lks) {
+    //             //     Some(res) => res,
+    //             //     None => panic!("{:?}", lks),
+    //             // };
+    //             lks.iter_mut().for_each(|x| *x = (*x - total).exp());
+    //             lks
+    //         })
+    //         .collect()
+    // }
     fn update<A: std::borrow::Borrow<AlignInfo>, C: std::borrow::Borrow<Context>>(
         &mut self,
         weights: &[f64],
@@ -860,7 +871,7 @@ impl HMModel {
                 .zip(weights.iter())
                 .map(|(alns, w)| w * alns.last().unwrap())
                 .sum();
-            dir.del_prob = (del_ws / total_ws).max(SMALL_VALUE);
+            dir.set_del_prob(del_ws / total_ws);
             // First re-estimate parameters on categorical distributions.
             let mut fraction = vec![SMALL_VALUE; dir.dirichlets.len()];
             for ((w, ctx), alns) in weights.iter().zip(contexts.iter()).zip(alns.clone()) {
@@ -872,18 +883,20 @@ impl HMModel {
             dir.dirichlets
                 .iter_mut()
                 .zip(fraction)
-                .for_each(|(x, f)| x.0 = f / total);
+                .for_each(|(x, f)| x.0 = (f / total).ln());
             // Then, re-estimate parameters on dirichlet distirbution on high-frequent unit.
-            for (target, (_, dir)) in dir.dirichlets.iter_mut().enumerate()
-            //.filter(|(_, (fr, dir))| WEIGHT_FILTER < *fr && 1 < dir.dim)
-            {
-                if dir.dim <= 1 {
+            for (target, (fr, dir)) in dir.dirichlets.iter_mut().enumerate() {
+                // APPROX: WEIGHT FILTER.
+                if dir.dim <= 1 || *fr < LOG_WEIGHT_FILTER {
+                    // if dir.dim <= 1 {
                     continue;
                 }
                 let (weights, dataset): (Vec<_>, Vec<_>) = weights
                     .iter()
                     .zip(contexts.iter())
                     .zip(alns.clone())
+                    // APPROX: WEIGHT FILTER.
+                    .filter(|&((&w, _), _)| LOG_WEIGHT_FILTER < w.ln())
                     .filter_map(|((&w, ctx), alns)| {
                         let (ws, obss): (Vec<f64>, Vec<_>) = ctx
                             .iter()
@@ -908,7 +921,10 @@ impl HMModel {
 }
 
 struct DirichletMixture {
+    // **log deletion prob**
     del_prob: f64,
+    mat_prob: f64,
+    // **(ln cluster composition, dirichlet) **.
     dirichlets: Vec<(f64, Dirichlet)>,
 }
 
@@ -928,19 +944,23 @@ impl std::fmt::Display for DirichletMixture {
 impl DirichletMixture {
     // Return log del_prob
     fn del(&self) -> f64 {
-        self.del_prob.ln()
+        self.del_prob
     }
     // Return log (1-e)Dir(prob|param).
     fn mat(&self, &(unit, ref prob): &(usize, Vec<f64>)) -> f64 {
         let &(frac, ref dir) = &self.dirichlets[unit];
-        (1f64 - self.del_prob).ln() + frac.ln() + dir.lk(prob)
+        self.mat_prob + frac + dir.lk(prob)
+        // self.mat_prob + frac.ln() + dir.lk(prob)
+    }
+    fn set_del_prob(&mut self, del_prob: f64) {
+        self.del_prob = del_prob.max(SMALL_VALUE).ln();
+        self.mat_prob = (1f64 - del_prob).max(SMALL_VALUE).ln();
     }
     // Create new instance from the given data.
     fn new(observed: &[(usize, f64, &[f64])], dims: &[usize]) -> Self {
         let del_prob = 0.1;
         let mut post_probs = vec![vec![]; dims.len()];
         let mut prob_weights = vec![vec![]; dims.len()];
-        // TODO: Maybe 1 would be better?
         let mut fractions = vec![SMALL_VALUE; dims.len()];
         for &(unit, w, prob) in observed {
             fractions[unit] += w;
@@ -955,11 +975,14 @@ impl DirichletMixture {
             .zip(dims.iter())
             .map(|(((probs, ws), fr), &dim)| {
                 assert_eq!(probs.len(), ws.len());
-                (fr / sum, Dirichlet::new(probs, ws, dim))
+                let fr = (fr / sum).ln();
+                (fr, Dirichlet::new(probs, ws, dim))
+                //(fr / sum, Dirichlet::new(probs, ws, dim))
             })
             .collect();
         Self {
-            del_prob,
+            mat_prob: (1f64 - del_prob).ln(),
+            del_prob: del_prob.ln(),
             dirichlets,
         }
     }
@@ -1024,23 +1047,52 @@ impl std::fmt::Display for Dirichlet {
 
 // LogSumExp(xs). Return if there's nan or inf.
 // If the vector is empty, it returns zero.
-fn logsumexp(xs: &[f64]) -> Option<f64> {
-    if xs.iter().all(|x| !x.is_nan()) && !xs.is_empty() {
-        // Never panics.
-        let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-        // assert!(sum >= 0., "{:?}->{}", xs, sum);
-        Some(max + sum)
-    } else if xs.is_empty() {
-        Some(0f64)
-    } else {
-        None
+// APPROX MARK: this is an approximation.
+fn logsumexp(xs: &[f64]) -> f64 {
+    match xs.len() {
+        0 => 0f64,
+        1 => xs[0],
+        2 => logsumexp2(xs[0], xs[1]),
+        _ => {
+            let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
+            let sum = xs
+                .iter()
+                .filter(|&x| -20f64 < x - max)
+                .map(|x| (x - max).exp())
+                .sum::<f64>()
+                .ln();
+            max + sum
+        }
     }
 }
+
+// fn logsumexp(xs: &[f64]) -> Option<f64> {
+//     match xs.len() {
+//         0 => Some(0f64),
+//         1 => Some(xs[0]),
+//         2 => Some(logsumexp2(xs[0], xs[1])),
+//         // _ if xs.iter().all(|x| !x.is_nan()) => {
+//         _ => {
+//             let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
+//             let sum = xs
+//                 .iter()
+//                 .filter(|&x| -20f64 < x - max)
+//                 .map(|x| (x - max).exp())
+//                 .sum::<f64>()
+//                 .ln();
+//             Some(max + sum)
+//         } // _ => None,
+//     }
+// }
 // Log(exp(x) + exp(y)) = x + Log(1+exp(y-x)).
+// APPROX MARK: this is an approximation.
 fn logsumexp2(x: f64, y: f64) -> f64 {
     let (x, y) = (x.max(y), x.min(y));
-    x + (1f64 + (y - x).exp()).ln()
+    if -20f64 < y - x {
+        x + (1f64 + (y - x).exp()).ln()
+    } else {
+        x
+    }
 }
 
 #[cfg(test)]

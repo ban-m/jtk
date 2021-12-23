@@ -1,5 +1,9 @@
 #!/bin/bash
 set -ue
+FLYE=${PWD}/script/flye.sh
+CANU=${PWD}/script/canu.sh
+PHASE=${PWD}/script/phasing_w_reference.sh
+
 # data=/grid/yoshimura/HG002/PacBio_CCS_15kb_20kb_chemistry2/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.fasta
 # OUTPUT=${PWD}/result/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
 # mkdir -p ${OUTPUT}
@@ -8,29 +12,49 @@ set -ue
 #      ${data} \
 #      ${OUTPUT}/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
 
-data=/data/hacone/MHC-KIR/split/Ashkenazi_Son.MHC.fa
-OUTPUT=${PWD}/result/Ashkenazi_Son.MHC
-mkdir -p ${OUTPUT}/jtk
-qsub -o ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out -j y\
-     ./script/pipeline_clr.sh \
-     ${data} \
-     ${OUTPUT}/jtk/Ashkenazi_Son.MHC.out
+## HG002 CLR
+data=${PWD}/data/hg002_filtered/9972589_9972588_hg002_mhc.fa
+OUTPUT=${PWD}/result/hg002
+# mkdir -p ${OUTPUT}/jtk
+# qsub -q centos7.q -o ${OUTPUT}/jtk/hg002.out -j y\
+#      ./script/pipeline_clr.sh \
+#     ${data} \
+#     ${OUTPUT}/jtk/hg002
+rm -rf ${OUTPUT}/phasing/
+mkdir -p ${OUTPUT}/phasing/
+REGION="chr6:28573494-33272792"
+REFERENCE=${OUTPUT}/phasing/reference.fa
+samtools faidx /grid/ban-m/human_genome/chm13.draft_v1.1.fasta ${REGION} > ${REFERENCE}
+qsub -q centos7.q \
+     -o ${OUTPUT}/phasing/log -j y ${PHASE} ${data} ${REFERENCE} ${OUTPUT}/phasing
 
+# mkdir -p ${OUTPUT}/flye
+# qsub -o ${OUTPUT}/flye/hg002.out -j y\
+#      ${FLYE} ${data} 5M ${OUTPUT}/flye
 
-## Make a little more units.
+# CANU=${PWD}/script/canu.sh
+# mkdir -p ${OUTPUT}/canu
+# bash ${CANU} ${data} 5M ${OUTPUT}/canu 2> ${OUTPUT}/canu/log
+
 data=${HOME}/work/arabidopsis_filtering/result/ler_kyo.fasta
 OUTPUT=${PWD}/result/ler_kyo/
-mkdir -p ${OUTPUT}/jtk
-qsub -o ${OUTPUT}/jtk/ler_kyo.out -j y \
-     ./script/pipeline_clr.sh\
-     ${data} \
-     ${OUTPUT}/jtk/ler_kyo \
-     30000
 
-# FLYE=${PWD}/script/flye.sh
-# mkdir -p ${OUTPUT}/flye
-# qsub -o ${OUTPUT}/flye/Ashkenazi_Son.MHC.out -j y\
-#      ${FLYE} ${data} 5M ${OUTPUT}/flye
+rm -rf ${OUTPUT}/phasing/
+mkdir -p ${OUTPUT}/phasing/
+REGION="3:1000000-9000000"
+REFERENCE=${OUTPUT}/phasing/reference.fa
+samtools faidx /data/ban-m/a_thaliana/genome/TAIR10_chr_all.fa ${REGION} > ${REFERENCE}
+qsub -q centos7.q \
+     -o ${OUTPUT}/phasing/log -j y ${PHASE} ${data} ${REFERENCE} ${OUTPUT}/phasing
+
+# mkdir -p ${OUTPUT}/jtk
+# qsub -q centos7.q -o ${OUTPUT}/jtk/ler_kyo.out -j y \
+#    ./script/pipeline_clr.sh\
+#     ${data} \
+#     ${OUTPUT}/jtk/ler_kyo \
+#     30000
+
+
 
 
 # data=/work/ryought/mhc/data/KIR/filter/all.KIR.fa
