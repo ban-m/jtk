@@ -32,10 +32,10 @@ impl DirichletMixtureCorrection for DataSet {
         }
         let posterior_distributions: Vec<_> = self
             .selected_chunks
-            // .par_iter()
-            .iter()
+            .par_iter()
+            // .iter()
             .map(|c| (c.id, c.cluster_num))
-            .filter(|&(id, _)| id == 382)
+            // .filter(|&(id, _)| id == 382)
             .map(|(id, cluster_num)| correct_unit(self, id, cluster_num, config))
             .collect();
         let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
@@ -80,18 +80,18 @@ pub fn correct_unit(
     }
     let start = std::time::Instant::now();
     let (contexts, _up_units, _down_units) = convert_to_contexts(&reads, unit_id, config);
-    trace!("ReadClusteirng\t{}\tBEGIN", unit_id);
-    let (mut new_clustering, lk, new_k) = (1..=k)
+    debug!("ReadClusteirng\t{}\tBEGIN", unit_id);
+    let (mut new_clustering, _lk, new_k) = (1..=k)
         .map(|k| clustering(&contexts, unit_id, k, config))
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
         .unwrap();
-    trace!("ReadClustering\tFinal\t{}\t{}\t{:.4}", unit_id, new_k, lk);
+    // debug!("ReadClustering\tFinal\t{}\t{}\t{:.4}", unit_id, new_k, lk);
     let pad_len = k.saturating_sub(new_k);
     for (_, _, prob) in new_clustering.iter_mut() {
         prob.extend(std::iter::repeat(0f64).take(pad_len));
     }
     let end = std::time::Instant::now();
-    trace!("ReadClustering\t{}\t{}", unit_id, (end - start).as_secs());
+    debug!("ReadClustering\t{}\t{}", unit_id, (end - start).as_secs());
     new_clustering
 }
 
@@ -315,26 +315,26 @@ pub fn clustering_inner<R: Rng>(
         let dir = rand_distr::Dirichlet::new(&vec![1.5f64; k]).unwrap();
         contexts.iter().map(|_| dir.sample(rng)).collect()
     };
-    let id: u64 = rng.gen::<u64>() % 1_000_000;
-    for (weights, ctx) in weights.iter().zip(contexts.iter()) {
-        trace!("{}\n{}\n", vec2str(weights), ctx);
-    }
+    // let id: u64 = rng.gen::<u64>() % 1_000_000;
+    // for (weights, ctx) in weights.iter().zip(contexts.iter()) {
+    //     trace!("{}\n{}\n", vec2str(weights), ctx);
+    // }
     let mut model = HMMixtureModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
-    trace!("CORRECT\tModel\t{}\n{}", id, model);
-    trace!("CORRECT\tLikelihood\t{}\t0\t{}", id, lk);
-    for t in 1..200 {
+    // trace!("CORRECT\tModel\t{}\n{}", id, model);
+    // trace!("CORRECT\tLikelihood\t{}\t0\t{}", id, lk);
+    for t in 1.. {
         // trace!("CORRECT\tModel\t{}\t{}\n{}", t, id, model);
         model.update(&mut weights, contexts, t);
         let next_lk = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
-        trace!("CORRECT\tLikelihood\t{}\t{}\t{}", id, t, next_lk);
+        // trace!("CORRECT\tLikelihood\t{}\t{}\t{}", id, t, next_lk);
         if (next_lk - lk) < THRESHOLD {
             break;
         } else {
             lk = next_lk;
         }
     }
-    trace!("CORRECT\tModel\t{}\n{}", id, model);
+    // trace!("CORRECT\tModel\t{}\n{}", id, model);
     let predictions: Vec<_> = contexts
         .iter()
         .zip(weights.into_iter())
@@ -422,6 +422,32 @@ impl HMMixtureModel {
             }
         }
     }
+    fn q_value(&self, weights: &[f64], context: &Context, align_expt: &[&AlignInfo]) -> f64 {
+        assert_eq!(weights.len(), align_expt.len());
+        self.fractions
+            .iter()
+            .zip(self.models.iter())
+            .zip(weights.iter())
+            .zip(align_expt.iter())
+            .map(|(((f, model), w), alns)| w * (f.ln() + model.q_value(context, alns)))
+            .sum()
+    }
+    fn calc_q_value(
+        &self,
+        weights: &[Vec<f64>],
+        contexts: &[Context],
+        align_expt: &[Vec<AlignInfo>],
+    ) -> f64 {
+        contexts
+            .iter()
+            .zip(weights.iter())
+            .enumerate()
+            .map(|(i, (ctx, ws))| {
+                let alns: Vec<_> = align_expt.iter().map(|alns| &alns[i]).collect();
+                self.q_value(ws, ctx, &alns)
+            })
+            .sum()
+    }
     fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context], iteration: usize) {
         // E-step
         // Posterior prob and alignment expectation.
@@ -430,27 +456,34 @@ impl HMMixtureModel {
         //     let post: Vec<_> = post.iter().map(|x| x.log10()).collect();
         //     trace!("{}\t{}", i, vec2str(&post));
         // }
-        // M-step
-        self.fractions = sum_and_normalize(&posterior_prob);
-        for (cl, model) in self.models.iter_mut().enumerate() {
-            let (mut ws, mut ctces, mut alns) = (vec![], vec![], vec![]);
-            for ((weight, ctx), align) in weights
-                .iter()
-                .zip(contexts.iter())
-                .zip(align_expt[cl].iter())
-            // .filter(|&((ws, _), _)| WEIGHT_FILTER < ws[cl])
-            {
-                ws.push(weight[cl]);
-                ctces.push(ctx);
-                alns.push(align);
-            }
-            assert_eq!(ws.len(), ctces.len());
-            assert_eq!(ws.len(), alns.len());
-            model.update(&ws, &ctces, &alns, iteration);
-        }
         for (ws, posterior) in weights.iter_mut().zip(posterior_prob) {
             *ws = posterior;
         }
+        // M-step
+        // Calc current Q-function(E[log P(X,Z|param)]) value.
+        // let q_value = self.calc_q_value(&weights, contexts, &align_expt);
+        // trace!("CORRECT\tQVAL\t{}\t{}", iteration, q_value);
+        self.fractions = sum_and_normalize(&weights);
+        for (cl, (model, alns)) in self.models.iter_mut().zip(align_expt.iter()).enumerate() {
+            let ws: Vec<_> = weights.iter().map(|ws| ws[cl]).collect();
+            model.update(&ws, contexts, alns, iteration);
+            // let (mut ws, mut ctces, mut alns) = (vec![], vec![], vec![]);
+            // for ((weight, ctx), align) in weights
+            //     .iter()
+            //     .zip(contexts.iter())
+            //     .zip(align_expt[cl].iter())
+            // .filter(|&((ws, _), _)| WEIGHT_FILTER < ws[cl])
+            // {
+            // ws.push(weight[cl]);
+            // ctces.push(ctx);
+            // alns.push(align);
+            // }
+            // assert_eq!(ws.len(), ctces.len());
+            // assert_eq!(ws.len(), alns.len());
+            // model.update(&ws, &ctces, &alns, iteration);
+        }
+        // let q_value = self.calc_q_value(&weights, contexts, &align_expt);
+        // trace!("CORRECT\tQVAL\t{}\t{}", iteration, q_value);
     }
     // 2nd return value: the expectation of aligning information of each cluster k.
     fn e_step(&self, contexts: &[Context]) -> (Vec<Vec<f64>>, Vec<Vec<AlignInfo>>) {
@@ -478,7 +511,16 @@ impl HMMixtureModel {
 }
 
 fn vec2str(xs: &[f64]) -> String {
-    let xs: Vec<_> = xs.iter().map(|x| format!("{:.2}", x)).collect();
+    let xs: Vec<_> = xs
+        .iter()
+        .map(|&x| {
+            if x < NEG_LARGE + 100f64 {
+                format!("  !   ")
+            } else {
+                format!("{:6.1}", x)
+            }
+        })
+        .collect();
     xs.join(",")
 }
 
@@ -586,6 +628,41 @@ impl HMModel {
             downstream,
         }
     }
+    #[allow(dead_code)]
+    fn q_value(&self, ctx: &Context, alns: &AlignInfo) -> f64 {
+        let up_lk: f64 = self
+            .upstream
+            .iter()
+            .zip(alns.upstream.iter())
+            .map(|(dir, up)| {
+                assert_eq!(up.len(), ctx.upstream.len() + 1);
+                let mat_lk: f64 = up
+                    .iter()
+                    .zip(ctx.upstream.iter())
+                    .map(|(a, obs)| a * dir.mat(obs))
+                    .sum();
+                let del_lk = up.last().unwrap() * dir.del();
+                mat_lk + del_lk
+            })
+            .sum();
+        let center_lk = self.center.lk(&ctx.center);
+        let down_lk: f64 = self
+            .downstream
+            .iter()
+            .zip(alns.downstream.iter())
+            .map(|(dir, down)| {
+                let mat_lk: f64 = down
+                    .iter()
+                    .zip(ctx.downstream.iter())
+                    .map(|(a, obs)| a * dir.mat(obs))
+                    .sum();
+                let del_lk = down.last().unwrap() * dir.del();
+                mat_lk + del_lk
+            })
+            .sum();
+        up_lk + center_lk + down_lk
+    }
+
     fn lk(&self, ctx: &Context) -> f64 {
         let up_forward = Self::forward(&self.upstream, &ctx.upstream);
         let up_lk = up_forward[ctx.upstream.len()][self.upstream_len];
@@ -609,6 +686,21 @@ impl HMModel {
             &down_forward,
             &down_backward,
         );
+        // DUMP
+        // eprintln!("{}", ctx);
+        // eprintln!("DOWN_FORWARD");
+        // for (i, row) in down_forward.iter().enumerate() {
+        //     eprintln!("{}\t{}", i, vec2str(row));
+        // }
+        // eprintln!("DOWN_BACKWARD");
+        // for (i, row) in down_backward.iter().enumerate() {
+        //     eprintln!("{}\t{}", i, vec2str(row));
+        // }
+        // eprintln!("ALIGN");
+        // for (i, row) in downstream.iter().enumerate() {
+        //     eprintln!("{}\t{}", i, vec2str(row));
+        // }
+        // eprintln!();
         AlignInfo {
             lk: up_lk + center + down_lk,
             upstream,
@@ -667,7 +759,7 @@ impl HMModel {
                     .collect();
                 // Push deletion
                 {
-                    let del_probs: Vec<_> = (0..query.len())
+                    let del_probs: Vec<_> = (0..query.len() + 1)
                         .map(|i| forward[i][j] + dir.del() + backward[i][j + 1])
                         .collect();
                     let lk = logsumexp(&del_probs).unwrap_or_else(|| panic!("{:?}", del_probs));
@@ -706,21 +798,25 @@ impl HMModel {
             })
             .collect()
     }
-    fn update(
+    fn update<A: std::borrow::Borrow<AlignInfo>, C: std::borrow::Borrow<Context>>(
         &mut self,
         weights: &[f64],
-        contexts: &[&Context],
-        align_expt: &[&AlignInfo],
+        contexts: &[C],
+        align_expt: &[A],
         iteration: usize,
     ) {
-        let center: Vec<_> = contexts.iter().map(|ctx| ctx.center.as_slice()).collect();
+        let contexts = contexts.iter().map(|ctx| ctx.borrow());
+        let center: Vec<_> = contexts.clone().map(|ctx| ctx.center.as_slice()).collect();
         self.center.update(&center, weights, iteration);
         // Update upstream
         let up_align_expectation: Vec<_> = align_expt
             .iter()
-            .map(|aln| aln.upstream.as_slice())
+            .map(|aln| aln.borrow().upstream.as_slice())
             .collect();
-        let up_contexts: Vec<_> = contexts.iter().map(|ctx| ctx.upstream.as_slice()).collect();
+        let up_contexts: Vec<_> = contexts
+            .clone()
+            .map(|ctx| ctx.upstream.as_slice())
+            .collect();
         Self::update_oneside(
             &mut self.upstream,
             weights,
@@ -730,10 +826,10 @@ impl HMModel {
         );
         let down_align_expectation: Vec<&[Vec<f64>]> = align_expt
             .iter()
-            .map(|aln| aln.downstream.as_slice())
+            .map(|aln| aln.borrow().downstream.as_slice())
             .collect();
         let down_contexts: Vec<_> = contexts
-            .iter()
+            .clone()
             .map(|ctx| ctx.downstream.as_slice())
             .collect();
         Self::update_oneside(
