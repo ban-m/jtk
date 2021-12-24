@@ -1,4 +1,4 @@
-const IS_MOCK: bool = true;
+const IS_MOCK: bool = false;
 use definitions::*;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
     {
         let mut ds = ds.clone();
         use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-        let config = ClusteringConfig::new(20, 5);
+        let config = ClusteringConfig::new(5, 40, 5);
         ds.correct_clustering(&config);
         dump(&ds, "dir_mixture");
     }

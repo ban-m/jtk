@@ -115,7 +115,7 @@ pub fn correct_unit(
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
         .unwrap();
-    trace!("CORRECT\tPickedLK\t{}", lk);
+    // trace!("CORRECT\tPickedLK\t{}", lk);
     let pad_len = k.saturating_sub(new_k);
     for (_, _, prob) in new_clustering.iter_mut() {
         prob.extend(std::iter::repeat(0f64).take(pad_len));
@@ -151,7 +151,7 @@ fn clustering(
         }
         buffer
     };
-    trace!("CORRECT\t{}\t{}", cluster_num, contexts.len());
+    // trace!("CORRECT\t{}\t{}", cluster_num, contexts.len());
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(seed);
     let (asn, likelihood, _) = simple_clustering_inner(&contexts, cluster_num, config, &mut rng);
     (asn, likelihood, cluster_num)
@@ -261,29 +261,29 @@ fn simple_clustering_inner<R: Rng>(
     };
     let mut weights: Vec<_> = contexts.iter().map(gen_weight).collect();
     let mut model = DirichletModel::new(contexts, &weights, k);
-    trace!("CORRECT\tModel\t{}\n{}", id, model);
+    // trace!("CORRECT\tModel\t{}\n{}", id, model);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
-    trace!("CORRECT\tLikelihood\t{}\t{}", id, lk);
+    // trace!("CORRECT\tLikelihood\t{}\t{}", id, lk);
     for _ in 0..20 {
-        trace!("CORRECT\tModel\t{}\n{}", id, model);
+        // trace!("CORRECT\tModel\t{}\n{}", id, model);
         model.update(&mut weights, contexts);
         model = DirichletModel::new(contexts, &weights, k);
         let next_lk = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
-        trace!("CORRECT\tLikelihood\t{}\t{}", id, next_lk);
+        // trace!("CORRECT\tLikelihood\t{}\t{}", id, next_lk);
         if (next_lk - lk) < 0.001 {
             break;
         } else {
             lk = next_lk;
         }
     }
-    trace!("CORRECT\tModel\t{}\n{}", id, model);
+    // trace!("CORRECT\tModel\t{}\n{}", id, model);
     let predictions: Vec<_> = contexts
         .iter()
         .zip(weights.into_iter())
         .map(|(ctx, weight)| (ctx.id, ctx.index, weight))
         .collect();
     let num_param = model.num_parameters() as f64;
-    trace!("CORRECT\tFinal\t{}\t{}\t{:.4}\t{}", id, k, lk, num_param);
+    // trace!("CORRECT\tFinal\t{}\t{}\t{:.4}\t{}", id, k, lk, num_param);
     (predictions, lk, num_param)
 }
 
