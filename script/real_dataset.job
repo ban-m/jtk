@@ -4,22 +4,9 @@ FLYE=${PWD}/script/flye.sh
 CANU=${PWD}/script/canu.sh
 PHASE=${PWD}/script/phasing_w_reference.sh
 
-# data=/grid/yoshimura/HG002/PacBio_CCS_15kb_20kb_chemistry2/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.fasta
-# OUTPUT=${PWD}/result/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
-# mkdir -p ${OUTPUT}
-# qsub -o ./logfiles/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA.out -j y\
-#      ./script/pipeline.sh \
-#      ${data} \
-#      ${OUTPUT}/HG002.PacBio_CCS_15kb_20kb_chemistry2.HLA
-
 ## HG002 CLR
 data=${PWD}/data/hg002_filtered/9972589_9972588_hg002_mhc.fa
 OUTPUT=${PWD}/result/hg002
-# mkdir -p ${OUTPUT}/jtk
-# qsub -q centos7.q -o ${OUTPUT}/jtk/hg002.out -j y\
-#      ./script/pipeline_clr.sh \
-#     ${data} \
-#     ${OUTPUT}/jtk/hg002
 rm -rf ${OUTPUT}/phasing/
 mkdir -p ${OUTPUT}/phasing/
 REGION="chr6:28573494-33272792"
@@ -28,14 +15,16 @@ samtools faidx /grid/ban-m/human_genome/chm13.draft_v1.1.fasta ${REGION} > ${REF
 qsub -q centos7.q \
      -o ${OUTPUT}/phasing/log -j y ${PHASE} ${data} ${REFERENCE} ${OUTPUT}/phasing
 
-# mkdir -p ${OUTPUT}/flye
-# qsub -o ${OUTPUT}/flye/hg002.out -j y\
-#      ${FLYE} ${data} 5M ${OUTPUT}/flye
+mkdir -p ${OUTPUT}/flye
+qsub -o ${OUTPUT}/flye/hg002.out -j y\
+     ${FLYE} ${data} 5M ${OUTPUT}/flye
 
-# CANU=${PWD}/script/canu.sh
-# mkdir -p ${OUTPUT}/canu
-# bash ${CANU} ${data} 5M ${OUTPUT}/canu 2> ${OUTPUT}/canu/log
+CANU=${PWD}/script/canu.sh
+mkdir -p ${OUTPUT}/canu
+bash ${CANU} ${data} 5M ${OUTPUT}/canu 2> ${OUTPUT}/canu/log
 
+
+## Arabidopsis thaliana
 data=${HOME}/work/arabidopsis_filtering/result/ler_kyo.fasta
 OUTPUT=${PWD}/result/ler_kyo/
 
@@ -47,37 +36,11 @@ samtools faidx /data/ban-m/a_thaliana/genome/TAIR10_chr_all.fa ${REGION} > ${REF
 qsub -q centos7.q \
      -o ${OUTPUT}/phasing/log -j y ${PHASE} ${data} ${REFERENCE} ${OUTPUT}/phasing
 
-# mkdir -p ${OUTPUT}/jtk
-# qsub -q centos7.q -o ${OUTPUT}/jtk/ler_kyo.out -j y \
-#    ./script/pipeline_clr.sh\
-#     ${data} \
-#     ${OUTPUT}/jtk/ler_kyo \
-#     30000
+mkdir -p ${OUTPUT}/jtk
+qsub -q centos7.q -o ${OUTPUT}/jtk/ler_kyo.out -j y \
+   ./script/pipeline_clr.sh\
+    ${data} \
+    ${OUTPUT}/jtk/ler_kyo \
+    30000
 
-
-
-
-# data=/work/ryought/mhc/data/KIR/filter/all.KIR.fa
-# OUTPUT=${PWD}/result/KIR
-# mkdir -p ${OUTPUT}/jtk
-# qsub -o ${OUTPUT}/jtk/KIR.out -j y\
-#      ./script/kir_pipeline.job \
-#      ${data} \
-#      ${OUTPUT}/jtk/KIR
-
-# data=/data/hacone/shared/all.HLA.fa
-# OUTPUT=${PWD}/result/HG002_HLA
-# mkdir -p ${OUTPUT}
-# qsub -o ./logfiles/HLA_HG002.out -j y\
-#      ./script/pipeline_clr.sh \
-#      ${data} \
-#      ${OUTPUT}/HG002_HLA
-
-# data=/data/hacone/shared/all_CLR.HLA.fa
-# OUTPUT=${PWD}/result/HG002_HLA_CLR
-# mkdir -p ${OUTPUT}
-# qsub -o ./logfiles/HLA_HG002_CLR.out -j y\
-#      ./script/pipeline_clr.sh \
-#      ${data} \
-#      ${OUTPUT}/HG002_HLA_CLR
 

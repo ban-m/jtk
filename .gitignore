@@ -24,3 +24,17 @@ python/dist
 python/jtk_definitions.egg-info
 *~
 *.ipynb
+!script/benchmark_clustering.job
+!script/extract_cox_pgf.sh
+!script/phase_mock_reads_from_mock_genome_baseline.sh
+!script/phase_mock_reads_from_mhc_baseline.sh
+!script/phase_mock_reads_from_mock_genome.sh
+!script/phase_mock_reads_from_mhc.sh
+!script/phasing_w_reference.sh
+!script/pipeline.sh
+!script/rename_fastq.awk
+!script/var_check.rs
+!script/map_hg002.sh
+!script/generate_mock_reads_from_mock_genome.sh
+!script/generate_mock_reads_from_mhc.sh
+!script/extract_cox_pgf.sh

@@ -36,11 +36,14 @@ impl DirichletMixtureCorrection for DataSet {
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             assert_eq!(node.posterior.len(), cl_num[&node.unit]);
         }
+        let (argmax, max) = cl_num.iter().max_by_key(|x| x.1).unwrap();
+        trace!("SELECTED\t{}\t{}", argmax, max);
         let posterior_distributions: Vec<_> = self
             .selected_chunks
             //.par_iter()
             .iter()
-            .filter(|c| c.id == 341)
+            .filter(|c| c.id == *argmax)
+            // .filter(|c| c.id == 341)
             .map(|c| (c.id, c.cluster_num))
             .map(|(id, cluster_num)| correct_unit(self, id, cluster_num, config))
             .collect();
@@ -85,8 +88,14 @@ pub fn correct_unit(
         return vec![];
     }
     let start = std::time::Instant::now();
-    let (contexts, _up_units, _down_units) = convert_to_contexts(&reads, unit_id, config);
-    debug!("ReadClusteirng\t{}\tBEGIN", unit_id);
+    let (contexts, up_units, down_units) = convert_to_contexts(&reads, unit_id, config);
+    debug!(
+        "ReadClusteirng\t{}\tBEGIN\t{}\t{}\t{}",
+        unit_id,
+        contexts.len(),
+        up_units.len(),
+        down_units.len()
+    );
     let (mut new_clustering, _lk, new_k) = (1..=k)
         .map(|k| clustering(&contexts, unit_id, k, config))
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
@@ -97,7 +106,8 @@ pub fn correct_unit(
         prob.extend(std::iter::repeat(0f64).take(pad_len));
     }
     let end = std::time::Instant::now();
-    debug!("ReadClustering\t{}\t{}", unit_id, (end - start).as_secs());
+    let duration = (end - start).as_secs();
+    debug!("ReadClustering\t{}\tEND\t{}", unit_id, duration,);
     new_clustering
 }
 
