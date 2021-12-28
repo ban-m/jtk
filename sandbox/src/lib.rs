@@ -1,5 +1,5 @@
 use log::debug;
-use poa_hmm::gen_sample;
+// use poa_hmm::gen_sample;
 use rand::Rng;
 pub fn test() {
     let xs: Vec<_> = (0..1000).collect();
@@ -65,7 +65,7 @@ pub fn generate_test_data<T: Rng>(
     test_num: usize,
     rng: &mut T,
     probs: &[f64],
-    profile: &poa_hmm::gen_sample::Profile,
+    profile: &kiley::gen_seq::Profile,
 ) -> (Vec<Vec<u8>>, Vec<u8>) {
     let choices: Vec<_> = (0..templates.len()).collect();
     use rand::seq::SliceRandom;
@@ -75,7 +75,7 @@ pub fn generate_test_data<T: Rng>(
     answer.sort_unstable();
     let dataset: Vec<_> = answer
         .iter()
-        .map(|&idx| gen_sample::introduce_randomness(&templates[idx], rng, profile))
+        .map(|&idx| kiley::gen_seq::introduce_randomness(&templates[idx], rng, profile))
         .collect();
     assert_eq!(dataset.len(), answer.len());
     debug!("Index1\tIndex2\tDist");

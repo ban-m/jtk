@@ -1,12 +1,11 @@
 use haplotyper::local_clustering::ClusteringConfig;
-use poa_hmm::*;
+use kiley::gen_seq;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 use std::collections::HashMap;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
-    c.poa_config = poa_hmm::DEFAULT_CONFIG;
     c.read_type = definitions::ReadType::CLR;
     c.limit = 60;
     let args: Vec<_> = std::env::args().collect();
@@ -22,12 +21,12 @@ fn main() -> std::io::Result<()> {
         (seed, test_num, clusters, errors, probs)
     };
     assert_eq!(clusters, 2);
-    let profile = gen_sample::PROFILE.norm().mul(errors);
+    let profile = gen_seq::PROFILE.norm().mul(errors);
     c.cluster_num = clusters;
     c.variant_num = 2;
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(seed as u64);
     let len = 2000;
-    let template: Vec<_> = gen_sample::generate_seq(&mut rng, len);
+    let template: Vec<_> = gen_seq::generate_seq(&mut rng, len);
     let mut templates = vec![template.clone()];
     let (var_type, seq) = {
         let mut seq = template.clone();

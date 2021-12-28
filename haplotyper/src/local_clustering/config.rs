@@ -13,7 +13,6 @@ pub struct ClusteringConfig<F: Fn(u8, u8) -> i32> {
     pub subchunk_length: usize,
     pub limit: u64,
     pub alnparam: AlignmentParameters<F>,
-    pub poa_config: poa_hmm::Config,
     pub id: u64,
     pub stable_limit: u32,
     pub variant_num: usize,
@@ -30,13 +29,11 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         subchunk_length: usize,
     ) -> Self {
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
-        let config = poa_hmm::Config::default();
         Self {
             cluster_num,
             subchunk_length,
             limit: 600,
             alnparam: DEFAULT_ALN,
-            poa_config: config,
             id,
             stable_limit: STABLE_LIMIT,
             variant_num: VARIANT_NUMBER,
@@ -48,13 +45,11 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
     }
     pub fn default() -> Self {
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
-        let config = poa_hmm::PACBIO_CONFIG;
         Self {
             cluster_num: 3,
             subchunk_length: 100,
             limit: 2000,
             alnparam: DEFAULT_ALN,
-            poa_config: config,
             id,
             stable_limit: STABLE_LIMIT,
             variant_num: VARIANT_NUMBER,
@@ -155,63 +150,4 @@ fn base_freq(rs: &[definitions::RawRead]) -> [f64; 4] {
     }
     base_count.iter_mut().for_each(|e| *e /= tot);
     base_count
-}
-
-#[allow(dead_code)]
-fn summarize_operations(opss: Vec<Vec<Op>>, base_freq: [f64; 4]) -> poa_hmm::Config {
-    // match + mismatch.
-    let mut matchmis = 0;
-    let mut num_mis = 0;
-    let mut num_seq = 0;
-    let mut num_del = 0;
-    let mut num_in = 0;
-    let mut mm_after_mm = 0;
-    let mut in_after_mm = 0;
-    let mut in_after_del = 0;
-    let mut in_after_in = 0;
-    let mut del_after_mm = 0;
-    let mut del_after_del = 0;
-    // let mut del_after_in = 0;
-    use Op::*;
-    for ops in opss {
-        num_seq += 1;
-        matchmis += ops.iter().filter(|&e| matches!(e, Match | Mism)).count();
-        num_mis += ops.iter().filter(|&e| matches!(e, Mism)).count();
-        num_del += ops.iter().filter(|&e| matches!(e, Del)).count();
-        num_in += ops.iter().filter(|&e| matches!(e, In)).count();
-        for before_after in ops.windows(2) {
-            let b = before_after[0];
-            let a = before_after[1];
-            match (b, a) {
-                (Match, Mism) | (Match, Match) | (Mism, Match) | (Mism, Mism) => mm_after_mm += 1,
-                (Mism, Del) | (Match, Del) => del_after_mm += 1,
-                (Del, Del) => del_after_del += 1,
-                //(In, Del) => del_after_in += 1,
-                (Mism, In) | (Match, In) => in_after_mm += 1,
-                (In, In) => in_after_in += 1,
-                (Del, In) => in_after_del += 1,
-                _ => {}
-            }
-        }
-    }
-    let div = |x, y| x as f64 / y as f64;
-    let p_mismatch = div(num_mis, matchmis);
-    matchmis -= num_seq;
-    //eprintln!("{}\t{}\t{}", matchmis, num_in,num_del);
-    let p_match = div(mm_after_mm, matchmis);
-    let p_start_in = div(in_after_mm, matchmis);
-    let p_start_del = div(del_after_mm, matchmis);
-    let p_ext_in = div(in_after_in, num_in);
-    let p_ext_del = div(del_after_del, num_del);
-    let p_del_to_in = div(in_after_del, num_del);
-    poa_hmm::Config {
-        mismatch: p_mismatch,
-        base_freq,
-        p_match,
-        p_ins: p_start_in,
-        p_del: p_start_del,
-        p_extend_ins: p_ext_in,
-        p_extend_del: p_ext_del,
-        p_del_to_ins: p_del_to_in,
-    }
 }

@@ -17,8 +17,8 @@ fn main() -> std::io::Result<()> {
         let config = ClusteringConfig::new(5, 40, 5);
         ds.correct_clustering(&config);
         dump(&ds, "dir_mixture");
+        // return Ok(());
     }
-    return Ok(());
     {
         let mut ds = ds.clone();
         use haplotyper::read_clustering::*;

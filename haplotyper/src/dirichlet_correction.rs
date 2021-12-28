@@ -9,7 +9,6 @@ const CLUSTER_PRIOR: f64 = 1f64;
 const SMALL: f64 = 0.0000000000000000000001;
 const LOGSMALL: f64 = -100f64;
 use definitions::*;
-use log::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 

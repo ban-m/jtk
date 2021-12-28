@@ -36,16 +36,17 @@ impl DirichletMixtureCorrection for DataSet {
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             assert_eq!(node.posterior.len(), cl_num[&node.unit]);
         }
-        let (argmax, max) = cl_num.iter().max_by_key(|x| x.1).unwrap();
-        trace!("SELECTED\t{}\t{}", argmax, max);
-        let posterior_distributions: Vec<_> = self
+        // let (argmax, max) = cl_num.iter().max_by_key(|x| x.1).unwrap();
+        let selections: Vec<_> = self
             .selected_chunks
-            //.par_iter()
             .iter()
-            // .filter(|c| c.id == *argmax)
-            .filter(|c| c.id == 341)
+            .filter(|c| c.id == 409)
             .map(|c| (c.id, c.cluster_num))
-            .map(|(id, cluster_num)| correct_unit(self, id, cluster_num, config))
+            .collect();
+        let posterior_distributions: Vec<_> = selections
+            .par_iter()
+            // .iter()
+            .map(|&(id, cluster_num)| correct_unit(self, id, cluster_num, config))
             .collect();
         let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
             let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = HashMap::new();
@@ -89,14 +90,36 @@ pub fn correct_unit(
     }
     let start = std::time::Instant::now();
     let (contexts, up_units, down_units) = convert_to_contexts(&reads, unit_id, config);
+    let tot = {
+        let (mut up_clnum, mut down_clnum) = (HashMap::new(), HashMap::new());
+        for ctx in contexts.iter() {
+            for up in ctx.upstream.iter() {
+                up_clnum.entry(up.0).or_insert(up.1.len());
+            }
+            for down in ctx.downstream.iter() {
+                down_clnum.entry(down.0).or_insert(down.1.len());
+            }
+        }
+        up_clnum.values().sum::<usize>()
+            + down_clnum.values().sum::<usize>()
+            + contexts[0].center.len()
+    };
+    for ctx in contexts.iter() {
+        eprintln!("{}\n", ctx);
+    }
     debug!(
-        "ReadClusteirng\t{}\tBEGIN\t{}\t{}\t{}",
+        "ReadClustering\t{}\tBEGIN\t{}\t{}\t{}\t{}",
         unit_id,
         contexts.len(),
         up_units.len(),
-        down_units.len()
+        down_units.len(),
+        tot,
     );
-    let (mut new_clustering, _lk, new_k) = (1..=k)
+    let init = match k {
+        0..=3 => 1,
+        _ => k - 3,
+    };
+    let (mut new_clustering, _lk, new_k) = (init..=k)
         .map(|k| clustering(&contexts, unit_id, k, config))
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
         .unwrap();
@@ -193,6 +216,7 @@ fn clustering(
     }
     let (mut asn, mut likelihood) = clustering_inner(&contexts, cluster_num, retry, &mut rng);
     let mut last_upd = 0;
+    let start = std::time::Instant::now();
     for loop_count in 0.. {
         let (asn_n, lk_n) = clustering_inner(&contexts, cluster_num, retry, &mut rng);
         if THRESHOLD_CL < lk_n - likelihood {
@@ -204,7 +228,15 @@ fn clustering(
             break;
         }
     }
-    debug!("CORRECTION\tMAX\t{}\t{}\t{}", unit, last_upd, cluster_num);
+    let end = std::time::Instant::now();
+    let duration = (end - start).as_secs();
+    trace!(
+        "CORRECTION\tMAX\t{}\t{}\t{}\t{}",
+        unit,
+        last_upd,
+        cluster_num,
+        duration
+    );
     (asn, likelihood, cluster_num)
 }
 
@@ -348,12 +380,25 @@ pub fn clustering_inner<R: Rng>(
         vec![vec![1f64]; contexts.len()]
     } else {
         let dir = rand_distr::Dirichlet::new(&vec![1.5f64; k]).unwrap();
+        // if rng.gen_bool(0.5) {
         contexts.iter().map(|_| dir.sample(rng)).collect()
+        // } else {
+        //     trace!("BLV");
+        //     contexts
+        //         .iter()
+        //         .map(|ctx| {
+        //             let mut ws: Vec<_> = ctx.center.iter().take(k).map(|x| x.exp()).collect();
+        //             let sum: f64 = ws.iter().sum();
+        //             ws.iter_mut().for_each(|x| *x /= sum);
+        //             ws
+        //         })
+        //         .collect()
+        // }
     };
     let id: u64 = rng.gen::<u64>() % 1_000_000;
     let mut model = HMMixtureModel::new(contexts, &weights, k);
     let mut lk: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
-    // trace!("CORRECT\tModel\t{}\n{}", id, model);
+    trace!("CORRECT\tModel\t{}\n{}", id, model);
     trace!("CORRECT\tLikelihood\t{}\t0\t{}", id, lk);
     let mut count = 0;
     for t in 1.. {
@@ -371,7 +416,7 @@ pub fn clustering_inner<R: Rng>(
     let end = std::time::Instant::now();
     let duration = (end - start).as_millis();
     trace!("CORRECT\tTIME\t{}\t{}\t{}\t{}", id, k, duration, count);
-    // trace!("CORRECT\tModel\t{}\n{}", id, model);
+    trace!("CORRECT\tModel\t{}\n{}", id, model);
     let predictions: Vec<_> = contexts
         .iter()
         .zip(weights.into_iter())
@@ -481,9 +526,9 @@ impl HMMixtureModel {
     }
     fn update(&mut self, weights: &mut Vec<Vec<f64>>, contexts: &[Context], iteration: usize) {
         // E-step
-        let start = std::time::Instant::now();
+        // let start = std::time::Instant::now();
         let align_expt = self.e_step(contexts, weights);
-        let estep = std::time::Instant::now();
+        // let estep = std::time::Instant::now();
         // M-step
         self.fractions = sum_and_normalize(&weights);
         let align_expt = align_expt.chunks(contexts.len());
@@ -491,12 +536,12 @@ impl HMMixtureModel {
             let ws: Vec<_> = weights.iter().map(|ws| ws[cl]).collect();
             model.update(&ws, contexts, alns, iteration);
         }
-        let mstep = std::time::Instant::now();
-        trace!(
-            "DURATION\t{}\t{}",
-            (estep - start).as_micros(),
-            (mstep - estep).as_micros(),
-        );
+        // let mstep = std::time::Instant::now();
+        // trace!(
+        //     "DURATION\t{}\t{}",
+        //     (estep - start).as_micros(),
+        //     (mstep - estep).as_micros(),
+        // );
     }
     // 2nd return value: the expectation of aligning information of each cluster k.
     fn e_step(&self, contexts: &[Context], weights: &mut Vec<Vec<f64>>) -> Vec<AlignInfo> {
@@ -559,6 +604,17 @@ fn sum_and_normalize(xss: &[Vec<f64>]) -> Vec<f64> {
     sumed
 }
 
+struct HMModel {
+    #[allow(dead_code)]
+    upstream_len: usize,
+    downstream_len: usize,
+    center: Dirichlet,
+    // the f64 parts summing up to 1 on each position.
+    upstream: Vec<DirichletMixture>,
+    // the f64 parts summing up to 1 on each position.
+    downstream: Vec<DirichletMixture>,
+}
+
 impl std::fmt::Display for HMModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for up in self.upstream.iter().rev() {
@@ -574,17 +630,6 @@ impl std::fmt::Display for HMModel {
         }
         Ok(())
     }
-}
-
-struct HMModel {
-    #[allow(dead_code)]
-    upstream_len: usize,
-    downstream_len: usize,
-    center: Dirichlet,
-    // the f64 parts summing up to 1 on each position.
-    upstream: Vec<DirichletMixture>,
-    // the f64 parts summing up to 1 on each position.
-    downstream: Vec<DirichletMixture>,
 }
 
 const NEG_LARGE: f64 = -10000000000000f64;
@@ -608,21 +653,20 @@ impl HMModel {
             .max()
             .unwrap_or(0);
         let weights: Vec<_> = weights.iter().map(|ws| ws[cluster]).collect();
-        // let center: Vec<_> = contexts.iter().map(|ctx| ctx.center.as_slice()).collect();
         let center = {
-            let (mut xs, total) = weights
+            let total: f64 = weights.iter().sum();
+            let mut xs = weights
                 .iter()
                 .zip(contexts.iter().map(|ctx| &ctx.center))
-                .fold((Vec::new(), 0f64), |(mut acc, total), (w, center)| {
+                .fold(Vec::new(), |mut acc, (w, center)| {
                     if acc.is_empty() {
                         acc = center.iter().map(|x| x * w).collect();
-                        (acc, *w)
                     } else {
                         acc.iter_mut()
                             .zip(center.iter())
                             .for_each(|(a, c)| *a += w * c);
-                        (acc, total + w)
                     }
+                    acc
                 });
             xs.iter_mut().for_each(|x| *x /= total);
             Dirichlet::fit(&xs, DIR_NORM)
@@ -699,14 +743,12 @@ impl HMModel {
         up_lk + center + down_lk
     }
     fn align(&self, ctx: &Context) -> AlignInfo {
-        // let start = std::time::Instant::now();
         let up_forward = Self::forward(&self.upstream, &ctx.upstream);
         let up_backward = Self::backward(&self.upstream, &ctx.upstream);
         let up_lk = *up_forward.last().and_then(|xs| xs.last()).unwrap();
         let down_forward = Self::forward(&self.downstream, &ctx.downstream);
         let down_backward = Self::backward(&self.downstream, &ctx.downstream);
         let down_lk = *down_forward.last().and_then(|xs| xs.last()).unwrap();
-        // let half = std::time::Instant::now();
         let upstream = Self::to_align(&self.upstream, &ctx.upstream, up_forward, &up_backward);
         let downstream = Self::to_align(
             &self.downstream,
@@ -715,11 +757,6 @@ impl HMModel {
             &down_backward,
         );
         let center = self.center.lk(&ctx.center);
-        // let fin = std::time::Instant::now();
-        // let aln = (half - start).as_nanos();
-        // let conv = (fin - half).as_nanos();
-        // let len = ctx.upstream.len() + ctx.downstream.len();
-        // trace!("ALN\t{}\t{}\t{}", aln, conv, len);
         AlignInfo {
             lk: up_lk + center + down_lk,
             upstream,
@@ -795,11 +832,10 @@ impl HMModel {
         align_expt: &[A],
         _iteration: usize,
     ) {
-        let mut sums = Vec::new();
         let contexts = contexts.iter().map(|ctx| ctx.borrow());
         {
-            let mut total = 0f64;
-            sums.clear();
+            let total: f64 = weights.iter().sum();
+            let mut sums = Vec::new();
             for (w, center) in weights.iter().zip(contexts.clone().map(|ctx| &ctx.center)) {
                 if sums.is_empty() {
                     sums.extend(center.iter().map(|x| w * x));
@@ -808,7 +844,6 @@ impl HMModel {
                         .zip(center.iter())
                         .for_each(|(a, x)| *a += x * w);
                 };
-                total += w;
             }
             sums.iter_mut().for_each(|x| *x /= total);
             self.center.update(&sums, DIR_NORM);
@@ -848,67 +883,54 @@ impl HMModel {
         contexts: &[&[(usize, Vec<f64>)]],
         alignments: &[&[Vec<f64>]],
     ) {
-        let mut sums: Vec<f64> = Vec::new();
-        for (j, dir) in parameters.iter_mut().enumerate() {
-            let alns = alignments.iter().map(|aln| aln[j].iter());
-            let total_ws: f64 = alns
-                .clone()
-                .zip(weights.iter())
-                .map(|(alns, w)| w * alns.sum::<f64>())
-                .sum();
-            // It never panics.
-            let del_ws: f64 = alns
-                .clone()
-                .zip(weights.iter())
-                .map(|(alns, w)| w * alns.last().unwrap())
-                .sum();
-            dir.set_del_prob(del_ws / total_ws);
-            // First re-estimate parameters on categorical distributions.
-            dir.dirichlets.iter_mut().for_each(|x| x.0 = SMALL_VALUE);
-            for ((w, ctx), alns) in weights.iter().zip(contexts.iter()).zip(alns.clone()) {
-                for (&(unit, _), weight) in ctx.iter().zip(alns) {
-                    dir.dirichlets[unit].0 += w * weight;
-                }
-            }
-            let total: f64 = dir.dirichlets.iter().map(|x| x.0).sum();
-            dir.dirichlets
-                .iter_mut()
-                .for_each(|d| d.0 = (d.0 / total).ln());
-            // Then, re-estimate parameters on dirichlet distirbution on high-frequent unit.
-            for (target, (fr, dir)) in dir.dirichlets.iter_mut().enumerate() {
-                if dir.dim() <= 1 || (*fr < LOG_WEIGHT_FILTER && APPROX) {
-                    continue;
-                }
-                sums.clear();
-                let mut total = 0f64;
-                for ((&w_data, ctx), alns) in weights
+        // Allocate all the elements at once, it is inefficient?
+        // j -> (del prob at j, c -> Dirichlet)
+        let mut sum_ups: Vec<(f64, Vec<(f64, Vec<f64>)>)> = parameters
+            .iter()
+            .map(|dir| {
+                let state: Vec<_> = dir
+                    .dirichlets
                     .iter()
-                    .zip(contexts.iter())
-                    .zip(alns.clone())
-                    .filter(|&((&w_data, _), _)| !(APPROX && w_data.ln() < LOG_WEIGHT_FILTER))
-                {
-                    for (&(_, ref prob), &weight) in ctx
-                        .iter()
-                        .zip(alns)
-                        .filter(|&((unit, _), _)| *unit == target)
-                        .filter(|&(_, &w)| !(APPROX && w.ln() < LOG_WEIGHT_FILTER))
-                    {
-                        total += w_data * weight;
-                        if sums.is_empty() {
-                            sums.extend(prob.iter().map(|x| w_data * weight * x));
-                        } else {
-                            sums.iter_mut()
-                                .zip(prob.iter())
-                                .for_each(|(a, x)| *a += w_data * weight * x);
-                        }
-                    }
-                }
-                if SMALL_VALUE < total {
-                    sums.iter_mut().for_each(|x| *x /= total);
-                    dir.update(&sums, DIR_NORM);
+                    .map(|(_, dir)| (SMALL_VALUE, vec![0f64; dir.dim()]))
+                    .collect();
+                (0f64, state)
+            })
+            .collect();
+        // Alns: j -> i -> prob to align j to the i-th.
+        for ((&w_data, ctx), alns) in weights.iter().zip(contexts.iter()).zip(alignments) {
+            assert_eq!(alns.len(), sum_ups.len());
+            for ((del_prob, state), aln) in sum_ups.iter_mut().zip(alns.iter()) {
+                assert_eq!(aln.len(), ctx.len() + 1);
+                *del_prob += w_data * aln.last().unwrap();
+                for (&(unit, ref obs), aln_prob) in ctx.iter().zip(aln.iter()) {
+                    state[unit].0 += w_data * aln_prob;
+                    state[unit]
+                        .1
+                        .iter_mut()
+                        .zip(obs.iter())
+                        .for_each(|(s, x)| *s += w_data * aln_prob * x);
                 }
             }
         }
+        parameters
+            .iter_mut()
+            .zip(sum_ups)
+            .for_each(|(dir, (del_prob, state))| {
+                let match_sum: f64 = state.iter().map(|x| x.0).sum();
+                dir.set_del_prob(del_prob / (match_sum + del_prob));
+                dir.dirichlets.iter_mut().zip(state).for_each(
+                    |((fr, di), (mat_prob, mut total))| {
+                        *fr = (mat_prob / match_sum).ln();
+                        if !APPROX || LOG_WEIGHT_FILTER < *fr {
+                            total.iter_mut().for_each(|x| *x /= mat_prob);
+                            di.update(&total, DIR_NORM);
+                        }
+                    },
+                );
+            });
+        // let end = std::time::Instant::now();
+        // let duration = (end - start).as_micros();
+        // trace!("UPDATE\t{}\t{}", duration / count, count);
     }
 }
 
@@ -926,10 +948,10 @@ impl std::fmt::Display for DirichletMixture {
             .dirichlets
             .iter()
             .enumerate()
-            .filter(|&(_, &(fr, _))| fr > 0.1)
-            .map(|(unit, (fr, dir))| format!("{}:{:.3}:{}", unit, fr, dir))
+            .filter(|&(_, &(fr, _))| fr.exp() > 0.1)
+            .map(|(unit, (fr, dir))| format!("{}:{:.3}:{}", unit, fr.exp(), dir))
             .collect();
-        write!(f, "{:.2}\t{}", self.del_prob, dump.join("\t"))
+        write!(f, "{:.2}\t{}", self.del_prob.exp(), dump.join("\t"))
     }
 }
 
@@ -1161,7 +1183,7 @@ mod tests {
         let hap2s = (vec![], 1, vec![]);
         let cl_num = { (vec![], 2, vec![]) };
         let is_uninformative = (vec![], false, vec![]);
-        let num = 10;
+        let num = 20;
         let reads = gen_reads(&hap1s, &hap2s, &cl_num, &is_uninformative, &mut rng, num);
         let (result, _) = clustering_inner(&reads, 2, 20, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
@@ -1187,9 +1209,6 @@ mod tests {
         let is_uninformative = { (vec![false, false, false], false, vec![false, false, false]) };
         let num = 10;
         let reads = gen_reads(&hap1s, &hap2s, &cl_num, &is_uninformative, &mut rng, num);
-        for (i, read) in reads.iter().enumerate() {
-            eprintln!("{}\t{}\t{}", i, read.upstream.len(), read.downstream.len());
-        }
         let (result, _) = clustering_inner(&reads, 2, 20, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
         let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
