@@ -379,22 +379,8 @@ pub fn clustering_inner<R: Rng>(
     let mut weights = if k == 1 {
         vec![vec![1f64]; contexts.len()]
     } else {
-        // TODO:Maybe we need to relax this distribution...?
         let dir = rand_distr::Dirichlet::new(&vec![1.5f64; k]).unwrap();
-        // if rng.gen_bool(0.5) {
         contexts.iter().map(|_| dir.sample(rng)).collect()
-        // } else {
-        //     trace!("BLV");
-        //     contexts
-        //         .iter()
-        //         .map(|ctx| {
-        //             let mut ws: Vec<_> = ctx.center.iter().take(k).map(|x| x.exp()).collect();
-        //             let sum: f64 = ws.iter().sum();
-        //             ws.iter_mut().for_each(|x| *x /= sum);
-        //             ws
-        //         })
-        //         .collect()
-        // }
     };
     let id: u64 = rng.gen::<u64>() % 1_000_000;
     let mut model = HMMixtureModel::new(contexts, &weights, k);
@@ -588,11 +574,15 @@ fn vec2str(xs: &[f64]) -> String {
 struct AlignInfo {
     // Likelihood. Sum of center, upstream and downstream.
     lk: f64,
-    // For each j-th position of the reference and the i-th position of the query,
-    // upstream[j][i] return the probability that the j-th pos of the refr emit the i-th pos of the query.
-    // Note that the last element of each row(upstream[j].last()) would be the prob of deletion.
-    upstream: Vec<Vec<f64>>,
-    downstream: Vec<Vec<f64>>,
+    // reference index -> query index -> prob of match at that position,
+    // reference index -> last -> prob of deletion at that position.
+    // For each reference index, the sum would be one.
+    upstream_match: Vec<Vec<f64>>,
+    // reference index + 1 -> the probability to move to the dead position at that location.
+    // at the 0-th position it has the probability to drop.
+    upstream_drop: Vec<f64>,
+    downstream_match: Vec<Vec<f64>>,
+    downstream_drop: Vec<f64>,
 }
 
 // Sum xs and normalize the result so that it summing up to 1.
@@ -615,9 +605,11 @@ struct HMModel {
     upstream_len: usize,
     downstream_len: usize,
     center: Dirichlet,
-    // the f64 parts summing up to 1 on each position.
+    // Dropping/continue probability at first position. Logged.
+    up_drop: (f64, f64),
     upstream: Vec<DirichletMixture>,
-    // the f64 parts summing up to 1 on each position.
+    // Dropping/continuing probability at first position. Logged.
+    down_drop: (f64, f64),
     downstream: Vec<DirichletMixture>,
 }
 
@@ -626,7 +618,9 @@ impl std::fmt::Display for HMModel {
         for up in self.upstream.iter().rev() {
             writeln!(f, "{}", up)?;
         }
+        writeln!(f, "{:.3}", self.up_drop.0.exp())?;
         writeln!(f, "Center\t{}", self.center)?;
+        writeln!(f, "{:.3}", self.down_drop.0.exp())?;
         for (i, down) in self.downstream.iter().enumerate() {
             if i != self.downstream_len - 1 {
                 writeln!(f, "{}", down)?;
@@ -652,7 +646,6 @@ impl HMModel {
             .map(|ctx| ctx.downstream.len())
             .max()
             .unwrap_or(0);
-        // let weights: Vec<_> = weights.iter().map(|ws| ws[cluster]).collect();
         let center = {
             let total: f64 = weights.iter().sum();
             let mut xs = weights
@@ -696,7 +689,9 @@ impl HMModel {
             upstream_len,
             downstream_len,
             center,
+            up_drop: (0.05f64.ln(), 0.95f64.ln()),
             upstream,
+            down_drop: (0.05f64.ln(), 0.95f64.ln()),
             downstream,
         };
         // Tune some-loop
@@ -713,12 +708,24 @@ impl HMModel {
         }
         model
     }
+    fn up_drop(&self) -> f64 {
+        self.up_drop.0
+    }
+    fn up_cont(&self) -> f64 {
+        self.up_drop.1
+    }
+    fn down_drop(self) -> f64 {
+        self.down_drop.0
+    }
+    fn down_cont(&self) -> f64 {
+        self.down_drop.1
+    }
     #[allow(dead_code)]
     fn q_value(&self, ctx: &Context, alns: &AlignInfo) -> f64 {
-        let up_lk: f64 = self
+        let up_match_lk: f64 = self
             .upstream
             .iter()
-            .zip(alns.upstream.iter())
+            .zip(alns.upstream_match.iter())
             .map(|(dir, up)| {
                 assert_eq!(up.len(), ctx.upstream.len() + 1);
                 let mat_lk: f64 = up
@@ -730,11 +737,24 @@ impl HMModel {
                 mat_lk + del_lk
             })
             .sum();
+        let up_trans_lk: f64 = self
+            .upstream
+            .iter()
+            .zip(alns.upstream_drop.iter().skip(1))
+            .map(|(dir, drop)| dir.drop_ln() * drop + dir.cont_ln() * (1f64 - drop))
+            .sum();
+        let drop_center = {
+            let drop = alns.upstream_drop[0];
+            let up = self.up_drop() * drop + self.up_cont() * (1f64 - drop);
+            let drop = alns.downstream_drop[0];
+            let down = self.down_drop() * drop * self.down_cont() * (1f64 - drop);
+            down + up
+        };
         let center_lk = self.center.lk(&ctx.center);
-        let down_lk: f64 = self
+        let down_match_lk: f64 = self
             .downstream
             .iter()
-            .zip(alns.downstream.iter())
+            .zip(alns.downstream_match.iter())
             .map(|(dir, down)| {
                 let mat_lk: f64 = down
                     .iter()
@@ -745,67 +765,111 @@ impl HMModel {
                 mat_lk + del_lk
             })
             .sum();
-        up_lk + center_lk + down_lk
+        let down_trans_lk: f64 = self
+            .downstream
+            .iter()
+            .zip(alns.downstream_drop.iter().skip(1))
+            .map(|(dir, drop)| dir.drop_ln() * drop + dir.cont_ln() * (1f64 - drop))
+            .sum();
+        up_match_lk + up_trans_lk + drop_center + center_lk + down_match_lk + down_trans_lk
     }
     fn lk(&self, ctx: &Context) -> f64 {
-        let up_forward = Self::forward(&self.upstream, &ctx.upstream);
-        let down_forward = Self::forward(&self.downstream, &ctx.downstream);
-        let up_lk = up_forward.last().and_then(|xs| xs.last()).unwrap();
-        let down_lk = down_forward.last().and_then(|xs| xs.last()).unwrap();
+        let up_lk = {
+            let forward = Self::forward(&self.upstream, &ctx.upstream, self.up_drop());
+            let lk: f64 = self
+                .upstream
+                .iter()
+                .zip(forward.iter().filter_map(|obs_q| obs_q.last()).skip(1))
+                .map(|(dir, obs)| obs + dir.drop_ln())
+                .sum();
+            lk + self.up_drop() + forward[0].last().unwrap()
+        };
+        let down_lk = {
+            let forward = Self::forward(&self.downstream, &ctx.downstream, self.down_drop());
+            let lk: f64 = self
+                .downstream
+                .iter()
+                .zip(forward.iter().filter_map(|obs_q| obs_q.last()).skip(1))
+                .map(|(dir, obs)| obs + dir.drop_ln())
+                .sum();
+            lk + self.down_drop() + forward[0].last().unwrap()
+        };
         let center = self.center.lk(&ctx.center);
         up_lk + center + down_lk
     }
     fn align(&self, ctx: &Context) -> AlignInfo {
-        let up_forward = Self::forward(&self.upstream, &ctx.upstream);
-        let up_backward = Self::backward(&self.upstream, &ctx.upstream);
-        let up_lk = *up_forward.last().and_then(|xs| xs.last()).unwrap();
-        let down_forward = Self::forward(&self.downstream, &ctx.downstream);
-        let down_backward = Self::backward(&self.downstream, &ctx.downstream);
-        let down_lk = *down_forward.last().and_then(|xs| xs.last()).unwrap();
-        let upstream = Self::to_align(&self.upstream, &ctx.upstream, up_forward, &up_backward);
-        let downstream = Self::to_align(
-            &self.downstream,
-            &ctx.downstream,
-            down_forward,
-            &down_backward,
-        );
+        let (upstream_match, upstream_drop, up_lk) = {
+            let forward = Self::forward(&self.upstream, &ctx.upstream, self.up_drop());
+            let lk: f64 = self
+                .upstream
+                .iter()
+                .zip(forward.iter().filter_map(|obs_q| obs_q.last()).skip(1))
+                .map(|(dir, obs)| obs + dir.drop_ln())
+                .sum();
+            let lk = lk + self.up_drop() + forward[0].last().unwrap();
+            let backward = Self::backward(&self.upstream, &ctx.upstream, self.up_drop());
+            let drop = self.up_drop;
+            let (match_prob, drop_prob) =
+                Self::to_align(&self.upstream, &ctx.upstream, forward, &backward, drop);
+            (match_prob, drop_prob, lk)
+        };
+        let (downstream_match, downstream_drop, down_lk) = {
+            let forward = Self::forward(&self.downstream, &ctx.downstream, self.down_drop());
+            let lk: f64 = self
+                .downstream
+                .iter()
+                .zip(forward.iter().filter_map(|obs_q| obs_q.last()).skip(1))
+                .map(|(dir, obs)| obs + dir.drop_ln())
+                .sum();
+            let lk = lk + self.down_drop() + forward[0].last().unwrap();
+            let backward = Self::backward(&self.downstream, &ctx.downstream, self.down_drop());
+            let drop = self.down_drop;
+            let (match_prob, drop_prob) =
+                Self::to_align(&self.downstream, &ctx.downstream, forward, &backward, drop);
+            (match_prob, drop_prob, lk)
+        };
         let center = self.center.lk(&ctx.center);
         AlignInfo {
             lk: up_lk + center + down_lk,
-            upstream,
-            downstream,
+            upstream_match,
+            upstream_drop,
+            downstream_match,
+            downstream_drop,
         }
     }
-    fn forward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)]) -> DP {
+    fn forward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)], init: f64) -> DP {
         let mut dp = vec![vec![0f64; query.len() + 1]; refr.len() + 1];
         for j in 1..query.len() + 1 {
             dp[0][j] = NEG_LARGE;
         }
         for i in 1..refr.len() + 1 {
-            dp[i][0] = dp[i - 1][0] + refr[i - 1].del();
+            let drop_prev = if 1 < i { refr[i - 2].drop_ln() } else { init };
+            dp[i][0] = dp[i - 1][0] + drop_prev + refr[i - 1].del();
         }
         for (i, dir) in refr.iter().enumerate().map(|(i, x)| (i + 1, x)) {
+            let drop_prev = if 1 < i { refr[i - 2].drop_ln() } else { init };
             for (j, obs) in query.iter().enumerate().map(|(j, x)| (j + 1, x)) {
                 let del_trans = dp[i - 1][j] + dir.del();
                 let match_trans = dp[i - 1][j - 1] + dir.mat(obs);
-                dp[i][j] = logsumexp2(del_trans, match_trans);
+                dp[i][j] = logsumexp2(del_trans, match_trans) + drop_prev;
             }
         }
         dp
     }
-    fn backward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)]) -> DP {
+    fn backward(refr: &[DirichletMixture], query: &[(usize, Vec<f64>)], init: f64) -> DP {
         let mut dp = vec![vec![0f64; query.len() + 1]; refr.len() + 1];
         for j in 0..query.len() + 1 {
             dp[refr.len()][j] = NEG_LARGE;
         }
         for i in 0..refr.len() + 1 {
-            dp[i][query.len()] = 0f64;
+            dp[i][query.len()] = if 0 < i { refr[i - 1].drop_ln() } else { init };
         }
         for (i, dir) in refr.iter().enumerate().rev() {
+            let drop_prev = if 0 < i { refr[i - 1].drop_ln() } else { init };
             for (j, obs) in query.iter().enumerate().rev() {
                 let del_trans = dp[i + 1][j] + dir.del();
                 let match_trans = dp[i + 1][j + 1] + dir.mat(obs);
-                dp[i][j] = logsumexp2(del_trans, match_trans);
+                dp[i][j] = logsumexp2(del_trans, match_trans) + drop_prev;
             }
         }
         dp
@@ -815,8 +879,17 @@ impl HMModel {
         query: &[(usize, Vec<f64>)],
         mut forward: DP,
         backward: &DP,
-    ) -> Vec<Vec<f64>> {
-        forward.pop();
+        drop_ln: (f64, f64),
+    ) -> (Vec<Vec<f64>>, Vec<f64>) {
+        let drop_probs = std::iter::once(drop_ln)
+            .chain(refr.iter().map(|dir|(dir.drop_ln(), dir.cont_ln())))
+            .zip(forward.iter())
+            .map(|((drop_ln, cont_ln), q_obs)|{
+                let drop = drop_ln + q_obs.last().unwrap();
+                let cont = 
+            })
+            .collect();
+            forward.pop();
         forward
             .iter_mut()
             .zip(refr.iter())
@@ -948,6 +1021,9 @@ impl HMModel {
 }
 
 struct DirichletMixture {
+    // **log dropping probability**
+    drop_prob: f64,
+    cont_prob: f64,
     // **log deletion prob**
     del_prob: f64,
     mat_prob: f64,
@@ -969,6 +1045,12 @@ impl std::fmt::Display for DirichletMixture {
 }
 
 impl DirichletMixture {
+    fn drop_ln(&self) -> f64 {
+        self.drop_prob
+    }
+    fn cont_ln(&self) -> f64 {
+        self.cont_prob
+    }
     // Return log del_prob
     fn del(&self) -> f64 {
         self.del_prob

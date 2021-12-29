@@ -14,10 +14,10 @@ fn main() -> std::io::Result<()> {
     {
         let mut ds = ds.clone();
         use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-        let config = ClusteringConfig::new(5, 40, 5);
+        let config = ClusteringConfig::new(5, 10, 5);
         ds.correct_clustering(&config);
         dump(&ds, "dir_mixture");
-        // return Ok(());
+        return Ok(());
     }
     {
         let mut ds = ds.clone();

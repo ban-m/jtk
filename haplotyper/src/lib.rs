@@ -4,6 +4,7 @@ pub mod dense_encoding;
 pub mod determine_units;
 pub mod dirichlet_correction;
 pub mod dirichlet_mixture;
+pub mod dirichlet_mixture_2;
 pub mod em_correction;
 pub mod encode;
 pub mod entry;
