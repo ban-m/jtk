@@ -37,8 +37,11 @@ impl ReClustering for DataSet {
             })
             .collect();
         // Polish clusering.
-        use crate::em_correction::ClusteringCorrection;
-        self.correct_clustering_em(c.repeat_num, c.coverage_thr, true);
+        // use crate::em_correction::ClusteringCorrection;
+        // self.correct_clustering_em(c.repeat_num, c.coverage_thr, true);
+        use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+        let config = ClusteringConfig::new(c.repeat_num, 10, c.coverage_thr);
+        self.correct_clustering(&config);
         // The set of the ((unit,cluster), (copy_num, offset)) to be clustered into `cluster_num` clusters.
         let re_cluster = get_units_to_cluster(self, c);
         // Allocate them in HashMap or recover the initial clustering.

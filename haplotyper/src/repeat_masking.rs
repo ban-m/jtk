@@ -69,7 +69,7 @@ pub fn mask_repeats_in_reads(seqs: &mut [Vec<u8>], config: &RepeatMaskConfig) {
     assert!(config.k <= 32);
     let kmers = seqs
         .into_par_iter()
-        .map(|seq| seq.windows(config.k).map(|w| to_idx(w)))
+        .map(|seq| seq.windows(config.k).map(to_idx))
         .fold(Vec::new, |mut x, y| {
             x.extend(y);
             x
@@ -83,7 +83,7 @@ pub fn mask_repeats_in_reads(seqs: &mut [Vec<u8>], config: &RepeatMaskConfig) {
     }
     let mask = create_mask(&count, config);
     seqs.par_iter_mut()
-        .for_each(|mut read| mask_repeats(&mut read, &mask, config.k));
+        .for_each(|read| mask_repeats(read, &mask, config.k));
 }
 
 use definitions::*;
@@ -93,7 +93,7 @@ fn kmer_counting(reads: &[RawRead], config: &RepeatMaskConfig) -> HashMap<u64, u
     let mut result = HashMap::with_capacity(1_000_000_000);
     let kmers = reads
         .into_par_iter()
-        .map(|read| read.seq().windows(k).map(|w| to_idx(w)))
+        .map(|read| read.seq().windows(k).map(to_idx))
         .fold(Vec::new, |mut x, y| {
             x.extend(y);
             x

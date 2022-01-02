@@ -209,7 +209,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
 // LK->LK-logsumexp(LK).
 fn to_posterior_probability(lks: &mut [Vec<f64>]) {
     for xs in lks.iter_mut() {
-        let total = logsumexp(&xs);
+        let total = logsumexp(xs);
         xs.iter_mut().for_each(|x| *x -= total);
     }
 }

@@ -38,6 +38,7 @@ type Node = (u64, u64);
 type DitEdge = ((Node, Position), (Node, Position));
 type EdgeConsensus = HashMap<DitEdge, EdgeLabel>;
 type NodeConsensus = HashMap<Node, Vec<u8>>;
+type EdgeBetweenSimplePath = (usize, bool, usize, bool, f64);
 
 /// A focus from a node of a ditch graph.
 /// Here, we tag a node with its position, i.e., Position.
@@ -827,10 +828,7 @@ impl<'a> DitchGraph<'a> {
         node_to_pathid: &HashMap<Node, usize>,
         edges: &[&DitchEdge],
         calibrator: &CoverageCalibrator,
-    ) -> (
-        Vec<Vec<(Node, Position)>>,
-        Vec<(usize, bool, usize, bool, f64)>,
-    ) {
+    ) -> (Vec<Vec<(Node, Position)>>, Vec<EdgeBetweenSimplePath>) {
         let path_num: usize = *node_to_pathid.values().max().unwrap_or(&0) + 1;
         let mut terminals: Vec<_> = vec![vec![]; path_num];
         let edges: Vec<_> = edges

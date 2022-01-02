@@ -8,22 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
-        .map(BufReader::new)
-        .map(|x| serde_json::de::from_reader(x).unwrap())?;
-    use haplotyper::dirichlet_correction;
-    let config = dirichlet_correction::Config::new(20, 5);
-    let corrected = dirichlet_correction::correct_unit(&ds, 63, 2, &config);
-    let id2desc: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|r| (r.id, r.name.clone()))
-        .collect();
-    for (id, _, post) in corrected.iter() {
-        let is_hap1 = id2desc[id].contains("251v2");
-        println!("{}\t{:?}", is_hap1, post);
-    }
+    // let args: Vec<_> = std::env::args().collect();
     // let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
     // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     // for read in ds.encoded_reads.iter() {

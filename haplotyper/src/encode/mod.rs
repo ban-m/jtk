@@ -31,7 +31,7 @@ impl Encode for definitions::DataSet {
         encode_by_mm2(self, threads, sim_thr).unwrap();
         deletion_fill::correct_unit_deletion(self, sim_thr);
         debug!("Encoded {} reads.", self.encoded_reads.len());
-        assert!(self.encoded_reads.iter().all(|read| is_uppercase(read)));
+        assert!(self.encoded_reads.iter().all(is_uppercase));
     }
 }
 
@@ -40,7 +40,7 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
     let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
-        .filter_map(|l| bio_utils::paf::PAF::new(l))
+        .filter_map(bio_utils::paf::PAF::new)
         .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
         .filter_map(|aln| {
             // Check the max-indel.

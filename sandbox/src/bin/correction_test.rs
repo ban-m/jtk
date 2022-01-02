@@ -1,4 +1,4 @@
-const IS_MOCK: bool = false;
+const IS_MOCK: bool = true;
 use definitions::*;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
@@ -17,35 +17,34 @@ fn main() -> std::io::Result<()> {
         let config = ClusteringConfig::new(5, 10, 5);
         ds.correct_clustering(&config);
         dump(&ds, "dir_mixture");
-        return Ok(());
     }
-    {
-        let mut ds = ds.clone();
-        use haplotyper::read_clustering::*;
-        let config = ReadClusteringConfig::default();
-        ds.read_clustering(&config);
-        dump(&ds, "readcl");
-    }
-    {
-        let mut ds = ds.clone();
-        use haplotyper::em_correction::ClusteringCorrection;
-        ds.correct_clustering_em(20, 5, false);
-        dump(&ds, "em");
-    }
-    {
-        let mut ds = ds.clone();
-        use haplotyper::read_clustering_sgd::{ReadClustering, ReadClusteringConfig};
-        let config = ReadClusteringConfig::new(20, 5);
-        ds.read_clustering(&config);
-        dump(&ds, "dgd");
-    }
-    {
-        let mut ds = ds.clone();
-        use haplotyper::dirichlet_correction::{Config, DirichletCorrection};
-        let config = Config::new(20, 5);
-        ds.correct_clustering(&config);
-        dump(&ds, "dir_corr");
-    }
+    // {
+    //     let mut ds = ds.clone();
+    //     use haplotyper::read_clustering::*;
+    //     let config = ReadClusteringConfig::default();
+    //     ds.read_clustering(&config);
+    //     dump(&ds, "readcl");
+    // }
+    // {
+    //     let mut ds = ds.clone();
+    //     use haplotyper::em_correction::ClusteringCorrection;
+    //     ds.correct_clustering_em(20, 5, false);
+    //     dump(&ds, "em");
+    // }
+    // {
+    //     let mut ds = ds.clone();
+    //     use haplotyper::read_clustering_sgd::{ReadClustering, ReadClusteringConfig};
+    //     let config = ReadClusteringConfig::new(20, 5);
+    //     ds.read_clustering(&config);
+    //     dump(&ds, "dgd");
+    // }
+    // {
+    //     let mut ds = ds.clone();
+    //     use haplotyper::dirichlet_correction::{Config, DirichletCorrection};
+    //     let config = Config::new(20, 5);
+    //     ds.correct_clustering(&config);
+    //     dump(&ds, "dir_corr");
+    // }
     dump(&ds, "before");
     Ok(())
 }

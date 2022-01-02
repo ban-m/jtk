@@ -441,6 +441,7 @@ dependencies = [
  "edlib_sys",
  "env_logger 0.9.0",
  "log",
+ "poa_hmm",
  "rand",
  "rand_xoshiro",
  "rayon",
@@ -467,6 +468,12 @@ dependencies = [
  "cc",
  "winapi",
 ]
+
+[[package]]
+name = "libm"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fc7aa29613bd6a620df431842069224d8bc9011086b1db4c0e0cd47fa03ec9a"
 
 [[package]]
 name = "libm"
@@ -600,7 +607,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a64b1ec5cda2586e284722486d802acf1f7dbdc623e2bfc57e65ca1cd099290"
 dependencies = [
  "autocfg",
- "libm",
+ "libm 0.2.1",
 ]
 
 [[package]]
@@ -620,6 +627,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67ac1d3f9a1d3616fd9a60c8d74296f22406a238b6a72f5cc1e6f314df4ffbf9"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "packed_simd_2"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71c0c06716cfc81616fa8e22b721ce92fecd594508bc0eb3d04ae3ef35ac10c5"
+dependencies = [
+ "cfg-if 0.1.10",
+ "libm 0.1.4",
 ]
 
 [[package]]
@@ -647,6 +664,17 @@ name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
+
+[[package]]
+name = "poa_hmm"
+version = "0.2.0"
+source = "git+https://github.com/ban-m/partial_order_alignment.git?branch=master#b434418447aad843e9267f616a0b609d2da4c38a"
+dependencies = [
+ "log",
+ "packed_simd_2",
+ "rand",
+ "rand_xoshiro",
+]
 
 [[package]]
 name = "ppv-lite86"

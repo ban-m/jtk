@@ -7,9 +7,10 @@ use rand_xoshiro::Xoshiro256Plus;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 // use std::println as trace;
+type NodeGroup = HashSet<(u64, u64)>;
 pub trait HapCut {
     /// Run HapCUT algorithm. Return the consistency score of the result.
-    fn hapcut(&self, c: &HapCutConfig) -> (i64, Vec<Phase>, Vec<HashSet<(u64, u64)>>);
+    fn hapcut(&self, c: &HapCutConfig) -> (i64, Vec<Phase>, Vec<NodeGroup>);
     fn hapcut_squish_diplotig(&mut self, c: &HapCutConfig) -> HashSet<u64>;
     /// Run HapCUT2 algorithm. Return the (scaled-)likelihood of the result.
     fn hapcut2(&self, c: &HapCut2Config) -> f64;

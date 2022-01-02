@@ -1030,11 +1030,11 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    use haplotyper::em_correction::*;
-    dataset.correct_clustering_em(repeat_num, threshold, true);
-    // use haplotyper::read_clustering::*;
-    // let config = ReadClusteringConfig::new(repeat_num, threshold);
-    // dataset.read_clustering(&config);
+    // use haplotyper::em_correction::*;
+    // dataset.correct_clustering_em(repeat_num, threshold, true);
+    use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+    let config = ClusteringConfig::new(repeat_num, 10, threshold);
+    dataset.correct_clustering(&config);
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, dataset: &mut DataSet) {

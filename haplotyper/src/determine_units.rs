@@ -264,7 +264,7 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
     let mm2 = crate::encode::mm2_alignment(ds, thr)?;
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
-        .filter_map(|l| bio_utils::paf::PAF::new(l))
+        .filter_map(bio_utils::paf::PAF::new)
         .filter(|aln| aln.tstart < ALLOWED_END_GAP && aln.tlen - aln.tend < ALLOWED_END_GAP)
         .collect();
     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
