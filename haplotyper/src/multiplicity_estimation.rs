@@ -27,11 +27,11 @@ pub trait MultiplicityEstimation {
 
 impl MultiplicityEstimation for DataSet {
     fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig) {
-        let mut counts: HashMap<_, u32> = HashMap::new();
-        for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            *counts.entry(node.unit).or_default() += 1;
-        }
         let cov = {
+            let mut counts: HashMap<_, u32> = HashMap::new();
+            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+                *counts.entry(node.unit).or_default() += 1;
+            }
             let mut counts: Vec<_> = counts.values().copied().collect();
             counts.sort_unstable();
             counts[counts.len() / 2] as f64 / 2f64
@@ -60,8 +60,12 @@ impl MultiplicityEstimation for DataSet {
         chunks
             .values_mut()
             .for_each(|c| c.cluster_num = c.cluster_num.max(1));
+        let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
+        for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            *counts.entry((node.unit, node.cluster)).or_default() += 1;
+        }
         let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
-        for ((node, _), cp) in nodes.iter() {
+        for (node, cp) in nodes.iter() {
             let occ = counts.get(node).unwrap_or(&0);
             counts_group.entry(cp).or_default().push(*occ as usize);
         }

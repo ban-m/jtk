@@ -10,10 +10,10 @@ if [ -e ${output}/log ]
 then
     rm -f ${output}/log
 fi
-qsub -q centos7.q -j y -o ${output}/log \
+qsub -q centos7.q -o ${output}/log \
+     -S /bin/bash -N Workflow -cwd -pe smp 24 -j y -V \
      ./script/pipeline.sh \
-     ${reads} \
-     ${output}/${readtype}.CLR
+     ${reads} ${output}/${readtype}
 
 # for diploid in dip-A-CS dip-A-D dip-A-DS dip-A-C 
 # do
@@ -24,8 +24,8 @@ qsub -q centos7.q -j y -o ${output}/log \
 #     then
 #         rm -f ${output}/${diploid}.CLR.log
 #     fi
-#     qsub -j y -o ${output}/${diploid}.CLR.log \
-#          ./script/pipeline_clr.sh \
-#          ${reads} \
-#          ${output}/${diploid}.CLR
+#     qsub -q centos7.q -S /bin/bash -N Workflow -cwd -pe smp 24 -V \
+#          -j y -o ${output}/${diploid}.CLR.log \
+#          ./script/pipeline.sh \
+#          ${reads}  ${output}/${diploid}.CLR
 # done

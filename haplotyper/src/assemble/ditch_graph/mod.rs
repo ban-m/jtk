@@ -568,6 +568,7 @@ impl<'a> DitchGraph<'a> {
     }
     // POINTER: ASSEMBLEIMPL
     // TODO: Tune this.
+    // TODO: Maybe we should turn the optimization part into gibbs sampling...?
     pub fn clean_up_graph_for_assemble(
         &mut self,
         cov: f64,

@@ -327,20 +327,6 @@ impl Graph {
             }
         }
         let argmax = |buf: &Vec<u32>| buf.iter().enumerate().max_by_key(|x| x.1).unwrap().0;
-        // let mut dump: Vec<_> = self.node_to_idx.iter().collect();
-        // dump.sort_by_key(|x| x.0 .0);
-        // for ((u, _), &idx) in dump {
-        //     let dist = &node_cp_dist[idx];
-        //     let arg = argmax(dist);
-        //     println!("N\t{}\t{}\t{}\t{:?}", u, arg, self.nodes[idx], dist);
-        // }
-        // let mut dump: Vec<_> = self.edge_to_idx.iter().collect();
-        // dump.sort_by_key(|x| (x.0 .0 .0, x.0 .1 .0));
-        // for (((u, _), (v, _)), &idx) in dump {
-        //     let dist = &edge_cp_dist[idx];
-        //     let arg = argmax(dist);
-        //     println!("E\t({},{})\t{}\t{}\t{:?}", u, v, arg, self.edges[idx], dist,);
-        // }
         let node_cp: Vec<_> = node_cp_dist.iter().map(argmax).collect();
         let edge_cp: Vec<_> = edge_cp_dist.iter().map(argmax).collect();
         (node_cp, edge_cp)

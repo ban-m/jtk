@@ -1,11 +1,4 @@
 #!/bin/bash
-#$ -S /bin/bash
-#$ -N Workflow
-#$ -cwd
-#$ -pe smp 23
-#$ -j y
-#$ -m e 
-#$ -V
 set -ue
 PATH="${PATH}:${PWD}/target/release/"
 TARGET=$1
@@ -43,8 +36,7 @@ then
 else
     cat ${2}.entry.json |\
         jtk polish_encoding --threads ${THREADS} -vv |\
-        jtk estimate_multiplicity -vv --threads ${THREADS} \
-            --draft_assembly ${DRAFT_GFA} --max_cluster_size 6 |\
+        jtk estimate_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA} |\
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi
 
@@ -54,8 +46,6 @@ then
 else
     cat ${CLUSTERED} |\
         jtk correct_deletion -vv --threads ${THREADS} |\
-        # jtk resolve_tangle -vv --threads ${THREADS} |\
-        # tee ${2}.temp.json |\
         jtk encode_densely -vv --threads ${THREADS} |\
         jtk correct_deletion -vv --threads ${THREADS}  >${RESOLVED}
 fi

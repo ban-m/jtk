@@ -330,16 +330,6 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("max_cluster_size")
-                .short("m")
-                .long("max_cluster_size")
-                .required(false)
-                .value_name("MAXCLUSTER")
-                .help("Maximum number of cluster")
-                .default_value("2")
-                .takes_value(true),
-        )
-        .arg(
             Arg::with_name("seed")
                 .short("s")
                 .long("seed")
@@ -942,9 +932,47 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    use haplotyper::local_clustering::*;
-    let config = ClusteringConfig::with_default(dataset, 2, length);
-    dataset.local_clustering(&config);
+    use std::collections::{HashMap, HashSet};
+    let prev_cluster_num: HashMap<_, _> = dataset
+        .selected_chunks
+        .iter()
+        .map(|c| (c.id, c.cluster_num))
+        .collect();
+    {
+        use haplotyper::local_clustering::*;
+        let config = ClusteringConfig::with_default(dataset, 2, length);
+        dataset.local_clustering(&config);
+    }
+    let current_cluster_num: HashMap<_, _> = {
+        // TODO: This is very inefficient.
+        let mut ds = dataset.clone();
+        use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+        let config = ClusteringConfig::new(5, 10, 5);
+        ds.correct_clustering(&config);
+        use haplotyper::multiplicity_estimation::*;
+        let config = MultiplicityEstimationConfig::new(threads, 34203980, None);
+        ds.estimate_multiplicity(&config);
+        ds.selected_chunks
+            .iter()
+            .map(|c| (c.id, c.cluster_num))
+            .collect()
+    };
+    let selection: HashSet<_> = prev_cluster_num
+        .iter()
+        .filter_map(|(unit, prev)| {
+            let now = current_cluster_num.get(unit)?;
+            if now != prev {
+                debug!("LOCAL\tREESTIM\t{}\t{}\t{}", unit, prev, now);
+                Some(*unit)
+            } else {
+                None
+            }
+        })
+        .collect();
+    {
+        use haplotyper::local_clustering::*;
+        local_clustering_selected(dataset, &selection);
+    }
 }
 
 fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {

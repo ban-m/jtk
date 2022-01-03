@@ -42,10 +42,10 @@ impl DirichletMixtureCorrection for DataSet {
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             assert_eq!(node.posterior.len(), cl_num[&node.unit]);
         }
-        // let (argmax, max) = cl_num.iter().max_by_key(|x| x.1).unwrap();
         let selections: Vec<_> = self
             .selected_chunks
             .iter()
+            .filter(|c| c.id == 1000)
             .map(|c| (c.id, c.cluster_num))
             .collect();
         let posterior_distributions: Vec<_> = selections
@@ -522,44 +522,39 @@ impl HMMixtureModel {
             .collect();
         logsumexp(&lks)
     }
-    // #[allow(dead_code)]
-    // fn q_value(&self, weights: &[f64], context: &Context, align_expt: &[&AlignInfo]) -> f64 {
-    //     assert_eq!(weights.len(), align_expt.len());
-    //     self.fractions
-    //         .iter()
-    //         .zip(self.models.iter())
-    //         .zip(weights.iter())
-    //         .zip(align_expt.iter())
-    //         .map(|(((f, model), w), alns)| w * (f.ln() + model.q_value(context, alns)))
-    //         .sum()
-    // }
-    // #[allow(dead_code)]
-    // fn calc_q_value(
-    //     &self,
-    //     weights: &[Vec<f64>],
-    //     contexts: &[Context],
-    //     align_expt: &[Vec<AlignInfo>],
-    // ) -> f64 {
-    //     contexts
-    //         .iter()
-    //         .zip(weights.iter())
-    //         .enumerate()
-    //         .map(|(i, (ctx, ws))| {
-    //             let alns: Vec<_> = align_expt.iter().map(|alns| &alns[i]).collect();
-    //             self.q_value(ws, ctx, &alns)
-    //         })
-    //         .sum()
-    // }
+    fn q_value(&self, weights: &[Vec<f64>], contexts: &[Context], alignments: &[AlignInfo]) -> f64 {
+        weights
+            .iter()
+            .zip(contexts.iter())
+            .enumerate()
+            .map(|(i, (ws, ctx))| {
+                self.fractions
+                    .iter()
+                    .zip(self.models.iter())
+                    .zip(ws.iter())
+                    .enumerate()
+                    .map(|(k, ((f, m), w))| {
+                        let aln = &alignments[contexts.len() * k + i];
+                        w * (f.ln() + m.q_value(ctx, aln))
+                    })
+                    .sum::<f64>()
+            })
+            .sum()
+    }
     fn update(&mut self, weights: &mut Vec<Vec<f64>>, contexts: &[Context], iteration: usize) {
         // E-step
         let align_expt = self.e_step(contexts, weights);
+        let qval = self.q_value(weights, contexts, &align_expt);
+        trace!("QVALUE\t{}\t{}", iteration, qval);
         // M-step
         self.fractions = sum_and_normalize(weights);
-        let align_expt = align_expt.chunks(contexts.len());
-        for (cl, (model, alns)) in self.models.iter_mut().zip(align_expt).enumerate() {
+        let alignments = align_expt.chunks(contexts.len());
+        for (cl, (model, alns)) in self.models.iter_mut().zip(alignments).enumerate() {
             let ws: Vec<_> = weights.iter().map(|ws| ws[cl]).collect();
             model.update(&ws, contexts, alns, iteration);
         }
+        let qval = self.q_value(weights, contexts, &align_expt);
+        trace!("QVALUE\t{}\t{}", iteration, qval);
     }
     // 2nd return value: the expectation of aligning information of each cluster k.
     fn e_step(&self, contexts: &[Context], weights: &mut Vec<Vec<f64>>) -> Vec<AlignInfo> {
@@ -772,6 +767,20 @@ impl HMModel {
             lk = new_lk;
         }
         model
+    }
+    fn q_value(&self, ctx: &Context, aln: &AlignInfo) -> f64 {
+        let center = {
+            let obs = self.center.lk(&ctx.center);
+            let up_drop = aln.upstream.drop_expt[0] * self.up_drop();
+            let up_cont = (1f64 - aln.upstream.drop_expt[0]) * self.up_cont();
+            let up = (up_drop + up_cont) * aln.upstream.arrive_expt[0];
+            let down_drop = aln.downstream.drop_expt[0] * self.down_drop();
+            let down_cont = (1f64 - aln.downstream.drop_expt[0]) * self.down_cont();
+            let down = (down_drop + down_cont) * aln.downstream.arrive_expt[0];
+            obs + up + down
+        };
+        todo!();
+        center
     }
     fn up_drop(&self) -> f64 {
         self.up_drop.0
@@ -986,15 +995,6 @@ impl HMModel {
                     .zip(query.iter())
                     .for_each(|((f, b), obs)| *f += cont_ln + dir.mat(obs) + b);
                 *forward.last_mut().unwrap() = del_prob;
-                if forward.iter().any(|x| x.is_nan()) {
-                    eprintln!("{:?}", forward);
-                    eprintln!("{}", dir);
-                    eprintln!("{}", vec2str(forward));
-                    eprintln!("{}", vec2str(backward));
-                    eprintln!("{}", cont_ln);
-                    panic!();
-                }
-
                 let total = logsumexp(forward);
                 for x in forward.iter_mut() {
                     *x = (*x - total).exp();

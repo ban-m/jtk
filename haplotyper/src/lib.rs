@@ -3,7 +3,6 @@ pub mod assemble;
 pub mod dense_encoding;
 pub mod determine_units;
 pub mod dirichlet_mixture;
-// pub mod em_correction;
 pub mod encode;
 pub mod entry;
 pub mod extract;

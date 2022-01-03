@@ -13,7 +13,8 @@ do
         echo "Log file found. Moving."
         mv ${OUTPUT}/${NAME}/jtk/${NAME}.out ${OUTPUT}/${NAME}/jtk/${NAME}.old.${RANDOM}.out
     fi
-    qsub -o ${OUTPUT}/${NAME}/jtk/${NAME}.out -j y\
+    qsub -q centos7.q -o ${OUTPUT}/${NAME}/jtk/${NAME}.out -j y\
+         -V -S /bin/bash -cwd -pe smp 24 -V \
          ./script/pipeline.sh \
          ${FASTA} \
          ${OUTPUT}/${NAME}/jtk/${NAME}
