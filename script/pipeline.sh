@@ -7,9 +7,10 @@ RESOLVED=${2}.entry.units.encode.clustered.resolved.json
 RESULT=${2}.json
 GFA=${2}.gfa
 DRAFT_GFA=${2}.draft.gfa
+DRAFT_GFA_2=${2}.draft2.gfa
 LOG=${2}.log
 STAT=${2}.stat
-THREADS=23
+THREADS=56
 
 ### Take number.
 if [ $# -ge 3 ]; then
@@ -46,8 +47,10 @@ then
 else
     cat ${CLUSTERED} |\
         jtk correct_deletion -vv --threads ${THREADS} |\
+        jtk correct_multiplicity -vv --threads ${THREADS} |\
         jtk encode_densely -vv --threads ${THREADS} |\
-        jtk correct_deletion -vv --threads ${THREADS}  >${RESOLVED}
+        jtk correct_deletion -vv --threads ${THREADS}  |\
+        jtk correct_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA_2} >${RESOLVED}
 fi
 
 if [ -f ${RESULT} ]

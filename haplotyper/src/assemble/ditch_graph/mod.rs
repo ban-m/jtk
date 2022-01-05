@@ -577,21 +577,30 @@ impl<'a> DitchGraph<'a> {
         c: &super::AssembleConfig,
     ) {
         self.assign_copy_number(cov, lens);
+        // self.assign_copy_number_gbs(cov, lens);
         self.remove_zero_copy_elements(lens, 0.2);
         self.assign_copy_number(cov, lens);
+        //self.assign_copy_number_gbs(cov, lens);
         self.remove_zero_copy_elements(lens, 0.5);
         self.assign_copy_number(cov, lens);
+        //self.assign_copy_number_gbs(cov, lens);
         self.zip_up_overclustering();
         // From good Likelihood ratio focus, to weaker ones.
         for llr in (3..15).filter(|x| x % 3 == 0).rev() {
             self.resolve_repeats(reads, c, llr as f64);
         }
         self.zip_up_overclustering();
-        // self.remove_tips(0.5, 5);
-        // self.z_edge_selection();
+        {
+            // Do we need this?
+            // self.remove_tips(0.5, 5);
+            // self.z_edge_selection();
+        }
         self.assign_copy_number(cov, lens);
+        //self.assign_copy_number_gbs(cov, lens);
         self.remove_zero_copy_path(0.3);
-        // graph.transitive_edge_reduction();
+        {
+            // graph.transitive_edge_reduction();
+        }
     }
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(
         reads: &'a [R],
@@ -789,14 +798,27 @@ impl<'a> DitchGraph<'a> {
     // Return Node->serialized simple-path id hashmapping and
     // edges between simple paths.
     fn reduce_simple_path(&self) -> (HashMap<Node, usize>, Vec<&DitchEdge>) {
-        let keys = self.nodes.keys().cloned().enumerate();
-        let node_index: HashMap<_, _> = keys.map(|(i, k)| (k, i)).collect();
+        let node_index: HashMap<Node, usize> = self
+            .nodes
+            .keys()
+            .enumerate()
+            .map(|(i, k)| (*k, i))
+            .collect();
         let (edges_in_simple_path, edges_between_simple_path) =
             self.partition_edges_by_simple_path();
         use crate::find_union::FindUnion;
         let mut fu = FindUnion::new(node_index.len());
         for edge in edges_in_simple_path.iter() {
-            fu.unite(node_index[&edge.from], node_index[&edge.to]);
+            let mut nodes = std::iter::once(edge.from)
+                // .chain(edge.proxying.iter().map(|x| x.0))
+                .chain(std::iter::once(edge.to))
+                .map(|node| node_index[&node]);
+            // Never panic
+            let mut current = nodes.next().unwrap();
+            for next in nodes {
+                fu.unite(current, next);
+                current = next;
+            }
         }
         let cluster_index: HashMap<_, _> = (0..node_index.len())
             .filter(|&n| fu.find(n) == Some(n))
@@ -898,7 +920,7 @@ impl<'a> DitchGraph<'a> {
         node_to_pathid: &HashMap<Node, usize>,
         terminals: &[Vec<(Node, Position)>],
     ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
-        let node_copy_number: HashMap<_, _> = node_to_pathid
+        let mut node_copy_number: HashMap<_, _> = node_to_pathid
             .iter()
             .map(|(&node, &pathid)| (node, node_cp[pathid]))
             .collect();
@@ -917,6 +939,13 @@ impl<'a> DitchGraph<'a> {
                 let from = (edge.from, edge.from_position);
                 let to = (edge.to, edge.to_position);
                 edge_copy_number.insert((from, to), cp);
+                // Increment node in proxying edge.
+                // Note that we should avoid double-count of the same edge.
+                if (edge.from, edge.from_position) <= (edge.to, edge.to_position) {
+                    for node in edge.proxying.iter().map(|x| x.0) {
+                        *node_copy_number.entry(node).or_default() += cp;
+                    }
+                }
             }
         }
         (node_copy_number, edge_copy_number)
@@ -1266,13 +1295,12 @@ impl<'a> DitchGraph<'a> {
                 if edges.clone().count() != 2 {
                     continue;
                 }
-                debug!("ZIP\t{:?}\t{}", node.node, pos);
                 // This is a "fork" branch.
                 let mut dests = edges.clone().map(|edge| self.destination(edge));
                 let first_dest = dests.next().unwrap();
                 let second_dest = dests.next().unwrap();
                 if first_dest == second_dest {
-                    debug!("ZIPPINGUP");
+                    debug!("ZIPPINGUP\t{:?}\t{}", node.node, pos);
                     let simple_path = self.simple_path_from(edges.clone().next().unwrap());
                     to_remove.extend(simple_path);
                 }
@@ -1464,7 +1492,7 @@ impl<'a> DitchGraph<'a> {
                 self.survey_focus(focus).is_some()
             })
             .count();
-        debug!("FOCI\t{}\t{}", foci.len(), success);
+        debug!("FOCI\tTryAndSuccess{}\t{}", foci.len(), success);
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
@@ -1491,7 +1519,7 @@ impl<'a> DitchGraph<'a> {
         edge.occ = self.nodes[&from].edges.iter().map(|e| e.occ).sum();
         // First, allocate edge to be removed.
         // Note that sometimes the newly added edge is already in this node(i.e. resolving some short branch),
-        // So we should be care that these read is not in the removing edges.
+        // So we should be care that the edge is not in the removing edges.
         let remove_from: Vec<_> = self
             .get_edges(from, from_pos)
             .filter(|e| !(e.to == to && e.to_position == to_pos))
@@ -1762,13 +1790,18 @@ impl<'a> DitchGraph<'a> {
                 !(e.from_position == to_pos && e.to == from && e.to_position == from_pos)
             });
         }
-        // If the degree became zero..
+        // If the degree became zero and this node and the copy number is zero, remove recursively
         let removed_all_edges = self
             .nodes
             .get(&to)
             .map(|node| node.edges.iter().all(|e| e.from_position == !to_pos))
             .unwrap_or(false);
-        if removed_all_edges {
+        let is_zero_copy = self
+            .nodes
+            .get(&to)
+            .map(|node| node.copy_number == Some(0))
+            .unwrap_or(false);
+        if removed_all_edges && is_zero_copy {
             // Removing this node.
             // First, recursively call the removing function.
             let remove_edges: Vec<_> = self.nodes[&to]

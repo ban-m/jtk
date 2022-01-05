@@ -12,28 +12,17 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
+    use haplotyper::copy_number_estimation::*;
+    let config = Config::default();
     let prev: HashMap<_, _> = ds
         .selected_chunks
         .iter()
         .map(|c| (c.id, c.cluster_num))
         .collect();
-    use haplotyper::multiplicity_estimation::*;
-    let config = MultiplicityEstimationConfig::new(24, 2234, None);
-    ds.estimate_multiplicity(&config);
-    let after: HashMap<_, _> = ds
-        .selected_chunks
-        .iter()
-        .map(|c| (c.id, c.cluster_num))
-        .collect();
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *counts.entry(node.unit).or_default() += 1;
-    }
-    println!("Unit\tPrev\tAfter\tCoverage");
-    for (unit, prev) in prev.iter() {
-        let after = after[unit];
-        let cov = counts[unit];
-        println!("{}\t{}\t{}\t{}", unit, prev, after, cov);
+    ds.update_copy_numbers(&config);
+    for c in ds.selected_chunks.iter() {
+        let prev = prev[&c.id];
+        println!("{}\t{}\t{}", c.id, c.cluster_num, prev);
     }
     Ok(())
 }

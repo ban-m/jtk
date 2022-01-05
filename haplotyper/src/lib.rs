@@ -1,8 +1,10 @@
 #![feature(is_sorted)]
 pub mod assemble;
+pub mod copy_number_estimation;
 pub mod dense_encoding;
 pub mod determine_units;
 pub mod dirichlet_mixture;
+pub mod dirichlet_mixture_old;
 pub mod encode;
 pub mod entry;
 pub mod extract;

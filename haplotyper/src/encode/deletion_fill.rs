@@ -99,13 +99,24 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) {
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
+    // use kiley::gphmm::*;
+    // let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+    // use kiley::PolishConfig;
+    // let config = PolishConfig::with_model(100, 0, 30, 4320498, 0, hmm);
     fn polish(xs: &[&[u8]], unit: &Unit) -> Vec<u8> {
-        // use kiley::gphmm::*;
-        // let mut hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-        // let band_width = 100;
-        // TODO:Maybe we need to polish the unit with GPHMM, why not?
-        // Maybe the computational cost matters....?
-        kiley::bialignment::polish_until_converge_banded(unit.seq(), xs, 100)
+        //, config: &PolishConfig<Cond>) -> Vec<u8> {
+        // use kiley::polish_chunk_by_parts;
+        // let max_len = xs
+        //     .iter()
+        //     .map(|x| x.len())
+        //     .max()
+        //     .unwrap_or_else(|| panic!("{},{}", unit.seq, unit.id));
+        // match 200 < max_len {
+        //     true => polish_chunk_by_parts(unit.seq(), xs, config),
+        //     false => unit.seq().to_vec(),
+        // }
+        let band_width = 100;
+        kiley::bialignment::polish_until_converge_banded(unit.seq(), xs, band_width)
     }
     let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<u64, Vec<_>> = HashMap::new();

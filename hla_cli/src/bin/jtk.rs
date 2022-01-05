@@ -350,6 +350,43 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
         )
 }
 
+fn subcommand_correct_multiplicity() -> App<'static, 'static> {
+    SubCommand::with_name("correct_multiplicity")
+        .version("0.1")
+        .author("Bansho Masutani")
+        .about("Fix multiplicities of units, re-clustering if needed.")
+        .arg(Arg::with_name("verbose").short("v").multiple(true))
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value("1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("seed")
+                .short("s")
+                .long("seed")
+                .required(false)
+                .value_name("SEED")
+                .help("Seed for pseudorandon number generators.")
+                .default_value("24")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("draft_assembly")
+                .short("o")
+                .long("draft_assembly")
+                .required(false)
+                .value_name("PATH")
+                .help("If given, output draft GFA to PATH.")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_partition_local() -> App<'static, 'static> {
     SubCommand::with_name("partition_local")
         .version("0.1")
@@ -371,16 +408,16 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .default_value("1")
                 .takes_value(true),
         )
-        .arg(
-            Arg::with_name("subchunk_len")
-                .short("s")
-                .long("subchunk_len")
-                .required(false)
-                .value_name("SubChunkLength")
-                .help("The length of sub-chunks")
-                .default_value("100")
-                .takes_value(true),
-        )
+    // .arg(
+    //     Arg::with_name("subchunk_len")
+    //         .short("s")
+    //         .long("subchunk_len")
+    //         .required(false)
+    //         .value_name("SubChunkLength")
+    //         .help("The length of sub-chunks")
+    //         .default_value("100")
+    //         .takes_value(true),
+    // )
 }
 
 fn subcommand_correct_deletion() -> App<'static, 'static> {
@@ -565,7 +602,7 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .required(false)
                 .value_name("REPEAT_NUM")
                 .help("Do EM algorithm for REPEAT_NUM times.")
-                .default_value("20")
+                .default_value("5")
                 .takes_value(true),
         )
         .arg(
@@ -922,57 +959,17 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let length: usize = matches
-        .value_of("subchunk_len")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
+    let length = 100;
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    use std::collections::{HashMap, HashSet};
-    let prev_cluster_num: HashMap<_, _> = dataset
-        .selected_chunks
-        .iter()
-        .map(|c| (c.id, c.cluster_num))
-        .collect();
-    {
-        use haplotyper::local_clustering::*;
-        let config = ClusteringConfig::with_default(dataset, 2, length);
-        dataset.local_clustering(&config);
-    }
-    let current_cluster_num: HashMap<_, _> = {
-        // TODO: This is very inefficient.
-        let mut ds = dataset.clone();
-        use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-        let config = ClusteringConfig::new(5, 10, 5);
-        ds.correct_clustering(&config);
-        use haplotyper::multiplicity_estimation::*;
-        let config = MultiplicityEstimationConfig::new(threads, 34203980, None);
-        ds.estimate_multiplicity(&config);
-        ds.selected_chunks
-            .iter()
-            .map(|c| (c.id, c.cluster_num))
-            .collect()
-    };
-    let selection: HashSet<_> = prev_cluster_num
-        .iter()
-        .filter_map(|(unit, prev)| {
-            let now = current_cluster_num.get(unit)?;
-            if now != prev {
-                debug!("LOCAL\tREESTIM\t{}\t{}\t{}", unit, prev, now);
-                Some(*unit)
-            } else {
-                None
-            }
-        })
-        .collect();
-    {
-        use haplotyper::local_clustering::*;
-        local_clustering_selected(dataset, &selection);
-    }
+    // Clustering.
+    use haplotyper::local_clustering::*;
+    let config = ClusteringConfig::with_default(dataset, 2, length);
+    dataset.local_clustering(&config);
 }
 
 fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -993,6 +990,59 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     }
     use haplotyper::encode::deletion_fill;
     deletion_fill::correct_unit_deletion(dataset, sim_thr);
+}
+
+fn correct_multiplicity(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+    debug!("START\tmultiplicity estimation");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|e| e.parse().ok())
+        .unwrap();
+    let seed: u64 = matches
+        .value_of("seed")
+        .and_then(|e| e.parse().ok())
+        .unwrap();
+    let path = matches.value_of("draft_assembly");
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    // Re-estimate the copy number, retry if needed.
+    use std::collections::{HashMap, HashSet};
+    let selection: HashSet<_> = {
+        let re_estimated_cluster_num: HashMap<_, _> = {
+            // TODO: This is very inefficient.
+            let mut ds: DataSet = dataset.clone();
+            use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+            use haplotyper::multiplicity_estimation::*;
+            let config = ClusteringConfig::new(5, 10, 5);
+            ds.correct_clustering(&config);
+            let config = MultiplicityEstimationConfig::new(threads, seed, path);
+            ds.estimate_multiplicity(&config);
+            ds.selected_chunks
+                .iter()
+                .map(|c| (c.id, c.cluster_num))
+                .collect()
+        };
+        dataset
+            .selected_chunks
+            .iter_mut()
+            .filter_map(|chunk| match re_estimated_cluster_num.get(&chunk.id) {
+                Some(&new) if new != chunk.cluster_num => {
+                    debug!("FIXMULTP\t{}\t{}\t{}", chunk.id, chunk.cluster_num, new);
+                    chunk.cluster_num = new;
+                    Some(chunk.id)
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    // Re clustering.
+    debug!("FIXMULTP\tTargetNum\t{}", selection.len());
+    use haplotyper::local_clustering::*;
+    local_clustering_selected(dataset, &selection);
 }
 
 fn global_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -1058,8 +1108,6 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    // use haplotyper::em_correction::*;
-    // dataset.correct_clustering_em(repeat_num, threshold, true);
     use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
     let config = ClusteringConfig::new(repeat_num, 10, threshold);
     dataset.correct_clustering(&config);
@@ -1205,6 +1253,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_resolve_tangle())
         .subcommand(subcommand_partition_local())
         .subcommand(subcommand_correct_deletion())
+        .subcommand(subcommand_correct_multiplicity())
         .subcommand(subcommand_partition_global())
         .subcommand(subcommand_correct_clustering())
         .subcommand(subcommand_encode_densely())
@@ -1235,6 +1284,7 @@ fn main() -> std::io::Result<()> {
         ("polish_encoding", Some(sub_m)) => polish_encode(sub_m, ds),
         ("partition_local", Some(sub_m)) => local_clustering(sub_m, ds),
         ("correct_deletion", Some(sub_m)) => correct_deletion(sub_m, ds),
+        ("correct_multiplicity", Some(sub_m)) => correct_multiplicity(sub_m, ds),
         ("resolve_tangle", Some(sub_m)) => resolve_tangle(sub_m, ds),
         ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
         ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
