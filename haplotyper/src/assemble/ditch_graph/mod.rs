@@ -1003,6 +1003,15 @@ impl<'a> DitchGraph<'a> {
             self.convert_connecting_edges(&node_to_pathid, &connecting_edges, &calibrator);
         let nodes = self.convert_path_weight(&node_to_pathid, &calibrator);
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number_gbs(&nodes, &edges, cov);
+        if log_enabled!(log::Level::Trace) {
+            trace!("COVCP\tType\tCov\tCp");
+            for (n, cp) in nodes.iter().zip(node_cp.iter()) {
+                trace!("COVCP\tNODE\t{}\t{}", n, cp,);
+            }
+            for (e, cp) in edges.iter().zip(edge_cp.iter()) {
+                trace!("COVCP\tEDGE\t{}\t{}", e.4, cp);
+            }
+        }
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
     /// (Re-)estimate copy number on each node and edge.

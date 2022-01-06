@@ -94,9 +94,9 @@ const CONST_CONFIDENCE: bool = false;
 const MAX_CONFIDENCE: f64 = 0.95;
 // sample copy-number estimation in  `BURN_IN` times from confidence=0 to condidence=MAX_CONFIDENCE,
 // then keep sampling `BURN_IN` times at confidence=MAX_CONFIDENCE to reach the stationaly distribution.
-const BURN_IN: usize = 20_000;
+const BURN_IN: usize = 2_000;
 // After burn-in, sample `SAMPLE_LEN` to get max a posterior estimation.
-const SAMPLE_LEN: usize = 20_000;
+const SAMPLE_LEN: usize = 2_000;
 
 #[derive(Debug, Clone)]
 pub struct GibbsSampler {
