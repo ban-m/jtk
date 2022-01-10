@@ -12,8 +12,12 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    use haplotyper::copy_number_estimation::*;
-    let config = Config::default();
+    ds.encoded_reads
+        .iter_mut()
+        .flat_map(|r| r.nodes.iter_mut())
+        .for_each(|n| n.cluster = 0);
+    use haplotyper::copy_number_estimation_mrf::*;
+    let config = Config::new(20f64, 9482390);
     let prev: HashMap<_, _> = ds
         .selected_chunks
         .iter()

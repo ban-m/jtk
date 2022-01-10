@@ -838,7 +838,7 @@ mod test {
                 //     (2_000 * idx).saturating_sub(rng.gen_range(0..200))
                 // };
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, &seq, cigar, position)
+                definitions::Node::new(unit, true, &seq, cigar, position, 2)
             })
             .collect();
         let edges = nodes
@@ -875,7 +875,7 @@ mod test {
             .map(|unit| {
                 let position = unit as usize * 2000;
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, &[b'A'; 2_000], cigar, position)
+                definitions::Node::new(unit, true, &[b'A'; 2_000], cigar, position, 2)
             })
             .collect();
         let edges = nodes
