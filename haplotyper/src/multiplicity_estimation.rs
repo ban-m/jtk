@@ -42,12 +42,13 @@ impl MultiplicityEstimation for DataSet {
             ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
         graph.remove_lightweight_edges(2, true);
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        graph.assign_copy_number_gbs(cov, &lens);
-        graph.remove_zero_copy_elements(&lens, 0.3);
-        graph.assign_copy_number_gbs(cov, &lens);
-        graph.remove_zero_copy_elements(&lens, 0.5);
-        let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
+        // graph.assign_copy_number_gbs(cov, &lens);
+        // graph.remove_zero_copy_elements(&lens, 0.3);
+        // graph.assign_copy_number_gbs(cov, &lens);
+        // graph.remove_zero_copy_elements(&lens, 0.5);
+        // let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
         // let (nodes, _) = graph.copy_number_estimation(cov, &lens);
+        let (nodes, _) = graph.copy_number_estimation_mcmc(cov, &lens);
         let mut chunks: HashMap<_, _> =
             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
         // reset copy number.

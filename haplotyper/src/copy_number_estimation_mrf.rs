@@ -3,6 +3,7 @@ use definitions::EncodedRead;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoroshiro128StarStar;
 use std::collections::HashMap;
+use std::collections::HashSet;
 type Node = (u64, u64);
 type Edge = ((Node, bool), (Node, bool));
 pub trait CopyNumberEstimation {
@@ -24,12 +25,12 @@ impl Config {
         }
     }
 }
-const ERROR_FRAC: f64 = 0.15;
-const BURN_IN: usize = 10_000;
-const SAMPLE_LEN: usize = 5_000;
+const ERROR_FRAC: f64 = 0.25;
+const BURN_IN: usize = 300_000;
+const SAMPLE_LEN: usize = 1_000;
 // target of consistency factor.
-const TARGET: f64 = 15f64;
-// const RECAL_INTERVAL: usize = 10_000;
+const TARGET: f64 = 20f64;
+const CHOICES: [usize; 3] = [0, 1, 2];
 impl std::default::Default for Config {
     fn default() -> Self {
         Self {
@@ -58,6 +59,7 @@ impl CopyNumberEstimation for DataSet {
     fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
         let (graph, node_to_idx, edge_to_idx) = Graph::new(&self.encoded_reads);
         let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(config);
+        // let hap_cov = config.haploid_coverage.unwrap();
         let mut node_cp: Vec<_> = node_to_idx
             .iter()
             .map(|(&node, &i)| (node, node_cp[i]))
@@ -109,43 +111,47 @@ impl MCMCConfig {
     // Smaller is better.
     fn node_potential(&self, w: u64, copy: usize) -> f64 {
         let cov = self.coverage;
+        // (w as f64 - copy as f64 * cov).powi(2) / 100f64
         let lambda = (copy as f64 * cov).max(cov * ERROR_FRAC);
         -(w as f64) * lambda.ln() + lambda
     }
 }
 
 impl Graph {
-    fn serialize_node<T: std::borrow::Borrow<EncodedRead>>(reads: &[T]) -> HashMap<Node, usize> {
-        let mut nodes: HashMap<Node, usize> = HashMap::new();
-        for node in reads.iter().flat_map(|r| r.borrow().nodes.iter()) {
-            let len = nodes.len();
-            nodes.entry((node.unit, node.cluster)).or_insert(len);
+    pub fn with(edges: &[(usize, bool, usize, bool)], coverages: &[u64]) -> Self {
+        let mut edge_lists = vec![[vec![], vec![]]; coverages.len()];
+        for (idx, &(u, u_is_head, v, v_is_head)) in edges.iter().enumerate() {
+            edge_lists[u][u_is_head as usize].push(idx);
+            edge_lists[v][v_is_head as usize].push(idx);
         }
-        nodes
+        Self {
+            coverages: coverages.to_vec(),
+            edges: edges.to_vec(),
+            edge_lists,
+        }
+    }
+    fn serialize_node<T: std::borrow::Borrow<EncodedRead>>(reads: &[T]) -> HashMap<Node, usize> {
+        let nodes: HashSet<_> = reads
+            .iter()
+            .flat_map(|r| r.borrow().nodes.iter().map(|n| (n.unit, n.cluster)))
+            .collect();
+        let mut nodes: Vec<_> = nodes.into_iter().collect();
+        nodes.sort();
+        nodes.into_iter().enumerate().map(|(i, k)| (k, i)).collect()
     }
     fn serialize_edge<T: std::borrow::Borrow<EncodedRead>>(reads: &[T]) -> HashMap<Edge, usize> {
-        let mut edges: HashMap<Edge, usize> = HashMap::new();
-        let mut counts = vec![];
-        for w in reads.iter().flat_map(|r| r.borrow().nodes.windows(2)) {
-            let len = edges.len();
-            let edge = Self::normalize(&w[0], &w[1]);
-            edges.entry(edge).or_insert(len);
-            if counts.len() <= len {
-                counts.push(0);
-            }
-            counts[edges[&edge]] += 1;
-        }
-        counts.sort();
-        for c in counts.iter() {
-            trace!("Edge\t{}", c);
-        }
-        edges.retain(|_, val| 2 < *val);
-        edges
-            .keys()
-            .copied()
-            .enumerate()
-            .map(|(i, k)| (k, i))
-            .collect()
+        let edges: HashSet<_> = reads
+            .iter()
+            .flat_map(|r| {
+                r.borrow()
+                    .nodes
+                    .windows(2)
+                    .map(|w| Self::normalize(&w[0], &w[1]))
+            })
+            .collect();
+        let mut edges: Vec<_> = edges.into_iter().collect();
+        edges.sort();
+        edges.into_iter().enumerate().map(|(i, k)| (k, i)).collect()
     }
     fn normalize(u: &definitions::Node, v: &definitions::Node) -> Edge {
         let u_is_head = !u.is_forward;
@@ -169,9 +175,12 @@ impl Graph {
                 assert_eq!(edge.to, read.nodes[i + 1].unit);
             }
         }
-        let edges: Vec<_> = edge_to_idx
-            .keys()
+        let mut edges: Vec<_> = edge_to_idx.keys().collect();
+        edges.sort();
+        let edges: Vec<_> = edges
+            .into_iter()
             .map(|&((u, u_is_head), (v, v_is_head))| {
+                trace!("EDGE\t{}\t{}\t{}\t{}", u.0, u_is_head, v.0, v_is_head);
                 (node_to_idx[&u], u_is_head, node_to_idx[&v], v_is_head)
             })
             .collect();
@@ -196,22 +205,6 @@ impl Graph {
             (*weights.select_nth_unstable(position).1) as f64 / 2f64
         }
     }
-    // fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
-    //     let ((node_cp, edge_cp), _) = self.map_estimate_copy_numbers(config);
-    //     let mut node_cp: Vec<_> = self
-    //         .node_to_idx
-    //         .iter()
-    //         .map(|(&node, &i)| (node, node_cp[i]))
-    //         .collect();
-    //     node_cp.sort_unstable_by_key(|x| x.0);
-    //     let mut edge_cp: Vec<_> = self
-    //         .edge_to_idx
-    //         .iter()
-    //         .map(|(&edge, &i)| (edge, edge_cp[i]))
-    //         .collect();
-    //     edge_cp.sort_unstable_by_key(|x| x.0);
-    //     (node_cp, edge_cp)
-    // }
     // Rounding p into p.trunc() + 1/0 depending on the p.fract().
     fn round<R: Rng>(rng: &mut R, f: f64) -> usize {
         f.trunc() as usize + rng.gen_bool(f.fract()) as usize
@@ -221,6 +214,7 @@ impl Graph {
             .coverages
             .iter()
             .map(|&x| Self::round(rng, x as f64 / config.coverage))
+            //.map(|_| 2)
             .collect();
         let mut edge_cov_dist = vec![0f64; self.edges.len()];
         for (&cov, edges) in self.coverages.iter().zip(self.edge_lists.iter()) {
@@ -235,34 +229,36 @@ impl Graph {
             .iter()
             .map(|&cov| Self::round(rng, cov / 2f64 / config.coverage))
             .collect();
-        // let edge_cp: Vec<_> = vec![1; self.edges.len()];
         (node_cp, edge_cp)
     }
+    fn estimate_mean_parameter(&self, node_cp: &[usize], hap_cov: f64) -> f64 {
+        let len = node_cp.len() as f64;
+        let mean_cp = node_cp.iter().sum::<usize>() as f64 / len;
+        let mean_cov = self.coverages.iter().sum::<u64>() as f64 / len;
+        (mean_cov + (hap_cov - 1f64) / len) / (mean_cp + 1f64 / len)
+    }
     // Return vector of (MAP-estimated) copy numbers of nodes and those of edges.
-    fn map_estimate_copy_numbers(&self, config: &Config) -> ((Vec<usize>, Vec<usize>), f64) {
+    pub fn map_estimate_copy_numbers(&self, config: &Config) -> ((Vec<usize>, Vec<usize>), f64) {
         let hap_cov = config
             .haploid_coverage
             .unwrap_or_else(|| self.estimate_coverage());
-        trace!("COV\t{}", hap_cov);
-        for cov in self.coverages.iter() {
-            trace!("COV\t{}", cov);
-        }
         let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(config.seed);
         let mut mcmc_config = MCMCConfig::new(0, 1f64, 1f64, hap_cov);
         let (mut node_cp, mut edge_cp) = self.initial_guess(&mcmc_config, &mut rng);
         // To get MAP estimates, get the lowest potential combination.
-        let loop_num = 2 * self.coverages.len() * (BURN_IN + SAMPLE_LEN);
         // We gradually increase the consistency factor so that after BURN_IN period,
         // the consistency factor would be TARGET.
         let stops = 2 * self.coverages.len() * BURN_IN;
         let grad = (TARGET.ln() / stops as f64).exp();
-        for t in 0..stops {
-            let (is_success, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
+        for _t in 0..stops {
+            let (_is_success, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
             mcmc_config.consist_factor *= grad;
-            trace!("MCMC\t{}\t{}\t{}\t0", t, mcmc_config.chain_id, is_success,);
         }
+        mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
         let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
-        let (mut argmin, mut min) = ((node_cp.clone(), edge_cp.clone()), current_potential);
+        let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
+        let mut min = current_potential;
+        let loop_num = 2 * self.coverages.len() * (BURN_IN + SAMPLE_LEN);
         for t in stops..loop_num {
             let (is_success, diff) =
                 self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
@@ -270,39 +266,23 @@ impl Graph {
                 current_potential += diff;
                 if current_potential < min {
                     min = current_potential;
-                    argmin = (node_cp.clone(), edge_cp.clone());
+                    argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
                 }
             }
-            trace!(
-                "MCMC\t{}\t{}\t{}\t{}",
-                t,
-                mcmc_config.chain_id,
-                is_success,
-                current_potential,
-            );
+            let ci = mcmc_config.chain_id;
+            if t % 500 == 0 {
+                trace!("MCMC\t{}\t{}\t{}\t{}", t, ci, is_success, current_potential,);
+                // If this is on, make sure to re-calculate the potential.
+                // mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
+                // current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
+                // trace!("COV\t{}\t{}", t, mcmc_config.coverage);
+            }
         }
+        mcmc_config.coverage = argmin.2;
         let potential = self.total_energy(&argmin.0, &argmin.1, &mcmc_config);
         trace!("MIN\t{}\t{}", min, potential);
-        (argmin, min)
-        // let mut node_cp_dist: Vec<_> = node_cp.iter().map(|&c| vec![0; 2 * c + 1]).collect();
-        // let mut edge_cp_dist: Vec<_> = edge_cp.iter().map(|&c| vec![0; 2 * c + 1]).collect();
-        // let mut lks = vec![];
-        // for (buf, &x) in node_cp_dist.iter_mut().zip(node_cp.iter()) {
-        //     if let Some(slot) = buf.get_mut(x) {
-        //         *slot += 1;
-        //     }
-        // }
-        // for (buf, &x) in edge_cp_dist.iter_mut().zip(edge_cp.iter()) {
-        //     if let Some(slot) = buf.get_mut(x) {
-        //         *slot += 1;
-        //     }
-        // }
-        // lks.push(self.total_energy(&node_cp, &edge_cp, hap_cov));
-        // let argmax = |buf: &Vec<u32>| buf.iter().enumerate().max_by_key(|x| x.1).unwrap().0;
-        // let node_cp: Vec<_> = node_cp_dist.iter().map(argmax).collect();
-        // let edge_cp: Vec<_> = edge_cp_dist.iter().map(argmax).collect();
-        // let lk = logsumexp(&lks);
-        // ((node_cp, edge_cp), lk)
+        assert!((potential - min).abs() < 0.001);
+        ((argmin.0, argmin.1), min)
     }
     // return (if the proposal is accepted, the potential difference between now-prev.
     fn update<R: Rng>(
@@ -312,11 +292,22 @@ impl Graph {
         config: &MCMCConfig,
         rng: &mut R,
     ) -> (bool, f64) {
-        if rng.gen_ratio(node_cp.len() as u32, (node_cp.len() + edge_cp.len()) as u32) {
-            self.update_node(node_cp, edge_cp, config, rng)
-        } else {
-            self.update_edge(node_cp, edge_cp, config, rng)
+        use rand::seq::SliceRandom;
+        // let choices = [0, 1, 2];
+        // let weights = vec![3f64.recip(); 3];
+        // let choice = choices.choose_weighted(rng, |&k| weights[k]).unwrap();
+        let choice = CHOICES.choose(rng).unwrap();
+        match choice {
+            0 => self.update_node(node_cp, edge_cp, config, rng),
+            1 => self.update_edge(node_cp, edge_cp, config, rng),
+            2 => self.update_neighbor(node_cp, edge_cp, config, rng),
+            _ => unreachable!(),
         }
+        // if rng.gen_ratio(node_cp.len() as u32, (node_cp.len() + edge_cp.len()) as u32) {
+        //     self.update_node(node_cp, edge_cp, config, rng)
+        // } else {
+        //     self.update_edge(node_cp, edge_cp, config, rng)
+        // }
     }
     fn update_node<R: Rng>(
         &self,
@@ -368,6 +359,57 @@ impl Graph {
             }
             (accept, potential_diff)
         }
+    }
+    fn update_neighbor<R: Rng>(
+        &self,
+        node_cp: &mut [usize],
+        edge_cp: &mut [usize],
+        config: &MCMCConfig,
+        rng: &mut R,
+    ) -> (bool, f64) {
+        use rand::seq::IteratorRandom;
+        let flip = rng.gen_range(0..node_cp.len());
+        let to_decrease = rng.gen_bool(0.5);
+        if to_decrease && node_cp[flip] == 0 {
+            return (true, 0f64);
+        }
+        let targets = {
+            let mut targets = self.edge_lists[flip]
+                .iter()
+                .map(|eds| eds.iter().choose_stable(rng));
+            // false -> 0, true -> 1, this is very important.
+            let tail_target = targets.next().unwrap().copied();
+            let tail_target = tail_target.filter(|&n| !to_decrease || 0 < n);
+            let head_target = targets.next().unwrap().copied();
+            let head_target = head_target.filter(|&n| !to_decrease || 0 < n);
+            // If this is a loop edge, then merge them.
+            if tail_target == head_target {
+                (flip, tail_target, None)
+            } else {
+                (flip, tail_target, head_target)
+            }
+        };
+        let potential_diff =
+            self.energy_diff_neighbor(node_cp, edge_cp, config, targets, to_decrease);
+        let prob = (-potential_diff / config.temprature).exp().min(1f64);
+        let accept = rng.gen_bool(prob);
+        if accept {
+            match to_decrease {
+                true => node_cp[flip] -= 1,
+                false => node_cp[flip] += 1,
+            }
+            match (targets.1, to_decrease) {
+                (Some(tail), true) => edge_cp[tail] -= 1,
+                (Some(tail), false) => edge_cp[tail] += 1,
+                _ => {}
+            }
+            match (targets.2, to_decrease) {
+                (Some(head), true) => edge_cp[head] -= 1,
+                (Some(head), false) => edge_cp[head] += 1,
+                _ => {}
+            }
+        }
+        (accept, potential_diff)
     }
     fn energy_diff_node(
         &self,
@@ -427,6 +469,90 @@ impl Graph {
         };
         (consis_diff_on_v + consis_diff_on_u) * config.consist_factor
     }
+    fn energy_diff_neighbor(
+        &self,
+        node_cp: &[usize],
+        edge_cp: &[usize],
+        config: &MCMCConfig,
+        (node, tail_edge, head_edge): (usize, Option<usize>, Option<usize>),
+        to_decrease: bool,
+    ) -> f64 {
+        // potential diff by node.
+        let node_cov = self.coverages[node];
+        let old_cp = node_cp[node];
+        let new_cp = if to_decrease { old_cp - 1 } else { old_cp + 1 };
+        let node_diff =
+            config.node_potential(node_cov, new_cp) - config.node_potential(node_cov, old_cp);
+        // Potential diff by edges.
+        // LK diff by edge potential
+        let edges = &self.edge_lists[node];
+        let terminals = {
+            let mut terminals: Vec<((usize, bool), usize)> = Vec::with_capacity(5);
+            match tail_edge {
+                None if !edges[0].is_empty() => {
+                    if terminals.iter().find(|x| x.0 == (node, false)).is_none() {
+                        terminals.push(((node, false), 0));
+                    }
+                }
+                Some(edge_idx) => {
+                    let (u, u_is_head, v, v_is_head) = self.edges[edge_idx];
+                    match terminals.iter_mut().find(|x| x.0 == (u, u_is_head)) {
+                        Some(res) => res.1 += 1,
+                        None => terminals.push(((u, u_is_head), 1)),
+                    }
+                    match terminals.iter_mut().find(|x| x.0 == (v, v_is_head)) {
+                        Some(res) => res.1 += 1,
+                        None => terminals.push(((v, v_is_head), 1)),
+                    }
+                }
+                _ => {}
+            }
+            match head_edge {
+                None if !edges[1].is_empty() => {
+                    if terminals.iter().find(|x| x.0 == (node, true)).is_none() {
+                        terminals.push(((node, true), 0));
+                    }
+                }
+                Some(edge_idx) => {
+                    let (u, u_is_head, v, v_is_head) = self.edges[edge_idx];
+                    match terminals.iter_mut().find(|x| x.0 == (u, u_is_head)) {
+                        Some(res) => res.1 += 1,
+                        None => terminals.push(((u, u_is_head), 1)),
+                    }
+                    match terminals.iter_mut().find(|x| x.0 == (v, v_is_head)) {
+                        Some(res) => res.1 += 1,
+                        None => terminals.push(((v, v_is_head), 1)),
+                    }
+                }
+                _ => {}
+            }
+            terminals
+        };
+        let edge_consistency_diff: f64 = terminals
+            .iter()
+            .map(|&((n, is_head), diff)| {
+                let node_old = node_cp[n];
+                let node_new = match (n == node, to_decrease) {
+                    (true, true) => node_old - 1,
+                    (true, false) => node_old + 1,
+                    (false, _) => node_old,
+                };
+                let edge_old: usize = self.edge_lists[n][is_head as usize]
+                    .iter()
+                    .map(|&i| edge_cp[i])
+                    .sum();
+                let edge_new = match to_decrease {
+                    true => edge_old - diff,
+                    false => edge_old + diff,
+                };
+                let new_diff = abs_diff(node_new, edge_new).pow(2);
+                let old_diff = abs_diff(node_old, edge_old).pow(2);
+                new_diff as f64 - old_diff as f64
+            })
+            .sum();
+        node_diff + edge_consistency_diff + config.consist_factor
+    }
+
     // Loged version of the total energy.
     // SMALLER IS BETTER
     fn total_energy(&self, node_cp: &[usize], edge_cp: &[usize], config: &MCMCConfig) -> f64 {
@@ -441,17 +567,17 @@ impl Graph {
             .iter()
             .zip(node_cp.iter())
             .map(|(eds_both_sides, &cp)| {
-                let head_eds = &eds_both_sides[0];
-                let head_cp: usize = head_eds.iter().map(|&idx| edge_cp[idx]).sum();
-                let head_potential: usize = match head_eds.is_empty() {
-                    true => 0,
-                    false => abs_diff(cp, head_cp).pow(2),
-                };
-                let tail_eds = &eds_both_sides[1];
+                let tail_eds = &eds_both_sides[0];
                 let tail_cp: usize = tail_eds.iter().map(|&idx| edge_cp[idx]).sum();
                 let tail_potential: usize = match tail_eds.is_empty() {
                     true => 0,
                     false => abs_diff(cp, tail_cp).pow(2),
+                };
+                let head_eds = &eds_both_sides[1];
+                let head_cp: usize = head_eds.iter().map(|&idx| edge_cp[idx]).sum();
+                let head_potential: usize = match head_eds.is_empty() {
+                    true => 0,
+                    false => abs_diff(cp, head_cp).pow(2),
                 };
                 head_potential + tail_potential
             })
@@ -480,20 +606,6 @@ fn logsumexp(xs: &[f64]) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    impl Graph {
-        fn with(edges: &[(usize, bool, usize, bool)], coverages: &[u64]) -> Self {
-            let mut edge_lists = vec![[vec![], vec![]]; coverages.len()];
-            for (idx, &(u, u_is_head, v, v_is_head)) in edges.iter().enumerate() {
-                edge_lists[u][u_is_head as usize].push(idx);
-                edge_lists[v][v_is_head as usize].push(idx);
-            }
-            Self {
-                coverages: coverages.to_vec(),
-                edges: edges.to_vec(),
-                edge_lists,
-            }
-        }
-    }
     #[test]
     fn it_works() {}
     #[test]

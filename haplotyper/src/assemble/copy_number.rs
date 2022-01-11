@@ -327,6 +327,23 @@ fn choose_copy_num<R: Rng>(
     }
 }
 
+//Input:haploid coverage.
+pub fn estimate_copy_number_mcmc(
+    nodes: &[f64],
+    edges: &[Edge],
+    cov: f64,
+) -> (Vec<usize>, Vec<usize>) {
+    let edges: Vec<_> = edges
+        .iter()
+        .map(|&(u, u_is_head, v, v_is_head, _)| (u, u_is_head, v, v_is_head))
+        .collect();
+    let coverages: Vec<_> = nodes.iter().map(|x| x.round() as u64).collect();
+    let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
+    debug!("COPYNUM\tGraph\t{}", graph);
+    let config = crate::copy_number_estimation_mrf::Config::new(cov, 34029);
+    graph.map_estimate_copy_numbers(&config).0
+}
+
 pub fn estimate_copy_number_gbs(
     nodes: &[f64],
     edges: &[Edge],

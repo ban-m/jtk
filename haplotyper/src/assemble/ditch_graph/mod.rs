@@ -850,7 +850,7 @@ impl<'a> DitchGraph<'a> {
         &self,
         node_to_pathid: &HashMap<Node, usize>,
         edges: &[&DitchEdge],
-        calibrator: &CoverageCalibrator,
+        calibrator: Option<&CoverageCalibrator>,
     ) -> (Vec<Vec<(Node, Position)>>, Vec<EdgeBetweenSimplePath>) {
         let path_num: usize = *node_to_pathid.values().max().unwrap_or(&0) + 1;
         let mut terminals: Vec<_> = vec![vec![]; path_num];
@@ -886,7 +886,10 @@ impl<'a> DitchGraph<'a> {
                 let unit_len =
                     self.nodes[&edge.from].seq().len() + self.nodes[&edge.to].seq().len();
                 let gap_len = (unit_len as i64 + edge.seq.len()) as usize;
-                let weight = calibrator.calib(edge.occ, gap_len);
+                let weight = match calibrator {
+                    Some(calibrator) => calibrator.calib(edge.occ, gap_len),
+                    None => edge.occ as f64,
+                };
                 // debug!("CALIB\t{:.1}\t{}\t{}\tEDGE", edge.occ, gap_len, weight);
                 (from_index, fp, to_index, tp, weight)
             })
@@ -896,7 +899,7 @@ impl<'a> DitchGraph<'a> {
     fn convert_path_weight(
         &self,
         node_to_pathid: &HashMap<Node, usize>,
-        calibrator: &CoverageCalibrator,
+        calibrator: Option<&CoverageCalibrator>,
     ) -> Vec<f64> {
         let path_num: usize = *node_to_pathid.values().max().unwrap_or(&0) + 1;
         let mut node_weights = vec![(0f64, 0usize); path_num];
@@ -904,7 +907,10 @@ impl<'a> DitchGraph<'a> {
             let simple_path_index = node_to_pathid[&node.node];
             node_weights[simple_path_index].1 += 1;
             let unit_len = node.seq().len();
-            let weight = calibrator.calib(node.occ, unit_len);
+            let weight = match calibrator {
+                Some(calibrator) => calibrator.calib(node.occ, unit_len),
+                None => node.occ as f64,
+            };
             node_weights[simple_path_index].0 += weight;
         }
         node_weights
@@ -967,9 +973,10 @@ impl<'a> DitchGraph<'a> {
     ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (calibrator, cov) = self.generate_coverage_calib(naive_cov, lens);
+        let calibrator = Some(&calibrator);
         let (terminals, mut edges) =
-            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, &calibrator);
-        let mut nodes = self.convert_path_weight(&node_to_pathid, &calibrator);
+            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, calibrator);
+        let mut nodes = self.convert_path_weight(&node_to_pathid, calibrator);
         edges.iter_mut().for_each(|x| x.4 /= cov);
         nodes.iter_mut().for_each(|x| *x /= cov);
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number(&nodes, &edges);
@@ -999,9 +1006,10 @@ impl<'a> DitchGraph<'a> {
     ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (calibrator, cov) = self.generate_coverage_calib(naive_cov, lens);
+        let calibrator = Some(&calibrator);
         let (terminals, edges) =
-            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, &calibrator);
-        let nodes = self.convert_path_weight(&node_to_pathid, &calibrator);
+            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, calibrator);
+        let nodes = self.convert_path_weight(&node_to_pathid, calibrator);
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number_gbs(&nodes, &edges, cov);
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
@@ -1028,6 +1036,46 @@ impl<'a> DitchGraph<'a> {
             }
         }
     }
+    /// Estimoate copy number of nodes and edges by MCMC.
+    /// *This function does not modify the graph content*.
+    /// If you want to assign copy number to each node, call `assign_copy_number_gbs` instead.
+    pub fn copy_number_estimation_mcmc(
+        &self,
+        naive_cov: f64,
+        _lens: &[usize],
+    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
+        let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
+        let (terminals, edges) =
+            self.convert_connecting_edges(&node_to_pathid, &connecting_edges, None);
+        let nodes = self.convert_path_weight(&node_to_pathid, None);
+        let (node_cp, edge_cp) =
+            super::copy_number::estimate_copy_number_mcmc(&nodes, &edges, naive_cov);
+        if log_enabled!(log::Level::Trace) {
+            trace!("COVCP\tType\tCov\tCp");
+            for (n, cp) in nodes.iter().zip(node_cp.iter()) {
+                trace!("COVCP\tNODE\t{}\t{}", n, cp,);
+            }
+            for (e, cp) in edges.iter().zip(edge_cp.iter()) {
+                trace!("COVCP\tEDGE\t{}\t{}", e.4, cp);
+            }
+        }
+        self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
+    }
+    /// (Re-)estimate copy number on each node and edge.
+    pub fn assign_copy_number_mcmc(&mut self, naive_cov: f64, lens: &[usize]) {
+        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_gbs(naive_cov, lens);
+        let get_edge_cn = |e: &DitchEdge| {
+            let edge = ((e.from, e.from_position), (e.to, e.to_position));
+            edge_copy_number.get(&edge).copied()
+        };
+        for (key, node) in self.nodes.iter_mut() {
+            node.copy_number = node_copy_number.get(key).cloned();
+            for edge in node.edges.iter_mut() {
+                edge.copy_number = get_edge_cn(edge);
+            }
+        }
+    }
+
     /// Even though the edge/node is zero copy number, we do not remove it if the conditions below hold:
     /// 1. If it is an edge, and all edge from the same position is ZCP, and it is the heviest edge among them.
     /// 2. If it is a node, and it has un-removable edge.
