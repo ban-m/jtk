@@ -2,7 +2,6 @@
 //! Specifically, by calling "normalize_local_clustering", on each chunk,
 //! # of reads on clusters would be sorted in descending order with respect to the cluster index.
 //! In other words, # of the 0-th cluster would be larger than that of 1-th, # of 1-st would be larger than 2-nd, and so on.
-
 use definitions::*;
 pub fn normalize_local_clustering(ds: &mut DataSet) {
     let max_chunk = ds.selected_chunks.iter().map(|x| x.id).max().unwrap() + 1;

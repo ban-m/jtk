@@ -46,10 +46,10 @@ then
     echo "Tangle resolved. Skip resolving proc".
 else
     cat ${CLUSTERED} |\
-        jtk correct_deletion -vv --threads ${THREADS} |\
+        jtk correct_deletion -vv --threads ${THREADS} --re_cluster |\
         # jtk correct_multiplicity -vv --threads ${THREADS} |\
         jtk encode_densely -vv --threads ${THREADS} |\
-        jtk correct_deletion -vv --threads ${THREADS}  >${RESOLVED} # |\
+        jtk correct_deletion -vv --threads ${THREADS} --re_cluster >${RESOLVED} # |\
         # jtk correct_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA_2} >${RESOLVED}
 fi
 

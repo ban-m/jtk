@@ -974,6 +974,8 @@ impl<'a> DitchGraph<'a> {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (calibrator, cov) = self.generate_coverage_calib(naive_cov, lens);
         let calibrator = Some(&calibrator);
+        // let cov = naive_cov;
+        // let calibrator = None;
         let (terminals, mut edges) =
             self.convert_connecting_edges(&node_to_pathid, &connecting_edges, calibrator);
         let mut nodes = self.convert_path_weight(&node_to_pathid, calibrator);
@@ -1014,10 +1016,10 @@ impl<'a> DitchGraph<'a> {
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
             for (n, cp) in nodes.iter().zip(node_cp.iter()) {
-                trace!("COVCP\tNODE\t{}\t{}", n, cp,);
+                trace!("COVCP\tNODE\t{:.2}\t{}", n, cp,);
             }
             for (e, cp) in edges.iter().zip(edge_cp.iter()) {
-                trace!("COVCP\tEDGE\t{}\t{}", e.4, cp);
+                trace!("COVCP\tEDGE\t{:.2}\t{}", e.4, cp);
             }
         }
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
@@ -1063,7 +1065,8 @@ impl<'a> DitchGraph<'a> {
     }
     /// (Re-)estimate copy number on each node and edge.
     pub fn assign_copy_number_mcmc(&mut self, naive_cov: f64, lens: &[usize]) {
-        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_gbs(naive_cov, lens);
+        let (node_copy_number, edge_copy_number) =
+            self.copy_number_estimation_mcmc(naive_cov, lens);
         let get_edge_cn = |e: &DitchEdge| {
             let edge = ((e.from, e.from_position), (e.to, e.to_position));
             edge_copy_number.get(&edge).copied()

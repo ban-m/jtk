@@ -408,16 +408,6 @@ fn subcommand_partition_local() -> App<'static, 'static> {
                 .default_value("1")
                 .takes_value(true),
         )
-    // .arg(
-    //     Arg::with_name("subchunk_len")
-    //         .short("s")
-    //         .long("subchunk_len")
-    //         .required(false)
-    //         .value_name("SubChunkLength")
-    //         .help("The length of sub-chunks")
-    //         .default_value("100")
-    //         .takes_value(true),
-    // )
 }
 
 fn subcommand_correct_deletion() -> App<'static, 'static> {
@@ -442,14 +432,21 @@ fn subcommand_correct_deletion() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("dissim")
+            Arg::with_name("sim")
                 .short("d")
-                .long("dis_similarity")
+                .long("similarity")
                 .required(false)
-                .value_name("DISSIM")
-                .help("Acceptable Dissimilarity threshold.")
+                .value_name("SIM")
+                .help("Acceptable similarity threshold.")
                 .default_value("0.35")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("re_cluster")
+                .short("r")
+                .long("re_cluster")
+                .required(false)
+                .help("Re-calculate the posterior probability of newly encoded units."),
         )
 }
 
@@ -959,7 +956,7 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let length = 100;
+    // let length = 100;
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
@@ -968,8 +965,8 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     }
     // Clustering.
     use haplotyper::local_clustering::*;
-    let config = ClusteringConfig::with_default(dataset, 2, length);
-    dataset.local_clustering(&config);
+    // let config = ClusteringConfig::with_default(dataset, 2, length);
+    dataset.local_clustering();
 }
 
 fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -979,9 +976,10 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|num| num.parse().ok())
         .unwrap();
     let sim_thr: f64 = matches
-        .value_of("dissim")
+        .value_of("sim")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let to_recal = matches.is_present("re_cluster");
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
@@ -989,7 +987,10 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     use haplotyper::encode::deletion_fill;
-    deletion_fill::correct_unit_deletion(dataset, sim_thr);
+    let find_new_node = deletion_fill::correct_unit_deletion(dataset, sim_thr);
+    if to_recal {
+        haplotyper::local_clustering::local_clustering_selected(dataset, &find_new_node);
+    }
 }
 
 fn correct_multiplicity(matches: &clap::ArgMatches, dataset: &mut DataSet) {

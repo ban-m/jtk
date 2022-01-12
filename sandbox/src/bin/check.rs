@@ -41,15 +41,15 @@ fn main() -> std::io::Result<()> {
         };
         match var_type {
             0..=3 => {
-                debug!("Subs,{}", var_pos);
+                debug!("INTR\tSubs,{}", var_pos);
                 seq[var_pos] = b"ACGT"[var_type];
             }
             4..=7 => {
-                debug!("Ins,{}", var_pos);
+                debug!("INTR\tIns,{}", var_pos);
                 seq.insert(var_pos, b"ACGT"[var_type - 4]);
             }
             _ => {
-                debug!("Del,{}", var_pos);
+                debug!("INTR\tDel,{}", var_pos);
                 seq.remove(var_pos);
             }
         };

@@ -214,7 +214,6 @@ impl Graph {
             .coverages
             .iter()
             .map(|&x| Self::round(rng, x as f64 / config.coverage))
-            //.map(|_| 2)
             .collect();
         let mut edge_cov_dist = vec![0f64; self.edges.len()];
         for (&cov, edges) in self.coverages.iter().zip(self.edge_lists.iter()) {
@@ -293,9 +292,7 @@ impl Graph {
         rng: &mut R,
     ) -> (bool, f64) {
         use rand::seq::SliceRandom;
-        // let choices = [0, 1, 2];
         // let weights = vec![3f64.recip(); 3];
-        // let choice = choices.choose_weighted(rng, |&k| weights[k]).unwrap();
         let choice = CHOICES.choose(rng).unwrap();
         match choice {
             0 => self.update_node(node_cp, edge_cp, config, rng),
@@ -379,9 +376,9 @@ impl Graph {
                 .map(|eds| eds.iter().choose_stable(rng));
             // false -> 0, true -> 1, this is very important.
             let tail_target = targets.next().unwrap().copied();
-            let tail_target = tail_target.filter(|&n| !to_decrease || 0 < n);
+            let tail_target = tail_target.filter(|&n| !to_decrease || 0 < edge_cp[n]);
             let head_target = targets.next().unwrap().copied();
-            let head_target = head_target.filter(|&n| !to_decrease || 0 < n);
+            let head_target = head_target.filter(|&n| !to_decrease || 0 < edge_cp[n]);
             // If this is a loop edge, then merge them.
             if tail_target == head_target {
                 (flip, tail_target, None)
@@ -399,12 +396,18 @@ impl Graph {
                 false => node_cp[flip] += 1,
             }
             match (targets.1, to_decrease) {
-                (Some(tail), true) => edge_cp[tail] -= 1,
+                (Some(tail), true) => {
+                    assert!(edge_cp[tail] > 0);
+                    edge_cp[tail] -= 1
+                }
                 (Some(tail), false) => edge_cp[tail] += 1,
                 _ => {}
             }
             match (targets.2, to_decrease) {
-                (Some(head), true) => edge_cp[head] -= 1,
+                (Some(head), true) => {
+                    assert!(edge_cp[head] > 0);
+                    edge_cp[head] -= 1
+                }
                 (Some(head), false) => edge_cp[head] += 1,
                 _ => {}
             }

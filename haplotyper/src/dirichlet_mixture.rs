@@ -1141,8 +1141,13 @@ impl DirichletMixture {
         self.dirichlets
             .get(unit)
             .map(|(frac, dir)| {
+                // If the fraction is very small, then, it SHOULD
+                // return some very small value, smaller than any other
+                // likelihood returned by dir.lk(prob).
+                // dir.lk(prob) is usually -1000 * (p-1)
+                // TODO: is this OK?
                 if APPROX && frac + self.mat_prob < LOG_WEIGHT_FILTER {
-                    self.mat_prob + frac
+                    self.mat_prob + frac + LOG_WEIGHT_FILTER
                 } else {
                     self.mat_prob + frac + dir.lk(prob)
                 }

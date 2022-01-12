@@ -435,6 +435,8 @@ impl Node {
         position_from_start: usize,
         cluster_num: usize,
     ) -> Self {
+        let post_prob = (cluster_num.max(1) as f64).recip().ln();
+        //let post_prob = 0f64;
         Self {
             position_from_start,
             unit,
@@ -442,8 +444,7 @@ impl Node {
             seq: String::from_utf8_lossy(seq).to_string(),
             is_forward,
             cigar,
-            posterior: vec![0f64; cluster_num],
-            // posterior: vec![(cluster_num as f64).recip(); cluster_num],
+            posterior: vec![post_prob; cluster_num],
         }
     }
     pub fn seq(&self) -> &[u8] {

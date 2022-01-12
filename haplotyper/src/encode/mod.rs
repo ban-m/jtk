@@ -19,8 +19,9 @@ const ALLOWED_END_GAP: usize = 50;
 // /// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
 // pub const INDEL_THRESHOLD: usize = 50;
 /// Any alignment having Insertion/Deletion longer than unit.seq() * INDEL_FRACTION would be discarded.
-/// for 2Kbp length, the threshold is 50bp.
+/// for 2Kbp length, the threshold is 30bp.
 pub const INDEL_FRACTION: f64 = 1f64 / 40f64;
+// pub const INDEL_FRACTION: f64 = 0.015;
 pub const MIN_INDEL_SIZE: usize = 10;
 pub trait Encode {
     fn encode(&mut self, threads: usize, sim_thr: f64);

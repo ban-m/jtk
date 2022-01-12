@@ -27,17 +27,22 @@ pub fn rand_index(label: &[u8], pred: &[u8]) -> f64 {
 }
 
 pub trait LocalClustering {
-    fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-        &mut self,
-        c: &ClusteringConfig<F>,
-    );
+    fn local_clustering(&mut self);
+    // fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    //     &mut self,
+    //     c: &ClusteringConfig<F>,
+    // );
 }
 
 impl LocalClustering for DataSet {
-    fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
-        &mut self,
-        _c: &ClusteringConfig<F>,
-    ) {
+    // fn local_clustering<F: Fn(u8, u8) -> i32 + std::marker::Sync>(
+    //     &mut self,
+    //     _c: &ClusteringConfig<F>,
+    // ) {
+    //     let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
+    //     local_clustering_selected(self, &selection);
+    // }
+    fn local_clustering(&mut self) {
         let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
         local_clustering_selected(self, &selection);
     }
@@ -108,11 +113,11 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let config = kmeans::ClusteringConfig::new(100, ref_unit.cluster_num as u8, coverage);
             // Maybe it is better to use the original alignment, right?
             let consensus = take_consensus(ref_unit, &seqs, &hmm);
-            let (asn, pss, score) = if 1 < ref_unit.cluster_num {
+            let (asn, pss, score, k) = if 1 < ref_unit.cluster_num {
                 kmeans::clustering_dev(&consensus, &seqs, &mut rng, &hmm, &config)
                     .unwrap_or_else(|| panic!("RECORD\t{}", unit_id))
             } else {
-                (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64)
+                (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
             };
             for (node, ps) in units.iter_mut().zip(pss) {
                 node.posterior = ps;
@@ -127,13 +132,15 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
                 unit_id, elapsed, len, score, cov
             );
-            (unit_id, (consensus, score, config.cluster_num))
+            //(unit_id, (consensus, score, config.cluster_num))
+            (unit_id, (consensus, score, k))
         })
         .collect();
     for unit in ds.selected_chunks.iter_mut() {
-        if let Some((consensus, score, _cluster_num)) = consensus_and_clusternum.get(&unit.id) {
+        if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
             unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
             unit.score = *score;
+            unit.cluster_num = *cluster_num as usize;
         }
     }
     // NOTE that we do not need to remove the very different reads, as
