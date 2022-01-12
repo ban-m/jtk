@@ -149,7 +149,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     } = *config;
     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
     let cluster_num = cluster_num as usize;
-    const NEWFEATURE: bool = true;
+    const NEWFEATURE: bool = false;
     let selected_variants = match NEWFEATURE {
         true => feature_extract(&profiles, cluster_num, coverage, template.len(), rng),
         false => {
@@ -181,17 +181,17 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     };
     let num = 2;
     let init_cluster_num = cluster_num.max(4) - 3;
-    // let (assignments, _score) = (init_cluster_num..=cluster_num)
-    //     .filter_map(|k| {
-    //         let (asn, score) = (0..num)
-    //             .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
-    //             .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    //         trace!("LK\t{}\t{:.3}", k, score);
-    //         let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
-    //         Some((asn, score - expected_gain))
-    //     })
-    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    // let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
+    let (assignments, _score) = (init_cluster_num..=cluster_num)
+        .filter_map(|k| {
+            let (asn, score) = (0..num)
+                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+            trace!("LK\t{}\t{:.3}", k, score);
+            let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
+            Some((asn, score - expected_gain))
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
     let (assignments, score, k) = (init_cluster_num..=cluster_num)
         .filter_map(|k| {
             let (asn, score) = (0..num)
@@ -766,23 +766,27 @@ fn feature_extract<R: Rng>(
             *count += (0.00001 < *p) as usize;
         }
     }
-    let mut probes: Vec<_> = total_improvement
+    let mut probes: Vec<(usize, f64)> = total_improvement
         .iter()
         .enumerate()
-        .filter_map(|(pos, &(maxgain, count))| {
+        .map(|(pos, &(maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
                 .map(|k| poisson_lk(count, coverage * k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
                 .unwrap_or_else(|| panic!("{}", cluster_num));
-            let lk = max_lk + maxgain;
-            // TODO: TUNE THIS IF STATEMENT.
-            (coverage < lk).then(|| (pos, lk))
+            (pos, max_lk + maxgain)
         })
         .collect();
     probes.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap());
+    // TODO:TUNE THIS
+    {
+        let min_take_num = cluster_num * 3;
+        let min_lk_gain = profiles.len() as f64 / cluster_num as f64;
+        probes.retain(|&(pos, max_lk_gain)| pos < min_take_num || min_lk_gain < max_lk_gain);
+    }
     // index of the variants, maximum gain.
     let mut selected_vars: Vec<(usize, f64)> = vec![];
-    for chunk in probes.chunks(5) {
+    for chunk in probes.chunks(7) {
         for &(pos, max_gain) in chunk {
             let already_inserted = selected_vars
                 .iter()
