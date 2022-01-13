@@ -44,15 +44,13 @@ impl CopyNumberEstimation for DataSet {
     fn update_copy_numbers(&mut self, config: &Config) {
         let (node_cp, _) = self.estimate_copy_numbers(config);
         // Reset copy numbers.
-        self.selected_chunks
-            .iter_mut()
-            .for_each(|c| c.cluster_num = 0);
+        self.selected_chunks.iter_mut().for_each(|c| c.copy_num = 0);
         // Update copy numbers.
         let mut chunks: HashMap<u64, &mut definitions::Unit> =
             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
         for ((unit, _), cp) in node_cp {
             if let Some(chunk) = chunks.get_mut(&unit) {
-                chunk.cluster_num += cp;
+                chunk.copy_num += cp;
             }
         }
     }

@@ -122,11 +122,9 @@ impl DetermineUnit for definitions::DataSet {
                 .filter(|u| !is_repetitive(u, config))
                 .take(config.unit_num)
                 .enumerate()
-                .map(|(idx, seq)| Unit {
-                    id: idx as u64,
-                    seq: String::from_utf8_lossy(seq).to_string(),
-                    cluster_num: config.min_cluster,
-                    score: 0f64,
+                .map(|(idx, seq)| {
+                    let seq = String::from_utf8_lossy(seq).to_string();
+                    Unit::new(idx as u64, seq, config.min_cluster)
                 })
                 .collect();
         } else {
@@ -395,11 +393,10 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
     debug!("FillSparse\t{}", picked_units.len());
     let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
     ds.selected_chunks
-        .extend(picked_units.iter().enumerate().map(|(i, seq)| Unit {
-            id: i as u64 + last_unit + 1,
-            seq: String::from_utf8_lossy(seq).to_string(),
-            cluster_num: config.min_cluster,
-            score: 0f64,
+        .extend(picked_units.iter().enumerate().map(|(i, seq)| {
+            let id = i as u64 + last_unit + 1;
+            let seq = String::from_utf8_lossy(seq).to_string();
+            Unit::new(id, seq, config.min_cluster)
         }));
 }
 

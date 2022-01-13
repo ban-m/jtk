@@ -194,19 +194,21 @@ pub struct Unit {
     pub seq: String,
     /// Current estimation of the cluster number.
     pub cluster_num: usize,
+    /// Current estimation of the copy number. This is an upper bound of the cluster number.
+    /// (For me: cluster_num is not always the copy number. There can be a homologous chunk.)
+    pub copy_num: usize,
     /// Local clustering score. If not clustered, zero.
-    pub score: f64, // /// The initial guess of the cluster number.
-                    // pub initial_cluster_num: usize
+    pub score: f64,
 }
 
 impl Unit {
-    pub fn new(id: u64, seq: String, cluster_num: usize) -> Self {
+    pub fn new(id: u64, seq: String, copy_num: usize) -> Self {
         Self {
             id,
             seq,
-            cluster_num,
+            copy_num,
+            cluster_num: copy_num,
             score: 0f64,
-            // initial_cluster_num: cluster_num,
         }
     }
     pub fn seq(&self) -> &[u8] {
@@ -435,8 +437,9 @@ impl Node {
         position_from_start: usize,
         cluster_num: usize,
     ) -> Self {
+        // This is cluster number. Because each node would be assigned to a cluster, not a copy.
+        // Actually, we can not determine each copy of in the genome, right?
         let post_prob = (cluster_num.max(1) as f64).recip().ln();
-        //let post_prob = 0f64;
         Self {
             position_from_start,
             unit,

@@ -27,15 +27,15 @@ pub struct ClusteringConfig {
     band_width: usize,
     // Coverage for haploid.
     coverage: f64,
-    pub cluster_num: u8,
+    pub copy_num: u8,
 }
 
 impl ClusteringConfig {
-    pub fn new(band_width: usize, cluster_num: u8, coverage: f64) -> Self {
+    pub fn new(band_width: usize, copy_num: u8, coverage: f64) -> Self {
         Self {
             band_width,
             coverage,
-            cluster_num,
+            copy_num,
         }
     }
 }
@@ -70,16 +70,16 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
 ) -> Option<(Vec<u8>, Vec<Vec<f64>>, f64, u8)> {
     let ClusteringConfig {
         band_width,
-        cluster_num,
+        copy_num,
         coverage,
     } = *config;
     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
-    let cluster_num = cluster_num as usize;
+    let copy_num = copy_num as usize;
     const NEWFEATURE: bool = true;
     let selected_variants = match NEWFEATURE {
-        true => feature_extract(&profiles, cluster_num, coverage, template.len(), rng),
+        true => feature_extract(&profiles, copy_num, coverage, template.len(), rng),
         false => {
-            let probes = filter_profiles(&profiles, cluster_num, 3, coverage, template.len());
+            let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
             if log_enabled!(log::Level::Trace) {
                 // DUMP Hot columns.
                 for (pos, lk) in probes.iter() {
@@ -105,16 +105,9 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .collect()
         }
     };
-    if log_enabled!(log::Level::Trace) {
-        // for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-        for (id, prf) in selected_variants.iter().enumerate() {
-            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-            trace!("ASN\t{}\t{}\t{}", cluster_num, id, prf.join("\t"));
-        }
-    }
     let num = 2;
-    let init_cluster_num = cluster_num.max(4) - 3;
-    let (assignments, score, k) = (init_cluster_num..=cluster_num)
+    let init_copy_num = copy_num.max(4) - 3;
+    let (assignments, score, k) = (init_copy_num..=copy_num)
         .filter_map(|k| {
             let (asn, score) = (0..num)
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
@@ -124,10 +117,14 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
             Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    // let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments, cluster_num);
-    // assert!(likelihood_gains.iter().all(|lks| lks.len() == cluster_num));
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
+    if log_enabled!(log::Level::Trace) {
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+            trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+        }
+    }
     Some((assignments, likelihood_gains, score, k as u8))
 }
 
@@ -276,7 +273,7 @@ fn calibrate_likelihoods(profiles: &[Vec<f64>], coverage: f64) -> Vec<Vec<f64>> 
         .collect()
 }
 
-#[allow(dead_code)]
+// #[allow(dead_code)]
 // Recursively clustering profiles into cluster_num size.
 // fn recursive_clustering<T: std::borrow::Borrow<[f64]>, R: Rng>(
 //     template_len: usize,
@@ -714,15 +711,18 @@ fn feature_extract<R: Rng>(
         let pos_in_bp = p2p(pos, template_len);
         trace!("SEED\t{}\t{}", pos_in_bp, lk_gain);
         let mut feature: Vec<_> = profiles.iter().map(|fs| fs[pos]).collect();
+        let mut pushed_pos = vec![pos_in_bp];
         probes.retain(|&(pos2, max_lk)| {
             let pos2_in_bp = p2p(pos2, template_len);
             let is_the_same = 0.99 < cosine_similarity(profiles, pos, pos2);
             let sokal_mich_sim = sokal_michener_sign(profiles, pos, pos2);
-            let diff_in_bp = pos_in_bp.max(pos2_in_bp) - pos_in_bp.min(pos2_in_bp);
+            let is_near = pushed_pos
+                .iter()
+                .any(|&pos_bp| pos_bp.max(pos2_in_bp) - pos_bp.min(pos2_in_bp) < MASK_LENGTH);
             if is_the_same {
                 false
             } else if 0.95 < sokal_mich_sim {
-                if MASK_LENGTH < diff_in_bp {
+                if !is_near {
                     feature
                         .iter_mut()
                         .zip(profiles.iter().map(|fs| fs[pos2]))
@@ -730,9 +730,10 @@ fn feature_extract<R: Rng>(
                     trace!("FOLLOW\t{}\t+\t{}", p2p(pos2, template_len), max_lk);
                     lk_gain += max_lk;
                 }
+                pushed_pos.push(pos2_in_bp);
                 false
             } else if sokal_mich_sim < 0.05 {
-                if MASK_LENGTH < diff_in_bp {
+                if !is_near {
                     feature
                         .iter_mut()
                         .zip(profiles.iter().map(|fs| fs[pos2]))
@@ -740,6 +741,7 @@ fn feature_extract<R: Rng>(
                     trace!("FOLLOW\t{}\t-\t{}", p2p(pos2, template_len), max_lk);
                     lk_gain += max_lk;
                 }
+                pushed_pos.push(pos2_in_bp);
                 false
             } else {
                 true
@@ -1064,12 +1066,11 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
         .unwrap();
     let mut assignments = vec![0; data.len()];
     let mut lk = 0f64;
-    for t in 0..3 {
+    for _t in 0..3 {
         assignments
             .iter_mut()
             .for_each(|x| *x = rng.gen_range(0..k) as u8);
         lk = mcmc(data, &mut assignments, k, cov, rng);
-        trace!("TRY\t{}\t{:.1}\t{:.1}", t, lk, lower_bound);
         if lower_bound < lk {
             break;
         }
@@ -1195,7 +1196,7 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
         .fold(0f64, |x, y| x + y.max(0f64));
     let partition_lk = clusters.iter().map(|&x| partition_lks[x]).sum::<f64>();
     let mut lk = data_lk + partition_lk;
-    let total = 1_000_000 * k as usize;
+    let total = 2_000_000 * k as usize;
     // MAP estimation.
     let (mut max, mut argmax) = (f64::NEG_INFINITY, vec![]);
     for _ in 0..total {

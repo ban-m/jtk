@@ -58,16 +58,16 @@ impl MultiplicityEstimation for DataSet {
         let mut chunks: HashMap<_, _> =
             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
         // reset copy number.
-        chunks.values_mut().for_each(|c| c.cluster_num = 0);
+        chunks.values_mut().for_each(|c| c.copy_num = 0);
         for ((chunk, _), cp) in nodes.iter() {
             if let Some(c) = chunks.get_mut(chunk) {
-                c.cluster_num += cp;
+                c.copy_num += cp;
             }
         }
         // Rescue 0-copy number chunks.
         chunks
             .values_mut()
-            .for_each(|c| c.cluster_num = c.cluster_num.max(1));
+            .for_each(|c| c.copy_num = c.copy_num.max(1));
         {
             // DUMP Information
             let mut counts: HashMap<(u64, u64), usize> = HashMap::new();

@@ -91,7 +91,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         let (_, cov, _) = covs.select_nth_unstable(pileups.len() / 2);
         let (unit_id, units) = pileups.iter().find(|(_, us)| us.len() == *cov).unwrap();
         debug!("LOCAL\tSAMPLE\t{}\t{}", unit_id, units.len());
-        let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
+        // Just limit the trainint sequence to 100 sequences.
+        let seqs: Vec<_> = units.iter().map(|node| node.seq()).take(100).collect();
         let ref_unit = chunks.get(unit_id).unwrap();
         let mut hmm = kiley::gphmm::GPHMM::<Cond>::clr();
         let band_width = 200;
@@ -104,16 +105,28 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     };
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
+        .filter(|(_, units)| !units.is_empty())
         .map(|(&unit_id, units)| {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
             let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
             let cov = seqs.len();
             let ref_unit = chunks.get(&unit_id).unwrap();
             let start = std::time::Instant::now();
-            let config = kmeans::ClusteringConfig::new(100, ref_unit.cluster_num as u8, coverage);
-            // Maybe it is better to use the original alignment, right?
-            let consensus = take_consensus(ref_unit, &seqs, &hmm);
-            let (asn, pss, score, k) = if 1 < ref_unit.cluster_num {
+            let config = kmeans::ClusteringConfig::new(100, ref_unit.copy_num as u8, coverage);
+            let consensus = {
+                let mut seqs_with_diff: Vec<_> = units
+                    .iter()
+                    .map(|node| {
+                        let (_, aln, _) = node.recover(ref_unit);
+                        let diff: usize = aln.iter().filter(|&&x| x != b'|').count();
+                        (node.seq(), diff)
+                    })
+                    .collect();
+                seqs_with_diff.sort_by_key(|x| x.1);
+                let seqs: Vec<_> = seqs_with_diff.iter().take(50).map(|x| x.0).collect();
+                take_consensus(ref_unit, &seqs, &hmm)
+            };
+            let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 kmeans::clustering_dev(&consensus, &seqs, &mut rng, &hmm, &config)
                     .unwrap_or_else(|| panic!("RECORD\t{}", unit_id))
             } else {
@@ -132,7 +145,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
                 unit_id, elapsed, len, score, cov
             );
-            //(unit_id, (consensus, score, config.cluster_num))
             (unit_id, (consensus, score, k))
         })
         .collect();

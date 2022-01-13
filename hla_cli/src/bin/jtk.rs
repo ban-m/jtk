@@ -1024,16 +1024,16 @@ fn correct_multiplicity(matches: &clap::ArgMatches, dataset: &mut DataSet) {
             ds.estimate_multiplicity(&config);
             ds.selected_chunks
                 .iter()
-                .map(|c| (c.id, c.cluster_num))
+                .map(|c| (c.id, c.copy_num))
                 .collect()
         };
         dataset
             .selected_chunks
             .iter_mut()
             .filter_map(|chunk| match re_estimated_cluster_num.get(&chunk.id) {
-                Some(&new) if new != chunk.cluster_num => {
-                    debug!("FIXMULTP\t{}\t{}\t{}", chunk.id, chunk.cluster_num, new);
-                    chunk.cluster_num = new;
+                Some(&new) if new != chunk.copy_num => {
+                    debug!("FIXMULTP\t{}\t{}\t{}", chunk.id, chunk.copy_num, new);
+                    chunk.copy_num = new;
                     Some(chunk.id)
                 }
                 _ => None,
@@ -1112,19 +1112,21 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
     let config = ClusteringConfig::new(repeat_num, 10, threshold);
     dataset.correct_clustering(&config);
+    // use haplotyper::em_correction::*;
+    // dataset.correct_clustering_em(repeat_num, threshold, true);
 }
 
-fn resolve_tangle(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+fn resolve_tangle(matches: &clap::ArgMatches, _dataset: &mut DataSet) {
     debug!("START\tClustering Correction step");
     let threads: usize = matches
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let repeat_num: usize = matches
+    let _repeat_num: usize = matches
         .value_of("repeat_num")
         .and_then(|num| num.parse::<usize>().ok())
         .unwrap();
-    let threshold: usize = matches
+    let _threshold: usize = matches
         .value_of("coverage_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
@@ -1134,9 +1136,10 @@ fn resolve_tangle(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    use haplotyper::re_clustering::*;
-    let config = ReClusteringConfig::new(threads, repeat_num, threshold);
-    dataset.re_clustering(&config);
+    todo!()
+    // use haplotyper::re_clustering::*;
+    // let config = ReClusteringConfig::new(threads, repeat_num, threshold);
+    // dataset.re_clustering(&config);
 }
 
 fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -1190,21 +1193,6 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
-    // 1. Zip up errorneous clustering.
-    // let min_count = 6;
-    // let max_tig_length = 20;
-    // dataset.zip_up_suspicious_haplotig(&config, min_count, max_tig_length);
-    // 2. Zip up by hapcut. Is this stronger than 1?
-    // use crate::hapcut::*;
-    // use std::collections::HashMap;
-    // let copy_number: HashMap<_, _> = dataset
-    //     .selected_chunks
-    //     .iter()
-    //     .map(|c| (c.id, c.cluster_num))
-    //     .collect();
-    // let hc_config = HapCutConfig::new(13912830, 0.8, 0.8, 1, 1, copy_number);
-    // 1. squish mis-clustering from dataset.
-    // dataset.hapcut_squish_diplotig(&hc_config);
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;

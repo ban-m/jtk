@@ -35,6 +35,8 @@ impl DenseEncoding for DataSet {
             .collect();
         debug!("DE\t{}\tEMCorrection", units.len());
         {
+            // use crate::em_correction::ClusteringCorrection;
+            // self.correct_clustering_em_on_selected(20, 5, false, &units);
             use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
             let config = ClusteringConfig::new(5, 10, 3);
             self.correct_clustering_on_selected(&config, &units);
@@ -177,7 +179,6 @@ fn split_edges_into_units(
     ave_unit_len: usize,
     cluster_num: usize,
     mut max_unit_id: u64,
-    // ) -> HashMap<DEdge, Vec<(usize, u64)>> {
 ) -> HashMap<DEdge, Vec<Unit>> {
     let mut units_in_edges = HashMap::new();
     for (key, consensus) in edges.iter() {
@@ -199,21 +200,6 @@ fn split_edges_into_units(
         units_in_edges.insert(*key, units_in_edge);
     }
     units_in_edges
-    // edges
-    //     .iter()
-    //     .map(|(&key, consensus)| {
-    //         let break_positions: Vec<_> = (1..)
-    //             .map(|i| i * ave_unit_len)
-    //             .take_while(|&break_pos| break_pos + ave_unit_len < consensus.len())
-    //             .chain(std::iter::once(consensus.len()))
-    //             .map(|break_pos| {
-    //                 max_unit_id += 1;
-    //                 (break_pos, max_unit_id)
-    //             })
-    //             .collect();
-    //         (key, break_positions)
-    //     })
-    //     .collect()
 }
 
 fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
@@ -260,7 +246,7 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
                 .filter(|ls| lower < ls.len() && ls.len() < upper)
                 .map(|x| x.as_slice())
                 .collect();
-            if labels.len() < cov_thr {
+            if labels.len() <= cov_thr {
                 return None;
             }
             let rough_contig = kiley::ternary_consensus_by_chunk(&labels, 100);
@@ -330,6 +316,7 @@ fn enumerate_multitigs(
             (1 < copy_number).then(|| (copy_number, nodes))
         })
         .collect();
+    // TODO:Is this needed?
     multi_tig.sort_by_key(|x| x.1.len());
     multi_tig
 }

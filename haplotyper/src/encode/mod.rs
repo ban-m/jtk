@@ -243,15 +243,6 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         cl,
     );
     Some(node)
-    // let aligned = String::from_utf8(leading).unwrap();
-    // Some(Node {
-    //     position_from_start,
-    //     unit: unit.id,
-    //     cluster: 0,
-    //     is_forward: aln.relstrand,
-    //     seq: aligned,
-    //     cigar: ops,
-    // })
 }
 
 pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {

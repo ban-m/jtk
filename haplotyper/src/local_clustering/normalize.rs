@@ -12,7 +12,7 @@ pub fn normalize_local_clustering(ds: &mut DataSet) {
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         pileups[node.unit as usize].push(node);
     }
-    for pileup in pileups {
+    for pileup in pileups.into_iter().filter(|pu| !pu.is_empty()) {
         let max_cluster = pileup.iter().map(|n| n.cluster).max().unwrap();
         let mut counts: Vec<(u64, u32)> = (0..=max_cluster).map(|c| (c, 0)).collect();
         for node in pileup.iter() {

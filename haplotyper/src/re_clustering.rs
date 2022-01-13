@@ -132,31 +132,14 @@ impl ReClustering for DataSet {
         };
         for chunk in self.selected_chunks.iter_mut() {
             chunk.cluster_num += increased_copy_number.get(&chunk.id).unwrap_or(&0);
+            chunk.copy_num += increased_copy_number.get(&chunk.id).unwrap_or(&0);
             chunk.score += scores.get(&chunk.id).unwrap_or(&0f64);
         }
-        // Update the estimated copy-number of the chunks.
-        // ID of the cluster -> total excess of the clustering.
-        // let re_cluster = get_units_to_cluster(&self, c);
-        // // Recover the initial clustering.
-        // for (read, (id, prev)) in self.encoded_reads.iter_mut().zip(init_clustering) {
-        //     assert_eq!(read.id, id);
-        //     for (node, (u, cl)) in read.nodes.iter_mut().zip(prev) {
-        //         assert_eq!(node.unit, u);
-        //         node.cluster = cl;
-        //     }
-        // }
-        // self.selected_chunks
-        //     .iter_mut()
-        //     .for_each(|c| c.cluster_num = cluster_num[&c.id]);
-        // // Re clustering.
-        // let target_units: HashSet<_> = re_cluster.keys().copied().collect();
-        // debug!("RECLUSTRE\t{}", target_units.len());
-        // crate::local_clustering::local_clustering_selected(&mut self, &target_units);
     }
 }
 
 fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<(u64, u64), (u8, u64)> {
-    let current_copy_num: HashMap<u64, usize> = ds
+    let current_cluster_num: HashMap<u64, usize> = ds
         .selected_chunks
         .iter()
         .map(|u| (u.id, u.cluster_num))
@@ -176,9 +159,9 @@ fn get_units_to_cluster(ds: &DataSet, c: &ReClusteringConfig) -> HashMap<(u64, u
     // then, that region is "strong" diplotig, i.e., we already tried and failed the clustering.
     node_copy_num
         .iter()
-        .filter(|&((unit, _), &copy_num)| 1 < copy_num && 2 < current_copy_num[unit])
+        .filter(|&((unit, _), &copy_num)| 1 < copy_num && 2 < current_cluster_num[unit])
         .map(|(&(unit, cluster), &copy_num)| {
-            let old_cluster_num = current_copy_num[&unit];
+            let old_cluster_num = current_cluster_num[&unit];
             let offset = old_cluster_num as u64 * cluster;
             ((unit, cluster), (copy_num as u8, offset))
         })

@@ -42,6 +42,12 @@ impl DirichletMixtureCorrection for DataSet {
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             assert_eq!(node.posterior.len(), cl_num[&node.unit]);
         }
+        // It is OK to use c.cluster_num here, not c.copy_num.
+        // This is because c.cluster_num is a more correct guess of the
+        // number of the 'distinctive' copies on a chunk.
+        // In other words, even if the copy number is four,
+        // it is reasonable to cluster them into three when there are
+        // only three different alleles.
         let selections: Vec<_> = self
             .selected_chunks
             .iter()
