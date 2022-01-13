@@ -1,31 +1,31 @@
-use clap::{App, Arg, SubCommand};
+use clap::{App, Arg};
 use definitions::*;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
 #[macro_use]
 extern crate log;
-fn subcommand_entry() -> App<'static, 'static> {
-    SubCommand::with_name("entry")
+fn subcommand_entry() -> App<'static> {
+    App::new("entry")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Entry point. It encodes a fasta file into HLA-class file.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("input")
+            Arg::new("input")
                 .long("input")
-                .short("r")
+                .short('r')
                 .value_name("READS")
                 .takes_value(true)
                 .required(true)
                 .help("Input FASTA file."),
         )
         .arg(
-            Arg::with_name("read_type")
+            Arg::new("read_type")
                 .long("read_type")
                 .takes_value(true)
                 .default_value("CLR")
@@ -34,30 +34,30 @@ fn subcommand_entry() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_extract() -> App<'static, 'static> {
-    let targets = ["raw_reads", "hic_reads", "units", "assignments"];
-    SubCommand::with_name("extract")
+const TARGETS: [&str; 4] = ["raw_reads", "hic_reads", "units", "assignments"];
+fn subcommand_extract() -> App<'static> {
+    App::new("extract")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Exit point. It extract fasta/q file from a HLA-class file.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("target")
-                .short("t")
+            Arg::new("target")
+                .short('t')
                 .long("target")
                 .takes_value(true)
                 .value_name("TARGET")
                 .required(true)
-                .possible_values(&targets),
+                .possible_values(&TARGETS),
         )
         .arg(
-            Arg::with_name("output")
-                .short("o")
+            Arg::new("output")
+                .short('o')
                 .long("output")
                 .takes_value(true)
                 .value_name("PATH")
@@ -65,96 +65,96 @@ fn subcommand_extract() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_stats() -> App<'static, 'static> {
-    SubCommand::with_name("stats")
+fn subcommand_stats() -> App<'static> {
+    App::new("stats")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Write stats to the specified file. It passes through the stdin to the stdout")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("file")
+            Arg::new("file")
                 .long("file")
                 .value_name("FILE")
-                .short("f")
+                .short('f')
                 .required(true)
                 .takes_value(true),
         )
 }
 
-fn subcommand_select_unit() -> App<'static, 'static> {
-    SubCommand::with_name("select_unit")
+fn subcommand_select_unit() -> App<'static> {
+    App::new("select_unit")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Pick subsequence from raw reads.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("chunk_len")
-                .short("l")
+            Arg::new("chunk_len")
+                .short('l')
                 .long("chunk_len")
                 .takes_value(true)
                 .default_value("2000")
                 .help("Length of a chunk"),
         )
         .arg(
-            Arg::with_name("skip_len")
-                .short("s")
+            Arg::new("skip_len")
+                .short('s')
                 .long("skip_len")
                 .takes_value(true)
                 .default_value("2000")
                 .help("Margin between units"),
         )
         .arg(
-            Arg::with_name("take_num")
-                .short("n")
+            Arg::new("take_num")
+                .short('n')
                 .long("take_num")
                 .takes_value(true)
                 .default_value("3000")
                 .help("Number of units;4*Genome size/chunk_len would be nice."),
         )
         .arg(
-            Arg::with_name("margin")
-                .short("m")
+            Arg::new("margin")
+                .short('m')
                 .long("margin")
                 .takes_value(true)
                 .default_value("500")
                 .help("Margin at the both end of a read."),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .takes_value(true)
                 .default_value("1")
                 .help("number of threads"),
         )
         .arg(
-            Arg::with_name("exclude")
+            Arg::new("exclude")
                 .long("exclude")
                 .takes_value(true)
                 .default_value("0.4")
                 .help("filter out unit having more than [exclude] repetitiveness."),
         )
         .arg(
-            Arg::with_name("upper")
-                .short("u")
+            Arg::new("upper")
+                .short('u')
                 .long("upper")
                 .help("Discard units with occurence more than or equal to [upper].")
                 .takes_value(true)
                 .default_value("200"),
         )
         .arg(
-            Arg::with_name("lower")
-                .short("l")
+            Arg::new("lower")
+                .short('l')
                 .long("lower")
                 .help("Discard units with occurence less than or equal to [upper].")
                 .takes_value(true)
@@ -162,34 +162,34 @@ fn subcommand_select_unit() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_polish_unit() -> App<'static, 'static> {
-    SubCommand::with_name("polish_unit")
+fn subcommand_polish_unit() -> App<'static> {
+    App::new("polish_unit")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Polishing units by consuming encoded reads")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .takes_value(true)
                 .default_value("1")
                 .help("number of threads"),
         )
         .arg(
-            Arg::with_name("filter_size")
+            Arg::new("filter_size")
                 .long("filter_size")
                 .takes_value(true)
                 .default_value("10")
                 .help("Unit with coverage less than this value would be discarded."),
         )
         .arg(
-            Arg::with_name("consensus_size")
+            Arg::new("consensus_size")
                 .long("consensus_size")
                 .takes_value(true)
                 .default_value("20")
@@ -197,43 +197,43 @@ fn subcommand_polish_unit() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_mask_repeats() -> App<'static, 'static> {
-    SubCommand::with_name("mask_repeats")
+fn subcommand_mask_repeats() -> App<'static> {
+    App::new("mask_repeats")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Mask Repeat(i.e., frequent k-mer)")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
+            Arg::new("threads")
                 .long("threads")
-                .short("t")
+                .short('t')
                 .help("Number of threads")
                 .takes_value(true)
                 .default_value("1"),
         )
         .arg(
-            Arg::with_name("k")
-                .short("k")
+            Arg::new("k")
+                .short('k')
                 .help("K-mer size(<32)")
                 .takes_value(true)
                 .default_value("15"),
         )
         .arg(
-            Arg::with_name("freq")
-                .short("f")
+            Arg::new("freq")
+                .short('f')
                 .long("freq")
                 .help("Mask top [freq] k-mer")
                 .takes_value(true)
                 .default_value("0.0008"),
         )
         .arg(
-            Arg::with_name("min")
-                .short("m")
+            Arg::new("min")
+                .short('m')
                 .long("min")
                 .help("Prevent k-mer occuring less than [min] times from masking.")
                 .takes_value(true)
@@ -241,70 +241,70 @@ fn subcommand_mask_repeats() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_encode() -> App<'static, 'static> {
-    SubCommand::with_name("encode")
+fn subcommand_encode() -> App<'static> {
+    App::new("encode")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Encode reads by alignments (Internally invoke `minimap2` tools).")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
+            Arg::new("threads")
                 .long("threads")
-                .short("t")
+                .short('t')
                 .help("Number of threads")
                 .takes_value(true)
                 .default_value("1"),
         )
 }
 
-fn subcommand_polish_encoding() -> App<'static, 'static> {
-    SubCommand::with_name("polish_encoding")
+fn subcommand_polish_encoding() -> App<'static> {
+    App::new("polish_encoding")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Remove nodes from reads.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
+            Arg::new("threads")
                 .long("threads")
-                .short("t")
+                .short('t')
                 .help("Number of threads")
                 .takes_value(true)
                 .default_value("1"),
         )
 }
 
-fn subcommand_pick_components() -> App<'static, 'static> {
-    SubCommand::with_name("pick_components")
+fn subcommand_pick_components() -> App<'static> {
+    App::new("pick_components")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Take top n largest components, discarding the rest and empty reads.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
+            Arg::new("threads")
                 .long("threads")
-                .short("t")
+                .short('t')
                 .help("Number of threads")
                 .takes_value(true)
                 .default_value("1"),
         )
         .arg(
-            Arg::with_name("component_num")
-                .short("c")
+            Arg::new("component_num")
+                .short('c')
                 .long("component_num")
                 .value_name("COMP")
                 .help("Take top [COMP] largest connected-components.")
@@ -313,15 +313,15 @@ fn subcommand_pick_components() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
-    SubCommand::with_name("estimate_multiplicity")
+fn subcommand_estimate_multiplicity() -> App<'static> {
+    App::new("estimate_multiplicity")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Determine multiplicities of units.")
-        .arg(Arg::with_name("verbose").short("v").multiple(true))
+        .arg(Arg::new("verbose").short('v').multiple_occurrences(true))
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -330,8 +330,8 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("seed")
-                .short("s")
+            Arg::new("seed")
+                .short('s')
                 .long("seed")
                 .required(false)
                 .value_name("SEED")
@@ -340,8 +340,8 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("draft_assembly")
-                .short("o")
+            Arg::new("draft_assembly")
+                .short('o')
                 .long("draft_assembly")
                 .required(false)
                 .value_name("PATH")
@@ -350,15 +350,15 @@ fn subcommand_estimate_multiplicity() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_correct_multiplicity() -> App<'static, 'static> {
-    SubCommand::with_name("correct_multiplicity")
+fn subcommand_correct_multiplicity() -> App<'static> {
+    App::new("correct_multiplicity")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Fix multiplicities of units, re-clustering if needed.")
-        .arg(Arg::with_name("verbose").short("v").multiple(true))
+        .arg(Arg::new("verbose").short('v').multiple_occurrences(true))
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -367,8 +367,8 @@ fn subcommand_correct_multiplicity() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("seed")
-                .short("s")
+            Arg::new("seed")
+                .short('s')
                 .long("seed")
                 .required(false)
                 .value_name("SEED")
@@ -377,8 +377,8 @@ fn subcommand_correct_multiplicity() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("draft_assembly")
-                .short("o")
+            Arg::new("draft_assembly")
+                .short('o')
                 .long("draft_assembly")
                 .required(false)
                 .value_name("PATH")
@@ -387,20 +387,20 @@ fn subcommand_correct_multiplicity() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_partition_local() -> App<'static, 'static> {
-    SubCommand::with_name("partition_local")
+fn subcommand_partition_local() -> App<'static> {
+    App::new("partition_local")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Clustering reads. (Local)")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -410,20 +410,20 @@ fn subcommand_partition_local() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_correct_deletion() -> App<'static, 'static> {
-    SubCommand::with_name("correct_deletion")
+fn subcommand_correct_deletion() -> App<'static> {
+    App::new("correct_deletion")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Correct unit deletion")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -432,8 +432,8 @@ fn subcommand_correct_deletion() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("sim")
-                .short("d")
+            Arg::new("sim")
+                .short('d')
                 .long("similarity")
                 .required(false)
                 .value_name("SIM")
@@ -442,33 +442,33 @@ fn subcommand_correct_deletion() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("re_cluster")
-                .short("r")
+            Arg::new("re_cluster")
+                .short('r')
                 .long("re_cluster")
                 .required(false)
                 .help("Re-calculate the posterior probability of newly encoded units."),
         )
 }
 
-fn subcommand_partition_global() -> App<'static, 'static> {
-    SubCommand::with_name("partition_global")
+fn subcommand_partition_global() -> App<'static> {
+    App::new("partition_global")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Clustering reads (Global).")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("graph")
+            Arg::new("graph")
                 .long("graph")
                 .help("Invoke graph-WhatsHap instead of de Bruijn."),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -477,8 +477,8 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("k")
-                .short("k")
+            Arg::new("k")
+                .short('k')
                 .long("kmer_size")
                 .required(false)
                 .value_name("KMER_SIZE")
@@ -487,8 +487,8 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("min_cluster_size")
-                .short("m")
+            Arg::new("min_cluster_size")
+                .short('m')
                 .long("min_cluster_size")
                 .required(false)
                 .value_name("MIN_CLUSTER_SIZE")
@@ -497,8 +497,8 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("mat_score")
-                .short("p")
+            Arg::new("mat_score")
+                .short('p')
                 .long("match_score")
                 .required(false)
                 .value_name("MATCH_SCORE")
@@ -507,8 +507,8 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("mismat_score")
-                .short("q")
+            Arg::new("mismat_score")
+                .short('q')
                 .long("mismatch_score")
                 .required(false)
                 .value_name("MISMATCH_SCORE")
@@ -517,8 +517,8 @@ fn subcommand_partition_global() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("gap_score")
-                .short("g")
+            Arg::new("gap_score")
+                .short('g')
                 .long("gap_score")
                 .required(false)
                 .value_name("GAP_SCORE")
@@ -528,20 +528,20 @@ fn subcommand_partition_global() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_resolve_tangle() -> App<'static, 'static> {
-    SubCommand::with_name("resolve_tangle")
+fn subcommand_resolve_tangle() -> App<'static> {
+    App::new("resolve_tangle")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Resolve tangle by re-estimate copy numbers.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -550,8 +550,8 @@ fn subcommand_resolve_tangle() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("repeat_num")
-                .short("r")
+            Arg::new("repeat_num")
+                .short('r')
                 .long("repeat_num")
                 .required(false)
                 .value_name("REPEAT_NUM")
@@ -560,8 +560,8 @@ fn subcommand_resolve_tangle() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("coverage_threshold")
-                .short("x")
+            Arg::new("coverage_threshold")
+                .short('x')
                 .long("threshold")
                 .required(false)
                 .value_name("THRESHOLD")
@@ -571,20 +571,20 @@ fn subcommand_resolve_tangle() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_correct_clustering() -> App<'static, 'static> {
-    SubCommand::with_name("correct_clustering")
+fn subcommand_correct_clustering() -> App<'static> {
+    App::new("correct_clustering")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Correct local clustering by EM algorithm.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -593,8 +593,8 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("repeat_num")
-                .short("r")
+            Arg::new("repeat_num")
+                .short('r')
                 .long("repeat_num")
                 .required(false)
                 .value_name("REPEAT_NUM")
@@ -603,8 +603,8 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("coverage_threshold")
-                .short("x")
+            Arg::new("coverage_threshold")
+                .short('x')
                 .long("threshold")
                 .required(false)
                 .value_name("THRESHOLD")
@@ -614,20 +614,20 @@ fn subcommand_correct_clustering() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_encode_densely() -> App<'static, 'static> {
-    SubCommand::with_name("encode_densely")
+fn subcommand_encode_densely() -> App<'static> {
+    App::new("encode_densely")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Encoding homologoud diplotig in densely.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -636,8 +636,8 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("length")
-                .short("l")
+            Arg::new("length")
+                .short('l')
                 .long("length")
                 .required(false)
                 .value_name("LENGTH")
@@ -646,8 +646,8 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("min_span_reads")
-                .short("m")
+            Arg::new("min_span_reads")
+                .short('m')
                 .long("min_span_reads")
                 .required(false)
                 .value_name("MIN")
@@ -657,20 +657,20 @@ fn subcommand_encode_densely() -> App<'static, 'static> {
         )
 }
 
-fn subcommand_assemble() -> App<'static, 'static> {
-    SubCommand::with_name("assemble")
+fn subcommand_assemble() -> App<'static> {
+    App::new("assemble")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Assemble reads.")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .multiple(true)
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
                 .help("Debug mode"),
         )
         .arg(
-            Arg::with_name("threads")
-                .short("t")
+            Arg::new("threads")
+                .short('t')
                 .long("threads")
                 .required(false)
                 .value_name("THREADS")
@@ -679,8 +679,8 @@ fn subcommand_assemble() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("window_size")
-                .short("w")
+            Arg::new("window_size")
+                .short('w')
                 .long("window_size")
                 .required(false)
                 .value_name("WINDOW_SIZE")
@@ -689,8 +689,8 @@ fn subcommand_assemble() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("min_span_reads")
-                .short("m")
+            Arg::new("min_span_reads")
+                .short('m')
                 .long("min_span_reads")
                 .required(false)
                 .value_name("MIN")
@@ -699,14 +699,14 @@ fn subcommand_assemble() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("no_polish")
-                .short("n")
+            Arg::new("no_polish")
+                .short('n')
                 .long("no_polish")
                 .help("If this flag is given, polishing stage would be skipped."),
         )
         .arg(
-            Arg::with_name("output")
-                .short("o")
+            Arg::new("output")
+                .short('o')
                 .long("output")
                 .required(true)
                 .value_name("PATH")
@@ -1262,7 +1262,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_pick_components())
         .subcommand(subcommand_mask_repeats())
         .get_matches();
-    if let Some(sub_m) = matches.subcommand().1 {
+    if let Some((_, sub_m)) = matches.subcommand() {
         let level = match sub_m.occurrences_of("verbose") {
             0 => "warn",
             1 => "info",
@@ -1271,29 +1271,29 @@ fn main() -> std::io::Result<()> {
         };
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     }
-    if let ("entry", Some(sub_m)) = matches.subcommand() {
+    if let Some(("entry", sub_m)) = matches.subcommand() {
         return entry(sub_m).and_then(|x| flush_file(&x));
     }
     let mut ds = get_input_file()?;
     let ds = &mut ds;
     match matches.subcommand() {
-        ("select_unit", Some(sub_m)) => select_unit(sub_m, ds),
-        ("mask_repeats", Some(sub_m)) => repeat_masking(sub_m, ds),
-        ("encode", Some(sub_m)) => encode(sub_m, ds),
-        ("polish_unit", Some(sub_m)) => polish_unit(sub_m, ds),
-        ("pick_components", Some(sub_m)) => pick_components(sub_m, ds),
-        ("polish_encoding", Some(sub_m)) => polish_encode(sub_m, ds),
-        ("partition_local", Some(sub_m)) => local_clustering(sub_m, ds),
-        ("correct_deletion", Some(sub_m)) => correct_deletion(sub_m, ds),
-        ("correct_multiplicity", Some(sub_m)) => correct_multiplicity(sub_m, ds),
-        ("resolve_tangle", Some(sub_m)) => resolve_tangle(sub_m, ds),
-        ("estimate_multiplicity", Some(sub_m)) => multiplicity_estimation(sub_m, ds),
-        ("partition_global", Some(sub_m)) => global_clustering(sub_m, ds),
-        ("correct_clustering", Some(sub_m)) => clustering_correction(sub_m, ds),
-        ("encode_densely", Some(sub_m)) => encode_densely(sub_m, ds),
-        ("assemble", Some(sub_m)) => assembly(sub_m, ds).unwrap(),
-        ("extract", Some(sub_m)) => extract(sub_m, ds).unwrap(),
-        ("stats", Some(sub_m)) => stats(sub_m, ds).unwrap(),
+        Some(("select_unit", sub_m)) => select_unit(sub_m, ds),
+        Some(("mask_repeats", sub_m)) => repeat_masking(sub_m, ds),
+        Some(("encode", sub_m)) => encode(sub_m, ds),
+        Some(("polish_unit", sub_m)) => polish_unit(sub_m, ds),
+        Some(("pick_components", sub_m)) => pick_components(sub_m, ds),
+        Some(("polish_encoding", sub_m)) => polish_encode(sub_m, ds),
+        Some(("partition_local", sub_m)) => local_clustering(sub_m, ds),
+        Some(("correct_deletion", sub_m)) => correct_deletion(sub_m, ds),
+        Some(("correct_multiplicity", sub_m)) => correct_multiplicity(sub_m, ds),
+        Some(("resolve_tangle", sub_m)) => resolve_tangle(sub_m, ds),
+        Some(("estimate_multiplicity", sub_m)) => multiplicity_estimation(sub_m, ds),
+        Some(("partition_global", sub_m)) => global_clustering(sub_m, ds),
+        Some(("correct_clustering", sub_m)) => clustering_correction(sub_m, ds),
+        Some(("encode_densely", sub_m)) => encode_densely(sub_m, ds),
+        Some(("assemble", sub_m)) => assembly(sub_m, ds).unwrap(),
+        Some(("extract", sub_m)) => extract(sub_m, ds).unwrap(),
+        Some(("stats", sub_m)) => stats(sub_m, ds).unwrap(),
         _ => unreachable!(),
     };
     flush_file(ds)

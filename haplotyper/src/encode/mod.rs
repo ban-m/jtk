@@ -51,7 +51,7 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
             let dist_thr = (chunk_len as f64 * sim_thr).floor() as usize;
             let gap_thr =
                 ((chunk_len as f64 * INDEL_FRACTION).round() as usize).max(MIN_INDEL_SIZE);
-            let cigar = sam::parse_cigar_string(aln.tags.get("cg")?);
+            let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
             let indel_iter = cigar.iter().map(|op| match *op {
                 sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,
                 sam::Op::Align(l) | sam::Op::Match(l) => -(l as i32),
@@ -154,7 +154,7 @@ fn encode_read_to_nodes_by_paf(
 
 fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
     use bio_utils::sam;
-    let cigar = sam::parse_cigar_string(aln.tags.get("cg")?);
+    let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
     // It is padded sequence. Should be adjusted.
     let (mut leading, aligned, mut trailing) = if aln.relstrand {
         let aligned = seq[aln.qstart..aln.qend].to_vec();

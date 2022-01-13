@@ -86,7 +86,7 @@ dependencies = [
  "cexpr",
  "cfg-if 0.1.10",
  "clang-sys",
- "clap",
+ "clap 2.34.0",
  "env_logger 0.6.2",
  "fxhash",
  "lazy_static",
@@ -101,13 +101,10 @@ dependencies = [
 
 [[package]]
 name = "bio_utils"
-version = "0.1.0"
-source = "git+https://github.com/ban-m/bio_utils.git?branch=master#548212ebf205bb0e959f21cb58b867f60124823b"
+version = "0.2.0"
+source = "git+https://github.com/ban-m/bio_utils.git?branch=master#6b178faf30ba050bc2d58340a1319acfc6b53bdc"
 dependencies = [
  "bytecount",
- "rand",
- "rayon",
- "regex",
  "serde",
 ]
 
@@ -185,10 +182,25 @@ dependencies = [
  "ansi_term",
  "atty",
  "bitflags",
- "strsim",
- "textwrap",
+ "strsim 0.8.0",
+ "textwrap 0.11.0",
  "unicode-width",
  "vec_map",
+]
+
+[[package]]
+name = "clap"
+version = "3.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12e8611f9ae4e068fa3e56931fded356ff745e70987ff76924a6e0ab1c8ef2e3"
+dependencies = [
+ "atty",
+ "bitflags",
+ "indexmap",
+ "os_str_bytes",
+ "strsim 0.10.0",
+ "termcolor",
+ "textwrap 0.14.2",
 ]
 
 [[package]]
@@ -374,6 +386,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab5ef0d4909ef3724cc8cce6ccc8572c5c817592e9285f5464f8e86f8bd3726e"
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,7 +410,7 @@ name = "hla_cli"
 version = "0.1.0"
 dependencies = [
  "bio_utils",
- "clap",
+ "clap 3.0.7",
  "definitions",
  "env_logger 0.9.0",
  "gfa",
@@ -418,6 +436,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
+name = "indexmap"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "282a6247722caba404c065016bbfa522806e51714c34f5dfc3e4a3a46fcb4223"
+dependencies = [
+ "autocfg",
+ "hashbrown",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -437,7 +465,7 @@ name = "kiley"
 version = "0.1.0"
 dependencies = [
  "bytecount",
- "clap",
+ "clap 2.34.0",
  "edlib_sys",
  "env_logger 0.9.0",
  "log",
@@ -623,6 +651,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "os_str_bytes"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e22443d1643a904602595ba1cd8f7d896afe56d26712531c5ff73a15b2fbf64"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -633,7 +670,7 @@ name = "path_phasing"
 version = "0.1.0"
 source = "git+https://github.com/ban-m/pathhap.git?branch=main#dce244ef8a308a1295174a8782bde8e8aa3b6ed2"
 dependencies = [
- "clap",
+ "clap 3.0.7",
  "env_logger 0.9.0",
  "histgram_viz",
  "log",
@@ -911,6 +948,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 
 [[package]]
+name = "strsim"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+
+[[package]]
 name = "syn"
 version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -938,6 +981,12 @@ checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
 dependencies = [
  "unicode-width",
 ]
+
+[[package]]
+name = "textwrap"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0066c8d12af8b5acd21e00547c3797fde4e8677254a7ee429176ccebbe93dd80"
 
 [[package]]
 name = "typenum"
