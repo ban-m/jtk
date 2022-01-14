@@ -4,6 +4,7 @@ OUTPUT=${PWD}/data/mock_genome/
 mkdir -p ${OUTPUT}
 CLR_READS=${OUTPUT}/haps.clr
 CCS_READS=${OUTPUT}/haps.ccs
+ONT_READS=${OUTPUT}/haps.ont
 HAPA=${OUTPUT}/hapA.fa
 HAPB=${OUTPUT}/hapB.fa
 REFERENCE=${OUTPUT}/hap_ref.fa
@@ -14,6 +15,17 @@ RENAME=${PWD}/script/rename_fastq.awk
 # Gen genome
 cargo run --release --bin gen_sim_genome -- ${REFERENCE} ${HAPA} ${HAPB} ${SEED} 
 cat ${HAPA} ${HAPB} > ${MERGED}
+
+
+for quantity in 30x 50x
+do
+    ONT_READS_QU=${ONT_READS}.${quantity}
+    badread simulate --reference ${MERGED} --quantity ${quantity} |\
+        awk -f ${RENAME} > ${ONT_READS_QU}.fq
+    cat ${ONT_READS_QU}.fq | paste - - - - | cut -f1,2 | sed -e 's/@/>/g' | tr '\t' '\n' > ${ONT_READS_QU}.fa
+done
+
+exit 0 
 
 for quantity in 30x 50x
 do

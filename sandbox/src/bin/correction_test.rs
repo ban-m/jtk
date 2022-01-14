@@ -12,25 +12,18 @@ fn main() -> std::io::Result<()> {
     }
     println!("UNIT\tid\tunit\tcluster\thap1\thap2\tpurity\tscore");
     {
-        let start = std::time::Instant::now();
         let mut ds = ds.clone();
         use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
         let config = ClusteringConfig::new(5, 10, 5);
-        // use std::collections::HashSet;
-        // let selection: HashSet<_> = vec![574].into_iter().collect();
-        // ds.correct_clustering_on_selected(&config, &selection);
         ds.correct_clustering(&config);
-        let end = std::time::Instant::now();
-        eprintln!("DIRTIME\t{}", (end - start).as_secs_f32());
-        dump(&ds, "dir_mixture_1");
+        dump(&ds, "dir_mixture");
     }
-    // {
-    //     let mut ds = ds.clone();
-    //     use haplotyper::dirichlet_mixture_old::{ClusteringConfig, DirichletMixtureCorrection};
-    //     let config = ClusteringConfig::new(5, 10, 5);
-    //     ds.correct_clustering(&config);
-    //     dump(&ds, "dir_mixture_2");
-    // }
+    {
+        let mut ds = ds.clone();
+        use haplotyper::em_correction::*;
+        ds.correct_clustering_em(20, 5, false);
+        dump(&ds, "bag_of_words");
+    }
     dump(&ds, "before");
     Ok(())
 }

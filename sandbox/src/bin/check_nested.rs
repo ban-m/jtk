@@ -23,38 +23,41 @@ fn main() -> std::io::Result<()> {
     let len = 2000;
     let template: Vec<_> = gen_seq::generate_seq(&mut rng, len);
     let mut templates = vec![template.clone()];
-    fn intro_var<R: Rng>(seq: &[u8], rng: &mut R) -> Vec<u8> {
+    fn intro_var<R: Rng>(seq: &[u8], rng: &mut R, count: usize) -> Vec<u8> {
         let mut seq = seq.to_vec();
-        let var_pos = rng.gen_range(0..seq.len());
-        let var_type = loop {
-            let var_type = rng.gen::<usize>() % 9;
-            if 4 <= var_type || b"ACGT"[var_type] != seq[var_pos] {
-                break var_type;
-            }
-        };
-        match var_type {
-            0..=3 => {
-                debug!("INTR\tSubs,{}", var_pos);
-                seq[var_pos] = b"ACGT"[var_type];
-            }
-            4..=7 => {
-                debug!("INTR\tIns,{}", var_pos);
-                seq.insert(var_pos, b"ACGT"[var_type - 4]);
-            }
-            _ => {
-                debug!("INTR\tDel,{}", var_pos);
-                seq.remove(var_pos);
+        for _ in 0..count {
+            let var_pos = rng.gen_range(0..seq.len());
+            let var_type = loop {
+                let var_type = rng.gen::<usize>() % 9;
+                if 4 <= var_type || b"ACGT"[var_type] != seq[var_pos] {
+                    break var_type;
+                }
+            };
+            match var_type {
+                0..=3 => {
+                    debug!("INTR\tSubs,{}", var_pos);
+                    seq[var_pos] = b"ACGT"[var_type];
+                }
+                4..=7 => {
+                    debug!("INTR\tIns,{}", var_pos);
+                    seq.insert(var_pos, b"ACGT"[var_type - 4]);
+                }
+                _ => {
+                    debug!("INTR\tDel,{}", var_pos);
+                    seq.remove(var_pos);
+                }
             }
         }
         seq
     }
-    for _ in 0..clusters {
+    for i in (0..clusters).rev() {
+        let var_num = 2usize.pow(i as u32);
         templates = templates
             .iter()
             .flat_map(|template| {
-                let a1 = intro_var(template, &mut rng);
-                let a2 = intro_var(template, &mut rng);
-                vec![a1, a2]
+                let a1 = intro_var(template, &mut rng, var_num);
+                // let a2 = intro_var(template, &mut rng, var_num);
+                vec![template.clone(), a1]
             })
             .collect();
     }
@@ -76,7 +79,7 @@ fn main() -> std::io::Result<()> {
         let config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
+        let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

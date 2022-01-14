@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
     let rep: &[u8] = if rng.gen_bool(0.5) { b"AT" } else { b"A" };
     let mut templates = vec![];
     for i in 0..clusters {
-        let rep_range = 10..20;
+        let rep_range = 10usize..20usize;
         let rep_num = rng.gen_range(rep_range.clone());
         debug!("{}\t{}", i, rep_num);
         let mut template = former_half.clone();
@@ -57,7 +57,7 @@ fn main() -> std::io::Result<()> {
         let config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
+        let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

@@ -46,7 +46,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
     config: &ClusteringConfig,
-) -> Option<(Vec<u8>, Vec<u8>, f64)> {
+) -> Option<(Vec<u8>, Vec<Vec<f64>>, f64, Vec<u8>)> {
     let band = config.band_width;
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band);
     let band_width = 100;
@@ -54,7 +54,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
     let hmm = hmm.fit_banded(&cons_template, reads, band_width);
     clustering_dev(&cons_template, reads, rng, &hmm, config)
-        .map(|(asn, _, lk, _)| (asn, cons_template, lk))
+        .map(|(asn, gains, lk, _)| (asn, gains, lk, cons_template))
 }
 
 /// If everything goes fine, return the assignment of each read,
@@ -75,7 +75,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     } = *config;
     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
     let copy_num = copy_num as usize;
-    const NEWFEATURE: bool = true;
+    const NEWFEATURE: bool = false;
     let selected_variants = match NEWFEATURE {
         true => feature_extract(&profiles, copy_num, coverage, template.len(), rng),
         false => {

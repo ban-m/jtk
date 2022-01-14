@@ -71,7 +71,7 @@ fn main() -> std::io::Result<()> {
         let config =
             haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
+        let (preds, gains, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();
@@ -83,16 +83,24 @@ fn main() -> std::io::Result<()> {
             / preds.len() as f64;
         let acc = (1f64 - acc).max(acc);
         println!("RESULT\t{}\tNEW\t{}\t{}\t{}", seed, score, time, acc);
+        for ((p, a), post) in preds.iter().zip(answer.iter()).zip(gains.iter()) {
+            log::debug!("{}\t{}\t{}", p, a, vec2str(post));
+        }
         log::debug!("\n{:?}\n{:?}", preds, answer);
     }
-    // for (i, (ans, read)) in answer.iter().zip(dataset.iter()).enumerate() {
-    //     let dist = kiley::bialignment::edit_dist(&templates[0], read) as i32;
-    //     let others: Vec<_> = templates
-    //         .iter()
-    //         .map(|x| kiley::bialignment::edit_dist(x, read) as i32 - dist)
-    //         .collect();
-    //     let others: Vec<_> = others.iter().map(|x| format!("{}", x)).collect();
-    //     log::trace!("OPTIMAL\t{}\t{}\t{}", i, ans, others.join("\t"));
-    // }
+    for (i, (ans, read)) in answer.iter().zip(dataset.iter()).enumerate() {
+        let dist = kiley::bialignment::edit_dist(&templates[0], read) as i32;
+        let others: Vec<_> = templates
+            .iter()
+            .map(|x| kiley::bialignment::edit_dist(x, read) as i32 - dist)
+            .collect();
+        let others: Vec<_> = others.iter().map(|x| format!("{}", x)).collect();
+        log::trace!("OPTIMAL\t{}\t{}\t{}", i, ans, others.join("\t"));
+    }
     Ok(())
+}
+
+fn vec2str(xs: &[f64]) -> String {
+    let xs: Vec<_> = xs.iter().map(|&x| format!("{:6.1}", x)).collect();
+    xs.join(",")
 }

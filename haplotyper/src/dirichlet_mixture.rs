@@ -435,10 +435,7 @@ pub fn clustering_inner<R: Rng>(
     trace!("CORRECT\tLikelihood\t{}\t0\t{}", id, lk);
     for t in 1.. {
         for _l in 0..retry {
-            // let before: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
             model.update(&mut weights, contexts, t);
-            // let after: f64 = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
-            // assert!(before < after + 0.0001);
         }
         let next_lk = contexts.iter().map(|ctx| model.get_likelihood(ctx)).sum();
         trace!("CORRECT\tLikelihood\t{}\t{}\t{}", id, t, next_lk,);
@@ -692,6 +689,20 @@ impl std::fmt::Display for HMModel {
     }
 }
 
+fn mean_len<I: std::iter::Iterator<Item = usize>>(iter: I) -> f64 {
+    let mut sum = 0;
+    let mut len = 0;
+    for x in iter {
+        sum += x + 1;
+        len += 1;
+    }
+    if len == 0 {
+        1f64
+    } else {
+        sum as f64 / len as f64
+    }
+}
+
 const NEG_LARGE: f64 = -10000000000000f64;
 type DP = Vec<Vec<f64>>;
 impl HMModel {
@@ -745,13 +756,20 @@ impl HMModel {
             .iter()
             .map(|bucket| DirichletMixture::new(bucket, down))
             .collect();
+        // DROP
+        let up_drop = mean_len(contexts.iter().map(|x| x.upstream.len())).recip() - SMALL_VALUE;
+        assert!(up_drop <= 1f64);
+        let down_drop = mean_len(contexts.iter().map(|x| x.downstream.len())).recip() - SMALL_VALUE;
+        assert!(down_drop <= 1f64);
         let mut model = Self {
             upstream_len,
             downstream_len,
             center,
-            up_drop: (0.05f64.ln(), 0.95f64.ln()),
+            // up_drop: (up_drop.ln(), (1f64 - up_drop).ln()),
+            up_drop: (up_drop.ln(), (1f64 - up_drop).ln()),
             upstream,
-            down_drop: (0.05f64.ln(), 0.95f64.ln()),
+            down_drop: (down_drop.ln(), (1f64 - down_drop).ln()),
+            //down_drop: (0.05f64.ln(), 0.95f64.ln()),
             downstream,
         };
         // Tune some-loop
@@ -1019,25 +1037,28 @@ impl HMModel {
             }
             sums.iter_mut().for_each(|x| *x /= total);
             self.center.update(&sums, DIR_NORM);
-            let up_drop = up_drop_prob[0].max(SMALL_VALUE);
-            self.up_drop = (up_drop.ln(), (1f64 - up_drop).max(SMALL_VALUE).ln());
-            let down_drop = down_drop_prob[0].max(SMALL_VALUE);
-            self.down_drop = (down_drop.ln(), (1f64 - down_drop).max(SMALL_VALUE).ln());
+            // DROP
+            // let up_drop = up_drop_prob[0].max(SMALL_VALUE);
+            // self.up_drop = (up_drop.ln(), (1f64 - up_drop).max(SMALL_VALUE).ln());
+            // let down_drop = down_drop_prob[0].max(SMALL_VALUE);
+            // self.down_drop = (down_drop.ln(), (1f64 - down_drop).max(SMALL_VALUE).ln());
         }
         if !self.upstream.is_empty() {
             let contexts = contexts.clone().map(|ctx| ctx.upstream.as_slice());
-            self.upstream
-                .iter_mut()
-                .zip(up_drop_prob.iter().skip(1))
-                .for_each(|(dir, &drop)| dir.set_drop_prob(drop));
+            // DROP
+            // self.upstream
+            //     .iter_mut()
+            //     .zip(up_drop_prob.iter().skip(1))
+            //     .for_each(|(dir, &drop)| dir.set_drop_prob(drop));
             Self::update_oneside(&mut self.upstream, weights, contexts, up_alns);
         }
         if !self.downstream.is_empty() {
             let contexts = contexts.clone().map(|ctx| ctx.downstream.as_slice());
-            self.downstream
-                .iter_mut()
-                .zip(down_drop_prob.iter().skip(1))
-                .for_each(|(dir, &drop)| dir.set_drop_prob(drop));
+            // DROP
+            // self.downstream
+            //     .iter_mut()
+            //     .zip(down_drop_prob.iter().skip(1))
+            //     .for_each(|(dir, &drop)| dir.set_drop_prob(drop));
             Self::update_oneside(&mut self.downstream, weights, contexts, down_alns);
         }
     }

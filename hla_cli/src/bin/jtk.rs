@@ -32,6 +32,21 @@ fn subcommand_entry() -> App<'static> {
                 .possible_values(&["CCS", "CLR", "ONT"])
                 .help("Read type. CCS, CLR, or ONT."),
         )
+        .arg(
+            Arg::new("slag")
+                .long("slag")
+                .takes_value(true)
+                .value_name("PATH")
+                .help("Dump low-quality reads into PATH"),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .takes_value(true)
+                .default_value("1")
+                .help("number of threads"),
+        )
 }
 
 const TARGETS: [&str; 4] = ["raw_reads", "hic_reads", "units", "assignments"];
@@ -718,12 +733,23 @@ fn subcommand_assemble() -> App<'static> {
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     use haplotyper::entry::Entry;
     debug!("START\tEntry");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
     let file = matches.value_of("input").unwrap();
+    let slag = matches.value_of("slag");
     let reader = std::fs::File::open(file).map(BufReader::new)?;
     let seqs = bio_utils::fasta::parse_into_vec_from(reader)?;
-    debug!("Encoding {} reads", seqs.len());
     let read_type = matches.value_of("read_type").unwrap();
-    Ok(DataSet::entry(file, &seqs, read_type))
+    Ok(DataSet::entry(file, seqs, read_type, slag))
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
@@ -1181,7 +1207,6 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         .value_of("min_span_reads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
