@@ -35,13 +35,6 @@ impl Entry for definitions::DataSet {
         let (raw_data, slags): (Vec<_>, Vec<_>) = raw_data
             .into_par_iter()
             .partition(|read| calc_entropy(read.seq(), K) > THR && read.seq().len() > LEN_THR);
-        // let trimed: usize = raw_data
-        //     .par_iter_mut()
-        //     .map(|seq| {
-        //         let trimed_len = trim_self_chimera(seq);
-        //         trimed_len
-        //     })
-        //     .sum();
         let trimed: usize = slags.iter().map(|r| r.seq().len()).sum();
         debug!("ENTRY\tTrimmed\t{}bp", trimed);
         let raw_reads: Vec<_> = raw_data
@@ -62,6 +55,12 @@ impl Entry for definitions::DataSet {
             })
             .collect();
         use definitions::DataSet;
+        for read in raw_reads.iter() {
+            if read.seq().iter().any(|x| !b"ACGT".contains(x)) {
+                let base = read.seq().iter().find(|x| !b"ACGT".contains(x)).unwrap();
+                panic!("{}", base);
+            }
+        }
         DataSet::with_minimum_data(input_file, raw_reads, read_type)
     }
 }

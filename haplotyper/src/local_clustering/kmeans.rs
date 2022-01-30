@@ -5,7 +5,9 @@ const DEL_SIZE: usize = 4;
 const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
-const AVERAGE_LK: f64 = 1.1;
+const CLR_AVERAGE_LK: f64 = 1.1;
+const ONT_AVERAGE_LK: f64 = 1.8;
+const CCS_AVERAGE_LK: f64 = 3.0;
 // See `clustering_dev`for detail.
 // const SMALL_LK: f64 = -1000f64;
 // const DEL_LK: f64 = 3f64;
@@ -15,6 +17,7 @@ const AVERAGE_LK: f64 = 1.1;
 // }
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
+use definitions::ReadType;
 // TODO:Tune this on-the-fly?
 // Anyway, set this to be very high value, I do not want to drop something.
 // const ERROR_PROB: f64 = 0.25;
@@ -23,7 +26,7 @@ use rand::Rng;
 // use crate::assemble::string_graph::consensus;
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig {
-    // TODO: Remove this?
+    read_type: ReadType,
     band_width: usize,
     // Coverage for haploid.
     coverage: f64,
@@ -31,8 +34,9 @@ pub struct ClusteringConfig {
 }
 
 impl ClusteringConfig {
-    pub fn new(band_width: usize, copy_num: u8, coverage: f64) -> Self {
+    pub fn new(band_width: usize, copy_num: u8, coverage: f64, read_type: ReadType) -> Self {
         Self {
+            read_type,
             band_width,
             coverage,
             copy_num,
@@ -72,6 +76,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         band_width,
         copy_num,
         coverage,
+        read_type,
     } = *config;
     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
     let copy_num = copy_num as usize;
@@ -106,6 +111,14 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         }
     };
     let num = 2;
+    // TODO:Move to other.
+    let average_lk = match read_type {
+        ReadType::CCS => CLR_AVERAGE_LK,
+        ReadType::CLR => CCS_AVERAGE_LK,
+        ReadType::ONT => ONT_AVERAGE_LK,
+        ReadType::None => CLR_AVERAGE_LK,
+    };
+    let estim_cov = (reads.len() as f64 / copy_num as f64 + coverage) / 2f64;
     let init_copy_num = copy_num.max(4) - 3;
     let (assignments, score, k) = (init_copy_num..=copy_num)
         .filter_map(|k| {
@@ -113,7 +126,8 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
-            let expected_gain = (k - 1) as f64 * AVERAGE_LK * coverage;
+            //let expected_gain = (k - 1) as f64 * average_lk * coverage;
+            let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
             Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;

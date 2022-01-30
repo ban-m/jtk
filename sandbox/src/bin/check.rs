@@ -68,8 +68,8 @@ fn main() -> std::io::Result<()> {
         let start = std::time::Instant::now();
         let coverage = (dataset.len() / clusters) as f64;
         let clusters = clusters as u8;
-        let config =
-            haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, clusters, coverage);
+        use haplotyper::local_clustering::kmeans::ClusteringConfig;
+        let config = ClusteringConfig::new(100, clusters, coverage, definitions::ReadType::CLR);
         use haplotyper::local_clustering::kmeans;
         let (preds, gains, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();

@@ -6,6 +6,7 @@ use ditch_graph::*;
 use gfa::GFA;
 use serde::*;
 use std::collections::{HashMap, HashSet};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
     pub nodes: Vec<Node>,
@@ -173,8 +174,7 @@ impl Assemble for DataSet {
         let cov = self.coverage.unwrap();
         let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
         graph.remove_lightweight_edges(2, true);
-        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
-
+        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, self.read_type);
         // TODO: Parametrize here.
         let squish = graph.squish_bubbles(2);
         self.encoded_reads
@@ -297,8 +297,11 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    graph.remove_lightweight_edges(2, true);
-    graph.clean_up_graph_for_assemble(cov, &lens, &reads, c);
+    match ds.read_type {
+        ReadType::CCS => graph.remove_lightweight_edges(1, true),
+        ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
+    };
+    graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, ds.read_type);
     let (segments, edge, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
@@ -383,7 +386,8 @@ fn polish_segment(
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
     };
-    let seq = String::from_utf8(polish_by_chunking(&alignments, segment, &reads, c)).unwrap();
+    let rt = &ds.read_type;
+    let seq = String::from_utf8(polish_by_chunking(&alignments, segment, &reads, c, rt)).unwrap();
     gfa::Segment::from(segment.sid.clone(), seq.len(), Some(seq))
 }
 
@@ -469,6 +473,7 @@ pub fn polish_by_chunking(
     segment: &gfa::Segment,
     reads: &[&[u8]],
     c: &AssembleConfig,
+    read_type: &definitions::ReadType,
 ) -> Vec<u8> {
     let template_seq = match segment.sequence.as_ref() {
         Some(res) => res.as_bytes().to_vec(),
@@ -483,70 +488,12 @@ pub fn polish_by_chunking(
         .collect();
     use kiley::gphmm::*;
     let model = GPHMM::<Cond>::clr();
-    let config = kiley::PolishConfig::with_model(100, c.window_size, 30, 50, 15, model);
+    let radius = read_type.band_width();
+    let config = kiley::PolishConfig::with_model(radius, c.window_size, 30, 50, 15, model);
     let mut polished = kiley::polish(&[segment], &reads, &alignments.records, &config);
     assert_eq!(polished.len(), 1);
     polished.pop().unwrap().1
 }
-
-// type CpEdge = ((u64, u64), (u64, u64));
-// /// Estimate the copy number on each edge and each node.
-// pub fn copy_number_estimation(
-//     ds: &DataSet,
-//     c: &AssembleConfig,
-// ) -> (HashMap<(u64, u64), usize>, HashMap<CpEdge, usize>) {
-//     let mut cluster_and_num: HashMap<_, u32> = HashMap::new();
-//     for asn in ds.assignments.iter() {
-//         *cluster_and_num.entry(asn.cluster).or_default() += 1;
-//     }
-//     let (mut node_cp, mut edge_cp) = (HashMap::new(), HashMap::new());
-//     for (cl, _) in cluster_and_num.into_iter() {
-//         let clusters: HashSet<_> = ds
-//             .assignments
-//             .iter()
-//             .filter(|asn| asn.cluster == cl)
-//             .map(|asn| asn.id)
-//             .collect();
-//         let reads: Vec<_> = ds
-//             .encoded_reads
-//             .iter()
-//             .filter(|r| clusters.contains(&r.id))
-//             .collect();
-//         let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-//         graph.remove_lightweight_edges(2, true);
-//         let cov = match ds.coverage {
-//             Some(res) => res,
-//             None => panic!("coverage was checked before estimate coverage."),
-//         };
-//         let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-//         let (node, edge) = graph.copy_number_estimation(cov, &lens);
-//         node_cp.extend(node);
-//         edge_cp.extend(edge.into_iter().map(|(((f, _), (t, _)), cp)| ((f, t), cp)));
-//     }
-//     (node_cp, edge_cp)
-// }
-
-// pub fn filter_non_unique_units(summaries: &[ContigSummary]) -> Vec<Vec<(u64, u64)>> {
-//     let mut unit_counts: HashMap<_, u32> = HashMap::new();
-//     for summary in summaries.iter() {
-//         for node in summary.summary.iter() {
-//             *unit_counts.entry((node.unit, node.cluster)).or_default() += 1;
-//         }
-//     }
-//     // Retain only unique units.
-//     unit_counts.retain(|_, val| *val == 1);
-//     summaries
-//         .iter()
-//         .map(|summary| {
-//             summary
-//                 .summary
-//                 .iter()
-//                 .map(|n| (n.unit, n.cluster))
-//                 .filter(|key| unit_counts.contains_key(&key))
-//                 .collect()
-//         })
-//         .collect()
-// }
 
 pub fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {
     summaries

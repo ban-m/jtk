@@ -612,6 +612,7 @@ struct AlnToArm {
 }
 
 impl AlnToArm {
+    #[allow(dead_code)]
     fn merge_drop_prob<'a, I: std::iter::Iterator<Item = &'a Self>>(
         alns: I,
         weights: &[f64],
@@ -1020,8 +1021,8 @@ impl HMModel {
         let align_expt = align_expt.iter().map(|aln| aln.borrow());
         let up_alns = align_expt.clone().map(|aln| &aln.upstream);
         let down_alns = align_expt.clone().map(|aln| &aln.downstream);
-        let up_drop_prob = AlnToArm::merge_drop_prob(up_alns.clone(), weights);
-        let down_drop_prob = AlnToArm::merge_drop_prob(down_alns.clone(), weights);
+        // let up_drop_prob = AlnToArm::merge_drop_prob(up_alns.clone(), weights);
+        // let down_drop_prob = AlnToArm::merge_drop_prob(down_alns.clone(), weights);
         {
             // Update the center.
             let (mut total, mut sums) = (SMALL_VALUE, Vec::new());
@@ -1185,6 +1186,7 @@ impl DirichletMixture {
         self.del_prob = del_prob.max(SMALL_VALUE).ln();
         self.mat_prob = (1f64 - del_prob).max(SMALL_VALUE).ln();
     }
+    #[allow(dead_code)]
     fn set_drop_prob(&mut self, drop_prob: f64) {
         self.drop_prob = drop_prob.max(SMALL_VALUE).ln();
         self.cont_prob = (1f64 - drop_prob).max(SMALL_VALUE).ln();

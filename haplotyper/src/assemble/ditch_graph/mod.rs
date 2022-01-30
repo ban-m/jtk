@@ -1,5 +1,6 @@
 use super::copy_number::CoverageCalibrator;
 use super::AssembleConfig;
+use definitions::ReadType;
 use definitions::{EncodedRead, Unit};
 use rayon::prelude::*;
 mod sequence_generation;
@@ -350,7 +351,6 @@ enum ContigTag {
     End(String, Position, usize),
     // Start position, end position.
     Both(String, Position, Position, usize),
-    // None,
 }
 
 /// A summary of a contig. It tells us
@@ -575,32 +575,32 @@ impl<'a> DitchGraph<'a> {
         lens: &[usize],
         reads: &[&EncodedRead],
         c: &super::AssembleConfig,
+        read_type: definitions::ReadType,
     ) {
         self.assign_copy_number(cov, lens);
-        // self.assign_copy_number_gbs(cov, lens);
         self.remove_zero_copy_elements(lens, 0.2);
         self.assign_copy_number(cov, lens);
-        //self.assign_copy_number_gbs(cov, lens);
         self.remove_zero_copy_elements(lens, 0.5);
-        self.assign_copy_number(cov, lens);
-        //self.assign_copy_number_gbs(cov, lens);
-        self.zip_up_overclustering();
+        self.assign_copy_number_mcmc(cov, lens);
+        if read_type == ReadType::CLR {
+            self.zip_up_overclustering();
+        }
         // From good Likelihood ratio focus, to weaker ones.
-        for llr in (3..15).filter(|x| x % 3 == 0).rev() {
+        let min_llr = match read_type {
+            ReadType::CCS => 1,
+            ReadType::CLR => 3,
+            ReadType::ONT => 2,
+            ReadType::None => 3,
+        };
+        //for llr in (min_llr..15).filter(|x| x % 3 == 0).rev() {
+        for llr in (min_llr..15).rev() {
             self.resolve_repeats(reads, c, llr as f64);
         }
-        self.zip_up_overclustering();
-        {
-            // Do we need this?
-            // self.remove_tips(0.5, 5);
-            // self.z_edge_selection();
+        if read_type == ReadType::CLR {
+            self.zip_up_overclustering();
         }
-        self.assign_copy_number(cov, lens);
-        //self.assign_copy_number_gbs(cov, lens);
+        self.assign_copy_number_mcmc(cov, lens);
         self.remove_zero_copy_path(0.3);
-        {
-            // graph.transitive_edge_reduction();
-        }
     }
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(
         reads: &'a [R],

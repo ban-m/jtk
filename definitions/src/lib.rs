@@ -38,6 +38,32 @@ pub enum ReadType {
     None,
 }
 
+pub const CLR_BAND_WIDTH: usize = 100;
+pub const HIFI_BAND_WIDTH: usize = 80;
+pub const ONT_BAND_WIDTH: usize = 80;
+
+pub const CLR_CTG_SIM: f64 = 0.25;
+pub const CLR_CLR_SIM: f64 = 0.35;
+pub const HIFI_SIM_THR: f64 = 0.1;
+pub const ONT_SIM_THR: f64 = 0.20;
+
+impl ReadType {
+    pub fn sim_thr(&self) -> f64 {
+        match *self {
+            ReadType::CCS => HIFI_SIM_THR,
+            ReadType::None | ReadType::CLR => CLR_CLR_SIM,
+            ReadType::ONT => ONT_SIM_THR,
+        }
+    }
+    pub fn band_width(&self) -> usize {
+        match *self {
+            ReadType::CCS => HIFI_BAND_WIDTH,
+            ReadType::None | ReadType::CLR => CLR_BAND_WIDTH,
+            ReadType::ONT => ONT_BAND_WIDTH,
+        }
+    }
+}
+
 impl std::default::Default for DataSet {
     fn default() -> Self {
         Self {

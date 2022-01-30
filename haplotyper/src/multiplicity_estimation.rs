@@ -40,7 +40,13 @@ impl MultiplicityEstimation for DataSet {
         let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 4);
         let mut graph =
             ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
-        graph.remove_lightweight_edges(2, true);
+        let thr = match self.read_type {
+            definitions::ReadType::CCS => 1,
+            definitions::ReadType::CLR => 2,
+            definitions::ReadType::ONT => 1,
+            definitions::ReadType::None => 1,
+        };
+        graph.remove_lightweight_edges(thr, true);
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         // graph.assign_copy_number_gbs(cov, &lens);
         // graph.assign_copy_number(cov, &lens);

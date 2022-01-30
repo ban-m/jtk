@@ -227,26 +227,44 @@ fn encode_node(
     };
     query.iter_mut().for_each(|x| x.make_ascii_uppercase());
     let (seq, aln_start, aln_end, ops, score) = {
+        let (seq, aln_start, aln_end) = {
+            let mode = edlib_sys::AlignMode::Infix;
+            let task = edlib_sys::AlignTask::Alignment;
+            // Note that unit.seq would be smaller than query! So the operations should be reversed.
+            let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
+            let locations = alignment.locations.unwrap();
+            let (aln_start, aln_end) = locations[0];
+            (&query[aln_start..=aln_end], aln_start, aln_end)
+        };
+        let band = ((seq.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
+        let (ops, aln_start, aln_end) = {
+            // TODO: Infix alignment would be better, but it is still OK.
+            // TODO:This should be depends on read type.
+            let (_score, mut ops) =
+                kiley::bialignment::global_banded(unitseq, seq, 2, -6, -5, -1, band);
+            let (aln_start, aln_end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
+            (ops, aln_start, aln_end)
+        };
         let unitlen = unitseq.len() as f64;
         let dist_thr = (unitlen * sim_thr).floor() as u32;
         let indel_thr =
             ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
-        let mode = edlib_sys::AlignMode::Infix;
-        let task = edlib_sys::AlignTask::Alignment;
-        // Note that unit.seq would be smaller than query! So the operations should be reversed.
-        let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
-        let locations = alignment.locations.unwrap();
-        let (aln_start, aln_end) = locations[0];
-        let seq = &query[aln_start..=aln_end];
-        let band = (seq.len() / 10).max(20);
-        // TODO: Infix alignment would be better, but it is still OK.
-        let (score, mut ops) = kiley::bialignment::global_banded(unitseq, seq, 2, -6, -5, -1, band);
-        let (aln_start, aln_end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
         let query = query[aln_start..=aln_end].to_vec();
-        let aln_dist = ops
-            .iter()
-            .filter(|&&op| op != kiley::bialignment::Op::Mat)
-            .count() as u32;
+        let aln_dist = {
+            let mut ops = ops.iter().peekable();
+            let mut dist = 0;
+            while let Some(op) = ops.next() {
+                while ops.peek() == Some(&op) {
+                    ops.next().unwrap();
+                }
+                dist += (*op != kiley::bialignment::Op::Mat) as u32;
+            }
+            dist
+            // ops
+            //     .iter()
+            //     .filter(|&&op| op != kiley::bialignment::Op::Mat)
+            //     .count() as u32
+        };
         // Mat=>-1, Other->1
         let indel_mism = ops
             .iter()
@@ -256,7 +274,6 @@ fn encode_node(
         if dist_thr < aln_dist || indel_thr < max_indel {
             if log_enabled!(log::Level::Trace) {
                 trace!("{}\t{}\t{}\t{}\tNG", unit.id, cluster, max_indel, aln_dist);
-                //let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &seq, &ops);
                 let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &query, &ops);
                 for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                     eprintln!("{}", String::from_utf8_lossy(xr));
@@ -267,7 +284,7 @@ fn encode_node(
             return None;
         }
         trace!("{}\t{}\t{}\t{}\tOK", unit.id, cluster, max_indel, aln_dist);
-        let (_score, ops) =
+        let (score, ops) =
             kiley::bialignment::global_banded(unit.seq(), &query, 2, -6, -5, -1, band);
         (query, aln_start, aln_end, ops, score)
     };

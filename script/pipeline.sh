@@ -10,12 +10,13 @@ DRAFT_GFA=${2}.draft.gfa
 DRAFT_GFA_2=${2}.draft2.gfa
 LOG=${2}.log
 STAT=${2}.stat
+READTYPE=${3}
 THREADS=56
 
 ### Take number.
-if [ $# -ge 3 ]; then
-    echo "Unit guess is changed to" $3
-    UNIT_GUESS=$3
+if [ $# -ge 4 ]; then
+    echo "Unit guess is changed to" $4
+    UNIT_GUESS=$4
 else
     UNIT_GUESS=10000
 fi
@@ -24,7 +25,7 @@ if [ -f ${2}.entry.json ]
 then
     echo "Entry file found. Skip entry proc."
 else
-    jtk entry --input ${TARGET} --read_type CLR |\
+    jtk entry --input ${TARGET} --read_type $READTYPE |\
         jtk mask_repeats -k 15 -t ${THREADS} -vv |\
         jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
         jtk pick_components -vv -c1 -t${THREADS}|\
@@ -47,10 +48,8 @@ then
 else
     cat ${CLUSTERED} |\
         jtk correct_deletion -vv --threads ${THREADS} --re_cluster |\
-        # jtk correct_multiplicity -vv --threads ${THREADS} |\
         jtk encode_densely -vv --threads ${THREADS} |\
-        jtk correct_deletion -vv --threads ${THREADS} --re_cluster >${RESOLVED} # |\
-        # jtk correct_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA_2} >${RESOLVED}
+        jtk correct_deletion -vv --threads ${THREADS} --re_cluster >${RESOLVED}
 fi
 
 if [ -f ${RESULT} ]

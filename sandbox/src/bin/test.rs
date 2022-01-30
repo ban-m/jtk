@@ -31,7 +31,8 @@ fn main() -> std::io::Result<()> {
         }
     }
     let mut rng: rand_xoshiro::Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(4329890);
-    let config = haplotyper::local_clustering::kmeans::ClusteringConfig::new(100, 4, 25f64);
+    use haplotyper::local_clustering::kmeans::ClusteringConfig;
+    let config = ClusteringConfig::new(100, 4, 25f64, definitions::ReadType::CLR);
     let (preds, gains, _, _) =
         haplotyper::local_clustering::kmeans::clustering(&nodes, &mut rng, &config).unwrap();
     for ((p, a), g) in preds.iter().zip(answer.iter()).zip(gains.iter()) {

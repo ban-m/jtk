@@ -4,25 +4,18 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::io::*;
 pub mod deletion_fill;
-/// Expected upper bound of the disparsity between polished segment vs raw reads.
-/// TODO: should be changed based on the read types.
-pub const CLR_CTG_SIM: f64 = 0.25;
-pub const CLR_CLR_SIM: f64 = 0.35;
-/// This is a parameter only valid for last program.
-/// TODO: As the Licencing issue, maybe we should remove these parameters as well as dependencies for last.
 pub const MARGIN: usize = 50;
 // Any alignment having deletion longer than ALLOWED_END_GAP would be discarded.
 // Increasing this value would be more "abundant" encoding,
 // but it would be problem in local clustering, which requiring almost all the
 // unit is correctly globally aligned.
-const ALLOWED_END_GAP: usize = 50;
+const ALLOWED_END_GAP: usize = 25;
 // /// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
 // pub const INDEL_THRESHOLD: usize = 50;
 /// Any alignment having Insertion/Deletion longer than unit.seq() * INDEL_FRACTION would be discarded.
-/// for 2Kbp length, the threshold is 30bp.
-pub const INDEL_FRACTION: f64 = 1f64 / 40f64;
-// pub const INDEL_FRACTION: f64 = 0.015;
-pub const MIN_INDEL_SIZE: usize = 10;
+/// for 2Kbp length, the threshold is 60bp.
+pub const INDEL_FRACTION: f64 = 1f64 / 20f64;
+pub const MIN_INDEL_SIZE: usize = 20;
 pub trait Encode {
     fn encode(&mut self, threads: usize, sim_thr: f64);
 }
@@ -58,15 +51,18 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
                 _ => 0,
             });
             let max_indel = max_region(indel_iter).max(0) as usize;
-            // let no_large_indel = max_indel < INDEL_THRESHOLD;
             let no_large_indel = max_indel < gap_thr;
             let dist: usize = cigar
                 .iter()
-                .map(|op| match *op {
-                    sam::Op::Deletion(l) | sam::Op::Insertion(l) | sam::Op::Mismatch(l) => l,
-                    _ => 0,
-                })
-                .sum();
+                .filter(|op| matches!(*op, sam::Op::Mismatch(_)))
+                .count();
+            // let dist: usize = cigar
+            //     .iter()
+            //     .map(|op| match *op {
+            //         sam::Op::Deletion(l) | sam::Op::Insertion(l) | sam::Op::Mismatch(l) => l,
+            //         _ => 0,
+            //     })
+            //     .sum();
             (no_large_indel && dist < dist_thr).then(|| aln)
         })
         .collect();
@@ -339,9 +335,9 @@ pub fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec
     use definitions::ReadType;
     let mut args = vec!["-t", &threads, "-c", "--eqx", "-P"];
     match ds.read_type {
-        ReadType::CCS => args.extend(vec!["-H"]),
+        ReadType::CCS => args.extend(vec!["-H", "-k", "18"]),
         ReadType::CLR => args.extend(vec!["-H", "-k", "15"]),
-        ReadType::ONT => args.extend(vec!["-k", "15"]),
+        ReadType::ONT => args.extend(vec!["-k", "17"]),
         _ => {}
     };
     let mm2 = minimap2::minimap2_args(&reference, &reads, &args);

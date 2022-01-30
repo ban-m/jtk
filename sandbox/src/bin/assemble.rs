@@ -11,13 +11,13 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    ds.encoded_reads
-        .iter_mut()
-        .flat_map(|r| r.nodes.iter_mut())
-        .for_each(|node| node.cluster = 0);
+    // ds.encoded_reads
+    //     .iter_mut()
+    //     .flat_map(|r| r.nodes.iter_mut())
+    //     .for_each(|node| node.cluster = 0);
     let config = AssembleConfig::new(1, 100, false, true, 3);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());
@@ -32,8 +32,8 @@ fn main() -> std::io::Result<()> {
 pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
-    let graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
-    // graph.remove_lightweight_edges(2, true);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    graph.remove_lightweight_edges(1, true);
     let (segments, edge, group, summaries) = graph.spell(c);
     // let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     let nodes = segments.into_iter().map(|node| {

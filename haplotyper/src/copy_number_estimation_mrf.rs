@@ -109,7 +109,6 @@ impl MCMCConfig {
     // Smaller is better.
     fn node_potential(&self, w: u64, copy: usize) -> f64 {
         let cov = self.coverage;
-        // (w as f64 - copy as f64 * cov).powi(2) / 100f64
         let lambda = (copy as f64 * cov).max(cov * ERROR_FRAC);
         -(w as f64) * lambda.ln() + lambda
     }
@@ -228,6 +227,8 @@ impl Graph {
             .collect();
         (node_cp, edge_cp)
     }
+    // This is not needed, especially the initial guess is **useful.**
+    #[allow(dead_code)]
     fn estimate_mean_parameter(&self, node_cp: &[usize], hap_cov: f64) -> f64 {
         let len = node_cp.len() as f64;
         let mean_cp = node_cp.iter().sum::<usize>() as f64 / len;
@@ -251,7 +252,7 @@ impl Graph {
             let (_is_success, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
             mcmc_config.consist_factor *= grad;
         }
-        mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
+        // mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
         let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
         let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
         let mut min = current_potential;
@@ -290,19 +291,14 @@ impl Graph {
         rng: &mut R,
     ) -> (bool, f64) {
         use rand::seq::SliceRandom;
-        // let weights = vec![3f64.recip(); 3];
-        let choice = CHOICES.choose(rng).unwrap();
-        match choice {
-            0 => self.update_node(node_cp, edge_cp, config, rng),
-            1 => self.update_edge(node_cp, edge_cp, config, rng),
-            2 => self.update_neighbor(node_cp, edge_cp, config, rng),
-            _ => unreachable!(),
-        }
-        // if rng.gen_ratio(node_cp.len() as u32, (node_cp.len() + edge_cp.len()) as u32) {
-        //     self.update_node(node_cp, edge_cp, config, rng)
-        // } else {
-        //     self.update_edge(node_cp, edge_cp, config, rng)
-        // }
+        (0..)
+            .find_map(|_| match CHOICES.choose(rng).unwrap() {
+                0 => self.update_node(node_cp, edge_cp, config, rng),
+                1 => self.update_edge(node_cp, edge_cp, config, rng),
+                2 => self.update_neighbor(node_cp, edge_cp, config, rng),
+                _ => unreachable!(),
+            })
+            .unwrap()
     }
     fn update_node<R: Rng>(
         &self,
@@ -310,11 +306,14 @@ impl Graph {
         edge_cp: &[usize],
         config: &MCMCConfig,
         rng: &mut R,
-    ) -> (bool, f64) {
+    ) -> Option<(bool, f64)> {
+        if node_cp.is_empty() {
+            return None;
+        }
         let flip = rng.gen_range(0..node_cp.len());
         let to_decrease = rng.gen_bool(0.5);
         if node_cp[flip] == 0 && to_decrease {
-            (true, 0f64)
+            Some((true, 0f64))
         } else {
             // This is new potential minux old one.
             let potential_diff = self.energy_diff_node(node_cp, edge_cp, config, flip, to_decrease);
@@ -327,7 +326,7 @@ impl Graph {
                     node_cp[flip] += 1;
                 }
             }
-            (accept, potential_diff)
+            Some((accept, potential_diff))
         }
     }
     fn update_edge<R: Rng>(
@@ -336,11 +335,14 @@ impl Graph {
         edge_cp: &mut [usize],
         config: &MCMCConfig,
         rng: &mut R,
-    ) -> (bool, f64) {
+    ) -> Option<(bool, f64)> {
+        if edge_cp.is_empty() {
+            return None;
+        }
         let flip = rng.gen_range(0..edge_cp.len());
         let to_decrease = rng.gen_bool(0.5);
         if edge_cp[flip] == 0 && to_decrease {
-            (true, 0f64)
+            Some((true, 0f64))
         } else {
             let potential_diff = self.energy_diff_edge(node_cp, edge_cp, config, flip, to_decrease);
             let prob = (-potential_diff / config.temprature).exp().min(1f64);
@@ -352,7 +354,7 @@ impl Graph {
                     edge_cp[flip] += 1;
                 }
             }
-            (accept, potential_diff)
+            Some((accept, potential_diff))
         }
     }
     fn update_neighbor<R: Rng>(
@@ -361,12 +363,15 @@ impl Graph {
         edge_cp: &mut [usize],
         config: &MCMCConfig,
         rng: &mut R,
-    ) -> (bool, f64) {
+    ) -> Option<(bool, f64)> {
+        if node_cp.is_empty() {
+            return None;
+        }
         use rand::seq::IteratorRandom;
         let flip = rng.gen_range(0..node_cp.len());
         let to_decrease = rng.gen_bool(0.5);
         if to_decrease && node_cp[flip] == 0 {
-            return (true, 0f64);
+            return Some((true, 0f64));
         }
         let targets = {
             let mut targets = self.edge_lists[flip]
@@ -410,7 +415,7 @@ impl Graph {
                 _ => {}
             }
         }
-        (accept, potential_diff)
+        Some((accept, potential_diff))
     }
     fn energy_diff_node(
         &self,

@@ -50,8 +50,12 @@ impl PolishUnit for DataSet {
             .retain(|n| matches!(pileups.get(&n.id),Some(xs) if c.filter_size <= xs.len()));
         self.selected_chunks.par_iter_mut().for_each(|unit| {
             if let Some(pileup) = pileups.get(&unit.id) {
+                let len_sum: usize = pileup.iter().map(|x| x.len()).sum();
+                let mean_len: usize = len_sum / pileup.len();
+                let radius = c.read_type.band_width().min(mean_len / 20);
                 let seqs = &pileup[..c.consensus_size.min(pileup.len())];
-                let cons = kiley::bialignment::polish_until_converge_banded(unit.seq(), seqs, 100);
+                let cons =
+                    kiley::bialignment::polish_until_converge_banded(unit.seq(), seqs, radius);
                 unit.seq = String::from_utf8(cons).unwrap();
             }
         });
@@ -82,8 +86,15 @@ impl PolishUnit for DataSet {
                     pileup.select_nth_unstable_by_key(med_idx, |x| x.len());
                     pileup.swap(0, med_idx);
                     let seqs = &pileup[..c.consensus_size.min(pileup.len())];
-                    let cons = kiley::ternary_consensus_by_chunk(seqs, 100);
-                    let cons = kiley::bialignment::polish_until_converge_banded(&cons, seqs, 100);
+                    let median_len: usize = pileup[0].len();
+                    let radius = match c.read_type {
+                        ReadType::CCS => (median_len / 50).max(40),
+                        ReadType::None | ReadType::CLR => (median_len / 20).max(100),
+                        ReadType::ONT => (median_len / 30).max(50),
+                    };
+                    let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
+                    let cons =
+                        kiley::bialignment::polish_until_converge_banded(&cons, seqs, radius);
                     Some((id, String::from_utf8(cons).unwrap()))
                 } else {
                     None
@@ -102,54 +113,3 @@ impl PolishUnit for DataSet {
         self.encoded_reads.clear();
     }
 }
-
-// use definitions::Node;
-// #[allow(dead_code)]
-// fn consensus(pileup: &[&Node], len: usize, c: &PolishUnitConfig) -> Option<String> {
-//     let subchunks: Vec<_> = pileup
-//         .iter()
-//         .map(|n| super::local_clustering::node_to_subchunks(n, 100))
-//         .collect();
-//     let mut chunks = vec![vec![]; len];
-//     for sc in subchunks.iter() {
-//         for c in sc.iter().filter(|c| 90 < c.seq.len() && c.seq.len() < 120) {
-//             if c.pos < len {
-//                 chunks[c.pos].push(c.seq.as_slice());
-//             }
-//         }
-//     }
-//     if chunks.iter().any(|cs| cs.len() < c.consensus_size) {
-//         None
-//     } else {
-//         let consensus: String = chunks
-//             .into_iter()
-//             .flat_map(|cs| consensus_chunk(&cs, c))
-//             .map(|n| n as char)
-//             .collect();
-//         Some(consensus)
-//     }
-// }
-
-// fn consensus_chunk(pileup: &[&[u8]], c: &PolishUnitConfig) -> Vec<u8> {
-//     assert!(pileup.len() >= c.consensus_size);
-//     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(c.seed);
-//     let subseq: Vec<_> = (0..c.rep_num)
-//         .map(|_| {
-//             let subchunk: Vec<_> = pileup
-//                 .choose_multiple(&mut rng, c.consensus_size)
-//                 .copied()
-//                 .collect();
-//             POA::from_slice(&subchunk, &vec![1.; subchunk.len()], (-2, -2, &score)).consensus()
-//         })
-//         .collect();
-//     let subseq: Vec<_> = subseq.iter().map(|e| e.as_slice()).collect();
-//     POA::from_slice(&subseq, &vec![1.; subseq.len()], (-2, -2, &score)).consensus()
-// }
-
-// fn score(x: u8, y: u8) -> i32 {
-//     if x == y {
-//         1
-//     } else {
-//         -1
-//     }
-// }

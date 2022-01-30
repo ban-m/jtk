@@ -4,19 +4,19 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 const CONS_MIN_LENGTH: usize = 200;
 const COV_THR_FACTOR: usize = 4;
-use crate::encode::CLR_CLR_SIM;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 #[derive(Debug, Clone, Copy)]
 pub struct DenseEncodingConfig {
     pub len: usize,
-    pub min_span_reads: usize,
+    // pub min_span_reads: usize,
 }
 impl DenseEncodingConfig {
-    pub fn new(len: usize, min_span_reads: usize) -> Self {
+    //pub fn new(len: usize, min_span_reads: usize) -> Self {
+    pub fn new(len: usize) -> Self {
         Self {
             len,
-            min_span_reads,
+            // min_span_reads,
         }
     }
 }
@@ -26,6 +26,8 @@ pub trait DenseEncoding {
 
 impl DenseEncoding for DataSet {
     fn dense_encoding(&mut self, config: &DenseEncodingConfig) {
+        let (band_width, sim_thr) = (self.read_type.band_width(), self.read_type.sim_thr());
+        let read_type = self.read_type;
         let ave_unit_len = get_average_unit_length(self);
         let original_assignments = log_original_assignments(self);
         let units: HashSet<_> = self
@@ -35,8 +37,6 @@ impl DenseEncoding for DataSet {
             .collect();
         debug!("DE\t{}\tEMCorrection", units.len());
         {
-            // use crate::em_correction::ClusteringCorrection;
-            // self.correct_clustering_em_on_selected(20, 5, false, &units);
             use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
             let config = ClusteringConfig::new(5, 10, 3);
             self.correct_clustering_on_selected(&config, &units);
@@ -62,14 +62,16 @@ impl DenseEncoding for DataSet {
             // Create new nodes between nodes to make this region "dense."
             // (unit,cluster,is_tail).
             let discard_thr = cov.floor() as usize / 2;
-            let edge_consensus = take_consensus_between_nodes(&reads, &nodes, discard_thr);
+            let edge_consensus =
+                take_consensus_between_nodes(&reads, &nodes, discard_thr, band_width);
             let max_unit_id: u64 = self.selected_chunks.iter().map(|x| x.id).max().unwrap();
             let edge_encoding_patterns =
                 split_edges_into_units(&edge_consensus, ave_unit_len, cluster_num, max_unit_id);
             // Encoding.
             for read in reads.iter_mut() {
                 let seq = &read_seq[&read.id];
-                let inserts = fill_edges_by_new_units(read, seq, &edge_encoding_patterns);
+                let inserts =
+                    fill_edges_by_new_units(read, seq, &edge_encoding_patterns, &read_type);
                 // Encode.
                 for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
                     read.nodes.insert(idx + accum_inserts, node);
@@ -86,7 +88,7 @@ impl DenseEncoding for DataSet {
             );
         }
         use crate::encode::deletion_fill::correct_unit_deletion;
-        let filled_units = correct_unit_deletion(self, CLR_CLR_SIM);
+        let filled_units = correct_unit_deletion(self, sim_thr);
         to_clustering_nodes.extend(filled_units);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
@@ -145,9 +147,8 @@ fn get_average_unit_length(ds: &DataSet) -> usize {
 pub fn fill_edges_by_new_units(
     read: &EncodedRead,
     seq: &[u8],
-    // edge_encoding_patterns: &HashMap<DEdge, Vec<(usize, u64)>>,
     edge_encoding_patterns: &HashMap<DEdge, Vec<Unit>>,
-    // edge_consensus: &HashMap<DEdge, Vec<u8>>,
+    read_type: &definitions::ReadType,
 ) -> Vec<(usize, Node)> {
     let mut inserts = vec![];
     for (idx, window) in read.nodes.windows(2).enumerate() {
@@ -157,16 +158,12 @@ pub fn fill_edges_by_new_units(
             window[1].position_from_start,
         );
         let (edge, direction) = edge_and_direction(window);
-        // let contig = match edge_consensus.get(&edge) {
-        //     Some(contig) => contig,
-        //     None => continue,
-        // };
         let unit_info = match edge_encoding_patterns.get(&edge) {
             Some(units) => units,
             None => continue,
         };
         // for node in encode_edge(seq, start, end, direction, contig, unit_info) {
-        for node in encode_edge(seq, start, end, direction, unit_info) {
+        for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
         }
@@ -206,6 +203,7 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
     reads: &[T],
     nodes: &[(u64, u64)],
     discard_thr: usize,
+    band_width: usize,
 ) -> HashMap<DEdge, Vec<u8>> {
     let mut edges: HashMap<DEdge, Vec<Vec<u8>>> = HashMap::new();
     for read in reads.iter().map(|r| r.borrow()) {
@@ -249,9 +247,12 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
             if labels.len() <= cov_thr {
                 return None;
             }
-            let rough_contig = kiley::ternary_consensus_by_chunk(&labels, 100);
-            let rough_contig =
-                kiley::bialignment::polish_until_converge_banded(&rough_contig, &labels, 100);
+            let rough_contig = kiley::ternary_consensus_by_chunk(&labels, band_width);
+            let rough_contig = kiley::bialignment::polish_until_converge_banded(
+                &rough_contig,
+                &labels,
+                band_width,
+            );
             match rough_contig.len() {
                 0..=CONS_MIN_LENGTH => None,
                 _ => Some((key, rough_contig)),
@@ -261,40 +262,43 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
 }
 
 // Why I did this? The clustering is already squished if the LK gain is not sufficient.
-#[allow(dead_code)]
-fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gain: f64) {
-    let mut new_clustered: HashMap<_, Vec<&mut _>> = nodes.iter().map(|&n| (n, vec![])).collect();
-    for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        if let Some(bucket) = new_clustered.get_mut(&node.unit) {
-            bucket.push(&mut node.cluster);
-        }
-    }
-    for unit in ds.selected_chunks.iter_mut() {
-        if let Some(assignments) = new_clustered.get_mut(&unit.id) {
-            let threshold = assignments.len() as f64 * per_read_lk_gain;
-            if unit.score <= threshold {
-                log::debug!(
-                    "Squishing\t{}\t{}\t{}",
-                    unit.id,
-                    unit.score,
-                    assignments.len()
-                );
-                unit.score = 0f64;
-                assignments.iter_mut().for_each(|x| **x = 0);
-            }
-        }
-    }
-}
+// #[allow(dead_code)]
+// fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gain: f64) {
+//     let mut new_clustered: HashMap<_, Vec<&mut _>> = nodes.iter().map(|&n| (n, vec![])).collect();
+//     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
+//         if let Some(bucket) = new_clustered.get_mut(&node.unit) {
+//             bucket.push(&mut node.cluster);
+//         }
+//     }
+//     for unit in ds.selected_chunks.iter_mut() {
+//         if let Some(assignments) = new_clustered.get_mut(&unit.id) {
+//             let threshold = assignments.len() as f64 * per_read_lk_gain;
+//             if unit.score <= threshold {
+//                 log::debug!(
+//                     "Squishing\t{}\t{}\t{}",
+//                     unit.id,
+//                     unit.score,
+//                     assignments.len()
+//                 );
+//                 unit.score = 0f64;
+//                 assignments.iter_mut().for_each(|x| **x = 0);
+//             }
+//         }
+//     }
+// }
 
 // Squish short contig, return the generated multi-tigs.
 fn enumerate_multitigs(
     ds: &mut DataSet,
-    &DenseEncodingConfig {
-        len,
-        min_span_reads,
-    }: &DenseEncodingConfig,
+    &DenseEncodingConfig { len }: &DenseEncodingConfig,
 ) -> Vec<(usize, Vec<(u64, u64)>)> {
     use crate::assemble::*;
+    let min_span_reads = match ds.read_type {
+        ReadType::CCS => 1,
+        ReadType::CLR => 4,
+        ReadType::ONT => 1,
+        ReadType::None => 3,
+    };
     let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
     ds.squish_small_contig(&config, len);
     let (_, summaries) = assemble(ds, &config);
@@ -353,9 +357,8 @@ fn encode_edge(
     start: usize,
     end: usize,
     is_forward: bool,
-    // contig: &[u8],
-    // unit_info: &[(usize, u64)],
     units: &[Unit],
+    read_type: &definitions::ReadType,
 ) -> Vec<definitions::Node> {
     let mut seq = if is_forward {
         seq[start..end].to_vec()
@@ -375,9 +378,7 @@ fn encode_edge(
                 acc.push(x + y);
                 (acc, x + y)
             });
-    // debug!("Encoding\t{}\t{}\t{:?}", seq.len(), contig.len(), unit_info);
-    let band = contig.len() / 20;
-    // TODO: These parameters shoule be changed depending on the sequencing tech.
+    let (band, sim_thr) = (read_type.band_width(), read_type.sim_thr());
     let (_, ops) = kiley::bialignment::global_banded(&contig, &seq, 2, -5, -6, -1, band);
     // Split the alignment into encoded nodes.
     // Current position on the contg and the query.
@@ -401,16 +402,10 @@ fn encode_edge(
             }
         }
         alignments.push(op);
-        // if xpos == unit_info[target_idx].0 {
         if xpos == break_points[target_idx] {
             // Reached the boundary.
             let unit = &units[target_idx];
             let (uid, unitlen) = (unit.id, unit.seq().len());
-            // let (break_point, uid) = unit_info[target_idx];
-            // let unitlen = match target_idx {
-            //     0 => break_point,
-            //     _ => break_point - unit_info[target_idx - 1].0,
-            // };
             let ylen = alignments
                 .iter()
                 .filter(|&&x| x != kiley::bialignment::Op::Del)
@@ -425,7 +420,7 @@ fn encode_edge(
                 .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
             let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
             let unitlen = unitlen as f64;
-            let dist_thr = (unitlen * CLR_CLR_SIM).floor() as usize;
+            let dist_thr = (unitlen * sim_thr).floor() as usize;
             let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
                 .max(crate::encode::MIN_INDEL_SIZE);
             if max_indel < gap_thr && edit_dist < dist_thr {
@@ -442,7 +437,6 @@ fn encode_edge(
             target_idx += 1;
             alignments.clear();
         }
-        // if target_idx == unit_info.len() {
         if target_idx == units.len() {
             // This is needed, as sometimes only insertions would be remain.
             break;
