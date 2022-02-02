@@ -7,7 +7,7 @@ mod sequence_generation;
 use std::collections::HashMap;
 use std::collections::HashSet;
 pub mod dg_test;
-
+const ERROR_PROB: f64 = 0.1;
 /// Position::Head is the up-stream position of a unit, and Tail is downstream by default.
 #[derive(Debug, Clone, Eq, PartialEq, Copy, Hash, PartialOrd, Ord)]
 pub enum Position {
@@ -581,7 +581,6 @@ impl<'a> DitchGraph<'a> {
         self.remove_zero_copy_elements(lens, 0.2);
         self.assign_copy_number(cov, lens);
         self.remove_zero_copy_elements(lens, 0.5);
-        self.assign_copy_number_mcmc(cov, lens);
         if read_type == ReadType::CLR {
             self.zip_up_overclustering();
         }
@@ -589,11 +588,11 @@ impl<'a> DitchGraph<'a> {
         let min_llr = match read_type {
             ReadType::CCS => 1,
             ReadType::CLR => 3,
-            ReadType::ONT => 2,
+            ReadType::ONT => 1,
             ReadType::None => 3,
         };
-        //for llr in (min_llr..15).filter(|x| x % 3 == 0).rev() {
-        for llr in (min_llr..15).rev() {
+        for llr in (min_llr..10).rev() {
+            self.assign_copy_number_mcmc(cov, lens);
             self.resolve_repeats(reads, c, llr as f64);
         }
         if read_type == ReadType::CLR {
@@ -810,7 +809,6 @@ impl<'a> DitchGraph<'a> {
         let mut fu = FindUnion::new(node_index.len());
         for edge in edges_in_simple_path.iter() {
             let mut nodes = std::iter::once(edge.from)
-                // .chain(edge.proxying.iter().map(|x| x.0))
                 .chain(std::iter::once(edge.to))
                 .map(|node| node_index[&node]);
             // Never panic
@@ -890,7 +888,6 @@ impl<'a> DitchGraph<'a> {
                     Some(calibrator) => calibrator.calib(edge.occ, gap_len),
                     None => edge.occ as f64,
                 };
-                // debug!("CALIB\t{:.1}\t{}\t{}\tEDGE", edge.occ, gap_len, weight);
                 (from_index, fp, to_index, tp, weight)
             })
             .collect();
@@ -900,22 +897,21 @@ impl<'a> DitchGraph<'a> {
         &self,
         node_to_pathid: &HashMap<Node, usize>,
         calibrator: Option<&CoverageCalibrator>,
-    ) -> Vec<f64> {
+    ) -> Vec<(f64, usize)> {
         let path_num: usize = *node_to_pathid.values().max().unwrap_or(&0) + 1;
         let mut node_weights = vec![(0f64, 0usize); path_num];
         for node in self.nodes.values() {
             let simple_path_index = node_to_pathid[&node.node];
             node_weights[simple_path_index].1 += 1;
             let unit_len = node.seq().len();
-            let weight = match calibrator {
+            node_weights[simple_path_index].0 += match calibrator {
                 Some(calibrator) => calibrator.calib(node.occ, unit_len),
                 None => node.occ as f64,
             };
-            node_weights[simple_path_index].0 += weight;
         }
         node_weights
             .iter()
-            .map(|&(sum, len)| sum / len as f64)
+            .map(|&(sum, len)| (sum / len as f64, len))
             .collect()
     }
     fn gather_answer(
@@ -926,7 +922,8 @@ impl<'a> DitchGraph<'a> {
         node_to_pathid: &HashMap<Node, usize>,
         terminals: &[Vec<(Node, Position)>],
     ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
-        let mut node_copy_number: HashMap<_, _> = node_to_pathid
+        //let mut node_copy_number: HashMap<_, _> = node_to_pathid
+        let node_copy_number: HashMap<_, _> = node_to_pathid
             .iter()
             .map(|(&node, &pathid)| (node, node_cp[pathid]))
             .collect();
@@ -945,13 +942,16 @@ impl<'a> DitchGraph<'a> {
                 let from = (edge.from, edge.from_position);
                 let to = (edge.to, edge.to_position);
                 edge_copy_number.insert((from, to), cp);
+                // Do we really need this? If a node is in a proxying edge,
+                // it is already exhausted, and its copy number should not affect the
+                // copy number of the original node.
                 // Increment node in proxying edge.
                 // Note that we should avoid double-count of the same edge.
-                if (edge.from, edge.from_position) <= (edge.to, edge.to_position) {
-                    for node in edge.proxying.iter().map(|x| x.0) {
-                        *node_copy_number.entry(node).or_default() += cp;
-                    }
-                }
+                // if (edge.from, edge.from_position) <= (edge.to, edge.to_position) {
+                //     for node in edge.proxying.iter().map(|x| x.0) {
+                //         *node_copy_number.entry(node).or_default() += cp;
+                //     }
+                // }
             }
         }
         (node_copy_number, edge_copy_number)
@@ -974,13 +974,11 @@ impl<'a> DitchGraph<'a> {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (calibrator, cov) = self.generate_coverage_calib(naive_cov, lens);
         let calibrator = Some(&calibrator);
-        // let cov = naive_cov;
-        // let calibrator = None;
         let (terminals, mut edges) =
             self.convert_connecting_edges(&node_to_pathid, &connecting_edges, calibrator);
         let mut nodes = self.convert_path_weight(&node_to_pathid, calibrator);
         edges.iter_mut().for_each(|x| x.4 /= cov);
-        nodes.iter_mut().for_each(|x| *x /= cov);
+        nodes.iter_mut().for_each(|x| x.0 /= cov);
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number(&nodes, &edges);
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
@@ -1012,6 +1010,7 @@ impl<'a> DitchGraph<'a> {
         let (terminals, edges) =
             self.convert_connecting_edges(&node_to_pathid, &connecting_edges, calibrator);
         let nodes = self.convert_path_weight(&node_to_pathid, calibrator);
+        let nodes: Vec<_> = nodes.iter().map(|x| x.0).collect();
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number_gbs(&nodes, &edges, cov);
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
@@ -1054,8 +1053,8 @@ impl<'a> DitchGraph<'a> {
             super::copy_number::estimate_copy_number_mcmc(&nodes, &edges, naive_cov);
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
-            for (n, cp) in nodes.iter().zip(node_cp.iter()) {
-                trace!("COVCP\tNODE\t{}\t{}", n, cp,);
+            for ((n, len), cp) in nodes.iter().zip(node_cp.iter()) {
+                trace!("COVCP\tNODE\t{}\t{}\t{}", n, len, cp,);
             }
             for (e, cp) in edges.iter().zip(edge_cp.iter()) {
                 trace!("COVCP\tEDGE\t{}\t{}", e.4, cp);
@@ -1856,11 +1855,9 @@ impl<'a> DitchGraph<'a> {
             .get(&to)
             .map(|node| node.edges.iter().all(|e| e.from_position == !to_pos))
             .unwrap_or(false);
-        let is_zero_copy = self
-            .nodes
-            .get(&to)
-            .map(|node| node.copy_number == Some(0))
-            .unwrap_or(false);
+        let to_copy_num = self.nodes.get(&to).and_then(|n| n.copy_number);
+        let is_zero_copy = matches!(to_copy_num, Some(0));
+        debug!("CP\t{}\t{:?}", to.0, to_copy_num);
         if removed_all_edges && is_zero_copy {
             // Removing this node.
             // First, recursively call the removing function.
@@ -1901,11 +1898,15 @@ impl<'a> DitchGraph<'a> {
                 }
             }
             foci.retain(|val| thr < val.llr());
+            foci.retain(|val| val.llr() != std::f64::INFINITY);
             debug!("FOCI\tNUM\t{}\tFiltered out weak foci.", foci.len());
             if foci.is_empty() {
                 break;
             }
-            foci.sort_by_key(|x| x.dist);
+            foci.sort_by(|x, y| match y.llr().partial_cmp(&x.llr()).unwrap() {
+                std::cmp::Ordering::Equal => (y.dist, y.from).cmp(&(x.dist, x.from)),
+                x => x,
+            });
             self.survey_foci(&foci);
         }
     }
@@ -1956,6 +1957,7 @@ impl<'a> DitchGraph<'a> {
         reads: &[&EncodedRead],
         config: &AssembleConfig,
     ) -> Option<Focus> {
+        // TODO:Maybe we can faster this process by using reverse indexing.
         let reads: Vec<_> = reads
             .iter()
             .filter(|r| r.contains(node.node))
@@ -2003,17 +2005,12 @@ impl<'a> DitchGraph<'a> {
                 })
                 .sum();
             assert!(!null_prob.is_nan(), "{:?}\t{:?}", ith_ln, occs);
-            // TODO: Parametrize here.
-            let err_prob = 0.1;
+            assert!(null_prob < std::f64::INFINITY, "{:?}\t{:?}", ith_ln, occs);
             let choice_num = nodes.len() as f64;
-            let correct_lk = ((1f64 - err_prob).powi(2) + err_prob / choice_num).ln();
-            // 1 => ((1f64 - err_prob) * err_prob + err_prob / choice_num).ln(),
-            // (+ (expt (- 1 0.1) 2) (/ 0.1 2))
-            // (* 23 (log 0.5)) (+ (* 14 (log 0.86)) (* 9 (log 0.14)))
-            // There are at least two nodes.
+            let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
             let error_lk = {
-                let correct_to_error = (1.0 - err_prob) * err_prob * (choice_num - 1.0).recip();
-                let error_to_error = err_prob / choice_num;
+                let correct_to_error = (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0).recip();
+                let error_to_error = ERROR_PROB / choice_num;
                 (correct_to_error + error_to_error).ln()
             };
             assert!(!correct_lk.is_nan());

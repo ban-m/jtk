@@ -23,9 +23,13 @@ fn main() -> std::io::Result<()> {
             for node in read.nodes.iter().filter(|n| unit == n.unit) {
                 let (query, aln, refr) = node.recover(ref_chunk);
                 let dist = aln.iter().filter(|&&x| x != b'|').count();
+                let identity = 1f64 - dist as f64 / aln.len() as f64;
                 let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
                 let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));
-                println!("{}\t{}\t{}\t{}\t{}", is_hap1, unit, cluster, dist, post);
+                println!(
+                    "{}\t{}\t{}\t{:.3}\t{}",
+                    is_hap1, unit, cluster, identity, post
+                );
                 println!("ALN\t{}", dist);
                 for (query, refr) in query.chunks(250).zip(refr.chunks(250)) {
                     println!("ALN\t{}", String::from_utf8_lossy(query));

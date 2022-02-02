@@ -133,8 +133,8 @@ fn subcommand_select_unit() -> App<'static> {
                 .short('n')
                 .long("take_num")
                 .takes_value(true)
-                .default_value("3000")
-                .help("Number of units;4*Genome size/chunk_len would be nice."),
+                .default_value("500")
+                .help("Number of units; Genome size/chunk_len would be nice."),
         )
         .arg(
             Arg::new("margin")
@@ -660,16 +660,6 @@ fn subcommand_encode_densely() -> App<'static> {
                 .default_value("15")
                 .takes_value(true),
         )
-    // .arg(
-    //     Arg::new("min_span_reads")
-    //         .short('m')
-    //         .long("min_span_reads")
-    //         .required(false)
-    //         .value_name("MIN")
-    //         .help("Minimum required number of reads to solve repeats")
-    //         .default_value("4")
-    //         .takes_value(true),
-    // )
 }
 
 fn subcommand_assemble() -> App<'static> {
@@ -703,16 +693,6 @@ fn subcommand_assemble() -> App<'static> {
                 .default_value("2000")
                 .takes_value(true),
         )
-        // .arg(
-        //     Arg::new("min_span_reads")
-        //         .short('m')
-        //         .long("min_span_reads")
-        //         .required(false)
-        //         .value_name("MIN")
-        //         .help("Minimum required number of reads to solve repeats")
-        //         .default_value("4")
-        //         .takes_value(true),
-        // )
         .arg(
             Arg::new("no_polish")
                 .short('n')
@@ -1184,10 +1164,6 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("length")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    // let min_span_reads: usize = matches
-    //     .value_of("min_span_reads")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
     use haplotyper::dense_encoding::*;
     let config = DenseEncodingConfig::new(length);
     dataset.dense_encoding(&config);
@@ -1203,10 +1179,6 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         .value_of("window_size")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    // let min_span_reads: usize = matches
-    //     .value_of("min_span_reads")
-    //     .and_then(|num| num.parse().ok())
-    //     .unwrap();
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
@@ -1220,7 +1192,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let min_span_reads = match dataset.read_type {
         ReadType::CCS => 1,
         ReadType::CLR => 4,
-        ReadType::ONT => 1,
+        ReadType::ONT => 3,
         ReadType::None => 3,
     };
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);

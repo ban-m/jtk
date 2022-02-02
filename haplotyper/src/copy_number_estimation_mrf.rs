@@ -76,15 +76,15 @@ impl CopyNumberEstimation for DataSet {
 pub struct Graph {
     // (u,u_pos, v, v_pos).
     edges: Vec<(usize, bool, usize, bool)>,
-    // coverage of nodes
-    coverages: Vec<u64>,
+    // coverage of nodes, length(number of units) in nodes.
+    coverages: Vec<(u64, usize)>,
     // for each node, for each position, return the set of edge indices.
     edge_lists: Vec<[Vec<usize>; 2]>,
 }
 
 impl std::fmt::Display for Graph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "N:{}\tE:{}", self.coverages.len(), self.edges.len(),)?;
+        write!(f, "N:{}\tE:{}", self.coverages.len(), self.edges.len(),)?;
         Ok(())
     }
 }
@@ -115,7 +115,7 @@ impl MCMCConfig {
 }
 
 impl Graph {
-    pub fn with(edges: &[(usize, bool, usize, bool)], coverages: &[u64]) -> Self {
+    pub fn with(edges: &[(usize, bool, usize, bool)], coverages: &[(u64, usize)]) -> Self {
         let mut edge_lists = vec![[vec![], vec![]]; coverages.len()];
         for (idx, &(u, u_is_head, v, v_is_head)) in edges.iter().enumerate() {
             edge_lists[u][u_is_head as usize].push(idx);
@@ -186,6 +186,7 @@ impl Graph {
             edge_lists[u][u_is_head as usize].push(idx);
             edge_lists[v][v_is_head as usize].push(idx);
         }
+        let coverages: Vec<_> = coverages.iter().map(|&x| (x, 1)).collect();
         let graph = Self {
             coverages,
             edges,
@@ -199,7 +200,7 @@ impl Graph {
         } else {
             let mut weights: Vec<_> = self.coverages.clone();
             let position = weights.len() / 2;
-            (*weights.select_nth_unstable(position).1) as f64 / 2f64
+            (*weights.select_nth_unstable(position).1).0 as f64 / 2f64
         }
     }
     // Rounding p into p.trunc() + 1/0 depending on the p.fract().
@@ -210,10 +211,10 @@ impl Graph {
         let node_cp: Vec<_> = self
             .coverages
             .iter()
-            .map(|&x| Self::round(rng, x as f64 / config.coverage))
+            .map(|&(x, _)| Self::round(rng, x as f64 / config.coverage))
             .collect();
         let mut edge_cov_dist = vec![0f64; self.edges.len()];
-        for (&cov, edges) in self.coverages.iter().zip(self.edge_lists.iter()) {
+        for (&(cov, _), edges) in self.coverages.iter().zip(self.edge_lists.iter()) {
             for &to in edges[0].iter() {
                 edge_cov_dist[to] += cov as f64 / edges[0].len() as f64;
             }
@@ -228,13 +229,13 @@ impl Graph {
         (node_cp, edge_cp)
     }
     // This is not needed, especially the initial guess is **useful.**
-    #[allow(dead_code)]
-    fn estimate_mean_parameter(&self, node_cp: &[usize], hap_cov: f64) -> f64 {
-        let len = node_cp.len() as f64;
-        let mean_cp = node_cp.iter().sum::<usize>() as f64 / len;
-        let mean_cov = self.coverages.iter().sum::<u64>() as f64 / len;
-        (mean_cov + (hap_cov - 1f64) / len) / (mean_cp + 1f64 / len)
-    }
+    // #[allow(dead_code)]
+    // fn estimate_mean_parameter(&self, node_cp: &[usize], hap_cov: f64) -> f64 {
+    //     let len = node_cp.len() as f64;
+    //     let mean_cp = node_cp.iter().sum::<usize>() as f64 / len;
+    //     let mean_cov = self.coverages.iter().sum::<u64>() as f64 / len;
+    //     (mean_cov + (hap_cov - 1f64) / len) / (mean_cp + 1f64 / len)
+    // }
     // Return vector of (MAP-estimated) copy numbers of nodes and those of edges.
     pub fn map_estimate_copy_numbers(&self, config: &Config) -> ((Vec<usize>, Vec<usize>), f64) {
         let hap_cov = config
@@ -426,11 +427,12 @@ impl Graph {
         to_decrease: bool,
     ) -> f64 {
         // Energy difference by changing copy number of node.
-        let node_cov = self.coverages[flip];
+        let (node_cov, len) = self.coverages[flip];
         let old_cp = node_cp[flip];
         let new_cp = if to_decrease { old_cp - 1 } else { old_cp + 1 };
         let node_diff =
             config.node_potential(node_cov, new_cp) - config.node_potential(node_cov, old_cp);
+        let node_diff = node_diff * len as f64;
         let edge_consistency: f64 = self.edge_lists[flip]
             .iter()
             .filter(|eds| !eds.is_empty()) // If there's no edge, then there's no penalty.
@@ -484,11 +486,12 @@ impl Graph {
         to_decrease: bool,
     ) -> f64 {
         // potential diff by node.
-        let node_cov = self.coverages[node];
+        let (node_cov, len) = self.coverages[node];
         let old_cp = node_cp[node];
         let new_cp = if to_decrease { old_cp - 1 } else { old_cp + 1 };
         let node_diff =
             config.node_potential(node_cov, new_cp) - config.node_potential(node_cov, old_cp);
+        let node_diff = len as f64 * node_diff;
         // Potential diff by edges.
         // LK diff by edge potential
         let edges = &self.edge_lists[node];
@@ -566,7 +569,7 @@ impl Graph {
             .coverages
             .iter()
             .zip(node_cp.iter())
-            .map(|(&w, &c)| config.node_potential(w, c))
+            .map(|(&(w, len), &c)| len as f64 * config.node_potential(w, c))
             .sum();
         let edge_consistency: usize = self
             .edge_lists
@@ -616,7 +619,7 @@ mod test {
     fn it_works() {}
     #[test]
     fn simple_case() {
-        let coverages: Vec<_> = vec![10; 4];
+        let coverages: Vec<_> = vec![(10, 1); 4];
         let edges = vec![
             (0, false, 1, true),
             (1, false, 2, true),
@@ -634,7 +637,7 @@ mod test {
         let mean_cov = 20;
         let div = 5;
         let coverages: Vec<_> = (0..100)
-            .map(|_| rng.gen_range(mean_cov - div..mean_cov + div))
+            .map(|_| (rng.gen_range(mean_cov - div..mean_cov + div), 1))
             .collect();
         let edges: Vec<_> = (0..99).map(|from| (from, false, from + 1, true)).collect();
         let graph = Graph::with(&edges, &coverages);
@@ -645,7 +648,7 @@ mod test {
         let config = Config::new(mean_cov as f64, 392480);
         let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(&config);
         for (i, cp) in node_cp.iter().enumerate().filter(|&(_, &cp)| cp != 1) {
-            println!("ND\t{}\t{}", cp, graph.coverages[i]);
+            println!("ND\t{}\t{}", cp, graph.coverages[i].0);
         }
         for (i, cp) in edge_cp.iter().enumerate().filter(|&(_, &cp)| cp != 1) {
             println!("ED\t{}\t{:?}", cp, graph.edges[i]);
@@ -663,7 +666,10 @@ mod test {
             vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
         let coverages: Vec<_> = node_cp
             .iter()
-            .map(|&copy| rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64)
+            .map(|&copy| {
+                let cov = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64;
+                (cov, 1)
+            })
             .collect();
         let _edge_cp: Vec<usize> = vec![
             vec![2],
@@ -713,7 +719,10 @@ mod test {
         let div = 5;
         let coverages: Vec<_> = node_cp
             .iter()
-            .map(|&copy| rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64)
+            .map(|&copy| {
+                let cov = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64;
+                (cov, 1)
+            })
             .collect();
         let edges = vec![
             (0, false, 1, true),
@@ -744,7 +753,10 @@ mod test {
         let div = 5;
         let coverages: Vec<_> = node_cp
             .iter()
-            .map(|&copy| rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64)
+            .map(|&copy| {
+                let cov = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64;
+                (cov, 1)
+            })
             .collect();
         let edges: Vec<_> = vec![
             (0, false, 1, true),

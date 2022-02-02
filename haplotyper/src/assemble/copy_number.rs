@@ -329,7 +329,7 @@ fn choose_copy_num<R: Rng>(
 
 //Input:haploid coverage.
 pub fn estimate_copy_number_mcmc(
-    nodes: &[f64],
+    nodes: &[(f64, usize)],
     edges: &[Edge],
     cov: f64,
 ) -> (Vec<usize>, Vec<usize>) {
@@ -337,7 +337,10 @@ pub fn estimate_copy_number_mcmc(
         .iter()
         .map(|&(u, u_is_head, v, v_is_head, _)| (u, u_is_head, v, v_is_head))
         .collect();
-    let coverages: Vec<_> = nodes.iter().map(|x| x.round() as u64).collect();
+    let coverages: Vec<_> = nodes
+        .iter()
+        .map(|&(x, len)| (x.round() as u64, len))
+        .collect();
     let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
     debug!("COPYNUM\tGraph\t{}", graph);
     let config = crate::copy_number_estimation_mrf::Config::new(cov, 34029);
@@ -358,7 +361,7 @@ pub fn estimate_copy_number_gbs(
 // Optimizer.
 #[derive(Debug, Clone)]
 struct Optimizer {
-    nodes: Vec<f64>,
+    nodes: Vec<(f64, usize)>,
     edges: Vec<Edge>,
     is_tip: Vec<bool>,
     gradient: Vec<f64>,
@@ -366,7 +369,7 @@ struct Optimizer {
 }
 
 impl Optimizer {
-    fn new(nodes: &[f64], edges: &[Edge], is_tip: &[bool]) -> Self {
+    fn new(nodes: &[(f64, usize)], edges: &[Edge], is_tip: &[bool]) -> Self {
         Self {
             nodes: nodes.to_vec(),
             edges: edges.to_vec(),
@@ -390,17 +393,16 @@ impl Optimizer {
             .chain(finalize);
         // debug!("PARAMS\tEPOCH\tRESIDUAL\tCONSISTENCY\tINTEGER");
         for (epoch, (alpha, beta, gamma)) in schedule.enumerate() {
-            // debug!("PARAMS\t{}\t{}\t{}\t{}", epoch, alpha, beta, gamma);
+            //debug!("PARAMS\t{}\t{}\t{}\t{}", epoch, alpha, beta, gamma);
             self.gradient.iter_mut().for_each(|x| *x = 0f64);
             self.momentum.iter_mut().for_each(|x| *x = 0f64);
-            // TODO: this is the worst hack I've ever implemented. Shame on me.
             copy_num
                 .iter_mut()
                 .for_each(|x| *x += (epoch as f64 + 1f64).recip());
             let mut loss_log: VecDeque<_> =
                 std::iter::repeat(std::f64::INFINITY).take(100).collect();
-            loop {
-                let total_loss = self.update(copy_num, alpha, beta, gamma);
+            for t in 1.. {
+                let total_loss = self.update(copy_num, alpha, beta, gamma, t);
                 let old = loss_log.pop_front().unwrap();
                 loss_log.push_back(total_loss);
                 if old - total_loss < 0.0001 {
@@ -410,9 +412,11 @@ impl Optimizer {
         }
     }
     // Momentum method
-    fn update(&mut self, copy_num: &mut [f64], alpha: f64, beta: f64, gamma: f64) -> f64 {
+    fn update(&mut self, copy_num: &mut [f64], alpha: f64, beta: f64, gamma: f64, t: usize) -> f64 {
         let total_loss = self.update_gradient(copy_num, alpha, beta, gamma);
-        let (learn_rate, moment_coef) = (0.01, 0f64);
+        let learn_rate = 0.02 / t as f64;
+        let moment_coef = 0.9;
+        // let (learn_rate, moment_coef) = (0.01, 0f64);
         for ((x, d), moment) in copy_num
             .iter_mut()
             .zip(self.gradient.iter())
@@ -425,7 +429,9 @@ impl Optimizer {
         total_loss
     }
     fn update_gradient(&mut self, copy_num: &[f64], alpha: f64, beta: f64, gamma: f64) -> f64 {
+        // Node residual for copy numbers
         let mut node_residual = vec![0f64; self.nodes.len()];
+        // Consisntency penalty.
         let mut node_penalty = vec![0f64; self.nodes.len()];
         for (&(from, fplus, to, tplus, _), cp) in self.edges.iter().zip(copy_num.iter()) {
             let coef = if fplus { -1f64 } else { 1f64 };
@@ -442,7 +448,7 @@ impl Optimizer {
         node_residual
             .iter_mut()
             .zip(self.nodes.iter())
-            .for_each(|(x, y)| *x -= y);
+            .for_each(|(x, y)| *x = *x - y.0);
         let integer_penalty: Vec<_> = copy_num
             .iter()
             .map(|x| x - x.round())
@@ -457,7 +463,12 @@ impl Optimizer {
             *g = cp - edge.4;
         }
         let edge_res: f64 = self.gradient.iter().map(|x| x * x).sum();
-        let node_res: f64 = node_residual.iter().map(|x| x * x).sum();
+        let node_res: f64 = node_residual
+            .iter()
+            .zip(self.nodes.iter())
+            //.map(|(x, &(_, _))| x * x)
+            .map(|(x, &(_, len))| len as f64 * x * x)
+            .sum();
         let node_pen: f64 = node_penalty.iter().map(|x| x * x).sum();
         let int_pen: f64 = integer_penalty.iter().map(|x| x * x).sum();
         self.gradient.iter_mut().for_each(|g| *g *= 2f64);
@@ -468,19 +479,17 @@ impl Optimizer {
             .zip(integer_penalty.iter())
         {
             // Grad is currently the residual of the edge.
-            let residual = node_residual[from] + node_residual[to] + *grad;
+            let from_grad = node_residual[from] * self.nodes[from].0 as f64;
+            let to_grad = node_residual[to] * self.nodes[to].0 as f64;
+            // let from_grad = node_residual[from];
+            // let to_grad = node_residual[to];
+            let residual = from_grad + to_grad + *grad;
             let from_coef = if fplus { -1f64 } else { 1f64 };
             let to_coef = if tplus { -1f64 } else { 1f64 };
             let node_consist = 2f64 * (from_coef * node_penalty[from] + to_coef * node_penalty[to]);
             *grad = alpha * residual + beta * node_consist + gamma * int_pen;
         }
         alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen
-        // let total_loss = alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen;
-        // debug!(
-        //     "LOSS\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
-        //     edge_res, node_res, node_pen, int_pen, total_loss
-        // );
-        // total_loss
     }
 }
 
@@ -509,7 +518,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
     let nodes: Vec<_> = gfa
         .iter()
         .filter_map(|record| {
-            if let gfa::Content::Seg(_) = &record.content {
+            if let gfa::Content::Seg(seg) = &record.content {
                 let coverage: usize = record
                     .tags
                     .iter()
@@ -517,8 +526,8 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|x| x.parse().ok())?;
                 let weight = calibrator.calib(coverage, unit_len) / cov;
-                // debug!("DUMP\t{}\t{:.2}\tNode", coverage, weight);
-                Some(weight)
+                let len = seg.slen as usize / unit_len;
+                Some((weight, len))
             } else {
                 None
             }
@@ -573,7 +582,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
 
 /// Estimate copy number.
 /// Return copy number of nodes, and copy number of edges.
-pub fn estimate_copy_number(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<usize>) {
+pub fn estimate_copy_number(nodes: &[(f64, usize)], edges: &[Edge]) -> (Vec<usize>, Vec<usize>) {
     let (is_tip, is_isolated): (Vec<_>, Vec<_>) = {
         // 2 * node_index + is_head.
         let mut degree = vec![0; nodes.len() * 2];
@@ -606,196 +615,20 @@ pub fn estimate_copy_number(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<u
         node_cp[i] *= 2f64;
     }
     for (i, _) in is_isolated.iter().enumerate().filter(|(_, &x)| x) {
-        node_cp[i] = nodes[i];
+        node_cp[i] = nodes[i].0;
     }
     let copy_num: Vec<_> = copy_num.iter().map(|&x| x.round() as usize).collect();
     let node_cp: Vec<_> = node_cp.iter().map(|&x| x.round() as usize).collect();
     (node_cp, copy_num)
 }
 
-// pub fn polish_copy_number(
-//     nodes: &[f64],
-//     node_cp: &mut [usize],
-//     edges: &[Edge],
-//     edge_cp: &mut [usize],
-// ) {
-//     // Copy number for [i][bool as usize]. True -> 1.
-//     let mut adj_copy_num = vec![[0; 2]; nodes.len()];
-//     for (&cp, &(from, fp, to, tp, _)) in edge_cp.iter().zip(edges.iter()) {
-//         adj_copy_num[from][fp as usize] += cp;
-//         adj_copy_num[to][tp as usize] += cp;
-//     }
-//     // (node index, true/false, target copy number);
-//     let mut diffs = vec![];
-//     for (idx, (node, adj_cp)) in node_cp.iter_mut().zip(adj_copy_num.iter()).enumerate() {
-//         let (plus, minus) = (adj_cp[0], adj_cp[1]);
-//         if plus == minus && plus != *node {
-//             // Node should be modified.
-//             *node = plus;
-//         } else if plus != minus && plus == *node {
-//             // minus should be modified.
-//             diffs.push((idx, true, plus));
-//         } else if plus != minus && minus == *node {
-//             // plus shoulud be modified.
-//             diffs.push((idx, false, minus));
-//         }
-//     }
-// Changing edge copy numbers...
-// TODO: More effient algorithm exists.
-// for (idx, direction, target) in diffs {
-//     let mut edges_to_change: Vec<(&mut usize, f64)> = edge_cp
-//         .iter_mut()
-//         .zip(edges.iter())
-//         .filter(|&(_, &(from, fp, to, tp, _))| {
-//             (from, fp) == (idx, direction) || (to, tp) == (idx, direction)
-//         })
-//         .map(|(cp, edge)| (cp, edge.4))
-//         .collect();
-//     let current_cp = edges_to_change.iter().map(|x| *x.0).sum::<usize>();
-//     if current_cp < target {
-//         // Increase.
-//         for _ in current_cp..target {
-//             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
-//                 .iter_mut()
-//                 .map(|(cp, cov)| ((*cov - (**cp + 1) as f64).powi(2), cp))
-//                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
-//             if let Some((_, cp)) = to_change {
-//                 **cp += 1;
-//             }
-//         }
-//     } else {
-//         for _ in target..current_cp {
-//             let to_change: Option<(f64, &mut &mut usize)> = edges_to_change
-//                 .iter_mut()
-//                 .map(|(cp, cov)| ((*cov - (**cp - 1) as f64).powi(2), cp))
-//                 .min_by(|x, y| (x.0).partial_cmp(&y.0).unwrap());
-//             if let Some((_, cp)) = to_change {
-//                 **cp -= 1;
-//             }
-//         }
-//     }
-// }
-// }
-
-// /// Optimization by using OpEn.
-// pub fn estimate_copy_number_open(nodes: &[f64], edges: &[Edge]) -> (Vec<usize>, Vec<usize>) {
-//     let (is_tip, is_isolated): (Vec<_>, Vec<_>) = {
-//         // 2 * node_index + is_head.
-//         let mut degree = vec![0; nodes.len() * 2];
-//         for &(from, f_plus, to, t_plus, _) in edges.iter() {
-//             degree[2 * from + f_plus as usize] += 1;
-//             degree[2 * to + t_plus as usize] += 1;
-//         }
-//         // If either position is 0, it is a tip.
-//         degree
-//             .chunks_exact(2)
-//             .map(|w| (w[0] == 0 || w[1] == 0, w[0] == 0 && w[1] == 0))
-//             .unzip()
-//     };
-//     let (alpha, beta, gamma) = (0.1, 0.5, 0.5);
-//     let loss_function =
-//         |copy_num: &[f64], cost: &mut f64| -> Result<(), optimization_engine::SolverError> {
-//             let mut node_residual: Vec<_> = nodes.iter().map(|x| -x).collect();
-//             let mut node_penalty = vec![0f64; nodes.len()];
-//             for (&(from, fplus, to, tplus, _), cp) in edges.iter().zip(copy_num.iter()) {
-//                 let coef = if fplus { -1f64 } else { 1f64 };
-//                 node_penalty[from] += cp * coef;
-//                 let coef = if tplus { -1f64 } else { 1f64 };
-//                 node_penalty[to] += cp * coef;
-//                 node_residual[from] += cp / 2f64;
-//                 node_residual[to] += cp / 2f64;
-//             }
-//             for (idx, _) in is_tip.iter().enumerate().filter(|(_, &x)| x) {
-//                 node_residual[idx] *= 2f64;
-//                 node_penalty[idx] = 0f64;
-//             }
-//             let node_res: f64 = node_residual.iter().map(|x| x * x).sum();
-//             let node_pen: f64 = node_penalty.iter().map(|x| x * x).sum();
-
-//             let integer_penalty = copy_num.iter().map(|x| x - x.round());
-//             let int_pen: f64 = integer_penalty.map(|x| x * x).sum();
-//             let edge_residual = edges.iter().zip(copy_num.iter()).map(|(e, c)| e.4 - c);
-//             let edge_res: f64 = edge_residual.map(|x| x * x).sum();
-//             *cost = alpha * (edge_res + node_res) + beta * node_pen + gamma * int_pen;
-//             Ok(())
-//         };
-//     let gradient = |copy_num: &[f64],
-//                     grad: &mut [f64]|
-//      -> Result<(), optimization_engine::SolverError> {
-//         let mut node_residual = vec![0f64; nodes.len()];
-//         let mut node_penalty = vec![0f64; nodes.len()];
-//         for (&(from, fplus, to, tplus, _), cp) in edges.iter().zip(copy_num.iter()) {
-//             let coef = if fplus { -1f64 } else { 1f64 };
-//             node_penalty[from] += cp * coef;
-//             let coef = if tplus { -1f64 } else { 1f64 };
-//             node_penalty[to] += cp * coef;
-//             node_residual[from] += cp / 2f64;
-//             node_residual[to] += cp / 2f64;
-//         }
-//         for (idx, _) in is_tip.iter().enumerate().filter(|(_, &x)| x) {
-//             node_residual[idx] *= 2f64;
-//             node_penalty[idx] = 0f64;
-//         }
-//         node_residual
-//             .iter_mut()
-//             .zip(nodes.iter())
-//             .for_each(|(x, y)| *x -= y);
-//         let integer_penalty: Vec<_> = copy_num
-//             .iter()
-//             .map(|x| x - x.round())
-//             .map(|x| if x.abs() < 0.5 - 0.00001 { x } else { 0f64 })
-//             .collect();
-//         for ((g, edge), cp) in grad.iter_mut().zip(edges.iter()).zip(copy_num.iter()) {
-//             *g = cp - edge.4;
-//         }
-//         grad.iter_mut().for_each(|g| *g *= 2f64);
-//         for ((grad, &(from, fplus, to, tplus, _)), int_pen) in grad
-//             .iter_mut()
-//             .zip(edges.iter())
-//             .zip(integer_penalty.iter())
-//         {
-//             // Grad is currently the residual of the edge.
-//             let residual = node_residual[from] + node_residual[to] + *grad;
-//             let from_coef = if fplus { -1f64 } else { 1f64 };
-//             let to_coef = if tplus { -1f64 } else { 1f64 };
-//             let node_consist = 2f64 * (from_coef * node_penalty[from] + to_coef * node_penalty[to]);
-//             *grad = alpha * residual + beta * node_consist + gamma * int_pen;
-//         }
-//         Ok(())
-//     };
-//     use optimization_engine::Optimizer;
-//     let mut copy_num: Vec<_> = edges.iter().map(|f| f.4).collect();
-//     let constraint = optimization_engine::constraints::NoConstraints::new();
-//     let problem = optimization_engine::Problem::new(&constraint, gradient, loss_function);
-//     let mut cache = optimization_engine::core::panoc::PANOCCache::new(copy_num.len(), 1e-1, 10);
-//     let mut optim = optimization_engine::core::panoc::PANOCOptimizer::new(problem, &mut cache);
-//     debug!("{:?}", optim.solve(&mut copy_num).unwrap());
-//     let mut loss = 0f64;
-//     loss_function(&copy_num, &mut loss).unwrap();
-//     debug!("Final loss\t{}", loss);
-//     let mut node_cp = vec![0f64; nodes.len()];
-//     for (&(from, _, to, _, _), cp) in edges.iter().zip(copy_num.iter()) {
-//         node_cp[from] += cp / 2f64;
-//         node_cp[to] += cp / 2f64;
-//     }
-//     for (i, _) in is_tip.iter().enumerate().filter(|(_, &x)| x) {
-//         node_cp[i] *= 2f64;
-//     }
-//     for (i, _) in is_isolated.iter().enumerate().filter(|(_, &x)| x) {
-//         node_cp[i] = nodes[i];
-//     }
-//     let copy_num: Vec<_> = copy_num.iter().map(|&x| x.round() as usize).collect();
-//     let node_cp: Vec<_> = node_cp.iter().map(|&x| x.round() as usize).collect();
-//     (node_cp, copy_num)
-// }
-
 #[cfg(test)]
 mod cpe_test {
     use super::*;
     use rand::{Rng, SeedableRng};
     use rand_xoshiro::Xoshiro256PlusPlus;
-    fn dataset1() -> (Vec<f64>, Vec<Edge>) {
-        let nodes = vec![2f64, 1f64, 1f64, 2f64];
+    fn dataset1() -> (Vec<(f64, usize)>, Vec<Edge>) {
+        let nodes = vec![(2f64, 1), (1f64, 1), (1f64, 1), (2f64, 1)];
         let edges = vec![
             (0, false, 1, true, 1f64),
             (0, false, 2, true, 1f64),
@@ -811,8 +644,8 @@ mod cpe_test {
         assert_eq!(nodes_cp, vec![2, 1, 1, 2]);
         assert_eq!(edges_cp, vec![1, 1, 1, 1]);
     }
-    fn dataset2() -> (Vec<f64>, Vec<usize>, Vec<Edge>, Vec<usize>) {
-        let nodes = vec![1f64, 1f64, 1f64, 1f64];
+    fn dataset2() -> (Vec<(f64, usize)>, Vec<usize>, Vec<Edge>, Vec<usize>) {
+        let nodes = vec![(1f64, 1), (1f64, 1), (1f64, 1), (1f64, 1)];
         let nodes_answer = vec![1; 4];
         let edges = vec![
             (0, false, 1, true, 1f64),
@@ -830,14 +663,14 @@ mod cpe_test {
         assert_eq!(nc, na);
         assert_eq!(ec, ea);
     }
-    fn dataset3() -> (Vec<f64>, Vec<usize>, Vec<Edge>, Vec<usize>) {
+    fn dataset3() -> (Vec<(f64, usize)>, Vec<usize>, Vec<Edge>, Vec<usize>) {
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(4324);
         let nodes_answer = vec![2, 1, 2, 1, 1, 2, 4, 2];
         let nodes: Vec<_> = nodes_answer
             .iter()
             .map(|&cp| {
                 let diff = rng.gen_range(-0.3..0.3);
-                cp as f64 + diff
+                (cp as f64 + diff, rng.gen_range(1..3))
             })
             .collect();
         let edge_answer = vec![1, 1, 1, 1, 1, 1, 1, 2, 2, 2];

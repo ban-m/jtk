@@ -18,7 +18,7 @@ if [ $# -ge 4 ]; then
     echo "Unit guess is changed to" $4
     UNIT_GUESS=$4
 else
-    UNIT_GUESS=10000
+    UNIT_GUESS=500
 fi
 
 if [ -f ${2}.entry.json ]

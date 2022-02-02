@@ -3,6 +3,7 @@ use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
 // use super::Encode;
 use definitions::*;
+use rand::prelude::*;
 use rand_xoshiro::Xoroshiro128Plus;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]
@@ -104,102 +105,51 @@ impl DetermineUnit for definitions::DataSet {
             ReadType::None | ReadType::CLR => 5,
             ReadType::ONT => 3,
         };
-        let mut reads: Vec<&RawRead> = self.raw_reads.iter().collect();
-        reads.sort_by_key(|r| r.seq().len());
-        reads.reverse();
         debug!("Select Unit: Configuration:{:?}", config);
-        let sim_thr = self.read_type.sim_thr();
-        let temp_config = {
-            let mut temp = config.clone();
-            temp.chunk_len = 12 * temp.chunk_len / 10;
-            temp
-        };
-        let subseqs: Vec<_> = reads
-            .iter()
-            .flat_map(|r| split_into(r, &temp_config))
-            .filter(|u| !is_repetitive(u, config))
-            .collect();
-        use rand::prelude::*;
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(342903);
-        self.selected_chunks = subseqs
-            .choose_multiple(&mut rng, temp_config.unit_num)
-            .enumerate()
-            .map(|(idx, seq)| {
-                let seq = String::from_utf8_lossy(seq).to_string();
-                Unit::new(idx as u64, seq, config.min_cluster)
-            })
-            .collect();
+        self.selected_chunks = {
+            let mut config = config.clone();
+            config.chunk_len = 12 * config.chunk_len / 10;
+            pick_random(&self.raw_reads, &config, &mut rng)
+        };
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
-        self.selected_chunks = remove_overlapping_units(self, config.threads).unwrap();
+        //self.selected_chunks = remove_overlapping_units(self, config.threads).unwrap();
+        remove_overlapping_units_dev(self, config).unwrap();
         // 1st polishing.
         debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
-        self.encode(config.threads, sim_thr);
+        self.encode(config.threads, self.read_type.sim_thr());
         remove_frequent_units(self, config.upper_count);
-        {
-            let mut counts: HashMap<_, usize> = HashMap::new();
-            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-                *counts.entry(node.unit).or_default() += 1;
-            }
-            let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
-            counts.sort_unstable();
-            let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
-            debug!("Histgrapm\n{}", hist.format(40, 20));
-        }
-        let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 10);
+        dump_histogram(self);
+        let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
         self.consensus_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
-        self.encode(config.threads, sim_thr);
+        self.encode(config.threads, self.read_type.sim_thr());
         fill_sparse_region(self, config);
         fill_tail_end(self, config);
         // 2nd polishing.
-        self.encode(config.threads, sim_thr);
+        self.encode(config.threads, self.read_type.sim_thr());
         remove_frequent_units(self, config.upper_count);
-        let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 20);
-        {
-            let mut counts: HashMap<_, usize> = HashMap::new();
-            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-                *counts.entry(node.unit).or_default() += 1;
-            }
-            let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
-            counts.sort_unstable();
-            let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
-            debug!("Histgrapm\n{}", hist.format(40, 20));
-        }
+        let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
+        dump_histogram(self);
         self.polish_unit(&polish_config);
         debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
+        debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
+        self.encode(config.threads, self.read_type.sim_thr());
+        remove_frequent_units(self, config.upper_count);
+        filter_unit_by_ovlp(self, config);
+        debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
+        self.encode(config.threads, self.read_type.sim_thr());
+        // Final polish
+        let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
+        dump_histogram(self);
+        self.polish_unit(&polish_config);
         self.selected_chunks
             .retain(|unit| config.chunk_len < unit.seq.len());
         for (idx, unit) in self.selected_chunks.iter_mut().enumerate() {
             unit.seq.truncate(config.chunk_len);
             unit.id = idx as u64;
         }
-        debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
-        // This encoding is inevitable.
-        self.encode(config.threads, sim_thr);
-        remove_frequent_units(self, config.upper_count);
-        filter_unit_by_ovlp(self, config);
-        debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
-        // This IS avoidable.
-        self.encode(config.threads, sim_thr);
-        // Final polishing.
-        let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
-        {
-            let mut counts: HashMap<_, usize> = HashMap::new();
-            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-                *counts.entry(node.unit).or_default() += 1;
-            }
-            let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
-            counts.sort_unstable();
-            let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
-            debug!("Histgrapm\n{}", hist.format(40, 20));
-        }
-        self.polish_unit(&polish_config);
-        debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
-        for (idx, chunk) in self.selected_chunks.iter_mut().enumerate() {
-            chunk.seq.truncate(config.chunk_len);
-            chunk.id = idx as u64;
-        }
-        self.encode(config.threads, sim_thr);
+        self.encode(config.threads, self.read_type.sim_thr());
     }
 }
 
@@ -224,7 +174,135 @@ fn remove_frequent_units(ds: &mut DataSet, upper_count: usize) {
     }
 }
 
+use rand::Rng;
+fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> Vec<Unit> {
+    use rand::prelude::*;
+    let subseqs: Vec<_> = reads
+        .iter()
+        .flat_map(|r| split_into(r, &config))
+        .filter(|u| !is_repetitive(u, config))
+        .collect();
+    subseqs
+        .choose_multiple(rng, config.unit_num)
+        .enumerate()
+        .map(|(idx, seq)| {
+            let seq = String::from_utf8_lossy(seq).to_string();
+            Unit::new(idx as u64, seq, config.min_cluster)
+        })
+        .collect()
+}
+
+fn mm2_unit_overlap(ds: &DataSet, config: &UnitConfig) -> std::io::Result<Vec<u8>> {
+    let mut rng = thread_rng();
+    let id: u64 = rng.gen::<u64>() % 100_000_000;
+    let mut c_dir = std::env::current_dir()?;
+    c_dir.push(format!("{}", id));
+    debug!("DETERMINE\tUnitOvlp\tCreating\t{:?}", c_dir);
+    std::fs::create_dir(&c_dir)?;
+    use std::io::{BufWriter, Write};
+    let chunks = {
+        let mut reference = c_dir.clone();
+        reference.push("chunks.fa");
+        let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
+        for unit in ds.selected_chunks.iter() {
+            writeln!(&mut wtr, ">{}\n{}", unit.id, &unit.seq)?;
+        }
+        let reference = reference.into_os_string().into_string().unwrap();
+        reference
+    };
+    use crate::minimap2;
+    let threads = format!("{}", config.threads);
+    let mut args = vec!["-t", &threads, "-c", "--eqx", "-P"];
+    match ds.read_type {
+        ReadType::CCS => args.extend(vec!["-H", "-k", "18"]),
+        ReadType::CLR => args.extend(vec!["-H", "-k", "15"]),
+        ReadType::ONT => args.extend(vec!["-k", "17"]),
+        _ => {}
+    };
+    args.push("-X");
+    let mm2 = minimap2::minimap2_args(&chunks, &chunks, &args);
+    debug!("DETERMINE\tUnitOvlp\tRemoving\t{:?}", c_dir);
+    std::fs::remove_dir_all(c_dir)?;
+    Ok(mm2)
+}
+
+pub fn is_proper_overlap(paf: &bio_utils::paf::PAF) -> bool {
+    const ALLOWED_END_GAP: usize = 25;
+    let (qstart, qend, qlen) = (paf.qstart, paf.qend, paf.qlen);
+    let (tstart, tend, tlen) = (paf.tstart, paf.tend, paf.tlen);
+    let is_forward = paf.relstrand;
+    // Q:-------->
+    // T:    --------->
+    let q_to_t_forward = (qlen - qend < ALLOWED_END_GAP) && tstart < ALLOWED_END_GAP && is_forward;
+    // Q:<--------
+    // T:    --------->
+    let q_to_t_rev = qstart < ALLOWED_END_GAP && tstart < ALLOWED_END_GAP && !is_forward;
+    // Q:     ------->
+    // T: ------->
+    let t_to_q_forward = (tlen - tend < ALLOWED_END_GAP) && qstart < ALLOWED_END_GAP && is_forward;
+    // Q:    <--------
+    // T: ------->
+    let t_to_q_rev =
+        (qlen - qend < ALLOWED_END_GAP) && (tlen - tend < ALLOWED_END_GAP) && !is_forward;
+    q_to_t_forward || q_to_t_rev || t_to_q_forward || t_to_q_rev
+}
+
+fn remove_overlapping_units_dev(ds: &mut DataSet, config: &UnitConfig) -> std::io::Result<()> {
+    let unit_len = ds.selected_chunks.len();
+    let mut edges: Vec<_> = (0..unit_len).map(|i| vec![0; i]).collect();
+    // How long one overlap should be at least.
+    let overlap_len = config.chunk_len * 3 / 4;
+    // This is the percent identy.
+    let overlap_thr: f64 = match ds.read_type {
+        ReadType::CCS => 0.05,
+        ReadType::CLR => 0.35,
+        ReadType::ONT => 0.15,
+        ReadType::None => 0.15,
+    };
+    let mm2 = mm2_unit_overlap(ds, config)?;
+    let alignments = String::from_utf8_lossy(&mm2);
+    let alignments = alignments
+        .lines()
+        .filter_map(bio_utils::paf::PAF::new)
+        .filter(|paf| is_proper_overlap(paf))
+        .filter(|paf| {
+            let identity = paf.matchnum as f64 / paf.blocklen as f64;
+            overlap_thr < identity && overlap_len < paf.blocklen
+        });
+    for aln in alignments {
+        let node_unit: usize = aln.tname.parse().unwrap();
+        let mode_unit: usize = aln.qname.parse().unwrap();
+        let (i, j) = (node_unit.max(mode_unit), node_unit.min(mode_unit));
+        if i != j {
+            edges[i as usize][j as usize] += 1;
+        }
+    }
+    let edges: Vec<Vec<_>> = edges
+        .iter()
+        .map(|xs| xs.iter().map(|&x| MIN_OCC < x).collect())
+        .collect();
+    let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
+    ds.selected_chunks
+        .retain(|unit| !to_be_removed[unit.id as usize]);
+    for (idx, unit) in ds.selected_chunks.iter_mut().enumerate() {
+        unit.id = idx as u64;
+    }
+    Ok(())
+}
+
+fn dump_histogram(ds: &DataSet) {
+    let mut counts: HashMap<_, usize> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        *counts.entry(node.unit).or_default() += 1;
+    }
+    let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
+    counts.sort_unstable();
+    let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
+    debug!("Histgrapm\n{}", hist.format(40, 20));
+}
+
 const MIN_OCC: usize = 5;
+#[allow(dead_code)]
 fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Unit>> {
     const ALLOWED_END_GAP: usize = 50;
     let mm2 = crate::encode::mm2_alignment(ds, thr)?;

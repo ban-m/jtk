@@ -1,3 +1,4 @@
+//! Tiny implementation of a string graph.
 use definitions::*;
 use rayon::prelude::*;
 const IDEN: f64 = 0.3;
@@ -29,8 +30,6 @@ pub const DEFAULT_CONFIG: AssembleConfig = AssembleConfig {
 
 #[derive(Clone)]
 pub struct StringGraph<'a> {
-    // TODO: nodes should be (&Node, bool) to indicate the
-    // direction of the reads. Maybe it fasten the alignment.
     pub edges: HashMap<u64, Vec<StrEdge>>,
     pub nodes: HashMap<u64, Vec<(&'a Node, bool)>>,
     pub reads: Vec<&'a EncodedRead>,
@@ -60,22 +59,13 @@ impl<'a> StringGraph<'a> {
         })
     }
     pub fn from_dataset(ds: &'a DataSet, c: &AssembleConfig) -> Self {
-        // use crate::global_clustering::{
-        //     error_correction::local_correction, GlobalClusteringConfig,
-        // };
-        // let config = GlobalClusteringConfig::new(3, 2, 1, -1, -1);
-        // let reads = local_correction(ds, &config);
-        // let assignments: HashMap<_, _> = ds.assignments.iter().map(|r| (r.id, r.cluster)).collect();
         let scoring_scheme = get_match_score(ds);
         let edges: HashMap<_, Result<Vec<_>, _>> = ds
             .encoded_reads
             .par_iter()
             .map(|r| {
                 let mut edges = vec![];
-                for q in ds.encoded_reads.iter().filter(|q| q.id != r.id)
-                //  && assignments.get(&q.id) == assignments.get(&r.id))
-                {
-                    // match StrEdge::from_corrected_reads(r, q, c, &scoring_scheme) {
+                for q in ds.encoded_reads.iter().filter(|q| q.id != r.id) {
                     match StrEdge::from_reads(r, q, c, &scoring_scheme) {
                         Ok(res) => edges.push(res),
                         Err(is_contained) if is_contained => return (r.id, Err(q.id)),
@@ -536,20 +526,20 @@ impl<'a> StringGraph<'a> {
             .collect()
     }
     fn consensus_from_nodes(nodes: &[&Node]) -> Vec<u8> {
-        use crate::local_clustering::node_to_subchunks;
-        let chunks: Vec<_> = nodes.iter().map(|n| node_to_subchunks(n, 100)).collect();
-        let max_pos = chunks
-            .iter()
-            .filter_map(|cs| cs.iter().map(|c| c.pos).max())
-            .max()
-            .unwrap();
-        let mut subseqs = vec![vec![]; max_pos + 1];
-        for cs in chunks.iter() {
-            for c in cs.iter() {
-                subseqs[c.pos].push(c.seq.as_slice());
-            }
-        }
-        subseqs.iter().flat_map(|seq| consensus(seq, 10)).collect()
+        vec![]
+        // let chunks: Vec<_> = nodes.iter().map(|n| node_to_subchunks(n, 100)).collect();
+        // let max_pos = chunks
+        //     .iter()
+        //     .filter_map(|cs| cs.iter().map(|c| c.pos).max())
+        //     .max()
+        //     .unwrap();
+        // let mut subseqs = vec![vec![]; max_pos + 1];
+        // for cs in chunks.iter() {
+        //     for c in cs.iter() {
+        //         subseqs[c.pos].push(c.seq.as_slice());
+        //     }
+        // }
+        // subseqs.iter().flat_map(|seq| consensus(seq, 10)).collect()
     }
     #[allow(clippy::type_complexity)]
     fn edge_consensus(&self) -> HashMap<((u64, u64), (u64, u64)), EdgeSeq> {
@@ -924,73 +914,6 @@ pub fn unit_alignment(
     //     .collect()
 }
 
-// fn validate_alignment(
-//     r_argmax: usize,
-//     r: &[(u64, u64)],
-//     q_argmax: usize,
-//     q: &[(u64, u64)],
-//     dp: &[Vec<i32>],
-//     max: i32,
-//     iden: f64,
-// ) -> Option<AlignmentResult> {
-//     let (mut rpos, mut qpos) = (r_argmax, q_argmax);
-//     while 0 < rpos && 0 < qpos {
-//         let mat = if r[rpos - 1] == q[qpos - 1] { 1 } else { -1 };
-//         if dp[rpos][qpos] == mat + dp[rpos - 1][qpos - 1] {
-//             rpos -= 1;
-//             qpos -= 1;
-//         } else if dp[rpos][qpos] == dp[rpos - 1][qpos] - 1 {
-//             rpos -= 1;
-//         } else if dp[rpos][qpos] == dp[rpos][qpos - 1] - 1 {
-//             qpos -= 1;
-//         } else {
-//             assert_eq!(dp[rpos][qpos], 0);
-//             break;
-//         }
-//     }
-//     // First condition:
-//     // If this alignment truly overlaps,
-//     // the optimal alignment should starts from the start position of either of reads.
-//     // Second condition:
-//     // If this alignment truly overlaps,
-//     // the optimal alignment should ends at either of reads.
-//     // eprintln!("{}\t{}", r.len(), q.len());
-//     let is_valid_overlap = (qpos == 0 || rpos == 0) && (q_argmax == q.len() || r_argmax == r.len());
-//     // eprintln!(
-//     //     "{}-{}\t{}-{}\t{}",
-//     //     rpos, r_argmax, qpos, q_argmax, is_valid_overlap
-//     // );
-//     if !is_valid_overlap {
-//         None
-//     } else if rpos == 0 && qpos == 0 && q_argmax == q.len() && r_argmax == r.len() {
-//         Some(AlignmentResult::DiagonalMatch)
-//     } else if rpos == 0 && r_argmax == r.len() {
-//         Some(AlignmentResult::Contained)
-//     } else if qpos == 0 && q_argmax == q.len() {
-//         Some(AlignmentResult::Containing)
-//     } else if rpos == 0 {
-//         assert!(r_argmax != r.len());
-//         let (rlen, qlen) = (r_argmax, q.len() - qpos);
-//         let identity = max as f64 / ((rlen * qlen) as f64).sqrt();
-//         // eprintln!("{}\t{}\t{}", rlen, qlen, identity);
-//         if iden < identity {
-//             Some(AlignmentResult::HeadToTail(r_argmax))
-//         } else {
-//             None
-//         }
-//     } else {
-//         assert!(qpos == 0 && q_argmax != q.len());
-//         let (rlen, qlen) = (r.len() - rpos, q_argmax);
-//         let identity = max as f64 / ((rlen * qlen) as f64).sqrt();
-//         // eprintln!("{}\t{}\t{}", rlen, qlen, identity);
-//         if iden < identity {
-//             Some(AlignmentResult::TailToHead(r.len() - rpos))
-//         } else {
-//             None
-//         }
-//     }
-// }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StrEdge {
     from: u64,
@@ -1149,42 +1072,4 @@ fn get_match_score(ds: &DataSet) -> HashMap<(u64, u64), f64> {
                 .collect::<Vec<_>>()
         })
         .collect()
-}
-
-pub fn consensus<T: std::borrow::Borrow<[u8]>>(xs: &[T], num: usize) -> Vec<u8> {
-    let xs: Vec<_> = xs.iter().map(|x| x.borrow()).collect();
-    if xs.is_empty() {
-        return vec![];
-    } else if xs.iter().map(|xs| xs.len()).max().unwrap() < 10 {
-        return xs.iter().max_by_key(|x| x.len()).unwrap().to_vec();
-    }
-    let param = (-2, -2, &|x, y| if x == y { 2 } else { -4 });
-    use rand_xoshiro::Xoroshiro128StarStar;
-    let cs: Vec<_> = (0..num as u64)
-        .into_par_iter()
-        .map(|s| {
-            use rand::seq::SliceRandom;
-            let mut rng: Xoroshiro128StarStar = rand::SeedableRng::seed_from_u64(s);
-            let mut cs: Vec<_> = xs.to_vec();
-            cs.shuffle(&mut rng);
-            let max_len = cs.iter().map(|s| s.len()).max().unwrap_or(0);
-            let node_num_thr = (max_len as f64 * 1.5).floor() as usize;
-            cs.iter()
-                .fold(poa_hmm::POA::default(), |x, y| {
-                    let res = if x.nodes().len() > node_num_thr {
-                        x.add(y, 1., param).remove_node(0.4)
-                    } else {
-                        x.add(y, 1., param)
-                    };
-                    res
-                })
-                .remove_node(0.4)
-                .finalize()
-                .consensus()
-        })
-        .collect();
-    let cs: Vec<_> = cs.iter().map(|cs| cs.as_slice()).collect();
-    poa_hmm::POA::default()
-        .update_thr(&cs, &vec![1.; cs.len()], param, 0.8, 1.5)
-        .consensus()
 }
