@@ -489,9 +489,6 @@ impl Graph {
         let (node_cov, len) = self.coverages[node];
         let old_cp = node_cp[node];
         let new_cp = if to_decrease { old_cp - 1 } else { old_cp + 1 };
-        let node_diff =
-            config.node_potential(node_cov, new_cp) - config.node_potential(node_cov, old_cp);
-        let node_diff = len as f64 * node_diff;
         // Potential diff by edges.
         // LK diff by edge potential
         let edges = &self.edge_lists[node];
@@ -559,7 +556,10 @@ impl Graph {
                 new_diff as f64 - old_diff as f64
             })
             .sum();
-        node_diff + edge_consistency_diff + config.consist_factor
+        let node_diff =
+            config.node_potential(node_cov, new_cp) - config.node_potential(node_cov, old_cp);
+        let node_diff = len as f64 * node_diff;
+        node_diff + edge_consistency_diff * config.consist_factor
     }
 
     // Loged version of the total energy.

@@ -588,7 +588,7 @@ impl<'a> DitchGraph<'a> {
         let min_llr = match read_type {
             ReadType::CCS => 1,
             ReadType::CLR => 3,
-            ReadType::ONT => 1,
+            ReadType::ONT => 3,
             ReadType::None => 3,
         };
         for llr in (min_llr..10).rev() {
@@ -1941,14 +1941,6 @@ impl<'a> DitchGraph<'a> {
         }
         foci
     }
-    fn get_covered_nodes(reads: &[&EncodedRead], thr: usize) -> HashSet<Node> {
-        let mut counts: HashMap<_, usize> = HashMap::new();
-        for node in reads.iter().flat_map(|r| r.nodes.iter()) {
-            *counts.entry((node.unit, node.cluster)).or_default() += 1;
-        }
-        counts.retain(|_, val| thr <= *val);
-        counts.keys().copied().collect()
-    }
     /// Return the focus if given node has a focus. Otherwise, return None.
     pub fn examine_focus(
         &self,
@@ -1963,11 +1955,11 @@ impl<'a> DitchGraph<'a> {
             .filter(|r| r.contains(node.node))
             .copied()
             .collect();
-        let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
-        let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
+        // let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
+        // let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
+        let dist_nodes = self.enumerate_candidate_nodes(&reads, config.min_span_reads, node, pos);
         let mut focus: Option<Focus> = None;
         for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
-            assert!(1 < nodes.len());
             let dist = dist + 1;
             let mut occs: Vec<_> = vec![0; nodes.len()];
             for read in reads.iter() {
@@ -1987,6 +1979,12 @@ impl<'a> DitchGraph<'a> {
                 let check_node = (check_node.unit, check_node.cluster);
                 if let Some(hit_node) = nodes.iter().position(|n| n.0 == check_node) {
                     occs[hit_node] += 1;
+                }
+            }
+            if node.node.0 == 275 && nodes.iter().any(|n| n.0 .0 == 431) {
+                debug!("---\t{}\t{}\t{:?}\t{:?}", dist, nodes.len(), nodes, occs);
+                for (d, nodes) in dist_nodes.iter().enumerate() {
+                    debug!("{}\t{:?}", d, nodes);
                 }
             }
             let ith_ln = {
@@ -2009,8 +2007,10 @@ impl<'a> DitchGraph<'a> {
             let choice_num = nodes.len() as f64;
             let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
             let error_lk = {
-                let correct_to_error = (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0).recip();
-                let error_to_error = ERROR_PROB / choice_num;
+                let correct_to_error =
+                    (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0) / choice_num;
+                let error_to_error =
+                    ERROR_PROB / choice_num * ERROR_PROB * (choice_num - 1f64) / choice_num;
                 (correct_to_error + error_to_error).ln()
             };
             assert!(!correct_lk.is_nan());
@@ -2038,52 +2038,119 @@ impl<'a> DitchGraph<'a> {
         }
         focus
     }
-    /// Return nodes achievable from the given node.
-    /// The i-th vector is the nodes reachable from `node` in i+1 hop.
-    /// Fot the i-th vector, one of the node shoule be in the
-    /// covered region.
-    pub fn enumerate_node_upto(
+    pub fn enumerate_candidate_nodes(
         &self,
+        reads: &[&EncodedRead],
+        min_span: usize,
         node: &DitchNode,
         pos: Position,
-        covered: &HashSet<Node>,
     ) -> Vec<Vec<(Node, Position)>> {
-        // TODO:Maybe it is efficient?
-        let mut has_arrived = HashSet::new();
-        let initial_nodes: Vec<_> = node
+        let max_reach = Self::max_reach(reads, min_span, node, pos);
+        let mut nodes_at = vec![vec![]; max_reach];
+        let mut active_nodes: Vec<_> = node
             .edges
             .iter()
             .filter(|edge| edge.from_position == pos)
-            .map(|edge| (edge.to, edge.to_position))
+            .map(|edge| (edge.proxying.len() + 1, edge.to, edge.to_position))
+            .filter(|&(d, _, _)| d <= max_reach)
             .collect();
-        let mut nodes_at: Vec<Vec<_>> = vec![initial_nodes];
-        for i in 0.. {
-            let mut next_nodes = vec![];
-            for &(node, p) in nodes_at[i].iter() {
-                has_arrived.insert(node);
-                let to_nodes = self
-                    .get_edges(node, !p)
-                    .filter_map(|e| (!has_arrived.contains(&e.to)).then(|| (e.to, e.to_position)));
-                next_nodes.extend(to_nodes);
-                // if let Some(next_node) = self.nodes.get(node) {
-                //     let to_nodes = next_node
-                //         .edges
-                //         .iter()
-                //         .filter(|e| e.from_position == !*p)
-                //         .map(|e| (e.to, e.to_position));
-                //     next_nodes.extend(to_nodes);
-                // }
-            }
-            next_nodes.sort();
-            next_nodes.dedup();
-            if next_nodes.iter().all(|n| !covered.contains(&(n.0))) {
-                break;
-            } else {
-                nodes_at.push(next_nodes);
-            }
+        while !active_nodes.is_empty() {
+            let (dist, node, p) = active_nodes.pop().unwrap();
+            let to_nodes = self
+                .get_edges(node, !p)
+                .map(|e| (dist + e.proxying.len() + 1, e.to, e.to_position))
+                .filter(|&(d, _, _)| d <= max_reach);
+            active_nodes.extend(to_nodes);
+            nodes_at[dist - 1].push((node, p));
         }
+        nodes_at.iter_mut().for_each(|nodes| {
+            nodes.sort();
+            nodes.dedup();
+        });
         nodes_at
     }
+    fn max_reach(
+        reads: &[&EncodedRead],
+        min_span: usize,
+        node: &DitchNode,
+        pos: Position,
+    ) -> usize {
+        let mut dist_node: HashMap<_, _> = HashMap::new();
+        for read in reads.iter() {
+            let start = read
+                .nodes
+                .iter()
+                .position(|n| (n.unit, n.cluster) == node.node)
+                .unwrap();
+            match (read.nodes[start].is_forward, pos) {
+                (true, Position::Tail) | (false, Position::Head) => {
+                    // ---> (Here to start) -- <---> -- <---> .... Or
+                    // <--- (Here to start) -- <---> -- <---> ....
+                    for (dist, node) in read.nodes.iter().skip(start).enumerate() {
+                        let node = (node.unit, node.cluster);
+                        *dist_node.entry((node, dist)).or_default() += 1;
+                    }
+                }
+                (true, Position::Head) | (false, Position::Tail) => {
+                    let read = read.nodes.iter().take(start + 1).rev();
+                    for (dist, node) in read.enumerate() {
+                        let node = (node.unit, node.cluster);
+                        *dist_node.entry((node, dist)).or_default() += 1;
+                    }
+                }
+            }
+        }
+        dist_node
+            .iter()
+            .filter(|&(_, &count)| min_span <= count)
+            .fold(0, |dist, (&(_, d), _)| d.max(dist))
+    }
+    // fn get_covered_nodes(reads: &[&EncodedRead], thr: usize) -> HashSet<Node> {
+    //     let mut counts: HashMap<_, usize> = HashMap::new();
+    //     for node in reads.iter().flat_map(|r| r.nodes.iter()) {
+    //         *counts.entry((node.unit, node.cluster)).or_default() += 1;
+    //     }
+    //     counts.retain(|_, val| thr <= *val);
+    //     counts.keys().copied().collect()
+    // }
+    // /// Return nodes achievable from the given node.
+    // /// The i-th vector is the nodes reachable from `node` in i+1 hop.
+    // /// Fot the i-th vector, one of the node shoule be in the
+    // /// covered region.
+    // pub fn enumerate_node_upto(
+    //     &self,
+    //     node: &DitchNode,
+    //     pos: Position,
+    //     covered: &HashSet<Node>,
+    // ) -> Vec<Vec<(Node, Position)>> {
+    //     let mut has_arrived = HashSet::new();
+    //     let initial_nodes: Vec<_> = node
+    //         .edges
+    //         .iter()
+    //         .filter(|edge| edge.from_position == pos)
+    //         .map(|edge| (edge.to, edge.to_position))
+    //         .collect();
+    //     let mut nodes_at: Vec<Vec<_>> = vec![initial_nodes];
+    //     for i in 0.. {
+    //         let mut next_nodes = vec![];
+    //         for &(node, p) in nodes_at[i].iter() {
+    //             has_arrived.insert(node);
+    //             let to_nodes = self
+    //                 .get_edges(node, !p)
+    //                 .filter(|e| !has_arrived.contains(&e.to))
+    //                 .map(|e| (e.to, e.to_position));
+    //             next_nodes.extend(to_nodes);
+    //         }
+    //         next_nodes.sort();
+    //         next_nodes.dedup();
+    //         if next_nodes.iter().all(|n| !covered.contains(&(n.0))) {
+    //             break;
+    //         } else {
+    //             nodes_at.push(next_nodes);
+    //         }
+    //     }
+    //     nodes_at
+    // }
     /// Remove edge from given reads.
     pub fn remove_edges_from_short_reads(&mut self, reads: &[&EncodedRead]) {
         for read in reads.iter() {

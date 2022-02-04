@@ -447,16 +447,6 @@ fn subcommand_correct_deletion() -> App<'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::new("sim")
-                .short('d')
-                .long("similarity")
-                .required(false)
-                .value_name("SIM")
-                .help("Acceptable similarity threshold.")
-                .default_value("0.35")
-                .takes_value(true),
-        )
-        .arg(
             Arg::new("re_cluster")
                 .short('r')
                 .long("re_cluster")
@@ -981,10 +971,6 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let sim_thr: f64 = matches
-        .value_of("sim")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
     let to_recal = matches.is_present("re_cluster");
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -992,6 +978,7 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
+    let sim_thr = dataset.read_type.sim_thr();
     use haplotyper::encode::deletion_fill;
     let find_new_node = deletion_fill::correct_unit_deletion(dataset, sim_thr);
     if to_recal {

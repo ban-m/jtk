@@ -41,7 +41,7 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
             use bio_utils::sam;
             let tname = aln.tname.parse::<u64>().unwrap();
             let chunk_len = chunks.get(&tname)?.seq().len();
-            let dist_thr = (chunk_len as f64 * sim_thr).floor() as usize;
+            // let dist_thr = (chunk_len as f64 * sim_thr).floor() as usize;
             let gap_thr =
                 ((chunk_len as f64 * INDEL_FRACTION).round() as usize).max(MIN_INDEL_SIZE);
             let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
@@ -52,18 +52,21 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
             });
             let max_indel = max_region(indel_iter).max(0) as usize;
             let no_large_indel = max_indel < gap_thr;
-            let dist: usize = cigar
-                .iter()
-                .filter(|op| matches!(*op, sam::Op::Mismatch(_)))
-                .count();
+            let (aln_len, mat_num) = cigar.iter().fold((0, 0), |(aln, mat), &op| match op {
+                sam::Op::Align(x)
+                | sam::Op::Insertion(x)
+                | sam::Op::Deletion(x)
+                | sam::Op::Mismatch(x) => (aln + x, mat),
+                sam::Op::Match(x) => (aln + x, mat + x),
+                _ => unreachable!(),
+            });
+            let percent_identity = mat_num as f64 / aln_len as f64;
+            (no_large_indel && 1f64 - sim_thr < percent_identity).then(|| aln)
             // let dist: usize = cigar
             //     .iter()
-            //     .map(|op| match *op {
-            //         sam::Op::Deletion(l) | sam::Op::Insertion(l) | sam::Op::Mismatch(l) => l,
-            //         _ => 0,
-            //     })
-            //     .sum();
-            (no_large_indel && dist < dist_thr).then(|| aln)
+            //     .filter(|op| matches!(*op, sam::Op::Mismatch(_)))
+            //     .count();
+            // (no_large_indel && dist < dist_thr).then(|| aln)
         })
         .collect();
     encode_by(ds, &alignments);

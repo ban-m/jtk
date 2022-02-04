@@ -246,34 +246,30 @@ fn encode_node(
             (ops, aln_start, aln_end)
         };
         let unitlen = unitseq.len() as f64;
-        let dist_thr = (unitlen * sim_thr).floor() as u32;
         let indel_thr =
             ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
         let query = query[aln_start..=aln_end].to_vec();
-        let aln_dist = {
-            let mut ops = ops.iter().peekable();
-            let mut dist = 0;
-            while let Some(op) = ops.next() {
-                while ops.peek() == Some(&op) {
-                    ops.next().unwrap();
-                }
-                dist += (*op != kiley::bialignment::Op::Mat) as u32;
-            }
-            dist
-            // ops
-            //     .iter()
-            //     .filter(|&&op| op != kiley::bialignment::Op::Mat)
-            //     .count() as u32
-        };
+        let (aln_len, mat_num) = ops.iter().fold((0, 0), |(aln, mat), &op| match op {
+            kiley::bialignment::Op::Mat => (aln + 1, mat + 1),
+            _ => (aln + 1, mat),
+        });
+        let percent_identity = mat_num as f64 / aln_len as f64;
+        let below_dissim = (1f64 - sim_thr) < percent_identity;
         // Mat=>-1, Other->1
         let indel_mism = ops
             .iter()
             .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
         let max_indel = super::max_region(indel_mism).max(0) as usize;
         assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-        if dist_thr < aln_dist || indel_thr < max_indel {
+        if !below_dissim || indel_thr < max_indel {
             if log_enabled!(log::Level::Trace) {
-                trace!("{}\t{}\t{}\t{}\tNG", unit.id, cluster, max_indel, aln_dist);
+                trace!(
+                    "{}\t{}\t{}\t{}\tNG",
+                    unit.id,
+                    cluster,
+                    max_indel,
+                    percent_identity
+                );
                 let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &query, &ops);
                 for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                     eprintln!("{}", String::from_utf8_lossy(xr));
@@ -283,7 +279,13 @@ fn encode_node(
             }
             return None;
         }
-        trace!("{}\t{}\t{}\t{}\tOK", unit.id, cluster, max_indel, aln_dist);
+        trace!(
+            "{}\t{}\t{}\t{}\tOK",
+            unit.id,
+            cluster,
+            max_indel,
+            percent_identity
+        );
         let (score, ops) =
             kiley::bialignment::global_banded(unit.seq(), &query, 2, -6, -5, -1, band);
         (query, aln_start, aln_end, ops, score)

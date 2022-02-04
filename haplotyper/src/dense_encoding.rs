@@ -410,20 +410,28 @@ fn encode_edge(
                 .iter()
                 .filter(|&&x| x != kiley::bialignment::Op::Del)
                 .count();
-            let edit_dist = alignments
-                .iter()
-                .filter(|&&x| x != kiley::bialignment::Op::Mat)
-                .count();
+            // let edit_dist = alignments
+            //     .iter()
+            //     .filter(|&&x| x != kiley::bialignment::Op::Mat)
+            //     .count();
             let cigar = crate::encode::compress_kiley_ops(&alignments);
             let indel_mism = alignments
                 .iter()
                 .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
             let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
             let unitlen = unitlen as f64;
-            let dist_thr = (unitlen * sim_thr).floor() as usize;
+            // let dist_thr = (unitlen * sim_thr).floor() as usize;
             let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
                 .max(crate::encode::MIN_INDEL_SIZE);
-            if max_indel < gap_thr && edit_dist < dist_thr {
+            let percent_identity = {
+                let (aln, mat) = alignments.iter().fold((0, 0), |(aln, mat), &op| match op {
+                    kiley::bialignment::Op::Mat => (aln + 1, mat + 1),
+                    _ => (aln + 1, mat),
+                });
+                mat as f64 / aln as f64
+            };
+            //if max_indel < gap_thr && edit_dist < dist_thr {
+            if max_indel < gap_thr && 1f64 - sim_thr < percent_identity {
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,
                     false => end - ypos,

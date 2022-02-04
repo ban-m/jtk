@@ -45,7 +45,7 @@ pub const ONT_BAND_WIDTH: usize = 80;
 pub const CLR_CTG_SIM: f64 = 0.15;
 pub const CLR_CLR_SIM: f64 = 0.20;
 pub const HIFI_SIM_THR: f64 = 0.1;
-pub const ONT_SIM_THR: f64 = 0.10;
+pub const ONT_SIM_THR: f64 = 0.15;
 
 impl ReadType {
     pub fn sim_thr(&self) -> f64 {

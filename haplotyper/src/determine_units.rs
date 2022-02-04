@@ -19,6 +19,8 @@ pub struct UnitConfig {
     pub lower_count: usize,
 }
 
+const FIRST_RELAX: f64 = 2f64;
+
 // const DEFAULT_RNG: usize = 200;
 impl UnitConfig {
     #[allow(clippy::too_many_arguments)]
@@ -113,36 +115,41 @@ impl DetermineUnit for definitions::DataSet {
             pick_random(&self.raw_reads, &config, &mut rng)
         };
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
-        //self.selected_chunks = remove_overlapping_units(self, config.threads).unwrap();
         remove_overlapping_units_dev(self, config).unwrap();
         // 1st polishing.
-        debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
-        self.encode(config.threads, self.read_type.sim_thr());
-        remove_frequent_units(self, config.upper_count);
-        dump_histogram(self);
-        let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
-        self.consensus_unit(&polish_config);
-        debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
-        self.encode(config.threads, self.read_type.sim_thr());
-        fill_sparse_region(self, config);
-        fill_tail_end(self, config);
+        {
+            debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
+            self.encode(config.threads, FIRST_RELAX * self.read_type.sim_thr());
+            remove_frequent_units(self, config.upper_count);
+            dump_histogram(self);
+            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
+            self.consensus_unit(&polish_config);
+            debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
+        }
         // 2nd polishing.
-        self.encode(config.threads, self.read_type.sim_thr());
-        remove_frequent_units(self, config.upper_count);
-        let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
-        dump_histogram(self);
-        self.polish_unit(&polish_config);
-        debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
-        debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
-        self.encode(config.threads, self.read_type.sim_thr());
-        remove_frequent_units(self, config.upper_count);
-        filter_unit_by_ovlp(self, config);
-        debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
-        self.encode(config.threads, self.read_type.sim_thr());
+        {
+            self.encode(config.threads, self.read_type.sim_thr());
+            fill_sparse_region(self, config);
+            fill_tail_end(self, config);
+            self.encode(config.threads, self.read_type.sim_thr());
+            remove_frequent_units(self, config.upper_count);
+            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
+            dump_histogram(self);
+            self.polish_unit(&polish_config);
+            debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
+        }
         // Final polish
-        let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
-        dump_histogram(self);
-        self.polish_unit(&polish_config);
+        {
+            debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
+            self.encode(config.threads, self.read_type.sim_thr());
+            remove_frequent_units(self, config.upper_count);
+            filter_unit_by_ovlp(self, config);
+            debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
+            self.encode(config.threads, self.read_type.sim_thr());
+            let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
+            dump_histogram(self);
+            self.polish_unit(&polish_config);
+        }
         self.selected_chunks
             .retain(|unit| config.chunk_len < unit.seq.len());
         for (idx, unit) in self.selected_chunks.iter_mut().enumerate() {
