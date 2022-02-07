@@ -6,6 +6,8 @@ const CONS_MIN_LENGTH: usize = 200;
 const COV_THR_FACTOR: usize = 4;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
+// (unit,cluster,direction, if it is `from` part)
+type DTip = (u64, u64, bool, bool);
 #[derive(Debug, Clone, Copy)]
 pub struct DenseEncodingConfig {
     pub len: usize,
@@ -21,12 +23,29 @@ impl DenseEncodingConfig {
     }
 }
 pub trait DenseEncoding {
+    fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig);
     fn dense_encoding(&mut self, config: &DenseEncodingConfig);
 }
 
 impl DenseEncoding for DataSet {
+    fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
+        let original_assignments = log_original_assignments(self);
+        {
+            use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+            let config = ClusteringConfig::new(5, 10, 3);
+            self.correct_clustering(&config);
+        }
+        let new_units = encode_polyploid_edges(self, &config);
+        for read in self.encoded_reads.iter_mut() {
+            let orig = &original_assignments[&read.id];
+            recover_original_assignments(read, orig);
+        }
+        // Local clustering.
+        debug!("LOCAL\tNEW\t{}", new_units.len());
+        crate::local_clustering::local_clustering_selected(self, &new_units);
+    }
     fn dense_encoding(&mut self, config: &DenseEncodingConfig) {
-        let (band_width, sim_thr) = (self.read_type.band_width(), self.read_type.sim_thr());
+        let band_width = self.read_type.band_width();
         let read_type = self.read_type;
         let ave_unit_len = get_average_unit_length(self);
         let original_assignments = log_original_assignments(self);
@@ -39,7 +58,7 @@ impl DenseEncoding for DataSet {
         {
             use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
             let config = ClusteringConfig::new(5, 10, 3);
-            self.correct_clustering_on_selected(&config, &units);
+            self.correct_clustering(&config);
         }
         debug!("DE\t{:?}\tEnumDiplotig", config);
         // The maximum value of the previous unit.
@@ -87,9 +106,9 @@ impl DenseEncoding for DataSet {
                     .flat_map(|(_, units)| units),
             );
         }
-        use crate::encode::deletion_fill::correct_unit_deletion;
-        let filled_units = correct_unit_deletion(self, sim_thr);
-        to_clustering_nodes.extend(filled_units);
+        // use crate::encode::deletion_fill::correct_unit_deletion;
+        // let filled_units = correct_unit_deletion(self, sim_thr);
+        // to_clustering_nodes.extend(filled_units);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
@@ -98,6 +117,53 @@ impl DenseEncoding for DataSet {
         debug!("LOCAL\tNEW\t{}", to_clustering_nodes.len());
         crate::local_clustering::local_clustering_selected(self, &to_clustering_nodes);
     }
+}
+
+type TipAndUnit<'a> = HashMap<DTip, Vec<&'a [Unit]>>;
+fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> HashSet<u64> {
+    // TODO: This is not precise, but works almost fine.
+    // TODO: How to treat tips? Is this OK?
+    let edge_units = enumerate_polyploid_edges(ds, config);
+    let tip_units = {
+        let mut tip_units: TipAndUnit = HashMap::new();
+        for (&(from, to), units) in edge_units.iter() {
+            let from = (from.0, from.1, from.2, true);
+            let to = (to.0, to.1, to.2, false);
+            tip_units.entry(from).or_default().push(units.as_slice());
+            tip_units.entry(to).or_default().push(units.as_slice());
+        }
+        tip_units
+    };
+    let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    let readtype = ds.read_type;
+    ds.encoded_reads.par_iter_mut().for_each(|read| {
+        let rawseq = &rawseq[&read.id];
+        edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
+    });
+    edge_units
+        .values()
+        .flat_map(|x| x.iter().map(|x| x.id))
+        .collect()
+}
+
+// TODO: we do not need raw seq `seq`. But I'm afraid read.rawseq() might be broken.
+fn edge_encode(
+    read: &mut EncodedRead,
+    seq: &[u8],
+    edges: &EdgeAndUnit,
+    tips: &TipAndUnit,
+    read_type: definitions::ReadType,
+    _config: &DenseEncodingConfig,
+) {
+    if read.nodes.is_empty() {
+        return;
+    }
+    let inserts = fill_edges_by_new_units_dev(read, seq, edges, tips, &read_type);
+    for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+        read.nodes.insert(idx + accum_inserts, node);
+    }
+    // Formatting.
+    re_encode_read(read, seq);
 }
 
 fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
@@ -168,6 +234,55 @@ pub fn fill_edges_by_new_units(
             inserts.push((idx + 1, node));
         }
     }
+    inserts
+}
+
+pub fn fill_edges_by_new_units_dev(
+    read: &EncodedRead,
+    seq: &[u8],
+    edges: &EdgeAndUnit,
+    tips: &TipAndUnit,
+    read_type: &definitions::ReadType,
+) -> Vec<(usize, Node)> {
+    let mut inserts = vec![];
+    // Head tip.
+    // {
+    //     let head = &read.nodes[0];
+    //     let (start, end) = (0, head.position_from_start);
+    //     let direction = false;
+    //     let head = (head.unit, head.cluster, head.is_forward);
+    //     if let Some(units) = tips.get(&head) {
+    //         for unit_info in units {
+    //             let nodes = encode_edge(seq, start, end, direction, unit_info, read_type);
+    //             inserts.extend(nodes.into_iter().map(|x| (0, x)));
+    //         }
+    //     }
+    // }
+    for (idx, window) in read.nodes.windows(2).enumerate() {
+        // What is important is the direction, the label, and the start-end position. Thats all.
+        let start = window[0].position_from_start + window[0].seq().len();
+        let end = window[1].position_from_start;
+        let forward = get_forward_d_edge_from_window(window);
+        let reverse = get_reverse_d_edge_from_window(window);
+        let (unit_info, direction) = if edges.contains_key(&forward) {
+            (&edges[&forward], true)
+        } else if edges.contains_key(&reverse) {
+            (&edges[&reverse], false)
+        } else {
+            continue;
+        };
+        for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
+            // idx=0 -> Insert at the first edge. So, the index should be 1.
+            inserts.push((idx + 1, node));
+        }
+    }
+    // Tail tip
+    // if 1 < read.nodes.len() {
+    //     let tail = read.nodes.last().unwrap();
+    //     let start = (tail.position_from_start + last.seq().len());
+    //     let end = seq.len();
+    //     let direction = true;
+    // }
     inserts
 }
 
@@ -287,22 +402,15 @@ fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
 //     }
 // }
 
-// Squish short contig, return the generated multi-tigs.
 fn enumerate_multitigs(
-    ds: &mut DataSet,
-    &DenseEncodingConfig { len }: &DenseEncodingConfig,
+    ds: &DataSet,
+    &DenseEncodingConfig { .. }: &DenseEncodingConfig,
 ) -> Vec<(usize, Vec<(u64, u64)>)> {
     use crate::assemble::*;
-    let min_span_reads = match ds.read_type {
-        ReadType::CCS => 1,
-        ReadType::CLR => 4,
-        ReadType::ONT => 1,
-        ReadType::None => 3,
-    };
+    let min_span_reads = ds.read_type.min_span_reads();
     let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
-    ds.squish_small_contig(&config, len);
     let (_, summaries) = assemble(ds, &config);
-    let mut multi_tig: Vec<_> = summaries
+    summaries
         .iter()
         .filter(|summary| !summary.summary.is_empty())
         .filter_map(|summary| {
@@ -319,10 +427,114 @@ fn enumerate_multitigs(
                 .collect();
             (1 < copy_number).then(|| (copy_number, nodes))
         })
+        .collect()
+}
+
+type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
+fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> EdgeAndUnit {
+    use crate::assemble::*;
+    let min_span_reads = ds.read_type.min_span_reads();
+    let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
+    let (_, summaries) = assemble(ds, &config);
+    let edges: HashMap<_, _> = summaries
+        .iter()
+        .filter(|summary| !summary.summary.is_empty())
+        .flat_map(|summary| {
+            let (total_cp, num) = summary
+                .summary
+                .iter()
+                .filter_map(|x| x.copy_number)
+                .fold((0, 0), |(cp, n), x| (cp + x, n + 1));
+            match total_cp / num {
+                0 | 1 => Vec::new(),
+                copy_number => summary
+                    .summary
+                    .windows(2)
+                    .map(|w| {
+                        let from = (w[0].unit, w[1].cluster, w[0].strand);
+                        let to = (w[0].unit, w[1].cluster, w[1].strand);
+                        ((from, to), copy_number)
+                    })
+                    .collect(),
+            }
+        })
         .collect();
-    // TODO:Is this needed?
-    multi_tig.sort_by_key(|x| x.1.len());
-    multi_tig
+    let mut consensi_materials: HashMap<_, Vec<_>> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        assert_eq!(read.nodes.len(), read.edges.len() + 1);
+        for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
+            assert_eq!((edge.from, edge.to), (w[0].unit, w[1].unit));
+            let forward = get_forward_d_edge_from_window(w);
+            let reverse = get_forward_d_edge_from_window(w);
+            if edges.contains_key(&forward) {
+                let label = edge.label().to_vec();
+                consensi_materials.entry(forward).or_default().push(label);
+            } else if edges.contains_key(&reverse) {
+                let label = bio_utils::revcmp(edge.label());
+                consensi_materials.entry(reverse).or_default().push(label);
+            }
+        }
+    }
+    let cov_thr = ds.coverage.unwrap().ceil() as usize / 4;
+    let mut max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
+    debug!("DE\tCand\t{}", consensi_materials.len());
+    let mean_chunk_len = {
+        let sum: usize = ds.selected_chunks.iter().map(|x| x.seq().len()).sum();
+        sum / ds.selected_chunks.len()
+    };
+    let mut newly_defined_unit = HashMap::new();
+    for (key, seqs) in consensi_materials {
+        let copy_num = edges[&key];
+        let consensus = match consensus(seqs, cov_thr) {
+            Some(res) => res,
+            None => continue,
+        };
+        let chunk_len = consensus.len() / (consensus.len() / mean_chunk_len + 1);
+        let units: Vec<_> = consensus
+            .chunks(chunk_len)
+            .map(|seq| {
+                let seq = String::from_utf8_lossy(seq).to_string();
+                max_unit_id += 1;
+                Unit::new(max_unit_id, seq, copy_num)
+            })
+            .collect();
+        newly_defined_unit.insert(key, units);
+    }
+    debug!("DE\tDefined\t{}", newly_defined_unit.len());
+    newly_defined_unit
+}
+
+fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
+    let pos = seqs.len() / 2;
+    let median = seqs.select_nth_unstable_by_key(pos, |x| x.len()).1.len();
+    let (upper, lower) = (2 * median, median.max(CONS_MIN_LENGTH) / 2);
+    let idx = seqs.iter().position(|x| x.len() == median).unwrap();
+    seqs.swap(0, idx);
+    seqs.retain(|x| (lower..upper).contains(&x.len()));
+    if seqs.len() <= cov_thr {
+        return None;
+    }
+    let mean_len = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
+    let band_width = (mean_len / 20).max(50);
+    let rough_contig = kiley::ternary_consensus_by_chunk(&seqs, band_width);
+    match kiley::bialignment::polish_until_converge_banded(&rough_contig, &seqs, band_width) {
+        seq if seq.len() < CONS_MIN_LENGTH => None,
+        seq => Some(seq),
+    }
+}
+
+// w: windows of nodes with 2 length.
+fn get_forward_d_edge_from_window(w: &[Node]) -> DEdge {
+    let from = (w[0].unit, w[0].cluster, w[0].is_forward);
+    let to = (w[1].unit, w[1].cluster, w[1].is_forward);
+    (from, to)
+}
+
+// w: windows of nodes with 2 length.
+fn get_reverse_d_edge_from_window(w: &[Node]) -> DEdge {
+    let from = (w[1].unit, w[1].cluster, !w[1].is_forward);
+    let to = (w[0].unit, w[0].cluster, !w[0].is_forward);
+    (from, to)
 }
 
 // formatting the two nodes so that it is from small unit to unit with larger ID.
@@ -410,10 +622,6 @@ fn encode_edge(
                 .iter()
                 .filter(|&&x| x != kiley::bialignment::Op::Del)
                 .count();
-            // let edit_dist = alignments
-            //     .iter()
-            //     .filter(|&&x| x != kiley::bialignment::Op::Mat)
-            //     .count();
             let cigar = crate::encode::compress_kiley_ops(&alignments);
             let indel_mism = alignments
                 .iter()
@@ -430,7 +638,6 @@ fn encode_edge(
                 });
                 mat as f64 / aln as f64
             };
-            //if max_indel < gap_thr && edit_dist < dist_thr {
             if max_indel < gap_thr && 1f64 - sim_thr < percent_identity {
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,

@@ -62,6 +62,14 @@ impl ReadType {
             ReadType::ONT => ONT_BAND_WIDTH,
         }
     }
+    pub fn min_span_reads(&self) -> usize {
+        match *self {
+            ReadType::CCS => 1,
+            ReadType::CLR => 3,
+            ReadType::ONT => 2,
+            ReadType::None => 3,
+        }
+    }
 }
 
 impl std::default::Default for DataSet {

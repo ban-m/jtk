@@ -16,7 +16,8 @@ impl<'a> super::DitchGraph<'a> {
         let mut arrived = HashSet::new();
         let mut sids: HashMap<_, _> = HashMap::new();
         let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);
-        let candidates = self.enumerate_candidates();
+        let mut candidates = self.enumerate_candidates();
+        candidates.sort();
         for (node, p) in candidates {
             if arrived.contains(&node) {
                 continue;
@@ -28,7 +29,9 @@ impl<'a> super::DitchGraph<'a> {
             g_edges.extend(edges);
             summaries.push(summary);
         }
-        for key in self.nodes.keys() {
+        let mut nodes: Vec<_> = self.nodes.keys().collect();
+        nodes.sort();
+        for key in nodes {
             if arrived.contains(key) {
                 continue;
             }

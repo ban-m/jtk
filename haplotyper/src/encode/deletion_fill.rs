@@ -26,7 +26,6 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
     const INNER_LOOP: usize = 15;
     let mut find_new_node = HashSet::new();
     'outer: for t in 0..OUTER_LOOP {
-        // TODO:Do we really need this? I think it is OK just using the reference units.
         let representative = take_consensus_sequence(ds);
         let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
         // i->vector of failed index and units.
@@ -264,7 +263,7 @@ fn encode_node(
         if !below_dissim || indel_thr < max_indel {
             if log_enabled!(log::Level::Trace) {
                 trace!(
-                    "{}\t{}\t{}\t{}\tNG",
+                    "FILLDEL\t{}\t{}\t{}\t{}\tNG",
                     unit.id,
                     cluster,
                     max_indel,
@@ -272,15 +271,15 @@ fn encode_node(
                 );
                 let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &query, &ops);
                 for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-                    eprintln!("{}", String::from_utf8_lossy(xr));
-                    eprintln!("{}", String::from_utf8_lossy(ar));
-                    eprintln!("{}\n", String::from_utf8_lossy(yr));
+                    eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
+                    eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
+                    eprintln!("ALN\t{}\n", String::from_utf8_lossy(yr));
                 }
             }
             return None;
         }
         trace!(
-            "{}\t{}\t{}\t{}\tOK",
+            "FILLDEL{}\t{}\t{}\t{}\tOK",
             unit.id,
             cluster,
             max_indel,

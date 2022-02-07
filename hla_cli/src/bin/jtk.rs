@@ -1105,8 +1105,6 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
     let config = ClusteringConfig::new(repeat_num, 10, threshold);
     dataset.correct_clustering(&config);
-    // use haplotyper::em_correction::*;
-    // dataset.correct_clustering_em(repeat_num, threshold, true);
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, _dataset: &mut DataSet) {
@@ -1176,12 +1174,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
-    let min_span_reads = match dataset.read_type {
-        ReadType::CCS => 1,
-        ReadType::CLR => 4,
-        ReadType::ONT => 3,
-        ReadType::None => 3,
-    };
+    let min_span_reads = dataset.read_type.min_span_reads();
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
