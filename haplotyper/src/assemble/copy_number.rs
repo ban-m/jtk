@@ -448,7 +448,7 @@ impl Optimizer {
         node_residual
             .iter_mut()
             .zip(self.nodes.iter())
-            .for_each(|(x, y)| *x = *x - y.0);
+            .for_each(|(x, y)| *x -= y.0);
         let integer_penalty: Vec<_> = copy_num
             .iter()
             .map(|x| x - x.round())

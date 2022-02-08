@@ -91,10 +91,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         for (chunk, units) in seqs_and_ref_units.iter() {
             debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
         }
-        // let (unit_id, units) = pileups.iter().find(|(_, us)| us.len() == *cov).unwrap();
-        // debug!("LOCAL\tSAMPLE\t{}\t{}", unit_id, units.len());
-        // let seqs: Vec<_> = units.iter().map(|node| node.seq()).take(100).collect();
-        // let ref_unit = chunks.get(unit_id).unwrap();
         use kiley::gphmm::*;
         let mut hmm = match ds.read_type {
             ReadType::CCS => kiley::gphmm::GPHMM::<Cond>::ccs(),
@@ -104,8 +100,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         for _ in 0..2 {
             for (ref_unit, seqs) in seqs_and_ref_units.iter() {
                 let band_width = band_width * 2;
-                let consensus = take_consensus(ref_unit, &seqs, band_width, &hmm);
-                hmm = hmm.fit_banded(&consensus, &seqs, band_width);
+                let consensus = take_consensus(ref_unit, seqs, band_width, &hmm);
+                hmm = hmm.fit_banded(&consensus, seqs, band_width);
             }
         }
         debug!("HMM\t{}", hmm);

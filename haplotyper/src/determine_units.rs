@@ -186,7 +186,7 @@ fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> V
     use rand::prelude::*;
     let subseqs: Vec<_> = reads
         .iter()
-        .flat_map(|r| split_into(r, &config))
+        .flat_map(|r| split_into(r, config))
         .filter(|u| !is_repetitive(u, config))
         .collect();
     subseqs
@@ -214,8 +214,7 @@ fn mm2_unit_overlap(ds: &DataSet, config: &UnitConfig) -> std::io::Result<Vec<u8
         for unit in ds.selected_chunks.iter() {
             writeln!(&mut wtr, ">{}\n{}", unit.id, &unit.seq)?;
         }
-        let reference = reference.into_os_string().into_string().unwrap();
-        reference
+        reference.into_os_string().into_string().unwrap()
     };
     use crate::minimap2;
     let threads = format!("{}", config.threads);
@@ -271,7 +270,7 @@ fn remove_overlapping_units_dev(ds: &mut DataSet, config: &UnitConfig) -> std::i
     let alignments = alignments
         .lines()
         .filter_map(bio_utils::paf::PAF::new)
-        .filter(|paf| is_proper_overlap(paf))
+        .filter(is_proper_overlap)
         .filter(|paf| {
             let identity = paf.matchnum as f64 / paf.blocklen as f64;
             overlap_thr < identity && overlap_len < paf.blocklen

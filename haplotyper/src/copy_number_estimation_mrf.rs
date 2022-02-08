@@ -6,12 +6,13 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 type Node = (u64, u64);
 type Edge = ((Node, bool), (Node, bool));
+type CopyNumResult = (Vec<(Node, usize)>, Vec<(Edge, usize)>);
 pub trait CopyNumberEstimation {
     fn update_copy_numbers(&mut self, config: &Config);
-    fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>);
+    fn estimate_copy_numbers(&self, config: &Config) -> CopyNumResult;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     haploid_coverage: Option<f64>,
     seed: u64,
@@ -31,14 +32,6 @@ const SAMPLE_LEN: usize = 1_000;
 // target of consistency factor.
 const TARGET: f64 = 20f64;
 const CHOICES: [usize; 3] = [0, 1, 2];
-impl std::default::Default for Config {
-    fn default() -> Self {
-        Self {
-            haploid_coverage: None,
-            seed: 0,
-        }
-    }
-}
 
 impl CopyNumberEstimation for DataSet {
     fn update_copy_numbers(&mut self, config: &Config) {
@@ -133,7 +126,7 @@ impl Graph {
             .flat_map(|r| r.borrow().nodes.iter().map(|n| (n.unit, n.cluster)))
             .collect();
         let mut nodes: Vec<_> = nodes.into_iter().collect();
-        nodes.sort();
+        nodes.sort_unstable();
         nodes.into_iter().enumerate().map(|(i, k)| (k, i)).collect()
     }
     fn serialize_edge<T: std::borrow::Borrow<EncodedRead>>(reads: &[T]) -> HashMap<Edge, usize> {
@@ -147,7 +140,7 @@ impl Graph {
             })
             .collect();
         let mut edges: Vec<_> = edges.into_iter().collect();
-        edges.sort();
+        edges.sort_unstable();
         edges.into_iter().enumerate().map(|(i, k)| (k, i)).collect()
     }
     fn normalize(u: &definitions::Node, v: &definitions::Node) -> Edge {
@@ -196,7 +189,7 @@ impl Graph {
     }
     fn estimate_coverage(&self) -> f64 {
         if self.coverages.is_empty() {
-            return 0f64;
+            0f64
         } else {
             let mut weights: Vec<_> = self.coverages.clone();
             let position = weights.len() / 2;
@@ -496,7 +489,7 @@ impl Graph {
             let mut terminals: Vec<((usize, bool), usize)> = Vec::with_capacity(5);
             match tail_edge {
                 None if !edges[0].is_empty() => {
-                    if terminals.iter().find(|x| x.0 == (node, false)).is_none() {
+                    if !terminals.iter().any(|x| x.0 == (node, false)) {
                         terminals.push(((node, false), 0));
                     }
                 }
@@ -515,7 +508,7 @@ impl Graph {
             }
             match head_edge {
                 None if !edges[1].is_empty() => {
-                    if terminals.iter().find(|x| x.0 == (node, true)).is_none() {
+                    if !terminals.iter().any(|x| x.0 == (node, true)) {
                         terminals.push(((node, true), 0));
                     }
                 }

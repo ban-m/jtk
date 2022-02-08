@@ -30,19 +30,28 @@ pub trait DenseEncoding {
 impl DenseEncoding for DataSet {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
         let original_assignments = log_original_assignments(self);
-        {
-            use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-            let config = ClusteringConfig::new(5, 10, 3);
-            self.correct_clustering(&config);
-        }
-        let new_units = encode_polyploid_edges(self, &config);
+        use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+        let correction_config = ClusteringConfig::new(5, 10, 5);
+        self.correct_clustering(&correction_config);
+        let new_units = encode_polyploid_edges(self, config);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
         }
-        // Local clustering.
-        debug!("LOCAL\tNEW\t{}", new_units.len());
         crate::local_clustering::local_clustering_selected(self, &new_units);
+        for unit in new_units {
+            let ref_chunk = self.selected_chunks.iter().find(|c| c.id == unit).unwrap();
+            for read in self.encoded_reads.iter() {
+                for node in read.nodes.iter().filter(|n| unit == n.unit) {
+                    let (_, aln, _) = node.recover(ref_chunk);
+                    let dist = aln.iter().filter(|&&x| x != b'|').count();
+                    let identity = 1f64 - dist as f64 / aln.len() as f64;
+                    let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
+                    let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));
+                    debug!("DE\tDUMP\t{}\t{}\t{:.3}\t{}", unit, cluster, identity, post);
+                }
+            }
+        }
     }
     fn dense_encoding(&mut self, config: &DenseEncodingConfig) {
         let band_width = self.read_type.band_width();
@@ -121,7 +130,6 @@ impl DenseEncoding for DataSet {
 
 type TipAndUnit<'a> = HashMap<DTip, Vec<&'a [Unit]>>;
 fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> HashSet<u64> {
-    // TODO: This is not precise, but works almost fine.
     // TODO: How to treat tips? Is this OK?
     let edge_units = enumerate_polyploid_edges(ds, config);
     let tip_units = {
@@ -136,14 +144,34 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
     };
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
-    ds.encoded_reads.par_iter_mut().for_each(|read| {
-        let rawseq = &rawseq[&read.id];
-        edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
-    });
-    edge_units
+    ds.encoded_reads
+        .par_iter_mut()
+        .filter(|r| !r.nodes.is_empty())
+        .for_each(|read| {
+            let rawseq = &rawseq[&read.id];
+            edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
+        });
+    let unit_ids: HashSet<_> = edge_units
         .values()
         .flat_map(|x| x.iter().map(|x| x.id))
-        .collect()
+        .collect();
+    {
+        let lens: HashMap<_, _> = edge_units
+            .values()
+            .flat_map(|x| x.iter().map(|x| (x.id, x.seq().len())))
+            .collect();
+        let mut counts: HashMap<_, u32> = HashMap::new();
+        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            *counts.entry(node.unit).or_default() += 1;
+        }
+        for id in unit_ids.iter() {
+            let (count, len) = (counts[id], lens[id]);
+            debug!("DE\tCount\t{}\t{}\t{}", id, count, len);
+        }
+    }
+    ds.selected_chunks
+        .extend(edge_units.into_values().flatten());
+    unit_ids
 }
 
 // TODO: we do not need raw seq `seq`. But I'm afraid read.rawseq() might be broken.
@@ -155,14 +183,13 @@ fn edge_encode(
     read_type: definitions::ReadType,
     _config: &DenseEncodingConfig,
 ) {
-    if read.nodes.is_empty() {
-        return;
-    }
     let inserts = fill_edges_by_new_units_dev(read, seq, edges, tips, &read_type);
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
-        read.nodes.insert(idx + accum_inserts, node);
+        match idx + accum_inserts {
+            pos if pos < read.nodes.len() => read.nodes.insert(idx + accum_inserts, node),
+            _ => read.nodes.push(node),
+        }
     }
-    // Formatting.
     re_encode_read(read, seq);
 }
 
@@ -244,24 +271,36 @@ pub fn fill_edges_by_new_units_dev(
     tips: &TipAndUnit,
     read_type: &definitions::ReadType,
 ) -> Vec<(usize, Node)> {
+    const MARGIN: usize = 25;
+    let len = seq.len();
     let mut inserts = vec![];
     // Head tip.
-    // {
-    //     let head = &read.nodes[0];
-    //     let (start, end) = (0, head.position_from_start);
-    //     let direction = false;
-    //     let head = (head.unit, head.cluster, head.is_forward);
-    //     if let Some(units) = tips.get(&head) {
-    //         for unit_info in units {
-    //             let nodes = encode_edge(seq, start, end, direction, unit_info, read_type);
-    //             inserts.extend(nodes.into_iter().map(|x| (0, x)));
-    //         }
-    //     }
-    // }
+    {
+        let head = &read.nodes[0];
+        let (start, end) = (0, (head.position_from_start + MARGIN).min(len));
+        let key = (head.unit, head.cluster, head.is_forward, false);
+        if let Some(units) = tips.get(&key) {
+            // --Tip--|Node[0]>|------
+            // --Unit-|ToNode|-----
+            for unit_info in units {
+                let nodes = encode_edge(seq, start, end, true, unit_info, read_type);
+                inserts.extend(nodes.into_iter().map(|x| (0, x)));
+            }
+        }
+        let key = (head.unit, head.cluster, !head.is_forward, true);
+        if let Some(units) = tips.get(&key) {
+            // |<Node[0]|-Tip--
+            // |FromNode|-Unit-
+            for unit_info in units {
+                let nodes = encode_edge(seq, start, end, false, unit_info, read_type);
+                inserts.extend(nodes.into_iter().map(|x| (0, x)));
+            }
+        }
+    }
     for (idx, window) in read.nodes.windows(2).enumerate() {
-        // What is important is the direction, the label, and the start-end position. Thats all.
         let start = window[0].position_from_start + window[0].seq().len();
         let end = window[1].position_from_start;
+        let (start, end) = (start.max(MARGIN) - MARGIN, (end + MARGIN).min(len));
         let forward = get_forward_d_edge_from_window(window);
         let reverse = get_reverse_d_edge_from_window(window);
         let (unit_info, direction) = if edges.contains_key(&forward) {
@@ -277,12 +316,30 @@ pub fn fill_edges_by_new_units_dev(
         }
     }
     // Tail tip
-    // if 1 < read.nodes.len() {
-    //     let tail = read.nodes.last().unwrap();
-    //     let start = (tail.position_from_start + last.seq().len());
-    //     let end = seq.len();
-    //     let direction = true;
-    // }
+    if 1 < read.nodes.len() {
+        let idx = read.nodes.len();
+        let tail = read.nodes.last().unwrap();
+        let (start, end) = (tail.position_from_start + tail.seq().len(), seq.len());
+        let (start, end) = (start.max(MARGIN) - MARGIN, (end + MARGIN).min(len));
+        let key = (tail.unit, tail.cluster, tail.is_forward, true);
+        if let Some(units) = tips.get(&key) {
+            // | Last>  |-Tip--
+            // |FromNode|-Unit-
+            for unit_info in units {
+                let nodes = encode_edge(seq, start, end, true, unit_info, read_type);
+                inserts.extend(nodes.into_iter().map(|x| (idx + 1, x)));
+            }
+        }
+        let key = (tail.unit, tail.cluster, !tail.is_forward, false);
+        if let Some(units) = tips.get(&key) {
+            // --Tip-|<Node[0]|
+            // -Unit-|ToNode|
+            for unit_info in units {
+                let nodes = encode_edge(seq, start, end, false, unit_info, read_type);
+                inserts.extend(nodes.into_iter().map(|x| (idx + 1, x)));
+            }
+        }
+    }
     inserts
 }
 
@@ -451,14 +508,15 @@ fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> Edg
                     .summary
                     .windows(2)
                     .map(|w| {
-                        let from = (w[0].unit, w[1].cluster, w[0].strand);
-                        let to = (w[0].unit, w[1].cluster, w[1].strand);
+                        let from = (w[0].unit, w[0].cluster, w[0].strand);
+                        let to = (w[1].unit, w[1].cluster, w[1].strand);
                         ((from, to), copy_number)
                     })
                     .collect(),
             }
         })
         .collect();
+    debug!("DE\t{}\tEDGES", edges.len());
     let mut consensi_materials: HashMap<_, Vec<_>> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         assert_eq!(read.nodes.len(), read.edges.len() + 1);
@@ -483,13 +541,25 @@ fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> Edg
         sum / ds.selected_chunks.len()
     };
     let mut newly_defined_unit = HashMap::new();
-    for (key, seqs) in consensi_materials {
+    let mut consensi: Vec<_> = consensi_materials
+        .into_par_iter()
+        .filter_map(|(key, seqs)| {
+            let mean = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
+            let len = seqs.len();
+            let cons = consensus(seqs, cov_thr).map(|s| (key, s));
+            if cons.is_none() {
+                debug!("DE\tEDGE\t{}\t{}\tNG", len, mean);
+            } else {
+                debug!("DE\tEDGE\t{}\t{}\tOK", len, mean);
+            }
+            cons
+        })
+        .collect();
+    consensi.sort_unstable_by_key(|x| x.0);
+    for (key, consensus) in consensi {
         let copy_num = edges[&key];
-        let consensus = match consensus(seqs, cov_thr) {
-            Some(res) => res,
-            None => continue,
-        };
-        let chunk_len = consensus.len() / (consensus.len() / mean_chunk_len + 1);
+        let chunk_num = (consensus.len() as f64 / mean_chunk_len as f64).ceil();
+        let chunk_len = (consensus.len() as f64 / chunk_num).ceil() as usize;
         let units: Vec<_> = consensus
             .chunks(chunk_len)
             .map(|seq| {
@@ -498,6 +568,10 @@ fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> Edg
                 Unit::new(max_unit_id, seq, copy_num)
             })
             .collect();
+        debug!("DE\tNewUnit\t{}\t{}", consensus.len(), units.len());
+        if units.iter().any(|x| x.seq().len() < 20) {
+            panic!("{}", chunk_len);
+        }
         newly_defined_unit.insert(key, units);
     }
     debug!("DE\tDefined\t{}", newly_defined_unit.len());
@@ -572,16 +646,11 @@ fn encode_edge(
     units: &[Unit],
     read_type: &definitions::ReadType,
 ) -> Vec<definitions::Node> {
-    let mut seq = if is_forward {
-        seq[start..end].to_vec()
-    } else {
-        bio_utils::revcmp(&seq[start..end])
-    };
-    seq.iter_mut().for_each(u8::make_ascii_uppercase);
     let contig: Vec<_> = units.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
         x.extend(y);
         x
     });
+    let (start, end, seq, ctg_start) = tune_position(start, end, seq, is_forward, &contig);
     let (break_points, _): (Vec<_>, _) =
         units
             .iter()
@@ -590,16 +659,36 @@ fn encode_edge(
                 acc.push(x + y);
                 (acc, x + y)
             });
-    let (band, sim_thr) = (read_type.band_width(), read_type.sim_thr());
-    let (_, ops) = kiley::bialignment::global_banded(&contig, &seq, 2, -5, -6, -1, band);
-    // Split the alignment into encoded nodes.
-    // Current position on the contg and the query.
-    let (mut xpos, mut ypos) = (0, 0);
+    // Current position on the contg
+    let mut xpos = ctg_start;
+    // Nearest break;
+    let mut target_idx = match break_points.iter().position(|&x| ctg_start < x) {
+        Some(i) => i,
+        None => return Vec::new(),
+    };
     // Current edit operations inside the focal unit.
-    let mut alignments = vec![];
-    let mut target_idx = 0;
+    let mut alignments = match target_idx {
+        0 => vec![kiley::bialignment::Op::Del; ctg_start],
+        i => vec![kiley::bialignment::Op::Del; ctg_start - break_points[i - 1]],
+    };
+    let contig = &contig[ctg_start..];
+    let (_, mut ops) =
+        kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, read_type.band_width());
+    // Split the alignment into encoded nodes.
+    // Current position of the query.
+    let mut ypos = {
+        let mut head_ins = 0;
+        ops.reverse();
+        while let Some(&kiley::bialignment::Op::Ins) = ops.last() {
+            ops.pop().unwrap();
+            head_ins += 1;
+        }
+        ops.reverse();
+        head_ins
+    };
     // Encoded nodes.
     let mut nodes = vec![];
+    let sim_thr = read_type.sim_thr();
     for op in ops {
         match op {
             kiley::bialignment::Op::Mat | kiley::bialignment::Op::Mism => {
@@ -661,4 +750,35 @@ fn encode_edge(
         nodes.reverse()
     }
     nodes
+}
+
+fn tune_position(
+    start: usize,
+    end: usize,
+    seq: &[u8],
+    is_forward: bool,
+    contig: &[u8],
+) -> (usize, usize, Vec<u8>, usize) {
+    let mut seq = if is_forward {
+        seq[start..end].to_vec()
+    } else {
+        bio_utils::revcmp(&seq[start..end])
+    };
+    // Note that seq would be smaller than contig.
+    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+    let mode = edlib_sys::AlignMode::Infix;
+    let task = edlib_sys::AlignTask::Alignment;
+    let alignment = edlib_sys::edlib_align(&seq, contig, mode, task);
+    let operations = alignment.operations.as_ref().unwrap();
+    let s = operations.iter().take_while(|&&x| x == 1).count();
+    let e = operations.iter().rev().take_while(|&&x| x == 1).count();
+    (0..e).map(|_| seq.pop().unwrap()).count();
+    seq.reverse();
+    (0..s).map(|_| seq.pop().unwrap()).count();
+    seq.reverse();
+    let (ctg_start, _) = alignment.locations.unwrap()[0];
+    match is_forward {
+        true => (start + s, end - e, seq, ctg_start),
+        false => (start + e, end - s, seq, ctg_start),
+    }
 }

@@ -44,13 +44,15 @@ impl ClusteringConfig {
     }
 }
 
+// Assignments, posterior, likelihood, consensus.
+type ClusteringResult = (Vec<u8>, Vec<Vec<f64>>, f64, Vec<u8>);
 /// Usual "flat(non-recursive)" clustering. Return assignments, template, and LK.
 // TODO:Maybe we need hmm in the configuration.
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
     config: &ClusteringConfig,
-) -> Option<(Vec<u8>, Vec<Vec<f64>>, f64, Vec<u8>)> {
+) -> Option<ClusteringResult> {
     let band = config.band_width;
     let cons_template = kiley::consensus(reads, rng.gen(), 10, band);
     let band_width = 100;
@@ -61,6 +63,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .map(|(asn, gains, lk, _)| (asn, gains, lk, cons_template))
 }
 
+type ClusteringDevResult = (Vec<u8>, Vec<Vec<f64>>, f64, u8);
 /// If everything goes fine, return the assignment of each read,
 /// likelihood vectors and its total likelihood gain.
 /// Specifically, if the returned value is `(asms,lks,lk),
@@ -71,7 +74,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     rng: &mut R,
     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
     config: &ClusteringConfig,
-) -> Option<(Vec<u8>, Vec<Vec<f64>>, f64, u8)> {
+) -> Option<ClusteringDevResult> {
     let ClusteringConfig {
         band_width,
         copy_num,
@@ -126,11 +129,11 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
-            //let expected_gain = (k - 1) as f64 * average_lk * coverage;
             let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
             Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let score = score + (k - 1) as f64 * average_lk * estim_cov;
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
     if log_enabled!(log::Level::Trace) {
@@ -791,7 +794,7 @@ fn try_clustering<R: Rng>(
     rng: &mut R,
 ) -> Vec<f64> {
     let (asn, _): (Vec<_>, _) = (0..2)
-        .map(|_| mcmc_clustering(&data, cluster_num, coverage, rng))
+        .map(|_| mcmc_clustering(data, cluster_num, coverage, rng))
         .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .unwrap();
     let mut gains = vec![vec![0f64; data[0].len()]; cluster_num];
@@ -1070,13 +1073,13 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
     let var_dim = data[0].len();
     let lower_bound: f64 = (0..var_dim)
         .map(|pos| {
-            let count: usize = data.iter().map(|xs| xs[pos].is_sign_positive()).count();
+            let count: usize = data.iter().filter(|xs| xs[pos].is_sign_positive()).count();
             let part_lk = max_poisson_lk(count, cov, 1, k);
             let part_lk_2 = max_poisson_lk(data.len() - count, cov, 1, k);
             let data_lk: f64 = data.iter().map(|xs| xs[pos].max(0f64)).sum();
             data_lk + part_lk + part_lk_2
         })
-        .max_by(|x, y| x.partial_cmp(&y).unwrap())
+        .max_by(|x, y| x.partial_cmp(y).unwrap())
         .unwrap();
     let mut assignments = vec![0; data.len()];
     let mut lk = 0f64;

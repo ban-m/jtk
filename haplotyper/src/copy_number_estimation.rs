@@ -64,9 +64,10 @@ impl std::default::Default for Config {
 
 type Node = (u64, u64);
 type Edge = (Node, Node);
+type CopyNumResult = (Vec<(Node, usize)>, Vec<(Edge, usize)>);
 pub trait CopyNumberEstimation {
     fn update_copy_numbers(&mut self, config: &Config);
-    fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>);
+    fn estimate_copy_numbers(&self, config: &Config) -> CopyNumResult;
 }
 
 use definitions::DataSet;
@@ -254,14 +255,14 @@ impl Graph {
     }
     fn estimate_coverage(&self) -> f64 {
         if self.nodes.is_empty() {
-            return 0f64;
+            0f64
         } else {
             let mut weights: Vec<_> = self.nodes.clone();
             let position = weights.len() / 2;
             (*weights.select_nth_unstable(position).1) as f64 / 2f64
         }
     }
-    fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
+    fn estimate_copy_numbers(&self, config: &Config) -> CopyNumResult {
         let (node_cp, edge_cp) = self.estimate_copy_numbers_inner(config);
         let mut node_cp: Vec<_> = self
             .node_to_idx

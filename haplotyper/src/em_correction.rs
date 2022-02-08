@@ -950,7 +950,7 @@ impl SimpleModel {
             .for_each(|(w, s)| *w = (s - score).exp());
         (mapping_positions, score)
     }
-    fn scores_and_mappings(&self, context: &Context) -> (Vec<f64>, Vec<(Vec<u8>, Vec<u8>)>) {
+    fn scores_and_mappings(&self, context: &Context) -> ScoreAndMapping {
         self.consensus
             .iter()
             .zip(self.fraction.iter())
@@ -970,6 +970,9 @@ impl SimpleModel {
         // score
     }
 }
+
+type ScoreAndMapping = (Vec<f64>, Vec<(Vec<u8>, Vec<u8>)>);
+
 #[derive(Debug, Clone)]
 struct Consensus {
     center: (u64, u64),

@@ -5,33 +5,41 @@ use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    // if args.len() < 4 {
-    //     panic!("[JSON] [Unit1] [Unit2]");
-    // }
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
-    for read in ds.encoded_reads.iter() {
-        if let Some(head) = read.nodes.first() {
-            tail_counts
-                .entry((head.unit, head.is_forward))
-                .or_default()
-                .push(&read.leading_gap);
-        }
-        if let Some(tail) = read.nodes.last() {
-            tail_counts
-                .entry((tail.unit, !tail.is_forward))
-                .or_default()
-                .push(&read.trailing_gap);
-        }
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    println!("Unit\tCluster\tIdentity");
+    for node in ds.encoded_reads.iter().flat_map(|x| x.nodes.iter()) {
+        let ref_chunk = chunks[&node.unit];
+        let (_, aln, _) = node.recover(ref_chunk);
+        let dist = aln.iter().filter(|&&x| x != b'|').count();
+        let identity = 1f64 - dist as f64 / aln.len() as f64;
+        let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
+        let (unit, cluster, _post) = (node.unit, node.cluster, post.join("\t"));
+        println!("{}\t{}\t{}", unit, cluster, identity);
     }
-    for ((unit, dir), labs) in tail_counts.iter() {
-        if labs.len() > 1 {
-            let sum: usize = labs.iter().map(|x| x.len()).sum();
-            println!("{}\t{}\t{}\t{}", unit, dir, sum / labs.len(), labs.len());
-        }
-    }
+    // let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
+    // for read in ds.encoded_reads.iter() {
+    //     if let Some(head) = read.nodes.first() {
+    //         tail_counts
+    //             .entry((head.unit, head.is_forward))
+    //             .or_default()
+    //             .push(&read.leading_gap);
+    //     }
+    //     if let Some(tail) = read.nodes.last() {
+    //         tail_counts
+    //             .entry((tail.unit, !tail.is_forward))
+    //             .or_default()
+    //             .push(&read.trailing_gap);
+    //     }
+    // }
+    // for ((unit, dir), labs) in tail_counts.iter() {
+    //     if labs.len() > 1 {
+    //         let sum: usize = labs.iter().map(|x| x.len()).sum();
+    //         println!("{}\t{}\t{}\t{}", unit, dir, sum / labs.len(), labs.len());
+    //     }
+    // }
 
     // let unit1: u64 = args[2].parse().unwrap();
     // let unit2: u64 = args[3].parse().unwrap();

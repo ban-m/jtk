@@ -1,4 +1,5 @@
 //! Filling deletion.
+// TODO:Curretly the alignment can not handle to re-encode missing tips. It reduce some of the reads which should be encoded otherwise...
 use definitions::*;
 use rayon::prelude::*;
 // use log::*;
@@ -125,7 +126,6 @@ pub fn correct_deletion_error(
     reads: &[ReadSkelton],
     sim_thr: f64,
 ) -> Vec<u64> {
-    // Inserption counts.
     let pileups = get_pileup(read, reads);
     // TODO:Parametrize here.
     let threshold = 3;
@@ -329,7 +329,6 @@ fn trim_head_tail_insertion(
 
 // Align read skeltons to read, return the pileup sumamries.
 fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
-    // let read_nodes: HashSet<_> = read.nodes.iter().map(|n| n.unit).collect();
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     for query in reads
         .iter()

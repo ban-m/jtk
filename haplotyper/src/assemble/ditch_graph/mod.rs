@@ -1062,6 +1062,7 @@ impl<'a> DitchGraph<'a> {
         }
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
+    // TODO:Fasten this function.
     /// (Re-)estimate copy number on each node and edge.
     pub fn assign_copy_number_mcmc(&mut self, naive_cov: f64, lens: &[usize]) {
         let (node_copy_number, edge_copy_number) =
@@ -1551,7 +1552,7 @@ impl<'a> DitchGraph<'a> {
                 self.survey_focus(focus).is_some()
             })
             .count();
-        debug!("FOCI\tTryAndSuccess{}\t{}", foci.len(), success);
+        debug!("FOCI\tTryAndSuccess\t{}\t{}", foci.len(), success);
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
@@ -1891,18 +1892,18 @@ impl<'a> DitchGraph<'a> {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         loop {
             let mut foci = self.get_foci(reads, config);
-            debug!("FOCI\tNUM\t{}\tBefore removing weak foci.", foci.len());
             if log_enabled!(log::Level::Trace) {
                 for focus in foci.iter() {
                     trace!("FOC_DETAIL\t{}", focus);
                 }
             }
+            let prev = foci.len();
             foci.retain(|val| thr < val.llr());
             foci.retain(|val| val.llr() != std::f64::INFINITY);
-            debug!("FOCI\tNUM\t{}\tFiltered out weak foci.", foci.len());
             if foci.is_empty() {
                 break;
             }
+            debug!("FOCI\tNUM\t{}\t{}", prev, foci.len());
             foci.sort_by(|x, y| match y.llr().partial_cmp(&x.llr()).unwrap() {
                 std::cmp::Ordering::Equal => (y.dist, y.from).cmp(&(x.dist, x.from)),
                 x => x,

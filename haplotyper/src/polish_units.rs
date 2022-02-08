@@ -42,7 +42,7 @@ impl PolishUnit for DataSet {
         for read in self.encoded_reads.iter() {
             for node in read.nodes.iter() {
                 if let Some(res) = pileups.get_mut(&node.unit) {
-                    res.push(node.seq());
+                    res.push(node);
                 }
             }
         }
@@ -50,12 +50,25 @@ impl PolishUnit for DataSet {
             .retain(|n| matches!(pileups.get(&n.id),Some(xs) if c.filter_size <= xs.len()));
         self.selected_chunks.par_iter_mut().for_each(|unit| {
             if let Some(pileup) = pileups.get(&unit.id) {
-                let len_sum: usize = pileup.iter().map(|x| x.len()).sum();
+                let len_sum: usize = pileup.iter().map(|x| x.seq().len()).sum();
                 let mean_len: usize = len_sum / pileup.len();
                 let radius = c.read_type.band_width().min(mean_len / 20);
-                let seqs = &pileup[..c.consensus_size.min(pileup.len())];
+                let mut seqs_with_diff: Vec<_> = pileup
+                    .iter()
+                    .map(|node| {
+                        let (_, aln, _) = node.recover(unit);
+                        let diff: usize = aln.iter().filter(|&&x| x != b'|').count();
+                        (diff, node.seq())
+                    })
+                    .collect();
+                seqs_with_diff.sort_by_key(|x| x.0);
+                let seqs: Vec<_> = seqs_with_diff
+                    .into_iter()
+                    .take(c.consensus_size)
+                    .map(|x| x.1)
+                    .collect();
                 let cons =
-                    kiley::bialignment::polish_until_converge_banded(unit.seq(), seqs, radius);
+                    kiley::bialignment::polish_until_converge_banded(unit.seq(), &seqs, radius);
                 unit.seq = String::from_utf8(cons).unwrap();
             }
         });
@@ -93,8 +106,18 @@ impl PolishUnit for DataSet {
                         ReadType::ONT => (median_len / 30).max(50),
                     };
                     let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
+                    let mut seq_with_diff: Vec<_> = pileup
+                        .iter()
+                        .map(|x| (edlib_sys::global_dist(&cons, x), x))
+                        .collect();
+                    seq_with_diff.sort_by_key(|x| x.0);
+                    let seqs: Vec<_> = seq_with_diff
+                        .iter()
+                        .take(c.consensus_size)
+                        .map(|x| *x.1)
+                        .collect();
                     let cons =
-                        kiley::bialignment::polish_until_converge_banded(&cons, seqs, radius);
+                        kiley::bialignment::polish_until_converge_banded(&cons, &seqs, radius);
                     Some((id, String::from_utf8(cons).unwrap()))
                 } else {
                     None

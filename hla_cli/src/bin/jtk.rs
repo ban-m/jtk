@@ -84,7 +84,7 @@ fn subcommand_stats() -> App<'static> {
     App::new("stats")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Write stats to the specified file. It passes through the stdin to the stdout")
+        .about("Write stats to the specified file.")
         .arg(
             Arg::new("verbose")
                 .short('v')
@@ -1151,7 +1151,7 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .unwrap();
     use haplotyper::dense_encoding::*;
     let config = DenseEncodingConfig::new(length);
-    dataset.dense_encoding(&config);
+    dataset.dense_encoding_dev(&config);
 }
 
 fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
