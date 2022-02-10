@@ -1,37 +1,36 @@
+#![allow(unused_imports)]
 // const IS_MOCK: bool = false;
 use definitions::*;
 use std::collections::HashMap;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet =
-        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
-            .unwrap();
-    for read in ds.encoded_reads.iter() {
-        let head = read.nodes.first().map(|n| n.unit);
-        let tail = read.nodes.last().map(|n| n.unit);
-        if head == Some(815) || head == Some(1332) {
-            let dir = read.nodes.first().unwrap().is_forward;
-            println!(
-                "Head\t{}\t{}\t{}\t{}",
-                head.unwrap(),
-                dir,
-                read.leading_gap.len(),
-                read.id,
-            );
-        }
-        if 1 < read.nodes.len() && (tail == Some(815) || tail == Some(1332)) {
-            let dir = read.nodes.last().unwrap().is_forward;
-            println!(
-                "Tail\t{}\t{}\t{}\t{}",
-                tail.unwrap(),
-                dir,
-                read.trailing_gap.len(),
-                read.id,
-            );
-        }
-    }
+    let xs = b"ACA";
+    let ys = b"C";
+    let tops = {
+        let mode = edlib_sys::AlignMode::Infix;
+        let task = edlib_sys::AlignTask::Alignment;
+        let aln = edlib_sys::edlib_align(ys, xs, mode, task);
+        let (start, end) = aln.locations.unwrap()[0];
+        let end = end + 1;
+        let mut ops = vec![kiley::bialignment::Op::Ins; start];
+        ops.extend(aln.operations.unwrap().iter().map(|op| match op {
+            0 => kiley::bialignment::Op::Mat,
+            1 => kiley::bialignment::Op::Del,
+            2 => kiley::bialignment::Op::Ins,
+            3 => kiley::bialignment::Op::Mism,
+            _ => unreachable!(),
+        }));
+        ops.extend(std::iter::repeat(kiley::bialignment::Op::Ins).take(xs.len() - end));
+        ops
+    };
+    eprintln!("{:?}", tops);
+    let (_, ops) = kiley::bialignment::edit_dist_slow_ops_semiglobal(ys, xs);
+    eprintln!("{:?}", ops);
+    // let args: Vec<_> = std::env::args().collect();
+    // let ds: DataSet =
+    //     serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
+    //         .unwrap();
     // let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     // println!("Unit\tCluster\tIdentity");
     // for node in ds.encoded_reads.iter().flat_map(|x| x.nodes.iter()) {

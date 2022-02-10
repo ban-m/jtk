@@ -430,10 +430,6 @@ fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> Edg
             }
         })
         .collect();
-    // let edges: HashMap<((u64, u64, bool), (u64, u64, bool)), usize> =
-    //     vec![(((815, 0, false), (1332, 0, true)), 2)]
-    //         .into_iter()
-    //         .collect();
     debug!("DE\t{}\tEDGES", edges.len());
     let mut consensi_materials: HashMap<_, Vec<_>> = HashMap::new();
     for read in ds.encoded_reads.iter() {
@@ -705,6 +701,7 @@ fn tune_position(
     // First, let's truncate the `seq`
     let alignment = edlib_sys::edlib_align(contig, &seq, mode, task);
     let (seq_start, seq_end) = alignment.locations.unwrap()[0];
+    let seq_end = seq_end + 1;
     // Modefy seq into truncate version.
     let pop_num = seq.len() - seq_end;
     (0..pop_num).map(|_| seq.pop().unwrap()).count();
@@ -720,5 +717,6 @@ fn tune_position(
     // Second, let's truncate the contig.
     let alignment = edlib_sys::edlib_align(&seq, contig, mode, task);
     let (ctg_start, ctg_end) = alignment.locations.unwrap()[0];
+    let ctg_end = ctg_end + 1;
     (seq_start, seq_end, seq, ctg_start, ctg_end)
 }

@@ -17,6 +17,7 @@ pub trait PurgeDivergent {
     fn purge(&mut self, config: &PurgeDivConfig);
 }
 
+use rayon::prelude::*;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
         let copy_number: HashMap<_, _> = self
@@ -33,13 +34,26 @@ impl PurgeDivergent for DataSet {
         let to_be_removed = purge_diverged_nodes(self, thr, config);
         let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
         debug!("PD\tREMOVED\t{}", removed_nodes);
-        for (read, (id, indices)) in self.encoded_reads.iter_mut().zip(to_be_removed) {
-            assert_eq!(read.id, id);
-            assert!(indices.is_sorted());
-            for &index in indices.iter().rev() {
-                read.remove(index);
-            }
-        }
+        let seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+        let prev = self.encoded_reads.len();
+        self.encoded_reads
+            .par_iter_mut()
+            .zip(to_be_removed)
+            .filter_map(|(read, (id, indices))| {
+                assert_eq!(read.id, id);
+                assert!(indices.is_sorted());
+                for &index in indices.iter().rev() {
+                    read.remove(index);
+                }
+                (!read.nodes.is_empty()).then(|| read)
+            })
+            .for_each(|read| {
+                let mut nodes = vec![];
+                nodes.append(&mut read.nodes);
+                let seq = seqs[&read.id];
+                *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+            });
+        debug!("PD\tEncodedRead\t{}\t{}", prev, self.encoded_reads.len());
         // Reclustering...
         {
             // Preserve clustering.
