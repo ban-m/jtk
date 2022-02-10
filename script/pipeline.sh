@@ -3,7 +3,8 @@ set -ue
 PATH="${PATH}:${PWD}/target/release/"
 TARGET=$1
 CLUSTERED=${2}.entry.units.encode.clustered.json
-RESOLVED=${2}.entry.units.encode.clustered.resolved.json
+PURGED=${2}.entry.units.encode.clustered.purged.json
+RESOLVED=${2}.entry.units.encode.clustered.purged.resolved.json
 RESULT=${2}.json
 GFA=${2}.gfa
 DRAFT_GFA=${2}.draft.gfa
@@ -42,11 +43,20 @@ else
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi
 
+
+if [ -f ${PURGED} ]
+then
+    echo "Suspicious encodings are already purged."
+else
+    cat ${CLUSTERED} | jtk purge_diverged --threads ${THREADS} -vv > ${PURGED}
+fi
+
+
 if [ -f ${RESOLVED} ]
 then
     echo "Tangle resolved. Skip resolving proc".
 else
-    cat ${CLUSTERED} |\
+    cat ${PURGED} |\
         jtk correct_deletion -vv --threads ${THREADS} --re_cluster |\
         jtk encode_densely -vv --threads ${THREADS} |\
         jtk correct_deletion -vv --threads ${THREADS} --re_cluster >${RESOLVED}

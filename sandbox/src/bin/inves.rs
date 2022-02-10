@@ -8,17 +8,44 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    println!("Unit\tCluster\tIdentity");
-    for node in ds.encoded_reads.iter().flat_map(|x| x.nodes.iter()) {
-        let ref_chunk = chunks[&node.unit];
-        let (_, aln, _) = node.recover(ref_chunk);
-        let dist = aln.iter().filter(|&&x| x != b'|').count();
-        let identity = 1f64 - dist as f64 / aln.len() as f64;
-        let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
-        let (unit, cluster, _post) = (node.unit, node.cluster, post.join("\t"));
-        println!("{}\t{}\t{}", unit, cluster, identity);
+    for read in ds.encoded_reads.iter() {
+        let head = read.nodes.first().map(|n| n.unit);
+        let tail = read.nodes.last().map(|n| n.unit);
+        if head == Some(815) || head == Some(1332) {
+            let dir = read.nodes.first().unwrap().is_forward;
+            println!(
+                "Head\t{}\t{}\t{}\t{}",
+                head.unwrap(),
+                dir,
+                read.leading_gap.len(),
+                read.id,
+            );
+        }
+        if 1 < read.nodes.len() && (tail == Some(815) || tail == Some(1332)) {
+            let dir = read.nodes.last().unwrap().is_forward;
+            println!(
+                "Tail\t{}\t{}\t{}\t{}",
+                tail.unwrap(),
+                dir,
+                read.trailing_gap.len(),
+                read.id,
+            );
+        }
     }
+    // let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    // println!("Unit\tCluster\tIdentity");
+    // for node in ds.encoded_reads.iter().flat_map(|x| x.nodes.iter()) {
+    //     let ref_chunk = chunks[&node.unit];
+    //     let (_, aln, _) = node.recover(ref_chunk);
+    //     let dist = aln.iter().filter(|&&x| x != b'|').count();
+    //     let identity = 1f64 - dist as f64 / aln.len() as f64;
+    //     let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
+    //     let (unit, cluster, _post) = (node.unit, node.cluster, post.join("\t"));
+    //     println!("{}\t{}\t{}", unit, cluster, identity);
+    // }
+    // use haplotyper::purge_diverged::PurgeDivergent;
+    // let config = haplotyper::purge_diverged::PurgeDivConfig::default();
+    // ds.purge(&config);
     // let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
     // for read in ds.encoded_reads.iter() {
     //     if let Some(head) = read.nodes.first() {

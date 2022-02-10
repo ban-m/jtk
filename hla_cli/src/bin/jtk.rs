@@ -425,6 +425,29 @@ fn subcommand_partition_local() -> App<'static> {
         )
 }
 
+fn subcommand_purge_diverged() -> App<'static> {
+    App::new("purge_diverged")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Purge diverged clusters")
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value("1")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_correct_deletion() -> App<'static> {
     App::new("correct_deletion")
         .version("0.1")
@@ -965,6 +988,23 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     dataset.local_clustering();
 }
 
+fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+    debug!("START\tPurge diverged clusters");
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    use haplotyper::purge_diverged::*;
+    let config = PurgeDivConfig::new(threads);
+    dataset.purge(&config);
+}
+
 fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tCorrectDeletion");
     let threads: usize = matches
@@ -1224,6 +1264,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_estimate_multiplicity())
         .subcommand(subcommand_resolve_tangle())
         .subcommand(subcommand_partition_local())
+        .subcommand(subcommand_purge_diverged())
         .subcommand(subcommand_correct_deletion())
         .subcommand(subcommand_correct_multiplicity())
         .subcommand(subcommand_partition_global())
@@ -1255,6 +1296,7 @@ fn main() -> std::io::Result<()> {
         Some(("pick_components", sub_m)) => pick_components(sub_m, ds),
         Some(("polish_encoding", sub_m)) => polish_encode(sub_m, ds),
         Some(("partition_local", sub_m)) => local_clustering(sub_m, ds),
+        Some(("purge_diverged", sub_m)) => purge_diverged(sub_m, ds),
         Some(("correct_deletion", sub_m)) => correct_deletion(sub_m, ds),
         Some(("correct_multiplicity", sub_m)) => correct_multiplicity(sub_m, ds),
         Some(("resolve_tangle", sub_m)) => resolve_tangle(sub_m, ds),

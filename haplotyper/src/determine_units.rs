@@ -101,6 +101,11 @@ pub trait DetermineUnit {
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
     // TODO: Parametrize the number of reads used in consensus generation.
+    // TOOD: Maybe we can remove some low-quality reads by
+    // TOOD: replace sim_thr() by other approprate method, such as
+    // dynamic threshold tuning....
+    // using alignment statistics.
+    // It would be much better, I think, even if the coverage would be damaged to some extent.
     fn select_chunks(&mut self, config: &UnitConfig) {
         let filter_size = match self.read_type {
             ReadType::CCS => 2,

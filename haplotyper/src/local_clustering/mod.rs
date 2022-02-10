@@ -72,41 +72,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         }
     }
     let coverage = ds.coverage.unwrap();
+    let hmm = estimate_model_parameters(ds.read_type, &pileups, &chunks);
     let band_width = ds.read_type.band_width();
-    // Maybe we can train pair-HMM here.
-    // Also, calculate the threshold.
-    let hmm = {
-        let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
-        let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
-        let seqs_and_ref_units: Vec<_> = pileups
-            .iter()
-            .filter(|(_, us)| (cov.max(1) - 1..cov + 2).contains(&us.len()))
-            .map(|(id, us)| {
-                let seqs: Vec<_> = us.iter().map(|n| n.seq()).take(100).collect();
-                let ref_unit = chunks.get(id).unwrap();
-                (ref_unit, seqs)
-            })
-            .take(2)
-            .collect();
-        for (chunk, units) in seqs_and_ref_units.iter() {
-            debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
-        }
-        use kiley::gphmm::*;
-        let mut hmm = match ds.read_type {
-            ReadType::CCS => kiley::gphmm::GPHMM::<Cond>::ccs(),
-            ReadType::None | ReadType::CLR => kiley::gphmm::GPHMM::<Cond>::clr(),
-            ReadType::ONT => kiley::gphmm::GPHMM::<Cond>::ont(),
-        };
-        for _ in 0..2 {
-            for (ref_unit, seqs) in seqs_and_ref_units.iter() {
-                let band_width = band_width * 2;
-                let consensus = take_consensus(ref_unit, seqs, band_width, &hmm);
-                hmm = hmm.fit_banded(&consensus, seqs, band_width);
-            }
-        }
-        debug!("HMM\t{}", hmm);
-        hmm
-    };
     let read_type = ds.read_type;
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
@@ -167,6 +134,44 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     re_encode_reads(ds, &consensus_and_clusternum);
     // Normalize local clustering.
     normalize::normalize_local_clustering(ds);
+}
+
+use kiley::gphmm::Cond;
+pub fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
+    read_type: ReadType,
+    pileups: &HashMap<u64, Vec<N>>,
+    chunks: &HashMap<u64, &Unit>,
+) -> kiley::gphmm::GPHMM<Cond> {
+    let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
+    let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
+    let seqs_and_ref_units: Vec<_> = pileups
+        .iter()
+        .filter(|(_, us)| (cov.max(1) - 1..cov + 2).contains(&us.len()))
+        .map(|(id, us)| {
+            let seqs: Vec<_> = us.iter().map(|n| n.borrow().seq()).take(100).collect();
+            let ref_unit = chunks.get(id).unwrap();
+            (ref_unit, seqs)
+        })
+        .take(2)
+        .collect();
+    for (chunk, units) in seqs_and_ref_units.iter() {
+        debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
+    }
+    use kiley::gphmm::*;
+    let mut hmm = match read_type {
+        ReadType::CCS => kiley::gphmm::GPHMM::<Cond>::ccs(),
+        ReadType::None | ReadType::CLR => kiley::gphmm::GPHMM::<Cond>::clr(),
+        ReadType::ONT => kiley::gphmm::GPHMM::<Cond>::ont(),
+    };
+    for _ in 0..2 {
+        for (ref_unit, seqs) in seqs_and_ref_units.iter() {
+            let band_width = read_type.band_width() * 2;
+            let consensus = take_consensus(ref_unit, seqs, band_width, &hmm);
+            hmm = hmm.fit_banded(&consensus, seqs, band_width);
+        }
+    }
+    debug!("HMM\t{}", hmm);
+    hmm
 }
 
 pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(

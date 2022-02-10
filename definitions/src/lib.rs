@@ -28,6 +28,10 @@ pub struct DataSet {
     pub assignments: Vec<Assignment>,
     /// The type of the reads.
     pub read_type: ReadType,
+    // /// Estimated parameter for a statistical model (used to phase local region)
+    // pub model_params: Option<ModelParameters>,
+    // /// Estimated error rate.
+    // pub error_rate: ErrorRate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
@@ -84,6 +88,8 @@ impl std::default::Default for DataSet {
             hic_edges: vec![],
             assignments: vec![],
             read_type: ReadType::None,
+            // model_params: None,
+            // error_rate: ErrorRate::default(),
         }
     }
 }
@@ -91,17 +97,7 @@ impl std::default::Default for DataSet {
 impl DataSet {
     /// Return an empty dataset.
     pub fn new() -> Self {
-        Self {
-            input_file: String::new(),
-            coverage: None,
-            raw_reads: vec![],
-            hic_pairs: vec![],
-            selected_chunks: vec![],
-            encoded_reads: vec![],
-            hic_edges: vec![],
-            assignments: vec![],
-            read_type: ReadType::None,
-        }
+        Self::default()
     }
     pub fn with_minimum_data(
         input_file: &str,
@@ -125,32 +121,10 @@ impl DataSet {
             hic_edges: vec![],
             assignments,
             read_type,
+            // model_params: None,
+            // error_rate: ErrorRate::guess(read_type),
         }
     }
-    // #[allow(clippy::too_many_arguments)]
-    // pub fn with_param(
-    //     input_file: String,
-    //     coverage: Option<f64>,
-    //     raw_reads: Vec<RawRead>,
-    //     hic_pairs: Vec<HiCPair>,
-    //     selected_chunks: Vec<Unit>,
-    //     encoded_reads: Vec<EncodedRead>,
-    //     hic_edges: Vec<HiCEdge>,
-    //     assignments: Vec<Assignment>,
-    //     read_type: ReadType,
-    // ) -> Self {
-    //     Self {
-    //         input_file,
-    //         coverage,
-    //         raw_reads,
-    //         hic_pairs,
-    //         selected_chunks,
-    //         encoded_reads,
-    //         hic_edges,
-    //         assignments,
-    //         read_type,
-    //     }
-    // }
     /// Sanity check function. Call it to ensure that some properties indeed holds.
     /// Currently, the following properties are checked.
     /// 1: The input file exists.
@@ -513,6 +487,7 @@ impl Node {
             })
             .sum::<usize>()
     }
+    /// Return (node path, alignment, unit path)
     pub fn recover(&self, unit: &Unit) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let (read, unit) = (self.seq(), unit.seq());
         let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
@@ -581,6 +556,92 @@ pub struct Assignment {
 impl Assignment {
     pub fn new(id: u64, cluster: usize) -> Self {
         Self { id, cluster }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelParameters {
+    pub del_open: f64,
+    pub del_ext: f64,
+    pub ins_open: f64,
+    pub ins_ext: f64,
+    pub match_prob: f64,
+}
+
+/// The error rate with respect to the length of the alignment.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ErrorRate {
+    pub del: f64,
+    pub del_sd: f64,
+    pub ins: f64,
+    pub ins_sd: f64,
+    pub mismatch: f64,
+    pub mism_sd: f64,
+    pub total: f64,
+    pub total_sd: f64,
+}
+
+const CCS_ERROR_RATE: ErrorRate = ErrorRate {
+    del: 0.005,
+    del_sd: 0.001,
+    ins: 0.005,
+    ins_sd: 0.001,
+    mismatch: 0.005,
+    mism_sd: 0.001,
+    total: 0.01,
+    total_sd: 0.005,
+};
+
+const CLR_ERROR_RATE: ErrorRate = ErrorRate {
+    del: 0.07,
+    del_sd: 0.02,
+    ins: 0.06,
+    ins_sd: 0.02,
+    mismatch: 0.02,
+    mism_sd: 0.01,
+    total: 0.15,
+    total_sd: 0.03,
+};
+
+const ONT_ERROR_RATE: ErrorRate = ErrorRate {
+    del: 0.01,
+    del_sd: 0.005,
+    ins: 0.01,
+    ins_sd: 0.005,
+    mismatch: 0.01,
+    mism_sd: 0.005,
+    total: 0.03,
+    total_sd: 0.008,
+};
+
+impl ErrorRate {
+    pub fn new(
+        (del, del_sd): (f64, f64),
+        (ins, ins_sd): (f64, f64),
+        (mism, mism_sd): (f64, f64),
+        (total, total_sd): (f64, f64),
+    ) -> Self {
+        Self {
+            del,
+            del_sd,
+            ins,
+            ins_sd,
+            mismatch: mism,
+            mism_sd,
+            total,
+            total_sd,
+        }
+    }
+    pub fn guess(readtype: ReadType) -> Self {
+        match readtype {
+            ReadType::CCS => CCS_ERROR_RATE,
+            ReadType::CLR => CLR_ERROR_RATE,
+            ReadType::ONT => ONT_ERROR_RATE,
+            ReadType::None => CLR_ERROR_RATE,
+        }
+    }
+    pub fn sum(&self) -> f64 {
+        self.del + self.ins + self.mismatch
     }
 }
 
