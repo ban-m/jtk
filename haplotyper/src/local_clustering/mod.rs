@@ -180,16 +180,19 @@ pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(
     band_width: usize,
     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
 ) -> Vec<u8> {
-    use kiley::polish_chunk_by_parts;
-    use kiley::PolishConfig;
-    let config = PolishConfig::with_model(band_width, 0, reads.len(), unit.id, 0, hmm.clone());
     let max_len = reads
         .iter()
         .map(|x| x.borrow().len())
         .max()
         .unwrap_or_else(|| panic!("{},{}", unit.seq, unit.id));
     match 200 < max_len {
-        true => polish_chunk_by_parts(unit.seq(), reads, &config),
+        true => {
+            use kiley::polish_chunk_by_parts;
+            use kiley::PolishConfig;
+            let config =
+                PolishConfig::with_model(band_width, 0, reads.len(), unit.id, 0, hmm.clone());
+            polish_chunk_by_parts(unit.seq(), reads, &config)
+        }
         false => unit.seq().to_vec(),
     }
 }

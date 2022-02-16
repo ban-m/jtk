@@ -264,15 +264,10 @@ impl Graph {
             let ci = mcmc_config.chain_id;
             if t % 500 == 0 {
                 trace!("MCMC\t{}\t{}\t{}\t{}", t, ci, is_success, current_potential,);
-                // If this is on, make sure to re-calculate the potential.
-                // mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
-                // current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
-                // trace!("COV\t{}\t{}", t, mcmc_config.coverage);
             }
         }
         mcmc_config.coverage = argmin.2;
         let potential = self.total_energy(&argmin.0, &argmin.1, &mcmc_config);
-        trace!("MIN\t{}\t{}", min, potential);
         assert!((potential - min).abs() < 0.001);
         ((argmin.0, argmin.1), min)
     }
@@ -584,9 +579,13 @@ impl Graph {
                 head_potential + tail_potential
             })
             .sum();
-        trace!("POTENTIAL\t{}\t{}", node_potential, edge_consistency);
         let edge_consistency: f64 = (edge_consistency as f64) * config.consist_factor;
-        node_potential + edge_consistency
+        let potential = node_potential + edge_consistency;
+        debug!(
+            "POTENTIAL\t{}\t{}\t{}",
+            node_potential, edge_consistency, potential
+        );
+        potential
     }
 }
 

@@ -48,9 +48,6 @@ impl PolishUnit for DataSet {
         }
         self.selected_chunks
             .retain(|n| matches!(pileups.get(&n.id),Some(xs) if c.filter_size <= xs.len()));
-        // let chunks: HashMap<_, _> = self.selected_chunks.iter().map(|c| (c.id, c)).collect();
-        // let hmm =
-        //     crate::local_clustering::estimate_model_parameters(self.read_type, &pileups, &chunks);
         self.selected_chunks.par_iter_mut().for_each(|unit| {
             if let Some(pileup) = pileups.get(&unit.id) {
                 let len_sum: usize = pileup.iter().map(|x| x.seq().len()).sum();
@@ -72,11 +69,6 @@ impl PolishUnit for DataSet {
                     .collect();
                 let cons =
                     kiley::bialignment::polish_until_converge_banded(unit.seq(), &seqs, radius);
-                // use kiley::polish_chunk_by_parts;
-                // use kiley::PolishConfig;
-                // let config =
-                //     PolishConfig::with_model(radius, 0, seqs.len(), unit.id, 0, hmm.clone());
-                // let cons = polish_chunk_by_parts(&cons, &seqs, &config);
                 unit.seq = String::from_utf8(cons).unwrap();
             }
         });

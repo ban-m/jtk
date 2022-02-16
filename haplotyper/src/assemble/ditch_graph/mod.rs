@@ -588,7 +588,7 @@ impl<'a> DitchGraph<'a> {
         let min_llr = match read_type {
             ReadType::CCS => 1,
             ReadType::CLR => 3,
-            ReadType::ONT => 9,
+            ReadType::ONT => 2,
             ReadType::None => 3,
         };
         for llr in (min_llr..10).rev() {
@@ -1700,11 +1700,7 @@ impl<'a> DitchGraph<'a> {
     // because of the removed nodes.
     // If it happened, eigther this focus or previous
     // branching is false. Maybe just dropping this focus would be better?
-    fn bfs_to_the_target(
-        &self,
-        focus: &Focus,
-        //info: &HashMap<Node, f64>,
-    ) -> Option<Vec<(Node, Position)>> {
+    fn bfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(Node, Position)>> {
         // Breadth first search until get to the target.
         // Just !pos to make code tidy.
         let (start, pos) = (focus.from, focus.from_position);
@@ -1715,7 +1711,7 @@ impl<'a> DitchGraph<'a> {
             let mut parent = vec![];
             assert_eq!(dist + 1, nodes_at.len());
             for (idx, &(node, pos)) in nodes_at[dist].iter().enumerate() {
-                if node == focus.to && pos == focus.to_position {
+                if node == focus.to && pos == focus.to_position && focus.dist == dist {
                     break 'outer;
                 }
                 // Move to the end of the node.
@@ -1759,9 +1755,7 @@ impl<'a> DitchGraph<'a> {
         &mut self,
         path: &[(Node, Position)],
         (start, pos): (Node, Position),
-        // focus: &Focus,
     ) -> (EdgeLabel, Vec<(Node, bool, usize)>) {
-        // let (start, pos) = (focus.from, focus.from_position);
         let first_elm = path[0];
         let first_label = self
             .get_edges(start, pos)
@@ -1778,6 +1772,7 @@ impl<'a> DitchGraph<'a> {
                 Position::Head => self.nodes[&from].seq().to_vec(),
                 Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
             };
+            let target = [(346, 0), (1788, 0), (690, 0), (457, 0), (1298, 0)];
             let occ = {
                 // This unwrap never panics.
                 let node = self.nodes.get_mut(&from).unwrap();
@@ -1786,6 +1781,10 @@ impl<'a> DitchGraph<'a> {
                         let occ = node.occ / cp;
                         node.occ -= occ;
                         node.copy_number = Some(cp - 1);
+                        if target.contains(&node.node) {
+                            let (n, c) = node.node;
+                            debug!("REMOVED\t{},{},{},{}", n, c, cp - 1, node.occ);
+                        }
                         occ
                     }
                     _ => 0,
@@ -1858,7 +1857,6 @@ impl<'a> DitchGraph<'a> {
             .unwrap_or(false);
         let to_copy_num = self.nodes.get(&to).and_then(|n| n.copy_number);
         let is_zero_copy = matches!(to_copy_num, Some(0));
-        debug!("CP\t{}\t{:?}", to.0, to_copy_num);
         if removed_all_edges && is_zero_copy {
             // Removing this node.
             // First, recursively call the removing function.
@@ -2141,34 +2139,34 @@ impl<'a> DitchGraph<'a> {
     //     }
     //     nodes_at
     // }
-    /// Remove edge from given reads.
-    pub fn remove_edges_from_short_reads(&mut self, reads: &[&EncodedRead]) {
-        for read in reads.iter() {
-            for w in read.nodes.windows(2) {
-                let from = (w[0].unit, w[0].cluster);
-                use Position::*;
-                let from_pos = if w[0].is_forward { Tail } else { Head };
-                let to = (w[1].unit, w[1].cluster);
-                let to_pos = if w[1].is_forward { Tail } else { Head };
-                let mock_edge = DitchEdge::new(from, from_pos, to, to_pos, EdgeLabel::Ovlp(0));
-                let forward_edge = self
-                    .nodes
-                    .get_mut(&from)
-                    .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
-                if let Some(forward_edge) = forward_edge {
-                    forward_edge.occ -= 1;
-                }
-                let mock_edge = mock_edge.reverse();
-                let reverse_edge = self
-                    .nodes
-                    .get_mut(&to)
-                    .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
-                if let Some(reverse_edge) = reverse_edge {
-                    reverse_edge.occ -= 1;
-                }
-            }
-        }
-    }
+    // /// Remove edge from given reads.
+    // pub fn remove_edges_from_short_reads(&mut self, reads: &[&EncodedRead]) {
+    //     for read in reads.iter() {
+    //         for w in read.nodes.windows(2) {
+    //             let from = (w[0].unit, w[0].cluster);
+    //             use Position::*;
+    //             let from_pos = if w[0].is_forward { Tail } else { Head };
+    //             let to = (w[1].unit, w[1].cluster);
+    //             let to_pos = if w[1].is_forward { Tail } else { Head };
+    //             let mock_edge = DitchEdge::new(from, from_pos, to, to_pos, EdgeLabel::Ovlp(0));
+    //             let forward_edge = self
+    //                 .nodes
+    //                 .get_mut(&from)
+    //                 .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
+    //             if let Some(forward_edge) = forward_edge {
+    //                 forward_edge.occ -= 1;
+    //             }
+    //             let mock_edge = mock_edge.reverse();
+    //             let reverse_edge = self
+    //                 .nodes
+    //                 .get_mut(&to)
+    //                 .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
+    //             if let Some(reverse_edge) = reverse_edge {
+    //                 reverse_edge.occ -= 1;
+    //             }
+    //         }
+    //     }
+    // }
     /// Remove lightweight edges with occurence less than `thr`.
     /// To retain that edge if the edge is the only edge from its terminal,
     /// set `retain_single_edge` to `true`.
