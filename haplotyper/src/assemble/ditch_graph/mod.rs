@@ -588,7 +588,7 @@ impl<'a> DitchGraph<'a> {
         let min_llr = match read_type {
             ReadType::CCS => 1,
             ReadType::CLR => 3,
-            ReadType::ONT => 3,
+            ReadType::ONT => 9,
             ReadType::None => 3,
         };
         for llr in (min_llr..10).rev() {
@@ -1892,11 +1892,6 @@ impl<'a> DitchGraph<'a> {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         loop {
             let mut foci = self.get_foci(reads, config);
-            if log_enabled!(log::Level::Trace) {
-                for focus in foci.iter() {
-                    trace!("FOC_DETAIL\t{}", focus);
-                }
-            }
             let prev = foci.len();
             foci.retain(|val| thr < val.llr());
             foci.retain(|val| val.llr() != std::f64::INFINITY);
@@ -1980,12 +1975,6 @@ impl<'a> DitchGraph<'a> {
                 let check_node = (check_node.unit, check_node.cluster);
                 if let Some(hit_node) = nodes.iter().position(|n| n.0 == check_node) {
                     occs[hit_node] += 1;
-                }
-            }
-            if node.node.0 == 275 && nodes.iter().any(|n| n.0 .0 == 431) {
-                debug!("---\t{}\t{}\t{:?}\t{:?}", dist, nodes.len(), nodes, occs);
-                for (d, nodes) in dist_nodes.iter().enumerate() {
-                    debug!("{}\t{:?}", d, nodes);
                 }
             }
             let ith_ln = {

@@ -43,7 +43,6 @@ impl DenseEncoding for DataSet {
 
 type TipAndUnit<'a> = HashMap<DTip, Vec<&'a [Unit]>>;
 fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> HashSet<u64> {
-    // TODO: How to treat tips? Is this OK?
     let edge_units = enumerate_polyploid_edges(ds, config);
     let tip_units = {
         let mut tip_units: TipAndUnit = HashMap::new();
@@ -57,13 +56,11 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
     };
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
-    ds.encoded_reads
-        .par_iter_mut()
-        .filter(|r| !r.nodes.is_empty())
-        .for_each(|read| {
-            let rawseq = &rawseq[&read.id];
-            edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
-        });
+    ds.encoded_reads.par_iter_mut().for_each(|read| {
+        let rawseq = &rawseq[&read.id];
+        edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
+    });
+
     let unit_ids: HashSet<_> = edge_units
         .values()
         .flat_map(|x| x.iter().map(|x| x.id))
@@ -73,7 +70,7 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
             .values()
             .flat_map(|x| x.iter().map(|x| (x.id, x.seq().len())))
             .collect();
-        let mut counts: HashMap<_, u32> = HashMap::new();
+        let mut counts: HashMap<_, u32> = lens.keys().map(|&id| (id, 0)).collect();
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             *counts.entry(node.unit).or_default() += 1;
         }
@@ -457,7 +454,9 @@ fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> Edg
     let mut newly_defined_unit = HashMap::new();
     let mut consensi: Vec<_> = consensi_materials
         .into_par_iter()
-        .filter_map(|(key, seqs)| {
+        .filter_map(|(key, mut seqs)| {
+            seqs.iter_mut()
+                .for_each(|xs| xs.iter_mut().for_each(u8::make_ascii_uppercase));
             let mean = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
             let len = seqs.len();
             let cons = consensus(seqs, cov_thr).map(|s| (key, s));
@@ -588,21 +587,21 @@ fn encode_edge(
     };
     // Current edit operations inside the focal unit.
     let mut alignments = match target_idx {
-        0 => vec![kiley::bialignment::Op::Del; ctg_start],
-        i => vec![kiley::bialignment::Op::Del; ctg_start - break_points[i - 1]],
+        0 => vec![kiley::Op::Del; ctg_start],
+        i => vec![kiley::Op::Del; ctg_start - break_points[i - 1]],
     };
     let ctg_orig_len = contig.len();
     let contig = &contig[ctg_start..ctg_end];
     let (_, mut ops) =
         kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, read_type.band_width());
     // Push deletion operations up to the last base.
-    ops.extend(std::iter::repeat(kiley::bialignment::Op::Del).take(ctg_orig_len - ctg_end));
+    ops.extend(std::iter::repeat(kiley::Op::Del).take(ctg_orig_len - ctg_end));
     // Split the alignment into encoded nodes.
     // Current position of the query.
     let mut ypos = {
         let mut head_ins = 0;
         ops.reverse();
-        while let Some(&kiley::bialignment::Op::Ins) = ops.last() {
+        while let Some(&kiley::Op::Ins) = ops.last() {
             ops.pop().unwrap();
             head_ins += 1;
         }
@@ -614,14 +613,14 @@ fn encode_edge(
     let sim_thr = read_type.sim_thr();
     for op in ops {
         match op {
-            kiley::bialignment::Op::Mat | kiley::bialignment::Op::Mism => {
+            kiley::Op::Match | kiley::Op::Mismatch => {
                 xpos += 1;
                 ypos += 1;
             }
-            kiley::bialignment::Op::Del => {
+            kiley::Op::Del => {
                 xpos += 1;
             }
-            kiley::bialignment::Op::Ins => {
+            kiley::Op::Ins => {
                 ypos += 1;
             }
         }
@@ -630,21 +629,18 @@ fn encode_edge(
             // Reached the boundary.
             let unit = &units[target_idx];
             let (uid, unitlen) = (unit.id, unit.seq().len());
-            let ylen = alignments
-                .iter()
-                .filter(|&&x| x != kiley::bialignment::Op::Del)
-                .count();
+            let ylen = alignments.iter().filter(|&&x| x != kiley::Op::Del).count();
             let cigar = crate::encode::compress_kiley_ops(&alignments);
             let indel_mism = alignments
                 .iter()
-                .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
+                .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
             let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
             let unitlen = unitlen as f64;
             let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
                 .max(crate::encode::MIN_INDEL_SIZE);
             let percent_identity = {
                 let (aln, mat) = alignments.iter().fold((0, 0), |(aln, mat), &op| match op {
-                    kiley::bialignment::Op::Mat => (aln + 1, mat + 1),
+                    kiley::Op::Match => (aln + 1, mat + 1),
                     _ => (aln + 1, mat),
                 });
                 mat as f64 / aln as f64

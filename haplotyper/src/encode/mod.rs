@@ -168,7 +168,7 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     let mut ops = vec![];
     if aln.tstart > 0 {
         let mut lops = semiglobal(&unit.seq()[..aln.tstart], &leading);
-        while lops[0] == kiley::bialignment::Op::Ins {
+        while lops[0] == kiley::Op::Ins {
             leading.remove(0);
             lops.remove(0);
         }
@@ -194,7 +194,7 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         // Trailing operations
         let mut tops = semiglobal(&unit.seq()[aln.tend..], &trailing);
         // Remove while trailing insertions.
-        while tops.last() == Some(&kiley::bialignment::Op::Ins) {
+        while tops.last() == Some(&kiley::Op::Ins) {
             tops.pop();
             trailing.pop();
         }
@@ -234,35 +234,35 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
     Some(node)
 }
 
-fn semiglobal(xs: &[u8], ys: &[u8]) -> Vec<kiley::bialignment::Op> {
+fn semiglobal(xs: &[u8], ys: &[u8]) -> Vec<kiley::Op> {
     if xs.len() == 0 {
-        return vec![kiley::bialignment::Op::Ins; ys.len()];
+        return vec![kiley::Op::Ins; ys.len()];
     } else if ys.len() == 0 {
-        return vec![kiley::bialignment::Op::Del; xs.len()];
+        return vec![kiley::Op::Del; xs.len()];
     }
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     let aln = edlib_sys::edlib_align(&xs, &ys, mode, task);
     let (start, end) = aln.locations.unwrap()[0];
     let end = end + 1;
-    let mut ops = vec![kiley::bialignment::Op::Ins; start];
+    let mut ops = vec![kiley::Op::Ins; start];
     ops.extend(aln.operations.unwrap().iter().map(|op| match op {
-        0 => kiley::bialignment::Op::Mat,
-        1 => kiley::bialignment::Op::Del,
-        2 => kiley::bialignment::Op::Ins,
-        3 => kiley::bialignment::Op::Mism,
+        0 => kiley::Op::Match,
+        1 => kiley::Op::Del,
+        2 => kiley::Op::Ins,
+        3 => kiley::Op::Mismatch,
         _ => unreachable!(),
     }));
-    ops.extend(std::iter::repeat(kiley::bialignment::Op::Ins).take(ys.len() - end));
+    ops.extend(std::iter::repeat(kiley::Op::Ins).take(ys.len() - end));
     ops
 }
 
-pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
-    use kiley::bialignment;
-    fn is_the_same(op1: bialignment::Op, op2: bialignment::Op) -> bool {
-        use bialignment::Op::*;
+pub fn compress_kiley_ops(k_ops: &[kiley::Op]) -> Vec<Op> {
+    fn is_the_same(op1: kiley::Op, op2: kiley::Op) -> bool {
         match (op1, op2) {
-            (Mat, Mism) | (Mism, Mat) => true,
+            (kiley::Op::Match, kiley::Op::Mismatch) | (kiley::Op::Mismatch, kiley::Op::Match) => {
+                true
+            }
             (x, y) if x == y => true,
             _ => false,
         }
@@ -275,20 +275,20 @@ pub fn compress_kiley_ops(k_ops: &[kiley::bialignment::Op]) -> Vec<Op> {
             len += 1;
         } else {
             match current_op {
-                bialignment::Op::Del => ops.push(Op::Del(len)),
-                bialignment::Op::Ins => ops.push(Op::Ins(len)),
-                bialignment::Op::Mat => ops.push(Op::Match(len)),
-                bialignment::Op::Mism => ops.push(Op::Match(len)),
+                kiley::Op::Del => ops.push(Op::Del(len)),
+                kiley::Op::Ins => ops.push(Op::Ins(len)),
+                kiley::Op::Match => ops.push(Op::Match(len)),
+                kiley::Op::Mismatch => ops.push(Op::Match(len)),
             }
             current_op = op;
             len = 1;
         }
     }
     match current_op {
-        bialignment::Op::Del => ops.push(Op::Del(len)),
-        bialignment::Op::Ins => ops.push(Op::Ins(len)),
-        bialignment::Op::Mat => ops.push(Op::Match(len)),
-        bialignment::Op::Mism => ops.push(Op::Match(len)),
+        kiley::Op::Del => ops.push(Op::Del(len)),
+        kiley::Op::Ins => ops.push(Op::Ins(len)),
+        kiley::Op::Match => ops.push(Op::Match(len)),
+        kiley::Op::Mismatch => ops.push(Op::Match(len)),
     }
     ops
 }

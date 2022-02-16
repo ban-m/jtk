@@ -39,20 +39,20 @@ impl PurgeDivergent for DataSet {
         self.encoded_reads
             .par_iter_mut()
             .zip(to_be_removed)
-            .filter_map(|(read, (id, indices))| {
+            .for_each(|(read, (id, indices))| {
                 assert_eq!(read.id, id);
                 assert!(indices.is_sorted());
                 for &index in indices.iter().rev() {
                     read.remove(index);
                 }
-                (!read.nodes.is_empty()).then(|| read)
-            })
-            .for_each(|read| {
-                let mut nodes = vec![];
-                nodes.append(&mut read.nodes);
-                let seq = seqs[&read.id];
-                *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
             });
+        self.encoded_reads.retain(|read| !read.nodes.is_empty());
+        self.encoded_reads.par_iter_mut().for_each(|read| {
+            let mut nodes = vec![];
+            nodes.append(&mut read.nodes);
+            let seq = seqs[&read.id];
+            *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+        });
         debug!("PD\tEncodedRead\t{}\t{}", prev, self.encoded_reads.len());
         // Reclustering...
         {

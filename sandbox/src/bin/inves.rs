@@ -5,32 +5,30 @@ use std::collections::HashMap;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let xs = b"ACA";
-    let ys = b"C";
-    let tops = {
-        let mode = edlib_sys::AlignMode::Infix;
-        let task = edlib_sys::AlignTask::Alignment;
-        let aln = edlib_sys::edlib_align(ys, xs, mode, task);
-        let (start, end) = aln.locations.unwrap()[0];
-        let end = end + 1;
-        let mut ops = vec![kiley::bialignment::Op::Ins; start];
-        ops.extend(aln.operations.unwrap().iter().map(|op| match op {
-            0 => kiley::bialignment::Op::Mat,
-            1 => kiley::bialignment::Op::Del,
-            2 => kiley::bialignment::Op::Ins,
-            3 => kiley::bialignment::Op::Mism,
-            _ => unreachable!(),
-        }));
-        ops.extend(std::iter::repeat(kiley::bialignment::Op::Ins).take(xs.len() - end));
-        ops
-    };
-    eprintln!("{:?}", tops);
-    let (_, ops) = kiley::bialignment::edit_dist_slow_ops_semiglobal(ys, xs);
-    eprintln!("{:?}", ops);
-    // let args: Vec<_> = std::env::args().collect();
-    // let ds: DataSet =
-    //     serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
-    //         .unwrap();
+    let args: Vec<_> = std::env::args().collect();
+    let ds: DataSet =
+        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
+            .unwrap();
+    for read in ds.encoded_reads.iter() {
+        if let Some(head) = read.nodes.first() {
+            if head.unit == 950 || head.unit == 591 {
+                let len = read.leading_gap.len();
+                println!(
+                    "Head\t{}\t{}\t{}\t{}",
+                    head.unit, head.cluster, head.is_forward, len
+                );
+            }
+        }
+        if let Some(tail) = read.nodes.last() {
+            if tail.unit == 950 || tail.unit == 591 {
+                let len = read.trailing_gap.len();
+                println!(
+                    "Tail\t{}\t{}\t{}\t{}",
+                    tail.unit, tail.cluster, tail.is_forward, len
+                );
+            }
+        }
+    }
     // let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     // println!("Unit\tCluster\tIdentity");
     // for node in ds.encoded_reads.iter().flat_map(|x| x.nodes.iter()) {

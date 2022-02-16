@@ -249,7 +249,7 @@ fn encode_node(
             ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
         let query = query[aln_start..=aln_end].to_vec();
         let (aln_len, mat_num) = ops.iter().fold((0, 0), |(aln, mat), &op| match op {
-            kiley::bialignment::Op::Mat => (aln + 1, mat + 1),
+            kiley::Op::Match => (aln + 1, mat + 1),
             _ => (aln + 1, mat),
         });
         let percent_identity = mat_num as f64 / aln_len as f64;
@@ -257,7 +257,7 @@ fn encode_node(
         // Mat=>-1, Other->1
         let indel_mism = ops
             .iter()
-            .map(|&op| 1 - 2 * (op == kiley::bialignment::Op::Mat) as i32);
+            .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
         let max_indel = super::max_region(indel_mism).max(0) as usize;
         assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
         if !below_dissim || indel_thr < max_indel {
@@ -269,7 +269,7 @@ fn encode_node(
                     max_indel,
                     percent_identity
                 );
-                let (xr, ar, yr) = kiley::bialignment::recover(unitseq, &query, &ops);
+                let (xr, ar, yr) = kiley::recover(unitseq, &query, &ops);
                 for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                     eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
                     eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
@@ -306,21 +306,17 @@ fn encode_node(
 }
 
 // Triming the head/tail insertion, re-calculate the start and end position.
-fn trim_head_tail_insertion(
-    ops: &mut Vec<kiley::bialignment::Op>,
-    start: usize,
-    end: usize,
-) -> (usize, usize) {
+fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>, start: usize, end: usize) -> (usize, usize) {
     // Triming head.
     let mut head_ins = 0;
     ops.reverse();
-    while ops.last() == Some(&kiley::bialignment::Op::Ins) {
+    while ops.last() == Some(&kiley::Op::Ins) {
         ops.pop();
         head_ins += 1;
     }
     ops.reverse();
     let mut tail_ins = 0;
-    while ops.last() == Some(&kiley::bialignment::Op::Ins) {
+    while ops.last() == Some(&kiley::Op::Ins) {
         ops.pop();
         tail_ins += 1;
     }
