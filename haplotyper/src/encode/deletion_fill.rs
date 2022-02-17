@@ -48,14 +48,12 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
             find_new_node.extend(newly_encoded_units);
             let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
             debug!("Filled:{}\t{}", current, after);
-            if after <= current {
-                if i == 0 {
-                    debug!("Filled\tBREAK\tOuter\t{}", t);
-                    break 'outer;
-                } else {
-                    debug!("Filled\tBREAK\tInner");
-                    break;
-                }
+            if after <= current && i == 0 {
+                debug!("Filled\tBREAK\tOuter\t{}", t);
+                break 'outer;
+            } else if after <= current {
+                debug!("Filled\tBREAK\tInner");
+                break;
             }
             current = after;
         }
@@ -126,67 +124,23 @@ pub fn correct_deletion_error(
     // TODO:Parametrize here.
     let threshold = 3;
     let nodes = &read.nodes;
-    let take_len = nodes.len();
     let mut inserts = vec![];
-    // TODO: FIXME.
-    let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
-    let seq = &seq;
-    for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
-        let head_cand = pileup.check_insertion_head(nodes, threshold, idx);
-        let head_best = head_cand
-            .iter()
-            .filter(|&&(_, _, id)| !failed_trials.contains(&(idx, id)))
-            .filter_map(|&(start_position, direction, uid)| {
-                let unit = *units.get(&uid)?;
-                consensi
-                    .get(&uid)?
-                    .iter()
-                    .filter_map(|&(cluster, ref cons)| {
-                        let end_position =
-                            (start_position + cons.len() + 2 * OFFSET).min(seq.len());
-                        let is_the_same_encode = nodes[idx].unit == uid
-                            && abs(nodes[idx].position_from_start, start_position) < cons.len();
-                        if start_position < end_position && !is_the_same_encode {
-                            let position = (start_position, end_position, direction);
-                            let unit_info = (unit, cluster, cons.as_slice());
-                            encode_node(seq, position, unit_info, sim_thr)
-                        } else {
-                            None
-                        }
-                    })
-                    .max_by_key(|x| x.1)
-            })
-            .max_by_key(|x| x.1);
+    assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
+    // for (idx, pileup) in pileups.iter().enumerate().take(nodes.len()).skip(1) {
+    for (idx, pileup) in pileups.iter().enumerate() {
+        let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
+        head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
+        let head_best = try_encoding_head(nodes, &head_cand, idx, &consensi, &units, seq, sim_thr);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
-            None => failed_trials.extend(head_cand.iter().map(|&(_, _, uid)| (idx, uid))),
+            None => failed_trials.extend(head_cand.into_iter().map(|x| (idx, x.2))),
         }
-        let tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
-        let tail_best = tail_cand
-            .iter()
-            .filter(|&&(_, _, id)| !failed_trials.contains(&(idx, id)))
-            .filter_map(|&(end_position, direction, uid)| {
-                let unit = *units.get(&uid)?;
-                consensi
-                    .get(&uid)?
-                    .iter()
-                    .filter_map(|&(cluster, ref cons)| {
-                        let end_position = end_position.min(seq.len());
-                        let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
-                        if start_position < end_position {
-                            let positions = (start_position, end_position, direction);
-                            let unit_info = (unit, cluster, cons.as_slice());
-                            encode_node(seq, positions, unit_info, sim_thr)
-                        } else {
-                            None
-                        }
-                    })
-                    .max_by_key(|x| x.1)
-            })
-            .max_by_key(|x| x.1);
+        let mut tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
+        tail_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
+        let tail_best = try_encoding_tail(&tail_cand, consensi, units, seq, sim_thr);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
-            None => failed_trials.extend(tail_cand.iter().map(|&(_, _, uid)| (idx, uid))),
+            None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.2))),
         }
     }
     let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.unit).collect();
@@ -207,92 +161,100 @@ pub fn correct_deletion_error(
     new_inserts
 }
 
+fn try_encoding_head(
+    nodes: &[Node],
+    head_cand: &[(usize, bool, u64)],
+    idx: usize,
+    consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
+    units: &HashMap<u64, &Unit>,
+    seq: &[u8],
+    sim_thr: f64,
+) -> Option<(Node, i32)> {
+    head_cand
+        .iter()
+        .filter_map(|&(start_position, direction, uid)| {
+            let unit = *units.get(&uid)?;
+            let consensi = consensi.get(&uid)?.iter();
+            consensi
+                .filter_map(|&(cluster, ref cons)| {
+                    let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
+                    let is_the_same_encode = match nodes.get(idx) {
+                        Some(node) => {
+                            node.unit == uid
+                                && abs(node.position_from_start, start_position) < cons.len()
+                        }
+                        None => false,
+                    };
+                    if start_position < end_position && !is_the_same_encode {
+                        let position = (start_position, end_position, direction);
+                        let unit_info = (unit, cluster, cons.as_slice());
+                        encode_node(seq, position, unit_info, sim_thr)
+                    } else {
+                        None
+                    }
+                })
+                .max_by_key(|x| x.1)
+        })
+        .max_by_key(|x| x.1)
+}
+
+fn try_encoding_tail(
+    tail_cand: &[(usize, bool, u64)],
+    consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
+    units: &HashMap<u64, &Unit>,
+    seq: &[u8],
+    sim_thr: f64,
+) -> Option<(Node, i32)> {
+    tail_cand
+        .iter()
+        .filter_map(|&(end_position, direction, uid)| {
+            let unit = *units.get(&uid)?;
+            consensi
+                .get(&uid)?
+                .iter()
+                .filter_map(|&(cluster, ref cons)| {
+                    let end_position = end_position.min(seq.len());
+                    let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
+                    if start_position < end_position {
+                        let positions = (start_position, end_position, direction);
+                        let unit_info = (unit, cluster, cons.as_slice());
+                        encode_node(seq, positions, unit_info, sim_thr)
+                    } else {
+                        None
+                    }
+                })
+                .max_by_key(|x| x.1)
+        })
+        .max_by_key(|x| x.1)
+}
+
 // Try to Encode Node. Return Some(node) if the alignment is good.
 // Return also the alignment score of the encoding.
 // The match score is 2, mism is -6, gap open is -5, and gap ext is -1.
 fn encode_node(
-    seq: &[u8],
+    query: &[u8],
     (start, end, is_forward): (usize, usize, bool),
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<(Node, i32)> {
-    let mut query = if is_forward {
-        seq[start..end].to_vec()
+    // Initial filter.
+    if (end - start) < 2 * unitseq.len() / 3 {
+        return None;
+    }
+    // Tune the query...
+    let query = if is_forward {
+        query[start..end].to_vec()
     } else {
-        bio_utils::revcmp(&seq[start..end])
+        bio_utils::revcmp(&query[start..end])
     };
-    query.iter_mut().for_each(|x| x.make_ascii_uppercase());
-    let (seq, aln_start, aln_end, ops, score) = {
-        let (seq, aln_start, aln_end) = {
-            let mode = edlib_sys::AlignMode::Infix;
-            let task = edlib_sys::AlignTask::Alignment;
-            // Note that unit.seq would be smaller than query! So the operations should be reversed.
-            let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
-            let locations = alignment.locations.unwrap();
-            let (aln_start, aln_end) = locations[0];
-            (&query[aln_start..=aln_end], aln_start, aln_end)
-        };
-        let band = ((seq.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-        let (ops, aln_start, aln_end) = {
-            // TODO: Infix alignment would be better, but it is still OK.
-            // TODO:This should be depends on read type.
-            // TODO: Guided version would be much better...?
-            let (_score, mut ops) =
-                kiley::bialignment::global_banded(unitseq, seq, 2, -6, -5, -1, band);
-            let (aln_start, aln_end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
-            (ops, aln_start, aln_end)
-        };
-        let unitlen = unitseq.len() as f64;
-        let indel_thr =
-            ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
-        let query = query[aln_start..=aln_end].to_vec();
-        let (aln_len, mat_num) = ops.iter().fold((0, 0), |(aln, mat), &op| match op {
-            kiley::Op::Match => (aln + 1, mat + 1),
-            _ => (aln + 1, mat),
-        });
-        let percent_identity = mat_num as f64 / aln_len as f64;
-        let below_dissim = (1f64 - sim_thr) < percent_identity;
-        // Mat=>-1, Other->1
-        let indel_mism = ops
-            .iter()
-            .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
-        let max_indel = super::max_region(indel_mism).max(0) as usize;
-        assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-        if !below_dissim || indel_thr < max_indel {
-            if log_enabled!(log::Level::Trace) {
-                trace!(
-                    "FILLDEL\t{}\t{}\t{}\t{}\tNG",
-                    unit.id,
-                    cluster,
-                    max_indel,
-                    percent_identity
-                );
-                let (xr, ar, yr) = kiley::recover(unitseq, &query, &ops);
-                for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-                    eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
-                    eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
-                    eprintln!("ALN\t{}\n", String::from_utf8_lossy(yr));
-                }
-            }
-            return None;
-        }
-        trace!(
-            "FILLDEL{}\t{}\t{}\t{}\tOK",
-            unit.id,
-            cluster,
-            max_indel,
-            percent_identity
-        );
-        let (score, ops) =
-            kiley::bialignment::global_banded(unit.seq(), &query, 2, -6, -5, -1, band);
-        (query, aln_start, aln_end, ops, score)
-    };
+    let (seq, aln_start, aln_end, ops, score) =
+        fine_mapping(&query, (unit, cluster, unitseq), sim_thr)?;
     let ops = super::compress_kiley_ops(&ops);
     let cl = unit.cluster_num;
     let position_from_start = if is_forward {
         start + aln_start
     } else {
-        start + query.len() - aln_end - 1
+        start + query.len() - aln_end
     };
     // I think we should NOT make likelihood gain to some biased value,
     // as 1. if the alignment gives the certaintly, then we can impute the clustering by the alignment,
@@ -301,6 +263,63 @@ fn encode_node(
     let mut node = Node::new(unit.id, is_forward, &seq, ops, position_from_start, cl);
     node.cluster = cluster;
     Some((node, score))
+}
+
+const ALN_PARAMETER: (i32, i32, i32, i32) = (2, -6, -5, -1);
+fn fine_mapping<'a>(
+    query: &'a [u8],
+    (unit, cluster, unitseq): (&Unit, u64, &[u8]),
+    sim_thr: f64,
+) -> Option<(&'a [u8], usize, usize, Vec<kiley::Op>, i32)> {
+    fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
+        use kiley::Op::*;
+        ops.iter()
+            .map(|&op| [Match, Del, Ins, Mismatch][op as usize])
+            .collect()
+    }
+    let (query, aln_start, aln_end, ops, band) = {
+        let mode = edlib_sys::AlignMode::Infix;
+        let task = edlib_sys::AlignTask::Alignment;
+        // Note that unit.seq would be smaller than query! So the operations should be reversed.
+        let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
+        let locations = alignment.locations.unwrap();
+        let (aln_start, aln_end) = locations[0];
+        let band = (((aln_end - aln_start + 1) as f64 * sim_thr * 0.3).ceil() as usize).max(10);
+        let seq = &query[aln_start..=aln_end];
+        let ops = edlib_op_to_kiley_op(&alignment.operations.unwrap());
+        let (_, mut ops) =
+            kiley::bialignment::guided::global_guided(unitseq, seq, &ops, band, ALN_PARAMETER);
+        let (start, end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
+        (&query[start..=end], start, end + 1, ops, band)
+    };
+    let unitlen = unitseq.len() as f64;
+    let indel_thr = ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
+    let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
+    let identity = mat_num as f64 / ops.len() as f64;
+    let below_dissim = (1f64 - sim_thr) < identity;
+    // Mat=>-1, Other->1
+    let indel_mism = ops
+        .iter()
+        .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
+    let max_indel = super::max_region(indel_mism).max(0) as usize;
+    let info = format!("{}\t{}\t{}\t{}", unit.id, cluster, max_indel, identity);
+    if !below_dissim || indel_thr < max_indel {
+        trace!("FILLDEL\t{}\tNG", info);
+        if log_enabled!(log::Level::Trace) {
+            let (xr, ar, yr) = kiley::recover(unitseq, &query, &ops);
+            for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+                eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
+                eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
+                eprintln!("ALN\t{}\n", String::from_utf8_lossy(yr));
+            }
+        }
+        None
+    } else {
+        trace!("FILLDEL{}\tOK", info);
+        use kiley::bialignment::guided::global_guided;
+        let (score, ops) = global_guided(unit.seq(), &query, &ops, band, ALN_PARAMETER);
+        Some((query, aln_start, aln_end, ops, score))
+    }
 }
 
 // Triming the head/tail insertion, re-calculate the start and end position.
@@ -336,63 +355,43 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
             Some(res) => res,
             None => continue,
         };
-        // let query = if is_forward {
-        //     query.clone()
-        // } else {
-        //     query.rev()
-        // };
-        // let (mut r_ptr, mut q_ptr) = (0, 0);
         let mut q_ptr = SkeltonIter::new(query, is_forward);
         let mut pileups = pileups.iter_mut();
         let mut current_pu = pileups.next().unwrap();
+        let mut position = 0;
         for op in aln {
+            // These unwraps are safe.
             match op {
-                Op::Ins(l) => {
-                    if let Some(head) = q_ptr.next() {
-                        current_pu.add_head(head.clone());
-                    }
+                Op::Ins(l) if position == 0 => {
+                    // Retain only the last insertion...
+                    current_pu.add_tail(q_ptr.nth(l - 1).unwrap());
+                }
+                Op::Ins(l) if position == pileups.len() - 1 => {
+                    // Retain only the first insertion...
+                    current_pu.add_head(q_ptr.next().unwrap());
                     for _ in 0..l - 1 {
-                        if let Some(tail) = q_ptr.next() {
-                            current_pu.add_tail(tail.clone());
-                        }
+                        q_ptr.next().unwrap();
+                    }
+                }
+                Op::Ins(l) => {
+                    current_pu.add_head(q_ptr.next().unwrap());
+                    for _ in 0..l - 1 {
+                        current_pu.add_tail(q_ptr.next().unwrap());
                     }
                 }
                 Op::Del(l) => {
+                    current_pu = pileups.nth(l - 1).unwrap();
+                    position += l;
+                }
+                Op::Match(l) => {
+                    q_ptr.nth(l - 1);
+                    position += l;
                     for _ in 0..l {
+                        current_pu.coverage += 1;
                         current_pu = pileups.next().unwrap();
                     }
                 }
-                Op::Match(l) => {
-                    for _ in 0..l {
-                        current_pu.coverage += 1;
-                        let next = (pileups.next(), q_ptr.next());
-                        if let (Some(pileup), _) = next {
-                            current_pu = pileup;
-                        }
-                    }
-                }
             }
-            // Op::Ins(l) => {
-            //     if r_ptr < read.nodes.len() && 0 < r_ptr {
-            //         pileups[r_ptr].add_head(query.nodes[q_ptr].clone());
-            //         if 1 < l {
-            //             let last_insertion = q_ptr + l - 1;
-            //             pileups[r_ptr].add_tail(query.nodes[last_insertion].clone());
-            //         }
-            //     }
-            //     q_ptr += l;
-            // }
-            // Op::Del(l) => {
-            //     r_ptr += l;
-            // }
-            // Op::Match(l) => {
-            //     for pileup in pileups.iter_mut().skip(r_ptr).take(l) {
-            //         pileup.coverage += 1;
-            //     }
-            //     r_ptr += l;
-            //     q_ptr += l;
-            // }
-            // }
         }
     }
     pileups
@@ -439,70 +438,7 @@ fn score(x: &LightNode, y: &LightNode) -> i32 {
         (true, true, true) => 1,
         (true, false, true) => -1,
     }
-    // if x.unit == y.unit && x.is_forward == y.is_forward {
-    //     1
-    // } else {
-    //     MIN_ALN
-    // }
 }
-
-// This should return overlapping alignment and its score.
-// #[allow(dead_code)]
-// fn pairwise_alignment(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Vec<Op>) {
-//     let (read, query) = (&read.nodes, &query.nodes);
-//     // We do not allow any mismatch by restricting the mismatch score to read.len() + query.len(),
-//     // which is apparently an upperbound.
-//     // Fill DP cells.
-//     let mut dp = vec![vec![0; query.len() + 1]; read.len() + 1];
-//     for (i, x) in read.iter().enumerate() {
-//         for (j, y) in query.iter().enumerate() {
-//             let (i, j) = (i + 1, j + 1);
-//             let match_score = dp[i - 1][j - 1] + score(x, y);
-//             let ins = dp[i][j - 1] - 1;
-//             let del = dp[i - 1][j] - 1;
-//             dp[i][j] = match_score.max(del).max(ins);
-//         }
-//     }
-//     let (mut r_pos, mut q_pos, dist) = (0..read.len() + 1)
-//         .map(|i| (i, query.len()))
-//         .chain((0..query.len() + 1).map(|j| (read.len(), j)))
-//         .map(|(i, j)| (i, j, dp[i][j]))
-//         .max_by_key(|x| x.2)
-//         .unwrap();
-//     // We encode alignment by silly coding, in which every operation has length 1 and
-//     // successive operation might be the same.
-//     let mut ops = vec![];
-//     if read.len() != r_pos {
-//         ops.push(Op::Del(read.len() - r_pos));
-//     }
-//     if query.len() != q_pos {
-//         ops.push(Op::Ins(query.len() - q_pos));
-//     }
-//     while 0 < r_pos && 0 < q_pos {
-//         let current_dist = dp[r_pos][q_pos];
-//         let match_score = dp[r_pos - 1][q_pos - 1] + score(&read[r_pos - 1], &query[q_pos - 1]);
-//         if current_dist == match_score {
-//             ops.push(Op::Match(1));
-//             q_pos -= 1;
-//             r_pos -= 1;
-//         } else if current_dist == dp[r_pos - 1][q_pos] - 1 {
-//             ops.push(Op::Del(1));
-//             r_pos -= 1;
-//         } else {
-//             assert_eq!(current_dist, dp[r_pos][q_pos - 1] - 1);
-//             ops.push(Op::Ins(1));
-//             q_pos -= 1;
-//         }
-//     }
-//     if r_pos != 0 {
-//         ops.push(Op::Del(r_pos));
-//     }
-//     if q_pos != 0 {
-//         ops.push(Op::Ins(q_pos));
-//     }
-//     ops.reverse();
-//     (dist, compress_operations(ops))
-// }
 
 fn pairwise_alignment_gotoh(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Vec<Op>) {
     let (read, query) = (&read.nodes, &query.nodes);
@@ -621,14 +557,6 @@ fn get_match_units(ops: &[Op]) -> usize {
         .sum::<usize>()
 }
 
-// Get threshold. In other words, a position would be regarded as an insertion if the
-// count for a inserted unit is more than the return value of this function.
-// fn get_threshold(pileups: &[Pileup]) -> usize {
-//     let totcov = pileups.iter().map(|p| p.coverage).sum::<usize>();
-//     // We need at least 3 insertions to confirm.
-//     (totcov / 3 / pileups.len()).max(3)
-// }
-
 #[derive(Debug, Clone)]
 pub struct Pileup {
     // insertion at the beggining of this node
@@ -661,14 +589,14 @@ impl Pileup {
             coverage: 0,
         }
     }
-    fn information_head(&self, unit: u64, is_forward: bool) -> (isize, isize) {
+    fn information_head(&self, unit: u64, is_forward: bool) -> (Option<isize>, Option<isize>) {
         let inserts = self
             .head_inserted
             .iter()
             .filter(|node| node.unit == unit && node.is_forward == is_forward);
         Self::summarize(inserts)
     }
-    fn information_tail(&self, unit: u64, is_forward: bool) -> (isize, isize) {
+    fn information_tail(&self, unit: u64, is_forward: bool) -> (Option<isize>, Option<isize>) {
         let inserts = self
             .tail_inserted
             .iter()
@@ -676,26 +604,22 @@ impl Pileup {
         Self::summarize(inserts)
     }
     fn summarize<'a>(
-        inserts: impl std::iter::Iterator<Item = &'a LightNode> + Clone,
-    ) -> (isize, isize) {
-        let prev_offset = {
-            let (count, total) =
-                inserts
-                    .clone()
-                    .fold((0, 0), |(count, total), node| match node.prev_offset {
-                        Some(len) => (count + 1, total + len),
-                        None => (count, total),
-                    });
-            total / count
-        };
-        let after_offset = {
-            let (count, total) =
-                inserts.fold((0, 0), |(count, total), node| match node.after_offset {
-                    Some(len) => (count + 1, total + len),
-                    None => (count, total),
-                });
-            total / count
-        };
+        inserts: impl std::iter::Iterator<Item = &'a LightNode>,
+    ) -> (Option<isize>, Option<isize>) {
+        let (mut prev_count, mut prev_total) = (0, 0);
+        let (mut after_count, mut after_total) = (0, 0);
+        for node in inserts {
+            if let Some(len) = node.prev_offset {
+                prev_count += 1;
+                prev_total += len;
+            }
+            if let Some(len) = node.after_offset {
+                after_count += 1;
+                after_total += len;
+            }
+        }
+        let prev_offset = (prev_count != 0).then(|| prev_total / prev_count);
+        let after_offset = (after_count != 0).then(|| after_total / after_count);
         (prev_offset, after_offset)
     }
     fn add_head(&mut self, node: LightNode) {
@@ -712,13 +636,13 @@ impl Pileup {
     ) -> Vec<(usize, bool, u64)> {
         self.insertion_head()
             .filter(|&(num, _, _)| threshold <= num)
-            .map(|(_, uid, direction)| {
+            .filter_map(|(_, uid, direction)| {
                 let (prev_offset, _) = self.information_head(uid, direction);
                 let start_position =
                     (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
-                let start_position = start_position + prev_offset;
+                let start_position = start_position + prev_offset?;
                 let start_position = (start_position as usize).saturating_sub(OFFSET);
-                (start_position, direction, uid)
+                Some((start_position, direction, uid))
             })
             .collect()
     }
@@ -734,11 +658,10 @@ impl Pileup {
         };
         self.insertion_tail()
             .filter(|&(num, _, _)| threshold <= num)
-            .map(|(_, uid, direction)| {
+            .filter_map(|(_, uid, direction)| {
                 let (_, after_offset) = self.information_tail(uid, direction);
-                let end_position = (end_position + after_offset) as usize + OFFSET;
-                // TODO: Validate end position.
-                (end_position, direction, uid)
+                let end_position = (end_position + after_offset?) as usize + OFFSET;
+                Some((end_position, direction, uid))
             })
             .collect()
     }
@@ -747,7 +670,6 @@ impl Pileup {
 #[derive(Clone)]
 pub struct ReadSkelton {
     nodes: Vec<LightNode>,
-    // sets: HashSet<u64>,
 }
 
 impl std::fmt::Debug for ReadSkelton {
@@ -800,7 +722,7 @@ impl ReadSkelton {
 
 #[derive(Clone)]
 pub struct LightNode {
-    // How long should be add to th last position of the previous node to
+    // How long should be add to the last position of the previous node to
     // get the start position of this node.
     // None if this is the first node.
     prev_offset: Option<isize>,
@@ -884,36 +806,6 @@ impl<'a> std::iter::Iterator for SkeltonIter<'a> {
 #[cfg(test)]
 mod deletion_fill {
     use super::*;
-    // #[test]
-    // fn aln_test() {
-    //     let nodes: Vec<_> = vec![69, 148, 318, 0]
-    //         .into_iter()
-    //         .zip(vec![false, false, true, true])
-    //         .map(|(unit, is_forward)| LightNode {
-    //             prev_offset: None,
-    //             unit,
-    //             cluster: 0,
-    //             is_forward,
-    //             after_offset: None,
-    //         })
-    //         .collect();
-    //     let read = ReadSkelton { nodes };
-    //     let nodes: Vec<_> = vec![69, 221, 286, 148, 318]
-    //         .into_iter()
-    //         .zip(vec![false, true, true, false, true])
-    //         .map(|(unit, is_forward)| LightNode {
-    //             prev_offset: None,
-    //             unit,
-    //             cluster: 0,
-    //             is_forward,
-    //             after_offset: None,
-    //         })
-    //         .collect();
-    //     let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
-    //     let query = ReadSkelton { nodes };
-    //     let (score, ops) = pairwise_alignment(&read, &query);
-    //     assert_eq!(score, 1, "{:?}", ops);
-    // }
     #[test]
     fn aln_test_gotoh() {
         let into_reads = |nodes: Vec<u64>| {

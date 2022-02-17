@@ -568,8 +568,11 @@ fn encode_edge(
         x.extend(y);
         x
     });
+    let ctg_orig_len = contig.len();
     // seq is equal to seq[start..end], revcmped if is_forward is false.
-    let (start, end, seq, ctg_start, ctg_end) = tune_position(start, end, seq, is_forward, &contig);
+    let band = read_type.band_width();
+    let ((start, end, seq), (ctg_start, ctg_end, _), mut ops) =
+        tune_position(start, end, seq, is_forward, &contig, band);
     let (break_points, _): (Vec<_>, _) =
         units
             .iter()
@@ -590,10 +593,6 @@ fn encode_edge(
         0 => vec![kiley::Op::Del; ctg_start],
         i => vec![kiley::Op::Del; ctg_start - break_points[i - 1]],
     };
-    let ctg_orig_len = contig.len();
-    let contig = &contig[ctg_start..ctg_end];
-    let (_, mut ops) =
-        kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, read_type.band_width());
     // Push deletion operations up to the last base.
     ops.extend(std::iter::repeat(kiley::Op::Del).take(ctg_orig_len - ctg_end));
     // Split the alignment into encoded nodes.
@@ -679,13 +678,18 @@ fn encode_edge(
 // This.
 // So, we need two-round infix alignment so that, in first alignment, the sequence would be truncted,
 // and the second round the contig would be tructed.
-fn tune_position(
+fn tune_position<'a>(
     start: usize,
     end: usize,
     seq: &[u8],
     is_forward: bool,
-    contig: &[u8],
-) -> (usize, usize, Vec<u8>, usize, usize) {
+    contig: &'a [u8],
+    band: usize,
+) -> (
+    (usize, usize, Vec<u8>),
+    (usize, usize, &'a [u8]),
+    Vec<kiley::Op>,
+) {
     let mut seq = if is_forward {
         seq[start..end].to_vec()
     } else {
@@ -693,7 +697,7 @@ fn tune_position(
     };
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
     let mode = edlib_sys::AlignMode::Infix;
-    let task = edlib_sys::AlignTask::Location;
+    let task = edlib_sys::AlignTask::Alignment;
     // First, let's truncate the `seq`
     let alignment = edlib_sys::edlib_align(contig, &seq, mode, task);
     let (seq_start, seq_end) = alignment.locations.unwrap()[0];
@@ -705,7 +709,6 @@ fn tune_position(
     (0..seq_start).map(|_| seq.pop().unwrap()).count();
     seq.reverse();
     // In the original coordinate.
-    // TODO:Maybe this is wrong...
     let (seq_start, seq_end) = match is_forward {
         true => (start + seq_start, start + seq_end),
         false => (end - seq_end, end - seq_start),
@@ -714,5 +717,18 @@ fn tune_position(
     let alignment = edlib_sys::edlib_align(&seq, contig, mode, task);
     let (ctg_start, ctg_end) = alignment.locations.unwrap()[0];
     let ctg_end = ctg_end + 1;
-    (seq_start, seq_end, seq, ctg_start, ctg_end)
+    let contig = &contig[ctg_start..ctg_end];
+    // let ops: Vec<_> = alignment
+    //     .operations
+    //     .unwrap()
+    //     .iter()
+    //     .map(|&op| {
+    //         use kiley::Op::*;
+    //         [Match, Ins, Del, Mismatch][op as usize]
+    //     })
+    //     .collect();
+    // use kiley::bialignment::guided::global_guided;
+    // let (_, ops) = global_guided(contig, &seq, &ops, band, (2, -5, -6, -1));
+    let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, band);
+    ((seq_start, seq_end, seq), (ctg_start, ctg_end, contig), ops)
 }
