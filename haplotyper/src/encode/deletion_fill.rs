@@ -40,14 +40,9 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
                 .flat_map(|(r, fails)| {
                     let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
                     seq.iter_mut().for_each(u8::make_ascii_uppercase);
-                    correct_deletion_error(
-                        (r, &seq),
-                        fails,
-                        &representative,
-                        &units,
-                        &read_skeltons,
-                        sim_thr,
-                    )
+                    let r_sk = &read_skeltons;
+                    let r = (r, seq.as_slice());
+                    correct_deletion_error(r, fails, &representative, &units, &r_sk, sim_thr)
                 })
                 .collect();
             find_new_node.extend(newly_encoded_units);
@@ -116,7 +111,8 @@ fn abs(x: usize, y: usize) -> usize {
 }
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
-const OFFSET: usize = 300;
+const OFFSET: usize = 100;
+
 // returns the ids of the units newly encoded.
 pub fn correct_deletion_error(
     (read, seq): (&mut EncodedRead, &[u8]),
@@ -132,6 +128,7 @@ pub fn correct_deletion_error(
     let nodes = &read.nodes;
     let take_len = nodes.len();
     let mut inserts = vec![];
+    // TODO: FIXME.
     let seq: Vec<_> = seq.iter().map(|x| x.to_ascii_uppercase()).collect();
     let seq = &seq;
     for (idx, pileup) in pileups.iter().enumerate().take(take_len).skip(1) {
@@ -239,6 +236,7 @@ fn encode_node(
         let (ops, aln_start, aln_end) = {
             // TODO: Infix alignment would be better, but it is still OK.
             // TODO:This should be depends on read type.
+            // TODO: Guided version would be much better...?
             let (_score, mut ops) =
                 kiley::bialignment::global_banded(unitseq, seq, 2, -6, -5, -1, band);
             let (aln_start, aln_end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
@@ -324,45 +322,77 @@ fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>, start: usize, end: usize) 
 }
 
 // Align read skeltons to read, return the pileup sumamries.
+// i-> insertions before the i-th nodes.
 fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
+    assert!(!read.nodes.is_empty());
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
-    for query in reads
+    let units_in_read: HashSet<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+    let filtered_read = reads
         .iter()
-        .filter(|q| read.nodes.iter().any(|n| q.sets.contains(&n.unit)))
-    {
-        let (aln, is_forward) = match alignment(read, query) {
+        .filter(|q| q.nodes.iter().any(|n| units_in_read.contains(&n.key())));
+    let skelton = ReadSkelton::new(read);
+    for query in filtered_read {
+        let (aln, is_forward) = match alignment(&skelton, query) {
             Some(res) => res,
             None => continue,
         };
-        let query = if is_forward {
-            query.clone()
-        } else {
-            query.rev()
-        };
-        let (mut r_ptr, mut q_ptr) = (0, 0);
+        // let query = if is_forward {
+        //     query.clone()
+        // } else {
+        //     query.rev()
+        // };
+        // let (mut r_ptr, mut q_ptr) = (0, 0);
+        let mut q_ptr = SkeltonIter::new(query, is_forward);
+        let mut pileups = pileups.iter_mut();
+        let mut current_pu = pileups.next().unwrap();
         for op in aln {
             match op {
                 Op::Ins(l) => {
-                    if r_ptr < read.nodes.len() && 0 < r_ptr {
-                        pileups[r_ptr].add_head(query.nodes[q_ptr].clone());
-                        if 1 < l {
-                            let last_insertion = q_ptr + l - 1;
-                            pileups[r_ptr].add_tail(query.nodes[last_insertion].clone());
+                    if let Some(head) = q_ptr.next() {
+                        current_pu.add_head(head.clone());
+                    }
+                    for _ in 0..l - 1 {
+                        if let Some(tail) = q_ptr.next() {
+                            current_pu.add_tail(tail.clone());
                         }
                     }
-                    q_ptr += l;
                 }
                 Op::Del(l) => {
-                    r_ptr += l;
+                    for _ in 0..l {
+                        current_pu = pileups.next().unwrap();
+                    }
                 }
                 Op::Match(l) => {
-                    for pileup in pileups.iter_mut().skip(r_ptr).take(l) {
-                        pileup.coverage += 1;
+                    for _ in 0..l {
+                        current_pu.coverage += 1;
+                        let next = (pileups.next(), q_ptr.next());
+                        if let (Some(pileup), _) = next {
+                            current_pu = pileup;
+                        }
                     }
-                    r_ptr += l;
-                    q_ptr += l;
                 }
             }
+            // Op::Ins(l) => {
+            //     if r_ptr < read.nodes.len() && 0 < r_ptr {
+            //         pileups[r_ptr].add_head(query.nodes[q_ptr].clone());
+            //         if 1 < l {
+            //             let last_insertion = q_ptr + l - 1;
+            //             pileups[r_ptr].add_tail(query.nodes[last_insertion].clone());
+            //         }
+            //     }
+            //     q_ptr += l;
+            // }
+            // Op::Del(l) => {
+            //     r_ptr += l;
+            // }
+            // Op::Match(l) => {
+            //     for pileup in pileups.iter_mut().skip(r_ptr).take(l) {
+            //         pileup.coverage += 1;
+            //     }
+            //     r_ptr += l;
+            //     q_ptr += l;
+            // }
+            // }
         }
     }
     pileups
@@ -377,12 +407,12 @@ const MIN_MATCH: usize = 2;
 const SCORE_THR: i32 = 1;
 // Alignment to the best direction, return the cigar and if the query should be reversed.
 // (*false* if needed).
-fn alignment(read: &EncodedRead, query: &ReadSkelton) -> Option<(Vec<Op>, bool)> {
-    let read = ReadSkelton::from_rich_nodes(&read.nodes);
-    let (f_score, f_ops) = pairwise_alignment_gotoh(&read, query);
+// fn alignment(read: &EncodedRead, query: &ReadSkelton) -> Option<(Vec<Op>, bool)> {
+fn alignment(read: &ReadSkelton, query: &ReadSkelton) -> Option<(Vec<Op>, bool)> {
+    let (f_score, f_ops) = pairwise_alignment_gotoh(read, query);
     let f_match = get_match_units(&f_ops);
     let query = query.rev();
-    let (r_score, r_ops) = pairwise_alignment_gotoh(&read, &query);
+    let (r_score, r_ops) = pairwise_alignment_gotoh(read, &query);
     let r_match = get_match_units(&r_ops);
     let score_thr = if read.nodes.len() == 2 { 1 } else { SCORE_THR };
     // Dovetails should be proper. Not Del->In or In -> Del transition should reside.
@@ -403,70 +433,76 @@ fn is_proper(ops: &[Op]) -> bool {
 
 const MIN_ALN: i32 = -10000000;
 fn score(x: &LightNode, y: &LightNode) -> i32 {
-    if x.unit == y.unit && x.is_forward == y.is_forward {
-        1
-    } else {
-        MIN_ALN
+    let is_same_dir = x.is_forward == y.is_forward;
+    match (x.unit == y.unit, x.cluster == y.cluster, is_same_dir) {
+        (_, _, false) | (false, _, _) => MIN_ALN,
+        (true, true, true) => 1,
+        (true, false, true) => -1,
     }
+    // if x.unit == y.unit && x.is_forward == y.is_forward {
+    //     1
+    // } else {
+    //     MIN_ALN
+    // }
 }
 
 // This should return overlapping alignment and its score.
-#[allow(dead_code)]
-fn pairwise_alignment(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Vec<Op>) {
-    let (read, query) = (&read.nodes, &query.nodes);
-    // We do not allow any mismatch by restricting the mismatch score to read.len() + query.len(),
-    // which is apparently an upperbound.
-    // Fill DP cells.
-    let mut dp = vec![vec![0; query.len() + 1]; read.len() + 1];
-    for (i, x) in read.iter().enumerate() {
-        for (j, y) in query.iter().enumerate() {
-            let (i, j) = (i + 1, j + 1);
-            let match_score = dp[i - 1][j - 1] + score(x, y);
-            let ins = dp[i][j - 1] - 1;
-            let del = dp[i - 1][j] - 1;
-            dp[i][j] = match_score.max(del).max(ins);
-        }
-    }
-    let (mut r_pos, mut q_pos, dist) = (0..read.len() + 1)
-        .map(|i| (i, query.len()))
-        .chain((0..query.len() + 1).map(|j| (read.len(), j)))
-        .map(|(i, j)| (i, j, dp[i][j]))
-        .max_by_key(|x| x.2)
-        .unwrap();
-    // We encode alignment by silly coding, in which every operation has length 1 and
-    // successive operation might be the same.
-    let mut ops = vec![];
-    if read.len() != r_pos {
-        ops.push(Op::Del(read.len() - r_pos));
-    }
-    if query.len() != q_pos {
-        ops.push(Op::Ins(query.len() - q_pos));
-    }
-    while 0 < r_pos && 0 < q_pos {
-        let current_dist = dp[r_pos][q_pos];
-        let match_score = dp[r_pos - 1][q_pos - 1] + score(&read[r_pos - 1], &query[q_pos - 1]);
-        if current_dist == match_score {
-            ops.push(Op::Match(1));
-            q_pos -= 1;
-            r_pos -= 1;
-        } else if current_dist == dp[r_pos - 1][q_pos] - 1 {
-            ops.push(Op::Del(1));
-            r_pos -= 1;
-        } else {
-            assert_eq!(current_dist, dp[r_pos][q_pos - 1] - 1);
-            ops.push(Op::Ins(1));
-            q_pos -= 1;
-        }
-    }
-    if r_pos != 0 {
-        ops.push(Op::Del(r_pos));
-    }
-    if q_pos != 0 {
-        ops.push(Op::Ins(q_pos));
-    }
-    ops.reverse();
-    (dist, compress_operations(ops))
-}
+// #[allow(dead_code)]
+// fn pairwise_alignment(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Vec<Op>) {
+//     let (read, query) = (&read.nodes, &query.nodes);
+//     // We do not allow any mismatch by restricting the mismatch score to read.len() + query.len(),
+//     // which is apparently an upperbound.
+//     // Fill DP cells.
+//     let mut dp = vec![vec![0; query.len() + 1]; read.len() + 1];
+//     for (i, x) in read.iter().enumerate() {
+//         for (j, y) in query.iter().enumerate() {
+//             let (i, j) = (i + 1, j + 1);
+//             let match_score = dp[i - 1][j - 1] + score(x, y);
+//             let ins = dp[i][j - 1] - 1;
+//             let del = dp[i - 1][j] - 1;
+//             dp[i][j] = match_score.max(del).max(ins);
+//         }
+//     }
+//     let (mut r_pos, mut q_pos, dist) = (0..read.len() + 1)
+//         .map(|i| (i, query.len()))
+//         .chain((0..query.len() + 1).map(|j| (read.len(), j)))
+//         .map(|(i, j)| (i, j, dp[i][j]))
+//         .max_by_key(|x| x.2)
+//         .unwrap();
+//     // We encode alignment by silly coding, in which every operation has length 1 and
+//     // successive operation might be the same.
+//     let mut ops = vec![];
+//     if read.len() != r_pos {
+//         ops.push(Op::Del(read.len() - r_pos));
+//     }
+//     if query.len() != q_pos {
+//         ops.push(Op::Ins(query.len() - q_pos));
+//     }
+//     while 0 < r_pos && 0 < q_pos {
+//         let current_dist = dp[r_pos][q_pos];
+//         let match_score = dp[r_pos - 1][q_pos - 1] + score(&read[r_pos - 1], &query[q_pos - 1]);
+//         if current_dist == match_score {
+//             ops.push(Op::Match(1));
+//             q_pos -= 1;
+//             r_pos -= 1;
+//         } else if current_dist == dp[r_pos - 1][q_pos] - 1 {
+//             ops.push(Op::Del(1));
+//             r_pos -= 1;
+//         } else {
+//             assert_eq!(current_dist, dp[r_pos][q_pos - 1] - 1);
+//             ops.push(Op::Ins(1));
+//             q_pos -= 1;
+//         }
+//     }
+//     if r_pos != 0 {
+//         ops.push(Op::Del(r_pos));
+//     }
+//     if q_pos != 0 {
+//         ops.push(Op::Ins(q_pos));
+//     }
+//     ops.reverse();
+//     (dist, compress_operations(ops))
+// }
 
 fn pairwise_alignment_gotoh(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Vec<Op>) {
     let (read, query) = (&read.nodes, &query.nodes);
@@ -674,8 +710,6 @@ impl Pileup {
         threshold: usize,
         idx: usize,
     ) -> Vec<(usize, bool, u64)> {
-        //Option<(usize, bool, u64)> {
-        //let (max_num, max_unit, max_dir) = self.max_insertion_head()?;
         self.insertion_head()
             .filter(|&(num, _, _)| threshold <= num)
             .map(|(_, uid, direction)| {
@@ -713,7 +747,7 @@ impl Pileup {
 #[derive(Clone)]
 pub struct ReadSkelton {
     nodes: Vec<LightNode>,
-    sets: HashSet<u64>,
+    // sets: HashSet<u64>,
 }
 
 impl std::fmt::Debug for ReadSkelton {
@@ -749,18 +783,18 @@ impl ReadSkelton {
                 LightNode {
                     prev_offset,
                     unit: n.unit,
+                    cluster: n.cluster,
                     is_forward: n.is_forward,
                     after_offset,
                 }
             })
             .collect();
-        let sets: HashSet<_> = nodes.iter().map(|n| n.unit).collect();
-        ReadSkelton { nodes, sets }
+        // let sets: HashSet<_> = nodes.iter().map(|n| n.unit).collect();
+        ReadSkelton { nodes }
     }
     fn rev(&self) -> Self {
         let nodes: Vec<_> = self.nodes.iter().rev().map(LightNode::rev).collect();
-        let sets = self.sets.clone();
-        Self { nodes, sets }
+        Self { nodes }
     }
 }
 
@@ -771,6 +805,7 @@ pub struct LightNode {
     // None if this is the first node.
     prev_offset: Option<isize>,
     unit: u64,
+    cluster: u64,
     is_forward: bool,
     // Almost the same as prev_offset. The distance between the last postion of this node to
     // the start position of the next node.
@@ -789,10 +824,14 @@ impl std::fmt::Debug for LightNode {
 }
 
 impl LightNode {
+    fn key(&self) -> (u64, u64) {
+        (self.unit, self.cluster)
+    }
     fn rev(
         &Self {
             prev_offset,
             unit,
+            cluster,
             is_forward,
             after_offset,
         }: &Self,
@@ -800,8 +839,44 @@ impl LightNode {
         Self {
             prev_offset: after_offset,
             unit,
+            cluster,
             is_forward: !is_forward,
             after_offset: prev_offset,
+        }
+    }
+}
+
+struct SkeltonIter<'a> {
+    inner: &'a ReadSkelton,
+    index: usize,
+    is_forward: bool,
+}
+
+impl<'a> SkeltonIter<'a> {
+    fn new(read: &'a ReadSkelton, is_forward: bool) -> Self {
+        let mut it = Self {
+            inner: read,
+            is_forward,
+            index: 0,
+        };
+        if !is_forward {
+            it.index = read.nodes.len();
+        }
+        it
+    }
+}
+
+impl<'a> std::iter::Iterator for SkeltonIter<'a> {
+    type Item = LightNode;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_forward {
+            self.index += 1;
+            self.inner.nodes.get(self.index - 1).cloned()
+        } else if 0 < self.index {
+            self.index -= 1;
+            self.inner.nodes.get(self.index).map(LightNode::rev)
+        } else {
+            None
         }
     }
 }
@@ -809,35 +884,36 @@ impl LightNode {
 #[cfg(test)]
 mod deletion_fill {
     use super::*;
-    #[test]
-    fn aln_test() {
-        let nodes: Vec<_> = vec![69, 148, 318, 0]
-            .into_iter()
-            .zip(vec![false, false, true, true])
-            .map(|(unit, is_forward)| LightNode {
-                prev_offset: None,
-                unit,
-                is_forward,
-                after_offset: None,
-            })
-            .collect();
-        let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
-        let read = ReadSkelton { nodes, sets };
-        let nodes: Vec<_> = vec![69, 221, 286, 148, 318]
-            .into_iter()
-            .zip(vec![false, true, true, false, true])
-            .map(|(unit, is_forward)| LightNode {
-                prev_offset: None,
-                unit,
-                is_forward,
-                after_offset: None,
-            })
-            .collect();
-        let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
-        let query = ReadSkelton { nodes, sets };
-        let (score, ops) = pairwise_alignment(&read, &query);
-        assert_eq!(score, 1, "{:?}", ops);
-    }
+    // #[test]
+    // fn aln_test() {
+    //     let nodes: Vec<_> = vec![69, 148, 318, 0]
+    //         .into_iter()
+    //         .zip(vec![false, false, true, true])
+    //         .map(|(unit, is_forward)| LightNode {
+    //             prev_offset: None,
+    //             unit,
+    //             cluster: 0,
+    //             is_forward,
+    //             after_offset: None,
+    //         })
+    //         .collect();
+    //     let read = ReadSkelton { nodes };
+    //     let nodes: Vec<_> = vec![69, 221, 286, 148, 318]
+    //         .into_iter()
+    //         .zip(vec![false, true, true, false, true])
+    //         .map(|(unit, is_forward)| LightNode {
+    //             prev_offset: None,
+    //             unit,
+    //             cluster: 0,
+    //             is_forward,
+    //             after_offset: None,
+    //         })
+    //         .collect();
+    //     let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
+    //     let query = ReadSkelton { nodes };
+    //     let (score, ops) = pairwise_alignment(&read, &query);
+    //     assert_eq!(score, 1, "{:?}", ops);
+    // }
     #[test]
     fn aln_test_gotoh() {
         let into_reads = |nodes: Vec<u64>| {
@@ -846,12 +922,12 @@ mod deletion_fill {
                 .map(|unit| LightNode {
                     prev_offset: None,
                     unit,
+                    cluster: 0,
                     is_forward: true,
                     after_offset: None,
                 })
                 .collect();
-            let sets: HashSet<_> = nodes.iter().map(|x| x.unit).collect();
-            ReadSkelton { nodes, sets }
+            ReadSkelton { nodes }
         };
         let read = into_reads(vec![69, 148, 318, 0]);
         let query = into_reads(vec![69, 221, 286, 148, 318]);

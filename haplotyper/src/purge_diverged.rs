@@ -18,6 +18,8 @@ pub trait PurgeDivergent {
 }
 
 use rayon::prelude::*;
+
+use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
         let copy_number: HashMap<_, _> = self
@@ -25,7 +27,7 @@ impl PurgeDivergent for DataSet {
             .iter()
             .map(|c| (c.id, c.copy_num))
             .collect();
-        let error_rate = crate::light_stats::error_rate(self);
+        let error_rate = self.error_rate();
         let thr = error_rate.total + 4f64 * error_rate.total_sd;
         debug!(
             "PD\tTHR\t{}\t{}\t{}",

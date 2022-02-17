@@ -581,6 +581,15 @@ pub struct ErrorRate {
     pub total_sd: f64,
 }
 
+impl std::fmt::Display for ErrorRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Del:{:.2}/{:.2}", self.del, self.del_sd)?;
+        writeln!(f, "Ins:{:.2}/{:.2}", self.ins, self.ins_sd)?;
+        writeln!(f, "Mism:{:.2}/{:.2}", self.mismatch, self.mism_sd)?;
+        write!(f, "Total:{:.2}/{:.2}", self.total, self.total_sd)
+    }
+}
+
 const CCS_ERROR_RATE: ErrorRate = ErrorRate {
     del: 0.005,
     del_sd: 0.001,

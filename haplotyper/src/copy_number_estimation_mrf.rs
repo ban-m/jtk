@@ -27,8 +27,9 @@ impl Config {
     }
 }
 const ERROR_FRAC: f64 = 0.25;
-const BURN_IN: usize = 300_000;
-const SAMPLE_LEN: usize = 1_000;
+const BURN_IN: usize = 1000;
+// const BURN_IN: usize = 300_000;
+// const SAMPLE_LEN: usize = 1_000;
 // target of consistency factor.
 const TARGET: f64 = 20f64;
 const CHOICES: [usize; 3] = [0, 1, 2];
@@ -84,16 +85,14 @@ impl std::fmt::Display for Graph {
 
 #[derive(Debug, Clone)]
 struct MCMCConfig {
-    chain_id: usize,
     temprature: f64,
     consist_factor: f64,
     coverage: f64,
 }
 
 impl MCMCConfig {
-    fn new(chain_id: usize, temprature: f64, consist_factor: f64, coverage: f64) -> Self {
+    fn new(temprature: f64, consist_factor: f64, coverage: f64) -> Self {
         Self {
-            chain_id,
             temprature,
             consist_factor,
             coverage,
@@ -235,41 +234,45 @@ impl Graph {
             .haploid_coverage
             .unwrap_or_else(|| self.estimate_coverage());
         let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(config.seed);
-        let mut mcmc_config = MCMCConfig::new(0, 1f64, 1f64, hap_cov);
+        let mut mcmc_config = MCMCConfig::new(1f64, 1f64, hap_cov);
         let (mut node_cp, mut edge_cp) = self.initial_guess(&mcmc_config, &mut rng);
         // To get MAP estimates, get the lowest potential combination.
         // We gradually increase the consistency factor so that after BURN_IN period,
         // the consistency factor would be TARGET.
-        let stops = 2 * self.coverages.len() * BURN_IN;
-        let grad = (TARGET.ln() / stops as f64).exp();
-        for _t in 0..stops {
-            let (_is_success, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
+        let total_step = 2 * (node_cp.len() + edge_cp.len()) * BURN_IN;
+        // let stops = 2 * self.coverages.len() * BURN_IN;
+        let grad = (TARGET.ln() / total_step as f64).exp();
+        for _ in 0..total_step {
+            let _ = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
             mcmc_config.consist_factor *= grad;
         }
+        let potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
+        ((node_cp, edge_cp), potential)
         // mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
-        let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
-        let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
-        let mut min = current_potential;
-        let loop_num = 2 * self.coverages.len() * (BURN_IN + SAMPLE_LEN);
-        for t in stops..loop_num {
-            let (is_success, diff) =
-                self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
-            if is_success {
-                current_potential += diff;
-                if current_potential < min {
-                    min = current_potential;
-                    argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
-                }
-            }
-            let ci = mcmc_config.chain_id;
-            if t % 500 == 0 {
-                trace!("MCMC\t{}\t{}\t{}\t{}", t, ci, is_success, current_potential,);
-            }
-        }
-        mcmc_config.coverage = argmin.2;
-        let potential = self.total_energy(&argmin.0, &argmin.1, &mcmc_config);
-        assert!((potential - min).abs() < 0.001);
-        ((argmin.0, argmin.1), min)
+        // let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
+        // let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
+        // let mut min = current_potential;
+        // let loop_num = 2 * self.coverages.len() * (BURN_IN + SAMPLE_LEN);
+        // for t in stops..loop_num {
+        //     let (is_success, diff) =
+        //         self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
+        //     if is_success {
+        //         current_potential += diff;
+        //         if current_potential < min {
+        //             min = current_potential;
+        //             argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
+        //         }
+        //     }
+        //     if t % 500 == 0 {
+        //         let ci = mcmc_config.chain_id;
+        //         trace!("MCMC\t{}\t{}\t{}\t{}", t, ci, is_success, current_potential);
+        //     }
+        // }
+        // mcmc_config.coverage = argmin.2;
+        // debug!("MCMC\tEnd");
+        // let potential = self.total_energy(&argmin.0, &argmin.1, &mcmc_config);
+        // assert!((potential - min).abs() < 0.001);
+        // ((argmin.0, argmin.1), min)
     }
     // return (if the proposal is accepted, the potential difference between now-prev.
     fn update<R: Rng>(
@@ -579,13 +582,13 @@ impl Graph {
                 head_potential + tail_potential
             })
             .sum();
-        let edge_consistency: f64 = (edge_consistency as f64) * config.consist_factor;
-        let potential = node_potential + edge_consistency;
-        debug!(
-            "POTENTIAL\t{}\t{}\t{}",
-            node_potential, edge_consistency, potential
-        );
-        potential
+        node_potential + edge_consistency as f64 * config.consist_factor
+        // let potential = node_potential + edge_consistency as f64 * config.consist_factor;
+        // debug!(
+        //     "POTENTIAL\t{:.1}\t{:.1}\t{:.1}\t{:.1}",
+        //     node_potential, edge_consistency, config.consist_factor, potential
+        // );
+        // potential
     }
 }
 

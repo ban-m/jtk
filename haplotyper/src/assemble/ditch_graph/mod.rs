@@ -1750,7 +1750,9 @@ impl<'a> DitchGraph<'a> {
         }
         Some(back_track)
     }
-    // Spll along the given path, reducing the copy number and the occs.
+    // Spell along the given path,
+    // reducing the copy number of the nodes, the occs of the nodes, and the
+    // occs of the edges.
     fn spell_along_path(
         &mut self,
         path: &[(Node, Position)],
@@ -1773,11 +1775,27 @@ impl<'a> DitchGraph<'a> {
                 Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
             };
             let target = [(346, 0), (1788, 0), (690, 0), (457, 0), (1298, 0)];
+            // Reduce the occ and copy number of the node, and occ of the edge.
             let occ = {
                 // This unwrap never panics.
                 let node = self.nodes.get_mut(&from).unwrap();
+                // Reduce te occ of the edge.
+                node.edges
+                    .iter_mut()
+                    .filter(|e| e.to == to && e.to_position == to_pos)
+                    .filter(|e| matches!(e.copy_number, Some(cp) if cp > 0))
+                    .for_each(|edge| {
+                        let cp = edge.copy_number.unwrap();
+                        let occ = edge.occ / cp;
+                        edge.occ -= occ;
+                        edge.copy_number = Some(cp - 1);
+                    });
                 match node.copy_number {
                     Some(cp) if 0 < cp => {
+                        // TODO: Is this OK? Maybe the copy number is not reliable.
+                        // The problem is not the reduction of the copy number -- it should be zero --
+                        // but the reduction of the `occ`. Maybe we should substract average coverage
+                        // along the path from the `node.occ`.
                         let occ = node.occ / cp;
                         node.occ -= occ;
                         node.copy_number = Some(cp - 1);
@@ -1808,6 +1826,7 @@ impl<'a> DitchGraph<'a> {
             }
             path_label.extend(node_seq);
         }
+        // Finalize the label of the edge.
         let label = match first_label {
             EdgeLabel::Ovlp(l) if l + (path_label.len() as i64) < 0 => {
                 EdgeLabel::Ovlp(l + path_label.len() as i64)
