@@ -104,13 +104,13 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 })
                 .unzip();
             let cov = seqs.len();
+            let band_width = read_type.band_width(ref_unit.seq().len()) / 2;
             let start = std::time::Instant::now();
             use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
-            let band_width = read_type.band_width(ref_unit.seq().len());
-            let config = ClusteringConfig::new(band_width, copy_num, coverage, read_type);
             let consensus =
                 hmm.polish_until_converge_with(ref_unit.seq(), &seqs, &mut ops, band_width);
+            let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 kmeans::clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config)
                     .unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
@@ -170,7 +170,7 @@ pub fn estimate_model_parameters_neo<N: std::borrow::Borrow<Node>>(
     let mut polishing_pairs: Vec<_> = seqs_and_ref_units
         .iter()
         .map(|(ref_unit, nodes)| {
-            let band_width = read_type.band_width(ref_unit.seq().len()) * 2;
+            let band_width = 2 * read_type.band_width(ref_unit.seq().len());
             let ops: Vec<Vec<_>> = nodes
                 .iter()
                 .map(|n| {

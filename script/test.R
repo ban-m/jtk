@@ -420,7 +420,7 @@ error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del)
     ggplot() + geom_point(aes(x=mean, y = sd/mean))
 
 
-error.rate.data <- read_tsv("real.tsv")
+error.rate.data <- read_tsv("hg002_hmg_ont.tsv")
 
 error.rate.data %>% ggplot() + geom_histogram(aes(x=mism+ins+del))
 
@@ -439,8 +439,8 @@ slowhmm.time <- read_tsv("./result/slowhmm_time.tsv", col_names=FALSE)
 
 slowhmm.combined <- full_join(slowhmm, slowhmm.time %>% rename(Unit=X1,Time=X2,Len=X3) %>% select(Unit,Time,Len)) %>% mutate(Type="Previous")
 
-fasthmm <- read_tsv("./result/fasthmm.tsv")
-fasthmm.time <- read_tsv("./result/fasthmm_time.tsv", col_names=FALSE)
+fasthmm <- read_tsv("fasthmm.tsv")
+fasthmm.time <- read_tsv("fasthmm_time.tsv", col_names=FALSE)
 
 fasthmm.combined <- full_join(fasthmm, fasthmm.time %>% rename(Unit=X1,Time=X2,Len=X3) %>% select(Unit,Time,Len)) %>% mutate(Type="Fast")
 
