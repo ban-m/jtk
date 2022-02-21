@@ -109,43 +109,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let copy_num = ref_unit.copy_num as u8;
             let band_width = read_type.band_width(ref_unit.seq().len());
             let config = ClusteringConfig::new(band_width, copy_num, coverage, read_type);
-            // let consensus = {
-            //     let mut seqs_with_diff: Vec<_> = units
-            //         .iter()
-            //         .map(|node| {
-            //             let (_, aln, _) = node.recover(ref_unit);
-            //             let diff: usize = aln.iter().filter(|&&x| x != b'|').count();
-            //             let mut ops = vec![];
-            //             for op in node.cigar.iter() {
-            //                 match op {
-            //                     Op::Match(l) => {
-            //                         ops.extend(std::iter::repeat(kiley::Op::Match).take(*l))
-            //                     }
-            //                     Op::Del(l) => {
-            //                         ops.extend(std::iter::repeat(kiley::Op::Del).take(*l))
-            //                     }
-            //                     Op::Ins(l) => {
-            //                         ops.extend(std::iter::repeat(kiley::Op::Ins).take(*l))
-            //                     }
-            //                 }
-            //             }
-            //             (node.seq(), diff, ops)
-            //         })
-            //         .collect();
-            //     seqs_with_diff.sort_by_key(|x| x.1);
-            //     let (seqs, _): (Vec<_>, Vec<_>) = seqs_with_diff
-            //         .into_iter()
-            //         .take(50)
-            //         .map(|(x, _, z)| (x, z))
-            //         .unzip();
-            //     take_consensus(ref_unit, &seqs, band_width, &hmm)
-            // };
-            // let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
-            //     kmeans::clustering_dev(&consensus, &seqs, &mut rng, &hmm, &config)
-            //         .unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
-            // } else {
-            //     (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
-            // };
             let consensus =
                 hmm.polish_until_converge_with(ref_unit.seq(), &seqs, &mut ops, band_width);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {

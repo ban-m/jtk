@@ -38,8 +38,9 @@ impl MultiplicityEstimation for DataSet {
         self.coverage = Some(cov);
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 4);
+        let rt = self.read_type;
         let mut graph =
-            ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), &assemble_config);
+            ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), rt, &assemble_config);
         let thr = match self.read_type {
             definitions::ReadType::CCS => 1,
             definitions::ReadType::CLR => 2,

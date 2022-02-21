@@ -32,8 +32,9 @@ fn main() -> std::io::Result<()> {
     let config = haplotyper::assemble::AssembleConfig::new(1, 1000, false, true, 5);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let units = &ds.selected_chunks;
+    let rt = ds.read_type;
     let mut graph =
-        haplotyper::assemble::ditch_graph::DitchGraph::new(&reads, Some(units), &config);
+        haplotyper::assemble::ditch_graph::DitchGraph::new(&reads, Some(units), rt, &config);
     let cov = ds.coverage.unwrap();
     let lens: Vec<_> = ds.raw_reads.iter().map(|r| r.seq().len()).collect();
     graph.assign_copy_number(cov, &lens);

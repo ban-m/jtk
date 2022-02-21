@@ -174,7 +174,8 @@ impl Assemble for DataSet {
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         let cov = self.coverage.unwrap();
-        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+        let rt = self.read_type;
+        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), rt, c);
         graph.remove_lightweight_edges(2, true);
         graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, self.read_type);
         // TODO: Parametrize here.
@@ -192,7 +193,8 @@ impl Assemble for DataSet {
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let cov = self.coverage.unwrap();
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), c);
+        let rt = self.read_type;
+        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), rt, c);
         graph.remove_lightweight_edges(2, true);
         graph.assign_copy_number(cov, &lens);
         graph.remove_zero_copy_elements(&lens, 0.5);
@@ -298,7 +300,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
     match ds.read_type {
         ReadType::CCS => graph.remove_lightweight_edges(1, true),
         ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
@@ -312,8 +314,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
             .iter()
             .map(|segment| {
                 let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
-                let segment = polish_segment(ds, segment, summary, c);
-                polish_segment(ds, &segment, summary, c)
+                polish_segment(ds, &segment, summary, c, &ds.read_type)
             })
             .collect()
     } else {
@@ -351,7 +352,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
 }
 pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), c);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
     graph.remove_lightweight_edges(2, true);
     let (segments, edge, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
@@ -381,10 +382,11 @@ fn polish_segment(
     segment: &gfa::Segment,
     summary: &ContigSummary,
     c: &AssembleConfig,
+    read_type: &definitions::ReadType,
 ) -> gfa::Segment {
     let reads = get_reads_in_cluster(ds, summary);
     debug!("Aligning {} reads", reads.len());
-    let alignments = match align_reads(segment, &reads, c) {
+    let alignments = match align_reads(segment, &reads, read_type, c) {
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
     };
@@ -423,6 +425,7 @@ fn get_reads_in_cluster<'a>(ds: &'a DataSet, summary: &ContigSummary) -> Vec<&'a
 fn align_reads(
     segment: &gfa::Segment,
     reads: &[&[u8]],
+    read_type: &definitions::ReadType,
     c: &AssembleConfig,
 ) -> std::io::Result<kiley::sam::Sam> {
     use rand::{thread_rng, Rng};
@@ -452,16 +455,13 @@ fn align_reads(
         (reference, reads)
     };
     let thr = format!("{}", c.threads);
-    let args = [
-        "-x",
-        "map-pb",
-        "-a",
-        "-t",
-        &thr,
-        "--secondary=no",
-        "-z",
-        "600,400",
-    ];
+    let mut args = vec!["-a", "-t", &thr, "--secondary=no"];
+    match read_type {
+        ReadType::CCS => args.extend(["-x", "map-hifi"]),
+        ReadType::CLR => args.extend(["-x", "map-pb"]),
+        ReadType::ONT => args.extend(["-x", "map-ont"]),
+        ReadType::None => args.extend(["-x", "map-hifi"]),
+    }
     let alignment = crate::minimap2::minimap2_args(&reference, &reads, &args);
     let alignment = kiley::sam::Sam::from_reader(std::io::BufReader::new(alignment.as_slice()));
     debug!("Removing {:?}", c_dir);
@@ -473,7 +473,7 @@ fn align_reads(
 pub fn polish_by_chunking(
     alignments: &kiley::sam::Sam,
     segment: &gfa::Segment,
-    reads: &[&[u8]],
+    _reads: &[&[u8]],
     _c: &AssembleConfig,
     _read_type: &definitions::ReadType,
 ) -> Vec<u8> {
@@ -483,12 +483,7 @@ pub fn polish_by_chunking(
     };
     let _segment = (segment.sid.clone(), template_seq);
     debug!("Recording {} alignments...", alignments.records.len());
-    let _reads: Vec<_> = reads
-        .iter()
-        .enumerate()
-        .map(|(i, r)| (format!("{}", i), r.to_vec()))
-        .collect();
-    todo!();
+    todo!()
 }
 
 pub fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {

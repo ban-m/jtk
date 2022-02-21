@@ -18,7 +18,7 @@ fn main() -> std::io::Result<()> {
     let config = AssembleConfig::new(1, 100, false, false, 4);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), &config);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, &config);
     graph.remove_lightweight_edges(2, true);
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
     let cov = ds.coverage.unwrap();

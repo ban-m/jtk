@@ -430,6 +430,7 @@ impl EdgeLabel {
 fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
     reads: &[R],
     units: Option<&[Unit]>,
+    read_type: &definitions::ReadType,
     c: &AssembleConfig,
 ) -> (NodeConsensus, EdgeConsensus) {
     let mut nodes: HashMap<_, Vec<_>> = HashMap::new();
@@ -458,9 +459,10 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
         Some(units) => units.iter().map(|u| (u.id, u.seq())).collect(),
         None => HashMap::new(),
     };
-    use kiley::gphmm::*;
-    let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    let config = kiley::PolishConfig::with_model(100, 0, 0, 0, 0, hmm);
+    // use kiley::gphmm::*;
+    // let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+    // let config = kiley::PolishConfig::with_model(100, 0, 0, 0, 0, hmm);
+    let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
     let node_consensus: HashMap<_, _> = nodes
         .into_par_iter()
         .map(|(key, value)| {
@@ -470,7 +472,26 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
             };
             let cons = if c.to_polish {
                 let seqs: Vec<_> = value.iter().map(|x| x.seq()).collect();
-                kiley::polish_chunk_by_parts(&draft, &seqs, &config)
+                use definitions::Op;
+                let mut ops: Vec<Vec<_>> = value
+                    .iter()
+                    .map(|x| {
+                        x.cigar
+                            .iter()
+                            .flat_map(|op| {
+                                let (op, len) = match op {
+                                    Op::Match(l) => (kiley::Op::Match, *l),
+                                    Op::Del(l) => (kiley::Op::Del, *l),
+                                    Op::Ins(l) => (kiley::Op::Ins, *l),
+                                };
+                                std::iter::repeat(op).take(len)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let band = read_type.band_width(draft.len());
+                hmm.polish_until_converge_with(&draft, &seqs, &mut ops, band)
+                // kiley::polish_chunk_by_parts(&draft, &seqs, &config)
             } else {
                 draft
             };
@@ -486,7 +507,7 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
             let cons = match (c.to_polish, 0 < offset) {
                 (_, false) => EdgeLabel::Ovlp(offset),
                 (true, _) => {
-                    let seqs: Vec<_> = value
+                    let mut seqs: Vec<_> = value
                         .iter()
                         .map(|(ed, is_forward)| match is_forward {
                             true => ed.label().to_vec(),
@@ -495,7 +516,9 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
                         .filter(|e| !e.is_empty())
                         .collect();
                     let consensus = if seqs.len() > 3 {
-                        kiley::consensus(&seqs, 0, 0, 100)
+                        let draft = seqs.pop().unwrap();
+                        let band = read_type.band_width(draft.len());
+                        hmm.polish_until_converge(&draft, &seqs, band)
                     } else {
                         seqs.iter().max_by_key(|x| x.len()).unwrap().to_vec()
                     };
@@ -604,10 +627,11 @@ impl<'a> DitchGraph<'a> {
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(
         reads: &'a [R],
         units: Option<&[Unit]>,
+        read_type: definitions::ReadType,
         c: &AssembleConfig,
     ) -> Self {
         // Take a consensus of nodes and edges.
-        let (nodes_seq, edge_seq) = take_consensus(reads, units, c);
+        let (nodes_seq, edge_seq) = take_consensus(reads, units, &read_type, c);
         // Allocate all nodes.
         let mut nodes: HashMap<_, _> = nodes_seq
             .into_iter()
@@ -1527,9 +1551,8 @@ impl<'a> DitchGraph<'a> {
         }
     }
     /// Check the dynamic of foci.
-    pub fn survey_foci(&mut self, foci: &[Focus]) {
-        let success: usize = foci
-            .iter()
+    pub fn survey_foci(&mut self, foci: &[Focus]) -> usize {
+        foci.iter()
             .filter(|focus| {
                 let (key, pos) = (focus.from, focus.from_position);
                 // Check if the targets are present in the graph.
@@ -1551,8 +1574,7 @@ impl<'a> DitchGraph<'a> {
                 debug!("FOCUS\tTRY\t{}", focus);
                 self.survey_focus(focus).is_some()
             })
-            .count();
-        debug!("FOCI\tTryAndSuccess\t{}\t{}", foci.len(), success);
+            .count()
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
@@ -1907,7 +1929,8 @@ impl<'a> DitchGraph<'a> {
     /// TODO: This code has bug when the graph contains loops?
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
-        loop {
+        let mut count = 1;
+        while count != 0 {
             let mut foci = self.get_foci(reads, config);
             let prev = foci.len();
             foci.retain(|val| thr < val.llr());
@@ -1920,7 +1943,8 @@ impl<'a> DitchGraph<'a> {
                 std::cmp::Ordering::Equal => (y.dist, y.from).cmp(&(x.dist, x.from)),
                 x => x,
             });
-            self.survey_foci(&foci);
+            count = self.survey_foci(&foci);
+            debug!("FOCI\tTryAndSuccess\t{}\t{}", foci.len(), count);
         }
     }
     /// Return a hash map containing all foci, thresholded by `config` parameter.
