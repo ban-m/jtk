@@ -10,20 +10,14 @@ type DTip = (u64, u64, bool, bool);
 #[derive(Debug, Clone, Copy)]
 pub struct DenseEncodingConfig {
     pub len: usize,
-    // pub min_span_reads: usize,
 }
 impl DenseEncodingConfig {
-    //pub fn new(len: usize, min_span_reads: usize) -> Self {
     pub fn new(len: usize) -> Self {
-        Self {
-            len,
-            // min_span_reads,
-        }
+        Self { len }
     }
 }
 pub trait DenseEncoding {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig);
-    // fn dense_encoding(&mut self, config: &DenseEncodingConfig);
 }
 
 impl DenseEncoding for DataSet {
@@ -254,150 +248,6 @@ pub fn fill_edges_by_new_units_dev(
     inserts
 }
 
-// fn split_edges_into_units(
-//     edges: &HashMap<DEdge, Vec<u8>>,
-//     ave_unit_len: usize,
-//     cluster_num: usize,
-//     mut max_unit_id: u64,
-// ) -> HashMap<DEdge, Vec<Unit>> {
-//     let mut units_in_edges = HashMap::new();
-//     for (key, consensus) in edges.iter() {
-//         let mut units_in_edge = vec![];
-//         let mut prev_bp = 0;
-//         for break_pos in (1..)
-//             .map(|i| i * ave_unit_len)
-//             .take_while(|&break_pos| break_pos + ave_unit_len < consensus.len())
-//             .chain(std::iter::once(consensus.len()))
-//         {
-//             max_unit_id += 1;
-//             let seq = String::from_utf8_lossy(&consensus[prev_bp..break_pos]).to_string();
-//             let unit = Unit::new(max_unit_id, seq, cluster_num);
-//             prev_bp = break_pos;
-//             units_in_edge.push(unit)
-//         }
-//         let count = units_in_edge.len();
-//         log::debug!("NEWUNIT\t{:?}\t{}\t{}", key, count, consensus.len());
-//         units_in_edges.insert(*key, units_in_edge);
-//     }
-//     units_in_edges
-// }
-
-// fn take_consensus_between_nodes<T: std::borrow::Borrow<EncodedRead>>(
-//     reads: &[T],
-//     nodes: &[(u64, u64)],
-//     discard_thr: usize,
-//     band_width: usize,
-// ) -> HashMap<DEdge, Vec<u8>> {
-//     let mut edges: HashMap<DEdge, Vec<Vec<u8>>> = HashMap::new();
-//     for read in reads.iter().map(|r| r.borrow()) {
-//         for (window, edge) in read.nodes.windows(2).zip(read.edges.iter()) {
-//             if !nodes.contains(&(window[0].unit, window[0].cluster))
-//                 || !nodes.contains(&(window[1].unit, window[1].cluster))
-//             {
-//                 continue;
-//             }
-//             let (edge_entry, direction) = edge_and_direction(window);
-//             let mut label = match direction {
-//                 true => edge.label().to_vec(),
-//                 false => bio_utils::revcmp(edge.label()),
-//             };
-//             // Register.
-//             label.iter_mut().for_each(u8::make_ascii_uppercase);
-//             edges.entry(edge_entry).or_insert_with(Vec::new).push(label);
-//         }
-//     }
-//     edges.retain(|_, val| discard_thr < val.len());
-//     debug!("EDGE\tDump edges.");
-//     for (edge, ls) in edges.iter() {
-//         log::debug!("EDGE\t{:?}\t{}", edge, ls.len());
-//     }
-//     // Create new units.
-//     edges
-//         .into_par_iter()
-//         .filter_map(|(key, mut labels)| {
-//             let cov_thr = labels.len() / COV_THR_FACTOR;
-//             let mut lengths: Vec<_> = labels.iter().map(|x| x.len()).collect();
-//             let (_, median, _) = lengths.select_nth_unstable(labels.len() / 2);
-//             let (upper, lower) = (2 * *median, (*median / 2).max(CONS_MIN_LENGTH));
-//             let med_idx = labels.len() / 2;
-//             labels.select_nth_unstable_by_key(med_idx, |x| x.len());
-//             labels.swap(0, med_idx);
-//             let labels: Vec<&[u8]> = labels
-//                 .iter()
-//                 .filter(|ls| lower < ls.len() && ls.len() < upper)
-//                 .map(|x| x.as_slice())
-//                 .collect();
-//             if labels.len() <= cov_thr {
-//                 return None;
-//             }
-//             let rough_contig = kiley::ternary_consensus_by_chunk(&labels, band_width);
-//             let rough_contig = kiley::bialignment::polish_until_converge_banded(
-//                 &rough_contig,
-//                 &labels,
-//                 band_width,
-//             );
-//             match rough_contig.len() {
-//                 0..=CONS_MIN_LENGTH => None,
-//                 _ => Some((key, rough_contig)),
-//             }
-//         })
-//         .collect()
-// }
-
-// Why I did this? The clustering is already squished if the LK gain is not sufficient.
-// #[allow(dead_code)]
-// fn squish_bad_clustering(ds: &mut DataSet, nodes: &HashSet<u64>, per_read_lk_gain: f64) {
-//     let mut new_clustered: HashMap<_, Vec<&mut _>> = nodes.iter().map(|&n| (n, vec![])).collect();
-//     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-//         if let Some(bucket) = new_clustered.get_mut(&node.unit) {
-//             bucket.push(&mut node.cluster);
-//         }
-//     }
-//     for unit in ds.selected_chunks.iter_mut() {
-//         if let Some(assignments) = new_clustered.get_mut(&unit.id) {
-//             let threshold = assignments.len() as f64 * per_read_lk_gain;
-//             if unit.score <= threshold {
-//                 log::debug!(
-//                     "Squishing\t{}\t{}\t{}",
-//                     unit.id,
-//                     unit.score,
-//                     assignments.len()
-//                 );
-//                 unit.score = 0f64;
-//                 assignments.iter_mut().for_each(|x| **x = 0);
-//             }
-//         }
-//     }
-// }
-
-// fn enumerate_multitigs(
-//     ds: &DataSet,
-//     &DenseEncodingConfig { .. }: &DenseEncodingConfig,
-// ) -> Vec<(usize, Vec<(u64, u64)>)> {
-//     use crate::assemble::*;
-//     let min_span_reads = ds.read_type.min_span_reads();
-//     let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
-//     let (_, summaries) = assemble(ds, &config);
-//     summaries
-//         .iter()
-//         .filter(|summary| !summary.summary.is_empty())
-//         .filter_map(|summary| {
-//             let (total_cp, num) = summary
-//                 .summary
-//                 .iter()
-//                 .filter_map(|x| x.copy_number)
-//                 .fold((0, 0), |(cp, n), x| (cp + x, n + 1));
-//             let copy_number = total_cp / num;
-//             let nodes: Vec<_> = summary
-//                 .summary
-//                 .iter()
-//                 .map(|x| (x.unit, x.cluster))
-//                 .collect();
-//             (1 < copy_number).then(|| (copy_number, nodes))
-//         })
-//         .collect()
-// }
-
 type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
 fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> EdgeAndUnit {
     use crate::assemble::*;
@@ -508,10 +358,8 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
     let mean_len = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
     let band_width = (mean_len / 20).max(50);
     let rough_contig = kiley::ternary_consensus_by_chunk(&seqs, band_width);
-    match kiley::bialignment::polish_until_converge_banded(&rough_contig, &seqs, band_width) {
-        seq if seq.len() < CONS_MIN_LENGTH => None,
-        seq => Some(seq),
-    }
+    let cons = kiley::bialignment::guided::polish_until_converge(&rough_contig, &seqs, band_width);
+    (CONS_MIN_LENGTH < cons.len()).then(|| cons)
 }
 
 // w: windows of nodes with 2 length.
@@ -570,7 +418,7 @@ fn encode_edge(
     });
     let ctg_orig_len = contig.len();
     // seq is equal to seq[start..end], revcmped if is_forward is false.
-    let band = read_type.band_width();
+    let band = read_type.band_width(contig.len());
     let ((start, end, seq), (ctg_start, ctg_end, _), mut ops) =
         tune_position(start, end, seq, is_forward, &contig, band);
     let (break_points, _): (Vec<_>, _) =

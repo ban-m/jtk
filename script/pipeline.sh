@@ -40,6 +40,7 @@ else
     cat ${2}.entry.json |\
         jtk polish_encoding --threads ${THREADS} -vv |\
         jtk estimate_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA} |\
+        tee ${2}.entry.units.encode.json |\
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi
 

@@ -71,38 +71,86 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             bucket.push(node);
         }
     }
+    pileups.iter_mut().for_each(|(unit_id, nodes)| {
+        nodes.sort_by_cached_key(|node| {
+            let ref_unit = chunks.get(&unit_id).unwrap();
+            let (_, aln, _) = node.recover(ref_unit);
+            aln.iter().filter(|&&x| x != b'|').count()
+        });
+    });
     let coverage = ds.coverage.unwrap();
-    let hmm = estimate_model_parameters(ds.read_type, &pileups, &chunks);
-    let band_width = ds.read_type.band_width();
+    let hmm = estimate_model_parameters_neo(ds.read_type, &pileups, &chunks);
     let read_type = ds.read_type;
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .filter(|(_, units)| !units.is_empty())
         .map(|(&unit_id, units)| {
-            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
-            let seqs: Vec<_> = units.iter().map(|node| node.seq()).collect();
-            let cov = seqs.len();
             let ref_unit = chunks.get(&unit_id).unwrap();
+            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
+            let (seqs, mut ops): (Vec<_>, Vec<_>) = units
+                .iter()
+                .map(|node| {
+                    let mut ops = vec![];
+                    for op in node.cigar.iter() {
+                        match op {
+                            Op::Match(l) => {
+                                ops.extend(std::iter::repeat(kiley::Op::Match).take(*l))
+                            }
+                            Op::Del(l) => ops.extend(std::iter::repeat(kiley::Op::Del).take(*l)),
+                            Op::Ins(l) => ops.extend(std::iter::repeat(kiley::Op::Ins).take(*l)),
+                        }
+                    }
+                    (node.seq(), ops)
+                })
+                .unzip();
+            let cov = seqs.len();
             let start = std::time::Instant::now();
             use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
+            let band_width = read_type.band_width(ref_unit.seq().len());
             let config = ClusteringConfig::new(band_width, copy_num, coverage, read_type);
-            let consensus = {
-                let mut seqs_with_diff: Vec<_> = units
-                    .iter()
-                    .map(|node| {
-                        let (_, aln, _) = node.recover(ref_unit);
-                        let diff: usize = aln.iter().filter(|&&x| x != b'|').count();
-                        (node.seq(), diff)
-                    })
-                    .collect();
-                seqs_with_diff.sort_by_key(|x| x.1);
-                let seqs: Vec<_> = seqs_with_diff.iter().take(50).map(|x| x.0).collect();
-                take_consensus(ref_unit, &seqs, band_width, &hmm)
-            };
+            // let consensus = {
+            //     let mut seqs_with_diff: Vec<_> = units
+            //         .iter()
+            //         .map(|node| {
+            //             let (_, aln, _) = node.recover(ref_unit);
+            //             let diff: usize = aln.iter().filter(|&&x| x != b'|').count();
+            //             let mut ops = vec![];
+            //             for op in node.cigar.iter() {
+            //                 match op {
+            //                     Op::Match(l) => {
+            //                         ops.extend(std::iter::repeat(kiley::Op::Match).take(*l))
+            //                     }
+            //                     Op::Del(l) => {
+            //                         ops.extend(std::iter::repeat(kiley::Op::Del).take(*l))
+            //                     }
+            //                     Op::Ins(l) => {
+            //                         ops.extend(std::iter::repeat(kiley::Op::Ins).take(*l))
+            //                     }
+            //                 }
+            //             }
+            //             (node.seq(), diff, ops)
+            //         })
+            //         .collect();
+            //     seqs_with_diff.sort_by_key(|x| x.1);
+            //     let (seqs, _): (Vec<_>, Vec<_>) = seqs_with_diff
+            //         .into_iter()
+            //         .take(50)
+            //         .map(|(x, _, z)| (x, z))
+            //         .unzip();
+            //     take_consensus(ref_unit, &seqs, band_width, &hmm)
+            // };
+            // let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
+            //     kmeans::clustering_dev(&consensus, &seqs, &mut rng, &hmm, &config)
+            //         .unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
+            // } else {
+            //     (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
+            // };
+            let consensus =
+                hmm.polish_until_converge_with(ref_unit.seq(), &seqs, &mut ops, band_width);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
-                kmeans::clustering_dev(&consensus, &seqs, &mut rng, &hmm, &config)
-                    .unwrap_or_else(|| panic!("RECORD\t{}", unit_id))
+                kmeans::clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config)
+                    .unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
             } else {
                 (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
             };
@@ -112,8 +160,9 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
+            // Change cigar string...
             let end = std::time::Instant::now();
-            let elapsed = (end - start).as_secs();
+            let elapsed = (end - start).as_millis();
             let len = consensus.len();
             debug!(
                 "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
@@ -122,6 +171,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             (unit_id, (consensus, score, k))
         })
         .collect();
+    debug!("LC\t{}", consensus_and_clusternum.len());
     for unit in ds.selected_chunks.iter_mut() {
         if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
             unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
@@ -134,6 +184,63 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     re_encode_reads(ds, &consensus_and_clusternum);
     // Normalize local clustering.
     normalize::normalize_local_clustering(ds);
+}
+
+pub fn estimate_model_parameters_neo<N: std::borrow::Borrow<Node>>(
+    read_type: ReadType,
+    pileups: &HashMap<u64, Vec<N>>,
+    chunks: &HashMap<u64, &Unit>,
+) -> kiley::hmm::guided::PairHiddenMarkovModel {
+    let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
+    let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
+    let mut seqs_and_ref_units: Vec<_> = pileups
+        .iter()
+        .filter(|(_, us)| (cov.max(1) - 1..cov + 2).contains(&us.len()))
+        .map(|(id, us)| (chunks.get(id).unwrap(), us))
+        .collect();
+    seqs_and_ref_units.sort_by_cached_key(|c| c.0.id);
+    seqs_and_ref_units.truncate(2);
+    for (chunk, units) in seqs_and_ref_units.iter() {
+        debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
+    }
+    let mut hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    let mut polishing_pairs: Vec<_> = seqs_and_ref_units
+        .iter()
+        .map(|(ref_unit, nodes)| {
+            let band_width = read_type.band_width(ref_unit.seq().len()) * 2;
+            let ops: Vec<Vec<_>> = nodes
+                .iter()
+                .map(|n| {
+                    n.borrow()
+                        .cigar
+                        .iter()
+                        .flat_map(|op| match *op {
+                            definitions::Op::Del(l) => std::iter::repeat(kiley::Op::Del).take(l),
+                            definitions::Op::Ins(l) => std::iter::repeat(kiley::Op::Ins).take(l),
+                            definitions::Op::Match(l) => {
+                                std::iter::repeat(kiley::Op::Match).take(l)
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+            let seqs: Vec<_> = nodes.iter().map(|n| n.borrow().seq()).collect();
+            (ref_unit.seq().to_vec(), seqs, ops, band_width)
+        })
+        .collect();
+    polishing_pairs
+        .par_iter_mut()
+        .for_each(|(consensus, seqs, ops, bw)| {
+            *consensus = hmm.polish_until_converge_with(consensus, seqs, ops, *bw);
+        });
+    debug!("POLISHED");
+    for _ in 0..2 {
+        for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
+            hmm.fit_naive_with_par(consensus, seqs, ops, *bw);
+        }
+    }
+    debug!("HMM\n{}", hmm);
+    hmm
 }
 
 use kiley::gphmm::Cond;
@@ -165,7 +272,7 @@ pub fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     };
     for _ in 0..2 {
         for (ref_unit, seqs) in seqs_and_ref_units.iter() {
-            let band_width = read_type.band_width() * 2;
+            let band_width = read_type.band_width(ref_unit.seq().len()) * 2;
             let consensus = take_consensus(ref_unit, seqs, band_width, &hmm);
             hmm = hmm.fit_banded(&consensus, seqs, band_width);
         }

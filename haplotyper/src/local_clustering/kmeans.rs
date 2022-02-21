@@ -145,6 +145,68 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     Some((assignments, likelihood_gains, score, k as u8))
 }
 
+pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    ops: &mut [Vec<kiley::Op>],
+    rng: &mut R,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    config: &ClusteringConfig,
+) -> Option<ClusteringDevResult> {
+    let ClusteringConfig {
+        band_width,
+        copy_num,
+        coverage,
+        read_type,
+    } = *config;
+    let profiles: Vec<_> = reads
+        .iter()
+        .zip(ops.iter_mut())
+        .map(|(seq, op)| {
+            let (mut table, lk) = hmm.modification_table(&template, seq.borrow(), band_width, op);
+            table.iter_mut().for_each(|x| *x -= lk);
+            table
+        })
+        .collect();
+    let copy_num = copy_num as usize;
+    let selected_variants: Vec<_> = {
+        let probes = filter_profiles_neo(&profiles, copy_num, 3, coverage, template.len());
+        profiles
+            .iter()
+            .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
+            .collect()
+    };
+    let num = 2;
+    let average_lk = match read_type {
+        ReadType::CCS => CLR_AVERAGE_LK,
+        ReadType::CLR => CCS_AVERAGE_LK,
+        ReadType::ONT => ONT_AVERAGE_LK,
+        ReadType::None => CLR_AVERAGE_LK,
+    };
+    let estim_cov = (reads.len() as f64 / copy_num as f64 + coverage) / 2f64;
+    let init_copy_num = copy_num.max(4) - 3;
+    let (assignments, score, k) = (init_copy_num..=copy_num)
+        .filter_map(|k| {
+            let (asn, score) = (0..num)
+                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+            trace!("LK\t{}\t{:.3}", k, score);
+            let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
+            Some((asn, score - expected_gain, k))
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let score = score + (k - 1) as f64 * average_lk * estim_cov;
+    let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
+    to_posterior_probability(&mut likelihood_gains);
+    if log_enabled!(log::Level::Trace) {
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+            trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+        }
+    }
+    Some((assignments, likelihood_gains, score, k as u8))
+}
+
 // LK->LK-logsumexp(LK).
 fn to_posterior_probability(lks: &mut [Vec<f64>]) {
     for xs in lks.iter_mut() {
@@ -482,26 +544,100 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                 .map(|k| poisson_lk(count, coverage * k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
                 .unwrap_or_else(|| panic!("{}", cluster_num));
-            // let (idx, len, ed_type) = if pos / 9 < template_len {
-            //     (pos / 9, pos % 9, "Sn")
-            // } else {
-            //     let ofs_pos = pos - 9 * template_len;
-            //     if ofs_pos < (DEL_SIZE - 1) * (template_len - DEL_SIZE) {
-            //         (ofs_pos / (DEL_SIZE - 1), ofs_pos % (DEL_SIZE - 1) + 2, "Dl")
-            //     } else {
-            //         let ofs_pos = ofs_pos - (DEL_SIZE - 1) * (template_len - DEL_SIZE);
-            //         (ofs_pos / REP_SIZE, ofs_pos % REP_SIZE + 1, "Cp")
-            //     }
-            // };
             let total_lk = max_lk + maxgain;
-            // trace!(
-            //     "LKSUM\t{}\t{}\t{}\t{}\t{}",
-            //     pos,
-            //     idx,
-            //     len,
-            //     ed_type,
-            //     total_lk / profiles.len() as f64,
-            // );
+            (pos, total_lk)
+        })
+        .collect();
+    // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
+    // Currently, find and sweep. So, to select one variant,
+    // It takes O(L) time to find a variant, and O(L) time to sweep linked variant.
+    // So, in total, O(ML) time to select M variants. It is OK I think, because
+    // usually L is 2K, M is around 3-20.
+    let mut is_selected = vec![0; probes.len()];
+    'outer: for _ in 0..round {
+        let mut weights: Vec<_> = vec![1f64; probes.len()];
+        for _ in 0..cluster_num.max(2) - 1 {
+            let next_var_idx = probes
+                .iter()
+                .map(|x| x.1)
+                .zip(weights.iter())
+                .zip(is_selected.iter())
+                .enumerate()
+                .max_by(|(_, ((lk1, w1), picked1)), (_, ((lk2, w2), picked2))| {
+                    match (picked1, picked2) {
+                        (1, _) | (2, _) => std::cmp::Ordering::Less,
+                        (_, 1) | (_, 2) => std::cmp::Ordering::Greater,
+                        _ => (lk1 * *w1).partial_cmp(&(lk2 * *w2)).unwrap(),
+                    }
+                });
+            if let Some((next_var_idx, _)) = next_var_idx {
+                let picked_pos = probes[next_var_idx].0;
+                let picked_pos_in_bp = base_position(picked_pos);
+                is_selected[next_var_idx] = 1;
+                for ((&(pos, _), weight), selected) in probes
+                    .iter()
+                    .zip(weights.iter_mut())
+                    .zip(is_selected.iter_mut())
+                    .filter(|&(_, &mut selected)| selected == 0)
+                {
+                    let pos_in_bp = base_position(pos);
+                    let diff_in_bp =
+                        pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
+                    let sim = sokal_michener(profiles, picked_pos, pos);
+                    let cos_sim = cosine_similarity(profiles, picked_pos, pos);
+                    // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
+                    // the sokal michener's similarity would be 0.975.
+                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
+                        *selected = 2;
+                    }
+                    if 0.75 < sim {
+                        *weight *= 1f64 - sim;
+                    }
+                }
+            } else {
+                break 'outer;
+            }
+        }
+    }
+    let selected_variants: Vec<_> = probes
+        .into_iter()
+        .zip(is_selected)
+        .filter_map(|(x, y)| (y == 1).then(|| x))
+        .collect();
+    selected_variants
+}
+
+fn filter_profiles_neo<T: std::borrow::Borrow<[f64]>>(
+    profiles: &[T],
+    cluster_num: usize,
+    round: usize,
+    coverage: f64,
+    template_len: usize,
+) -> Vec<(usize, f64)> {
+    // (sum, maximum gain, number of positive element)
+    let mut total_improvement = vec![(0f64, 0); profiles[0].borrow().len()];
+    for prof in profiles.iter().map(|x| x.borrow()) {
+        for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
+            *maxgain += p.max(0f64);
+            *count += (0.00001 < *p) as usize;
+        }
+    }
+
+    let base_position = |pos: usize| pos / kiley::hmm::guided::NUM_ROW;
+    let in_mask = |pos: usize| {
+        let pos = base_position(pos);
+        pos < MASK_LENGTH || (template_len - MASK_LENGTH) < pos
+    };
+    let probes: Vec<(usize, f64)> = total_improvement
+        .into_iter()
+        .enumerate()
+        .filter(|&(pos, _)| !in_mask(pos))
+        .map(|(pos, (maxgain, count))| {
+            let max_lk = (1..cluster_num + 1)
+                .map(|k| poisson_lk(count, coverage * k as f64))
+                .max_by(|x, y| x.partial_cmp(y).unwrap())
+                .unwrap_or_else(|| panic!("{}", cluster_num));
+            let total_lk = max_lk + maxgain;
             (pos, total_lk)
         })
         .collect();

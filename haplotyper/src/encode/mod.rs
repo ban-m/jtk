@@ -277,8 +277,7 @@ pub fn compress_kiley_ops(k_ops: &[kiley::Op]) -> Vec<Op> {
             match current_op {
                 kiley::Op::Del => ops.push(Op::Del(len)),
                 kiley::Op::Ins => ops.push(Op::Ins(len)),
-                kiley::Op::Match => ops.push(Op::Match(len)),
-                kiley::Op::Mismatch => ops.push(Op::Match(len)),
+                kiley::Op::Mismatch | kiley::Op::Match => ops.push(Op::Match(len)),
             }
             current_op = op;
             len = 1;
@@ -287,8 +286,7 @@ pub fn compress_kiley_ops(k_ops: &[kiley::Op]) -> Vec<Op> {
     match current_op {
         kiley::Op::Del => ops.push(Op::Del(len)),
         kiley::Op::Ins => ops.push(Op::Ins(len)),
-        kiley::Op::Match => ops.push(Op::Match(len)),
-        kiley::Op::Mismatch => ops.push(Op::Match(len)),
+        kiley::Op::Mismatch | kiley::Op::Match => ops.push(Op::Match(len)),
     }
     ops
 }

@@ -44,12 +44,17 @@ pub enum ReadType {
 
 pub const CLR_BAND_WIDTH: usize = 100;
 pub const HIFI_BAND_WIDTH: usize = 80;
-pub const ONT_BAND_WIDTH: usize = 80;
+pub const ONT_BAND_WIDTH: usize = 100;
 
 pub const CLR_CTG_SIM: f64 = 0.15;
 pub const CLR_CLR_SIM: f64 = 0.20;
 pub const HIFI_SIM_THR: f64 = 0.1;
 pub const ONT_SIM_THR: f64 = 0.15;
+
+// (* 0.03 2000.0)
+pub const CLR_BAND_FRAC: f64 = 0.03;
+pub const ONT_BAND_FRAC: f64 = 0.03;
+pub const HIFI_BAND_FRAC: f64 = 0.02;
 
 impl ReadType {
     pub fn sim_thr(&self) -> f64 {
@@ -59,12 +64,15 @@ impl ReadType {
             ReadType::ONT => ONT_SIM_THR,
         }
     }
-    pub fn band_width(&self) -> usize {
-        match *self {
-            ReadType::CCS => HIFI_BAND_WIDTH,
-            ReadType::None | ReadType::CLR => CLR_BAND_WIDTH,
-            ReadType::ONT => ONT_BAND_WIDTH,
-        }
+    pub fn band_width(&self, len: usize) -> usize {
+        let len = len as f64
+            * match *self {
+                ReadType::CCS => HIFI_BAND_FRAC,
+                ReadType::CLR => CLR_BAND_FRAC,
+                ReadType::ONT => ONT_BAND_FRAC,
+                ReadType::None => CLR_BAND_FRAC,
+            };
+        len.ceil() as usize
     }
     pub fn min_span_reads(&self) -> usize {
         match *self {
@@ -651,6 +659,22 @@ impl ErrorRate {
     }
     pub fn sum(&self) -> f64 {
         self.del + self.ins + self.mismatch
+    }
+}
+
+impl std::ops::Add for ErrorRate {
+    type Output = ErrorRate;
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            del: self.del + rhs.del,
+            del_sd: self.del_sd + rhs.del_sd,
+            ins: self.ins + rhs.ins,
+            ins_sd: self.ins_sd + rhs.ins_sd,
+            mismatch: self.mismatch + rhs.mismatch,
+            mism_sd: self.mism_sd + rhs.mism_sd,
+            total: self.total + rhs.total,
+            total_sd: self.total_sd + rhs.total_sd,
+        }
     }
 }
 

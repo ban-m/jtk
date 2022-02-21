@@ -52,7 +52,7 @@ impl PolishUnit for DataSet {
             if let Some(pileup) = pileups.get(&unit.id) {
                 let len_sum: usize = pileup.iter().map(|x| x.seq().len()).sum();
                 let mean_len: usize = len_sum / pileup.len();
-                let radius = c.read_type.band_width().min(mean_len / 20);
+                let radius = c.read_type.band_width(mean_len);
                 let mut seqs_with_diff: Vec<_> = pileup
                     .iter()
                     .map(|node| {
@@ -68,7 +68,7 @@ impl PolishUnit for DataSet {
                     .map(|x| x.1)
                     .collect();
                 let cons =
-                    kiley::bialignment::polish_until_converge_banded(unit.seq(), &seqs, radius);
+                    kiley::bialignment::guided::polish_until_converge(unit.seq(), &seqs, radius);
                 unit.seq = String::from_utf8(cons).unwrap();
             }
         });
@@ -100,11 +100,7 @@ impl PolishUnit for DataSet {
                     pileup.swap(0, med_idx);
                     let seqs = &pileup[..c.consensus_size.min(pileup.len())];
                     let median_len: usize = pileup[0].len();
-                    let radius = match c.read_type {
-                        ReadType::CCS => (median_len / 50).max(40),
-                        ReadType::None | ReadType::CLR => (median_len / 20).max(100),
-                        ReadType::ONT => (median_len / 30).max(50),
-                    };
+                    let radius = c.read_type.band_width(median_len);
                     let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
                     let mut seq_with_diff: Vec<_> = pileup
                         .iter()
@@ -117,7 +113,7 @@ impl PolishUnit for DataSet {
                         .map(|x| *x.1)
                         .collect();
                     let cons =
-                        kiley::bialignment::polish_until_converge_banded(&cons, &seqs, radius);
+                        kiley::bialignment::guided::polish_until_converge(&cons, &seqs, radius);
                     Some((id, String::from_utf8(cons).unwrap()))
                 } else {
                     None

@@ -4,23 +4,71 @@ use haplotyper::determine_units::DetermineUnit;
 use haplotyper::encode::Encode;
 // use haplotyper::DetermineUnit;
 use haplotyper::assemble::*;
+use haplotyper::local_clustering::LocalClustering;
+use kiley::recover;
 use rand::SeedableRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
 use std::collections::{HashMap, HashSet};
 use std::io::*;
+fn error(node: &definitions::Node, ref_unit: &Unit) -> (f64, f64, f64) {
+    let (query, aln, refr) = node.recover(ref_unit);
+    let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
+    let del = query.iter().filter(|&&x| x == b' ').count() as f64;
+    let ins = refr.iter().filter(|&&x| x == b' ').count() as f64;
+    let aln_len = aln.len() as f64;
+    (mismat / aln_len, del / aln_len, ins / aln_len)
+}
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    use haplotyper::dense_encoding::*;
-    let config = DenseEncodingConfig::new(10);
-    let prev: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
-    ds.dense_encoding_dev(&config);
-    let now: usize = ds.encoded_reads.iter().map(|r| r.nodes.len()).sum();
-    log::debug!("{}->{}", prev, now);
-    println!("{}", serde_json::ser::to_string(&ds).unwrap());
+    let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    use rayon::prelude::*;
+    let error_rates: Vec<_> = ds
+        .encoded_reads
+        .par_iter()
+        .flat_map(|r| {
+            r.nodes
+                .par_iter()
+                .map(|n| (r.id, n.unit, error(n, ref_units[&n.unit])))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    println!("readid\tunitid\tmism\tins\tdel");
+    for (rid, unit, (mism, ins, del)) in error_rates {
+        println!("{}\t{}\t{}\t{}\t{}", rid, unit, mism, ins, del);
+    }
+    // let nodes: Vec<_> = ds
+    //     .encoded_reads
+    //     .iter()
+    //     .flat_map(|r| r.nodes.iter())
+    //     .filter(|n| n.unit == 141)
+    //     .collect();
+    // let ref_unit = ds
+    //     .selected_chunks
+    //     .iter()
+    //     .find(|c| c.id == 141)
+    //     .unwrap()
+    //     .seq();
+    // let (seqs, mut ops): (Vec<_>, Vec<_>) = nodes
+    //     .iter()
+    //     .map(|node| {
+    //         let ops = kiley::bialignment::global(ref_unit, node.seq(), 2, -6, -5, -2).1;
+    //         (node.seq(), ops)
+    //     })
+    //     .unzip();
+    // let cons =
+    //     kiley::bialignment::guided::polish_until_converge_with(ref_unit, &seqs, &mut ops, 60);
+    // for (seq, op) in seqs.iter().zip(ops.iter()) {
+    //     let (refr, aln, query) = kiley::recover(&cons, seq, op);
+    //     for ((refr, aln), query) in refr.chunks(200).zip(aln.chunks(200)).zip(query.chunks(200)) {
+    //         println!("{}", String::from_utf8_lossy(refr));
+    //         println!("{}", String::from_utf8_lossy(aln));
+    //         println!("{}\n", String::from_utf8_lossy(query));
+    //     }
+    // }
     // let id2desc: HashMap<_, _> = ds
     //     .raw_reads
     //     .iter()

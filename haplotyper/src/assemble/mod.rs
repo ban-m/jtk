@@ -71,6 +71,7 @@ impl Graph {
 pub struct AssembleConfig {
     threads: usize,
     to_polish: bool,
+    #[allow(dead_code)]
     window_size: usize,
     // If true, resolve repeats.
     to_resolve: bool,
@@ -473,27 +474,21 @@ pub fn polish_by_chunking(
     alignments: &kiley::sam::Sam,
     segment: &gfa::Segment,
     reads: &[&[u8]],
-    c: &AssembleConfig,
-    read_type: &definitions::ReadType,
+    _c: &AssembleConfig,
+    _read_type: &definitions::ReadType,
 ) -> Vec<u8> {
     let template_seq = match segment.sequence.as_ref() {
         Some(res) => res.as_bytes().to_vec(),
         None => panic!(),
     };
-    let segment = (segment.sid.clone(), template_seq);
+    let _segment = (segment.sid.clone(), template_seq);
     debug!("Recording {} alignments...", alignments.records.len());
-    let reads: Vec<_> = reads
+    let _reads: Vec<_> = reads
         .iter()
         .enumerate()
         .map(|(i, r)| (format!("{}", i), r.to_vec()))
         .collect();
-    use kiley::gphmm::*;
-    let model = GPHMM::<Cond>::clr();
-    let radius = read_type.band_width();
-    let config = kiley::PolishConfig::with_model(radius, c.window_size, 30, 50, 15, model);
-    let mut polished = kiley::polish(&[segment], &reads, &alignments.records, &config);
-    assert_eq!(polished.len(), 1);
-    polished.pop().unwrap().1
+    todo!();
 }
 
 pub fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {

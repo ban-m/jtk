@@ -64,9 +64,8 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
-    fn polish(xs: &[&[u8]], unit: &Unit) -> Vec<u8> {
-        let band_width = 100;
-        kiley::bialignment::polish_until_converge_banded(unit.seq(), xs, band_width)
+    fn polish(xs: &[&[u8]], unit: &Unit, band: usize) -> Vec<u8> {
+        kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
     }
     let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<u64, Vec<_>> = HashMap::new();
@@ -85,6 +84,7 @@ fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
             for (cl, seq) in bucket {
                 clusters.entry(*cl).or_default().push(seq);
             }
+            let band = ds.read_type.band_width(ref_unit.seq().len());
             assert!(!clusters.is_empty());
             let representative: Vec<_> = if clusters.len() == 1 {
                 clusters
@@ -95,7 +95,7 @@ fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
                 clusters
                     .iter()
                     .filter(|(_, xs)| !xs.is_empty())
-                    .map(|(&cl, xs)| (cl, polish(xs, ref_unit)))
+                    .map(|(&cl, xs)| (cl, polish(xs, ref_unit, band)))
                     .collect()
             };
             (unit, representative)
@@ -109,8 +109,7 @@ fn abs(x: usize, y: usize) -> usize {
 }
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
-const OFFSET: usize = 100;
-
+const OFFSET: usize = 300;
 // returns the ids of the units newly encoded.
 pub fn correct_deletion_error(
     (read, seq): (&mut EncodedRead, &[u8]),
@@ -126,7 +125,6 @@ pub fn correct_deletion_error(
     let nodes = &read.nodes;
     let mut inserts = vec![];
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    // for (idx, pileup) in pileups.iter().enumerate().take(nodes.len()).skip(1) {
     for (idx, pileup) in pileups.iter().enumerate() {
         let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
         head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
@@ -149,7 +147,7 @@ pub fn correct_deletion_error(
         for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
             read.nodes.insert(idx + accum_inserts, node);
         }
-        let mut nodes = vec![];
+        let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_slippy_alignment};
         nodes.sort_by_key(|n| (n.unit, n.position_from_start));
@@ -247,15 +245,24 @@ fn encode_node(
     } else {
         bio_utils::revcmp(&query[start..end])
     };
-    let (seq, aln_start, aln_end, ops, score) =
+    let (seq, aln_start, aln_end, kops, score) =
         fine_mapping(&query, (unit, cluster, unitseq), sim_thr)?;
-    let ops = super::compress_kiley_ops(&ops);
+    let ops = super::compress_kiley_ops(&kops);
     let cl = unit.cluster_num;
     let position_from_start = if is_forward {
         start + aln_start
     } else {
         start + query.len() - aln_end
     };
+    {
+        // Sanity check
+        let (rlen, qlen) = ops.iter().fold((0, 0), |(rlen, qlen), op| match op {
+            Op::Match(l) => (rlen + l, qlen + l),
+            Op::Del(l) => (rlen + l, qlen),
+            Op::Ins(l) => (rlen, qlen + l),
+        });
+        assert_eq!((rlen, qlen), (unit.seq().len(), seq.len()));
+    }
     // I think we should NOT make likelihood gain to some biased value,
     // as 1. if the alignment gives the certaintly, then we can impute the clustering by the alignment,
     // 2. if `cluster` assignment is just by chance,
@@ -271,6 +278,7 @@ fn fine_mapping<'a>(
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<(&'a [u8], usize, usize, Vec<kiley::Op>, i32)> {
+    use kiley::bialignment::guided::global_guided;
     fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
         use kiley::Op::*;
         ops.iter()
@@ -285,25 +293,34 @@ fn fine_mapping<'a>(
         let locations = alignment.locations.unwrap();
         let (aln_start, aln_end) = locations[0];
         let band = (((aln_end - aln_start + 1) as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-        let seq = &query[aln_start..=aln_end];
         let ops = edlib_op_to_kiley_op(&alignment.operations.unwrap());
-        let (_, mut ops) =
-            kiley::bialignment::guided::global_guided(unitseq, seq, &ops, band, ALN_PARAMETER);
-        let (start, end) = trim_head_tail_insertion(&mut ops, aln_start, aln_end);
-        (&query[start..=end], start, end + 1, ops, band)
+        let query = &query[aln_start..=aln_end];
+        let (_, mut ops) = global_guided(unitseq, query, &ops, band, ALN_PARAMETER);
+        let (start, end) = trim_head_tail_insertion(&mut ops);
+        let query = &query[start..query.len() - end];
+        let start = aln_start;
+        let end = aln_end + 1 - end;
+        (query, start, end, ops, band)
     };
-    let unitlen = unitseq.len() as f64;
-    let indel_thr = ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
-    let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
-    let identity = mat_num as f64 / ops.len() as f64;
-    let below_dissim = (1f64 - sim_thr) < identity;
-    // Mat=>-1, Other->1
-    let indel_mism = ops
-        .iter()
-        .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
-    let max_indel = super::max_region(indel_mism).max(0) as usize;
-    let info = format!("{}\t{}\t{}\t{}", unit.id, cluster, max_indel, identity);
-    if !below_dissim || indel_thr < max_indel {
+    let (below_dissim, below_indel, info) = {
+        let unitlen = unitseq.len() as f64;
+        let indel_thr =
+            ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
+        // Mat=>-1, Other->1
+        let indel_mism = ops
+            .iter()
+            .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
+        let max_indel = super::max_region(indel_mism).max(0) as usize;
+        let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
+        let identity = mat_num as f64 / ops.len() as f64;
+        let info = format!("{}\t{}\t{}\t{}", unit.id, cluster, max_indel, identity);
+        ((1f64 - sim_thr) < identity, max_indel < indel_thr, info)
+    };
+    if below_dissim && below_indel {
+        trace!("FILLDEL{}\tOK", info);
+        let (score, new_ops) = global_guided(unit.seq(), &query, &ops, band, ALN_PARAMETER);
+        Some((query, aln_start, aln_end, new_ops, score))
+    } else {
         trace!("FILLDEL\t{}\tNG", info);
         if log_enabled!(log::Level::Trace) {
             let (xr, ar, yr) = kiley::recover(unitseq, &query, &ops);
@@ -314,30 +331,24 @@ fn fine_mapping<'a>(
             }
         }
         None
-    } else {
-        trace!("FILLDEL{}\tOK", info);
-        use kiley::bialignment::guided::global_guided;
-        let (score, ops) = global_guided(unit.seq(), &query, &ops, band, ALN_PARAMETER);
-        Some((query, aln_start, aln_end, ops, score))
     }
 }
 
 // Triming the head/tail insertion, re-calculate the start and end position.
-fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>, start: usize, end: usize) -> (usize, usize) {
-    // Triming head.
-    let mut head_ins = 0;
-    ops.reverse();
-    while ops.last() == Some(&kiley::Op::Ins) {
-        ops.pop();
-        head_ins += 1;
-    }
-    ops.reverse();
+fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>) -> (usize, usize) {
     let mut tail_ins = 0;
     while ops.last() == Some(&kiley::Op::Ins) {
         ops.pop();
         tail_ins += 1;
     }
-    (start + head_ins, end - tail_ins)
+    ops.reverse();
+    let mut head_ins = 0;
+    while ops.last() == Some(&kiley::Op::Ins) {
+        ops.pop();
+        head_ins += 1;
+    }
+    ops.reverse();
+    (head_ins, tail_ins)
 }
 
 // Align read skeltons to read, return the pileup sumamries.

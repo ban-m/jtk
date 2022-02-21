@@ -405,3 +405,30 @@ cov.flip.unit.summary %>%  ggplot() + geom_histogram(aes(x=flip))
 cov.flip.unit.summary %>% filter(score < 500) %>%  ggplot() + geom_histogram(aes(x=score), bins=100)
 
 
+
+error.rate.data <- read_tsv("mock.tsv")
+
+error.rate.data %>% ggplot() + geom_histogram(aes(x=mism+ins+del))
+
+
+error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
+    group_by(unitid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
+    ggplot() + geom_point(aes(x=mean, y = sd/mean))
+
+error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
+    group_by(readid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
+    ggplot() + geom_point(aes(x=mean, y = sd/mean))
+
+
+error.rate.data <- read_tsv("real.tsv")
+
+error.rate.data %>% ggplot() + geom_histogram(aes(x=mism+ins+del))
+
+
+error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
+    group_by(unitid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
+    ggplot() + geom_point(aes(x=mean, y = sd/mean))
+
+error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
+    group_by(readid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
+    ggplot() + geom_point(aes(x=mean, y = sd/mean))
