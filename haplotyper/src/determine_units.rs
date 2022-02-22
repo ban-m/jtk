@@ -370,18 +370,9 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
 fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
-        // let len = if edge.label.is_empty() {
-        //     edge.offset
-        // } else {
-        //     edge.label().len() as i64
-        // };
         let key = (edge.from.min(edge.to), edge.from.max(edge.to));
         edge_count.entry(key).or_default().push(edge);
-        // let entry = edge_count.entry(edge).or_default();
-        // entry.0 += 1;
-        // entry.1 += len;
     }
-    // use std::collections::HashSet;
     // We fill units for each sparsed region.
     let count_thr = {
         let mut count: HashMap<_, usize> = HashMap::new();
@@ -414,35 +405,6 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
             picked_units.extend(new_units);
         }
     }
-    // let mut sparse_edge: HashSet<_> = edge_count
-    //     .into_iter()
-    //     .filter_map(|(edge, (count, len))| (len / count as i64 > sparse_thr).then(|| edge))
-    //     .collect();
-    // let stride = config.chunk_len + config.skip_len;
-    // let picked_units: Vec<_> = {
-    //     let mut new_units = vec![];
-    //     for read in ds.encoded_reads.iter() {
-    //         for edge in read.edges.iter() {
-    //             let seq = edge.label();
-    //             let edge = (edge.from.min(edge.to), edge.from.max(edge.to));
-    //             if sparse_edge.contains(&edge) {
-    //                 // Pick new units.
-    //                 new_units.extend(
-    //                     (0..)
-    //                         .map(|i| (stride * i, stride * i + config.chunk_len))
-    //                         .take_while(|&(_, y)| y + config.skip_len < seq.len())
-    //                         .map(|(s, t)| &seq[s..t])
-    //                         .filter(|u| !is_repetitive(u, config)),
-    //                 );
-    //                 sparse_edge.remove(&edge);
-    //             }
-    //         }
-    //         if sparse_edge.is_empty() {
-    //             break;
-    //         }
-    //     }
-    //     new_units
-    // };
     debug!("FillSparse\t{}", picked_units.len());
     let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
     ds.selected_chunks
@@ -469,6 +431,9 @@ fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
                 .push(&read.trailing_gap);
         }
     }
+    tail_counts.values_mut().for_each(|tips| {
+        tips.retain(|label| config.chunk_len < label.len());
+    });
     // We fill units for each sparsed region.
     let count_thr = {
         let mut count: HashMap<_, usize> = HashMap::new();
@@ -482,14 +447,12 @@ fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
     let mut picked_units = vec![];
     for ((unit, direction), labels) in tail_counts
         .into_iter()
-        .filter(|(_, labels)| labels.len() > count_thr / 2 && !labels.is_empty())
+        .filter(|(_, labels)| labels.len() > count_thr.max(1))
     {
         let seq = labels.iter().max_by_key(|xs| xs.len()).unwrap();
         trace!("FillSparse\t{}\t{}\t{}", unit, direction, labels.len());
-        let new_units = (0..)
-            .map(|i| (config.chunk_len * i, config.chunk_len * (i + 1)))
-            .take_while(|&(_, y)| y < seq.len())
-            .map(|(s, t)| &seq[s..t])
+        let new_units = seq
+            .chunks_exact(config.chunk_len)
             .filter(|u| !is_repetitive(u, config));
         picked_units.extend(new_units);
     }

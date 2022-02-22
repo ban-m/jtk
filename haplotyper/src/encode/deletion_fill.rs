@@ -236,7 +236,7 @@ fn encode_node(
     sim_thr: f64,
 ) -> Option<(Node, i32)> {
     // Initial filter.
-    if (end - start) < 2 * unitseq.len() / 3 {
+    if (end - start) < 4 * unitseq.len() / 5 {
         return None;
     }
     // Tune the query...
@@ -302,21 +302,33 @@ fn fine_mapping<'a>(
         let end = aln_end + 1 - end;
         (query, start, end, ops, band)
     };
-    let (below_dissim, below_indel, info) = {
-        let unitlen = unitseq.len() as f64;
-        let indel_thr =
-            ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
-        // Mat=>-1, Other->1
-        let indel_mism = ops
-            .iter()
-            .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
-        let max_indel = super::max_region(indel_mism).max(0) as usize;
+    let (below_dissim, info) = {
         let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
         let identity = mat_num as f64 / ops.len() as f64;
-        let info = format!("{}\t{}\t{}\t{}", unit.id, cluster, max_indel, identity);
-        ((1f64 - sim_thr) < identity, max_indel < indel_thr, info)
+        let (rlen, qlen) = (unitseq.len(), query.len());
+        let info = format!("{}\t{}\t{}\t{}\t{}", unit.id, cluster, identity, rlen, qlen);
+        ((1f64 - sim_thr) < identity, info)
     };
-    if below_dissim && below_indel {
+    // let (below_dissim, below_indel, info) = {
+    // let unitlen = unitseq.len() as f64;
+    // let indel_thr =
+    //     ((unitlen * super::INDEL_FRACTION).round() as usize).max(super::MIN_INDEL_SIZE);
+    // Mat=>-1, Other->1
+    // let indel_mism = ops
+    //     .iter()
+    //     .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
+    // let max_indel = super::max_region(indel_mism).max(0) as usize;
+    // let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
+    // let identity = mat_num as f64 / ops.len() as f64;
+    // let (rlen, qlen) = (unitseq.len(), query.len());
+    // let info = format!(
+    //     "{}\t{}\t{}\t{}\t{}\t{}",
+    //     unit.id, cluster, max_indel, identity, rlen, qlen
+    // );
+    // ((1f64 - sim_thr) < identity, max_indel < indel_thr, info)
+    // };
+    //if below_dissim && below_indel {
+    if below_dissim {
         trace!("FILLDEL{}\tOK", info);
         let (score, new_ops) = global_guided(unit.seq(), &query, &ops, band, ALN_PARAMETER);
         Some((query, aln_start, aln_end, new_ops, score))

@@ -31,7 +31,7 @@ impl Encode for definitions::DataSet {
 
 pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> std::io::Result<()> {
     let mm2 = mm2_alignment(ds, p)?;
-    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
+    // let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
         .lines()
         .filter_map(bio_utils::paf::PAF::new)
@@ -39,19 +39,19 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
         .filter_map(|aln| {
             // Check the max-indel.
             use bio_utils::sam;
-            let tname = aln.tname.parse::<u64>().unwrap();
-            let chunk_len = chunks.get(&tname)?.seq().len();
+            // let tname = aln.tname.parse::<u64>().unwrap();
+            // let chunk_len = chunks.get(&tname)?.seq().len();
             // let dist_thr = (chunk_len as f64 * sim_thr).floor() as usize;
-            let gap_thr =
-                ((chunk_len as f64 * INDEL_FRACTION).round() as usize).max(MIN_INDEL_SIZE);
+            // let gap_thr =
+            //     ((chunk_len as f64 * INDEL_FRACTION).round() as usize).max(MIN_INDEL_SIZE);
             let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
-            let indel_iter = cigar.iter().map(|op| match *op {
-                sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,
-                sam::Op::Align(l) | sam::Op::Match(l) => -(l as i32),
-                _ => 0,
-            });
-            let max_indel = max_region(indel_iter).max(0) as usize;
-            let no_large_indel = max_indel < gap_thr;
+            // let indel_iter = cigar.iter().map(|op| match *op {
+            //     sam::Op::Mismatch(l) | sam::Op::Deletion(l) | sam::Op::Insertion(l) => l as i32,
+            //     sam::Op::Align(l) | sam::Op::Match(l) => -(l as i32),
+            //     _ => 0,
+            // });
+            // let max_indel = max_region(indel_iter).max(0) as usize;
+            // let no_large_indel = max_indel < gap_thr;
             let (aln_len, mat_num) = cigar.iter().fold((0, 0), |(aln, mat), &op| match op {
                 sam::Op::Align(x)
                 | sam::Op::Insertion(x)
@@ -61,7 +61,8 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
                 _ => unreachable!(),
             });
             let percent_identity = mat_num as f64 / aln_len as f64;
-            (no_large_indel && 1f64 - sim_thr < percent_identity).then(|| aln)
+            (1f64 - sim_thr < percent_identity).then(|| aln)
+            //(no_large_indel && 1f64 - sim_thr < percent_identity).then(|| aln)
         })
         .collect();
     encode_by(ds, &alignments);

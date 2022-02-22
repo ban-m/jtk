@@ -33,7 +33,7 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
-    graph.remove_lightweight_edges(2, true);
+    // graph.remove_lightweight_edges(2, true);
     let (segments, edge, group, summaries) = graph.spell(c);
     let nodes = segments.into_iter().map(|node| {
         let tags = match summaries.iter().find(|x| x.id == node.sid) {
