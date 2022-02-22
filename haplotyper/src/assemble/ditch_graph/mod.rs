@@ -1992,11 +1992,14 @@ impl<'a> DitchGraph<'a> {
             .filter(|r| r.contains(node.node))
             .copied()
             .collect();
-        // let covered = Self::get_covered_nodes(&reads, config.min_span_reads);
-        // let dist_nodes = self.enumerate_node_upto(node, pos, &covered);
         let dist_nodes = self.enumerate_candidate_nodes(&reads, config.min_span_reads, node, pos);
         let mut focus: Option<Focus> = None;
         for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
+            // TODO: Maybe we need to clarify condition so that to remove this if-statement...
+            let total_occs: usize = nodes.iter().map(|n| self.nodes[&n.0].occ).sum();
+            if total_occs == 0 {
+                continue;
+            }
             let dist = dist + 1;
             let mut occs: Vec<_> = vec![0; nodes.len()];
             for read in reads.iter() {
