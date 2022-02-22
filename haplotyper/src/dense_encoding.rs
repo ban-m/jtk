@@ -475,16 +475,16 @@ fn encode_edge(
         if xpos == break_points[target_idx] {
             // Reached the boundary.
             let unit = &units[target_idx];
-            let (uid, unitlen) = (unit.id, unit.seq().len());
+            let (uid, _unitlen) = (unit.id, unit.seq().len());
             let ylen = alignments.iter().filter(|&&x| x != kiley::Op::Del).count();
             let cigar = crate::encode::compress_kiley_ops(&alignments);
-            let indel_mism = alignments
-                .iter()
-                .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
-            let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
-            let unitlen = unitlen as f64;
-            let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
-                .max(crate::encode::MIN_INDEL_SIZE);
+            // let indel_mism = alignments
+            //     .iter()
+            //     .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
+            // let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
+            // let unitlen = unitlen as f64;
+            // let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
+            //     .max(crate::encode::MIN_INDEL_SIZE);
             let percent_identity = {
                 let (aln, mat) = alignments.iter().fold((0, 0), |(aln, mat), &op| match op {
                     kiley::Op::Match => (aln + 1, mat + 1),
@@ -492,7 +492,8 @@ fn encode_edge(
                 });
                 mat as f64 / aln as f64
             };
-            if max_indel < gap_thr && 1f64 - sim_thr < percent_identity {
+            //if max_indel < gap_thr && 1f64 - sim_thr < percent_identity {
+            if 1f64 - sim_thr < percent_identity {
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,
                     false => end - ypos,

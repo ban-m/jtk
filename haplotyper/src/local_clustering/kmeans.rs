@@ -164,6 +164,8 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .zip(ops.iter_mut())
         .map(|(seq, op)| {
             let (mut table, lk) = hmm.modification_table(&template, seq.borrow(), band_width, op);
+            assert!(table.iter().all(|x| x.is_finite()));
+            assert!(table.iter().all(|x| !x.is_nan()));
             table.iter_mut().for_each(|x| *x -= lk);
             table
         })
@@ -1330,6 +1332,12 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
     let partition_lks: Vec<_> = (0..=data.len())
         .map(|x| max_poisson_lk(x, cov, 1, k))
         .collect();
+    assert!(
+        partition_lks.iter().all(|x| !x.is_nan()),
+        "{:?}\t{}",
+        partition_lks,
+        cov
+    );
     // how many instance in a cluster.
     let mut clusters = vec![0; k];
     for &asn in assign.iter() {
@@ -1408,6 +1416,11 @@ fn update<R: Rng>(
     // Calc likelihoods.
     let prob = if 0f64 < diff { 1f64 } else { diff.exp() };
     if prob.is_nan() {
+        for xs in data.iter() {
+            eprintln!("{:?}", xs);
+        }
+        eprintln!("{:?}", partition_lks);
+        eprintln!("{:?}", clusters);
         panic!("{},{},{},{}", prob, diff, prop_lk, prev_lk);
     }
     if rng.gen_bool(prob) {

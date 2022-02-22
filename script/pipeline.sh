@@ -52,7 +52,6 @@ else
     cat ${CLUSTERED} | jtk purge_diverged --threads ${THREADS} -vv > ${PURGED}
 fi
 
-
 if [ -f ${RESOLVED} ]
 then
     echo "Tangle resolved. Skip resolving proc".

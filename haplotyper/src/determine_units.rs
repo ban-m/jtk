@@ -442,7 +442,7 @@ fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
         }
         let mut count: Vec<_> = count.into_values().collect();
         let median = count.len() / 2;
-        *count.select_nth_unstable(median).1 / 4
+        *count.select_nth_unstable(median).1 / 8
     };
     let mut picked_units = vec![];
     for ((unit, direction), labels) in tail_counts
