@@ -15,7 +15,7 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    let config = AssembleConfig::new(1, 100, false, false, 4);
+    let config = AssembleConfig::new(1, 100, false, false, 4, 4f64);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, &config);

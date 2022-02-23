@@ -478,3 +478,6 @@ correction.comparison <- full_join(
     datasets[[6]]$data %>% group_by(unit) %>% summarize(purity=mean(purity)) %>% rename(after=purity),
     datasets[[2]]$data %>% group_by(unit) %>% summarize(purity=mean(purity)) %>% rename(before=purity))
 
+
+datasets %>%
+    map(~list(name=.$name, data = filter(.$data, unit %in% c(1685,1591,813)) %>% arrange(unit)))

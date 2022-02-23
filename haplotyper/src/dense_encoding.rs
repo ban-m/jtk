@@ -248,11 +248,20 @@ pub fn fill_edges_by_new_units_dev(
     inserts
 }
 
+fn weak_resolve(read_type: definitions::ReadType) -> (usize, f64) {
+    match read_type {
+        ReadType::CCS => (3, 2f64),
+        ReadType::CLR => (4, 5f64),
+        ReadType::ONT => (4, 4f64),
+        ReadType::None => (4, 4f64),
+    }
+}
+
 type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
 fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> EdgeAndUnit {
     use crate::assemble::*;
-    let min_span_reads = ds.read_type.min_span_reads();
-    let config = AssembleConfig::new(1, 1000, false, true, min_span_reads);
+    let (min_span_reads, lk_ratio) = weak_resolve(ds.read_type);
+    let config = AssembleConfig::new(1, 1000, false, true, min_span_reads, lk_ratio);
     let (_, summaries) = assemble(ds, &config);
     let edges: HashMap<_, _> = summaries
         .iter()

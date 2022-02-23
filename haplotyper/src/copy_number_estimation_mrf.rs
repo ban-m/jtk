@@ -27,7 +27,7 @@ impl Config {
     }
 }
 const ERROR_FRAC: f64 = 0.25;
-const BURN_IN: usize = 1000;
+const BURN_IN: usize = 10_000;
 // const BURN_IN: usize = 300_000;
 // const SAMPLE_LEN: usize = 1_000;
 // target of consistency factor.
@@ -240,7 +240,6 @@ impl Graph {
         // We gradually increase the consistency factor so that after BURN_IN period,
         // the consistency factor would be TARGET.
         let total_step = 2 * (node_cp.len() + edge_cp.len()) * BURN_IN;
-        // let stops = 2 * self.coverages.len() * BURN_IN;
         let grad = (TARGET.ln() / total_step as f64).exp();
         for _ in 0..total_step {
             let _ = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
@@ -252,8 +251,8 @@ impl Graph {
         // let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
         // let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
         // let mut min = current_potential;
-        // let loop_num = 2 * self.coverages.len() * (BURN_IN + SAMPLE_LEN);
-        // for t in stops..loop_num {
+        // let loop_num = 2000 * self.coverages.len();
+        // for _ in 0..loop_num {
         //     let (is_success, diff) =
         //         self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
         //     if is_success {
@@ -262,10 +261,6 @@ impl Graph {
         //             min = current_potential;
         //             argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
         //         }
-        //     }
-        //     if t % 500 == 0 {
-        //         let ci = mcmc_config.chain_id;
-        //         trace!("MCMC\t{}\t{}\t{}\t{}", t, ci, is_success, current_potential);
         //     }
         // }
         // mcmc_config.coverage = argmin.2;

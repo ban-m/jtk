@@ -82,6 +82,14 @@ impl ReadType {
             ReadType::None => 3,
         }
     }
+    pub fn min_llr_value(&self) -> f64 {
+        match *self {
+            ReadType::CCS => 0.1f64,
+            ReadType::CLR => 1f64,
+            ReadType::ONT => 0.5f64,
+            ReadType::None => 1f64,
+        }
+    }
 }
 
 impl std::default::Default for DataSet {

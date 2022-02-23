@@ -21,27 +21,25 @@ fn error(node: &definitions::Node, ref_unit: &Unit) -> (f64, f64, f64) {
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    let selection: HashSet<_> = vec![967].into_iter().collect();
-    local_clustering_selected(&mut ds, &selection);
-    // let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    // use rayon::prelude::*;
-    // let error_rates: Vec<_> = ds
-    //     .encoded_reads
-    //     .par_iter()
-    //     .flat_map(|r| {
-    //         r.nodes
-    //             .par_iter()
-    //             .map(|n| (r.id, n.unit, error(n, ref_units[&n.unit])))
-    //             .collect::<Vec<_>>()
-    //     })
-    //     .collect();
-    // println!("readid\tunitid\tmism\tins\tdel");
-    // for (rid, unit, (mism, ins, del)) in error_rates {
-    //     println!("{}\t{}\t{}\t{}\t{}", rid, unit, mism, ins, del);
-    // }
+    let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    use rayon::prelude::*;
+    let error_rates: Vec<_> = ds
+        .encoded_reads
+        .par_iter()
+        .flat_map(|r| {
+            r.nodes
+                .par_iter()
+                .map(|n| (r.id, n.unit, error(n, ref_units[&n.unit])))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    println!("readid\tunitid\tmism\tins\tdel");
+    for (rid, unit, (mism, ins, del)) in error_rates {
+        println!("{}\t{}\t{}\t{}\t{}", rid, unit, mism, ins, del);
+    }
     // let nodes: Vec<_> = ds
     //     .encoded_reads
     //     .iter()

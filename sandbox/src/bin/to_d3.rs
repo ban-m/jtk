@@ -29,7 +29,7 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|rdr| serde_json::de::from_reader(rdr).unwrap())?;
-    let config = haplotyper::assemble::AssembleConfig::new(1, 1000, false, true, 5);
+    let config = haplotyper::assemble::AssembleConfig::new(1, 1000, false, true, 5, 2f64);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let units = &ds.selected_chunks;
     let rt = ds.read_type;

@@ -73,9 +73,9 @@ pub struct AssembleConfig {
     to_polish: bool,
     #[allow(dead_code)]
     window_size: usize,
-    // If true, resolve repeats.
     to_resolve: bool,
     min_span_reads: usize,
+    span_likelihood_ratio: f64,
 }
 
 impl std::default::Default for AssembleConfig {
@@ -86,6 +86,7 @@ impl std::default::Default for AssembleConfig {
             window_size: 100,
             to_resolve: false,
             min_span_reads: 6,
+            span_likelihood_ratio: 3f64,
         }
     }
 }
@@ -96,6 +97,7 @@ impl AssembleConfig {
         to_polish: bool,
         to_resolve: bool,
         min_span_reads: usize,
+        span_likelihood_ratio: f64,
     ) -> Self {
         Self {
             window_size,
@@ -103,6 +105,7 @@ impl AssembleConfig {
             to_polish,
             to_resolve,
             min_span_reads,
+            span_likelihood_ratio,
         }
     }
 }

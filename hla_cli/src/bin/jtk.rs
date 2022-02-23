@@ -165,7 +165,7 @@ fn subcommand_select_unit() -> App<'static> {
                 .long("upper")
                 .help("Discard units with occurence more than or equal to [upper].")
                 .takes_value(true)
-                .default_value("200"),
+                .default_value("150"),
         )
         .arg(
             Arg::new("lower")
@@ -1212,8 +1212,9 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
-    let min_span_reads = dataset.read_type.min_span_reads();
-    let config = AssembleConfig::new(threads, window_size, !skip_polish, true, min_span_reads);
+    let msr = dataset.read_type.min_span_reads();
+    let min_lk = dataset.read_type.min_llr_value();
+    let config = AssembleConfig::new(threads, window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
     writeln!(&mut file, "{}", gfa)?;

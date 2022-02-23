@@ -232,7 +232,8 @@ impl std::fmt::Display for DitchEdge {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "({:?}:{})->", self.from, self.from_position)?;
         write!(f, "({:?}:{})", self.to, self.to_position)?;
-        write!(f, "{}:{}", self.occ, self.seq)
+        let cp = self.copy_number.unwrap_or(0);
+        write!(f, "{}:{}:{}", self.occ, self.seq, cp)
     }
 }
 
@@ -620,16 +621,13 @@ impl<'a> DitchGraph<'a> {
             self.zip_up_overclustering();
         }
         // From good Likelihood ratio focus, to weaker ones.
-        let min_llr = match read_type {
-            ReadType::CCS => 1,
-            ReadType::CLR => 3,
-            ReadType::ONT => 2,
-            ReadType::None => 3,
-        };
-        for llr in (min_llr..10).rev() {
+        let min_llr = c.span_likelihood_ratio;
+        let llr_stream = (0..10).rev().map(|x| x as f64).take_while(|&x| min_llr < x);
+        for llr in llr_stream {
             self.assign_copy_number_mcmc(cov, lens);
             self.resolve_repeats(reads, c, llr as f64);
         }
+        self.remove_lightweight_edges(0, true);
         if read_type == ReadType::CLR {
             self.zip_up_overclustering();
         }
@@ -755,9 +753,7 @@ impl<'a> DitchGraph<'a> {
         if let Some(node) = self.nodes.get_mut(&to.0) {
             node.edges
                 .iter_mut()
-                .filter(|edge| {
-                    edge.from_position == to.1 && (edge.from, edge.from_position) == from
-                })
+                .filter(|edge| edge.from_position == to.1 && (edge.to, edge.to_position) == from)
                 .for_each(|edge| edge.reduce_one_copy_number());
         }
     }
@@ -1840,27 +1836,16 @@ impl<'a> DitchGraph<'a> {
                     .filter(|e| matches!(e.copy_number, Some(cp) if cp > 0))
                     .map(|edge| ((edge.from, edge.from_position), (edge.to, edge.to_position)))
                     .collect();
-                for (from, to) in reduced {
-                    self.decrement_edge_copy_number(from, to);
-                }
+                reduced
+                    .into_iter()
+                    .for_each(|(from, to)| self.decrement_edge_copy_number(from, to));
                 // This unwrap never panics.
                 let node = self.nodes.get_mut(&from).unwrap();
-                // let reduced: Vec<_> = node
-                //     .edges
-                //     .iter_mut()
-                //     .filter(|e| e.to == to && e.to_position == to_pos)
-                //     .filter(|e| matches!(e.copy_number, Some(cp) if cp > 0))
-                //     .map(|edge| {
-                //         let cp = edge.copy_number.unwrap();
-                //         let occ = edge.occ / cp;
-                //         edge.occ -= occ;
-                //         edge.copy_number = Some(cp - 1);
-                //         (edge.from, edge.to)
-                //     })
-                //     .collect();
-
                 match node.copy_number {
                     Some(cp) if 0 < cp => {
+                        if [536, 786].contains(&node.node.0) {
+                            debug!("DUMP\t{}", node);
+                        }
                         // TODO: Is this OK? Maybe the copy number is not reliable.
                         // The problem is not the reduction of the copy number -- it should be zero --
                         // but the reduction of the `occ`. Maybe we should substract average coverage
@@ -2256,7 +2241,7 @@ impl<'a> DitchGraph<'a> {
     //         }
     //     }
     // }
-    /// Remove lightweight edges with occurence less than `thr`.
+    /// Remove lightweight edges with occurence less than or equal to `thr`.
     /// To retain that edge if the edge is the only edge from its terminal,
     /// set `retain_single_edge` to `true`.
     pub fn remove_lightweight_edges(&mut self, thr: usize, retain_single_edge: bool) {
@@ -2701,7 +2686,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / hap.len() / 2) as f64;
         let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(1, 100, false, false, 6);
+        let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
         let graph = DitchGraph::new(&reads, None, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -2751,7 +2736,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
         let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(1, 100, false, false, 6);
+        let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
         let graph = DitchGraph::new(&reads, None, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
         for (i, &cp) in node_cp.iter().enumerate() {

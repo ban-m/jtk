@@ -20,7 +20,8 @@ impl ComponentPicking for DataSet {
     fn pick_top_n_component(&mut self, c: &ComponentPickingConfig) {
         use crate::assemble::Assemble;
         use crate::assemble::AssembleConfig;
-        let asm_config = AssembleConfig::new(1, 100, false, false, 6);
+        // The last two parameter is not needed.
+        let asm_config = AssembleConfig::new(1, 100, false, false, 6, 3f64);
         let graph = self.assemble_draft_graph(&asm_config);
         let mut components: Vec<_> = graph.enumerate_connected_components();
         for (i, cc) in components.iter().enumerate() {
