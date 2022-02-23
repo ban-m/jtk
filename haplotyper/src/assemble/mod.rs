@@ -287,9 +287,9 @@ impl Assemble for DataSet {
                 }
             })
             .collect();
-        for summary in summaries.iter() {
-            debug!("SUMMARY\t{}", summary);
-        }
+        // for summary in summaries.iter() {
+        //     debug!("SUMMARY\t{}", summary);
+        // }
         Graph { nodes, edges }
     }
 }

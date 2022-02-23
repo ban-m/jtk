@@ -305,6 +305,18 @@ impl DitchEdge {
             proxying,
         }
     }
+    // reduce the copy number by one,
+    // and decrease the .occ parameter appropriately.
+    fn reduce_one_copy_number(&mut self) {
+        match self.copy_number.as_mut() {
+            Some(cp) if *cp == 1 => {
+                let occ_reduce = self.occ / *cp;
+                self.occ -= occ_reduce;
+                *cp -= 1;
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -729,6 +741,24 @@ impl<'a> DitchGraph<'a> {
                 "`get_edge({:?})` is called, but there's no such node,",
                 node
             ),
+        }
+    }
+    // Decrease the copy number of the given edge by one,
+    // tune the occurence of these edges appropriately.
+    fn decrement_edge_copy_number(&mut self, from: (Node, Position), to: (Node, Position)) {
+        if let Some(node) = self.nodes.get_mut(&from.0) {
+            node.edges
+                .iter_mut()
+                .filter(|edge| edge.from_position == from.1 && (edge.to, edge.to_position) == to)
+                .for_each(|edge| edge.reduce_one_copy_number());
+        }
+        if let Some(node) = self.nodes.get_mut(&to.0) {
+            node.edges
+                .iter_mut()
+                .filter(|edge| {
+                    edge.from_position == to.1 && (edge.from, edge.from_position) == from
+                })
+                .for_each(|edge| edge.reduce_one_copy_number());
         }
     }
     // Return tuples of node and their position from which
@@ -1796,22 +1826,39 @@ impl<'a> DitchGraph<'a> {
                 Position::Head => self.nodes[&from].seq().to_vec(),
                 Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
             };
-            let target = [(346, 0), (1788, 0), (690, 0), (457, 0), (1298, 0)];
             // Reduce the occ and copy number of the node, and occ of the edge.
             let occ = {
-                // This unwrap never panics.
-                let node = self.nodes.get_mut(&from).unwrap();
                 // Reduce te occ of the edge.
-                node.edges
-                    .iter_mut()
+                // The reverse direction should be cared.
+                let reduced: Vec<_> = self
+                    .nodes
+                    .get(&from)
+                    .unwrap()
+                    .edges
+                    .iter()
                     .filter(|e| e.to == to && e.to_position == to_pos)
                     .filter(|e| matches!(e.copy_number, Some(cp) if cp > 0))
-                    .for_each(|edge| {
-                        let cp = edge.copy_number.unwrap();
-                        let occ = edge.occ / cp;
-                        edge.occ -= occ;
-                        edge.copy_number = Some(cp - 1);
-                    });
+                    .map(|edge| ((edge.from, edge.from_position), (edge.to, edge.to_position)))
+                    .collect();
+                for (from, to) in reduced {
+                    self.decrement_edge_copy_number(from, to);
+                }
+                // This unwrap never panics.
+                let node = self.nodes.get_mut(&from).unwrap();
+                // let reduced: Vec<_> = node
+                //     .edges
+                //     .iter_mut()
+                //     .filter(|e| e.to == to && e.to_position == to_pos)
+                //     .filter(|e| matches!(e.copy_number, Some(cp) if cp > 0))
+                //     .map(|edge| {
+                //         let cp = edge.copy_number.unwrap();
+                //         let occ = edge.occ / cp;
+                //         edge.occ -= occ;
+                //         edge.copy_number = Some(cp - 1);
+                //         (edge.from, edge.to)
+                //     })
+                //     .collect();
+
                 match node.copy_number {
                     Some(cp) if 0 < cp => {
                         // TODO: Is this OK? Maybe the copy number is not reliable.
@@ -1821,10 +1868,6 @@ impl<'a> DitchGraph<'a> {
                         let occ = node.occ / cp;
                         node.occ -= occ;
                         node.copy_number = Some(cp - 1);
-                        if target.contains(&node.node) {
-                            let (n, c) = node.node;
-                            debug!("REMOVED\t{},{},{},{}", n, c, cp - 1, node.occ);
-                        }
                         occ
                     }
                     _ => 0,
@@ -2338,12 +2381,10 @@ impl<'a> DitchGraph<'a> {
         assert!(self.sanity_check());
         // Check the collapsing condition.
         let edges: Vec<_> = self.get_edges(root, position).collect();
-        // Check.
         assert!(edges.len() > 1);
         // TODO: Maybe we need to consensus these bubbles.
         let (first_node, first_pos, seq, edgelabel) = {
             let first = edges.iter().max_by_key(|x| x.occ).unwrap();
-            // let first = edges.first().unwrap();
             let first_node = first.to;
             let seq = self.nodes[&first.to].seq().to_vec();
             let edgelabel = first.seq.clone();
@@ -2387,14 +2428,12 @@ impl<'a> DitchGraph<'a> {
             .unwrap()
             .edges
             .retain(|e| (e.from_position != position));
-        let root_to_edge = match new_node
+        let root_to_edge = new_node
             .edges
             .iter()
             .find(|e| e.to == root && e.to_position == position)
-        {
-            Some(res) => res.reverse(),
-            None => panic!(),
-        };
+            .unwrap()
+            .reverse();
         self.nodes.get_mut(&root).unwrap().edges.push(root_to_edge);
         self.nodes.insert(first_node, new_node);
         let num_edge = self.get_edges(root, position).count();
@@ -2663,7 +2702,7 @@ mod tests {
         let cov = (total_units / hap.len() / 2) as f64;
         let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let assemble_config = AssembleConfig::new(1, 100, false, false, 6);
-        let graph = DitchGraph::new(&reads, None, &assemble_config);
+        let graph = DitchGraph::new(&reads, None, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
         for (i, &cp) in node_cp.iter().enumerate() {
             assert_eq!(cp, nodes[&(i as u64, 0)]);
@@ -2713,7 +2752,7 @@ mod tests {
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
         let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let assemble_config = AssembleConfig::new(1, 100, false, false, 6);
-        let graph = DitchGraph::new(&reads, None, &assemble_config);
+        let graph = DitchGraph::new(&reads, None, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
         for (i, &cp) in node_cp.iter().enumerate() {
             assert_eq!(cp, nodes[&(i as u64, 0)]);

@@ -4,6 +4,101 @@ use definitions::*;
 use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone)]
+pub struct CorrectDeletionConfig {
+    re_clustering: bool,
+    sim_thr: f64,
+}
+
+impl CorrectDeletionConfig {
+    pub fn new(re_clustering: bool, sim_thr: f64) -> Self {
+        Self {
+            re_clustering,
+            sim_thr,
+        }
+    }
+}
+
+pub trait CorrectDeletion {
+    fn correct_deletion(&mut self, config: &CorrectDeletionConfig);
+}
+
+impl CorrectDeletion for DataSet {
+    fn correct_deletion(&mut self, config: &CorrectDeletionConfig) {
+        let find_new_units = correct_unit_deletion(self, config.sim_thr);
+        if config.re_clustering {
+            // Log original assignments.
+            let original_assignments = log_original_assignments(self);
+            // Log previous copy number
+            let prev_copy_numbers: HashMap<u64, _> = self
+                .selected_chunks
+                .iter()
+                .map(|c| (c.id, c.copy_num))
+                .collect();
+            // Re-estimate copy number
+            // -> Erase cluster
+            self.encoded_reads
+                .iter_mut()
+                .flat_map(|r| r.nodes.iter_mut())
+                .for_each(|n| n.cluster = 0);
+            use crate::multiplicity_estimation::*;
+            let seed = (231043290490.0 * config.sim_thr).round() as u64;
+            let config = MultiplicityEstimationConfig::new(1, seed, None);
+            self.estimate_multiplicity(&config);
+            // Retain all the units changed their copy numbers.
+            let chainged_units: HashSet<_> = self
+                .selected_chunks
+                .iter()
+                .filter_map(|c| match prev_copy_numbers.get(&c.id) {
+                    None => None,
+                    Some(&prev) if c.copy_num == prev => None,
+                    Some(_) => Some(c.id),
+                })
+                .collect();
+            // Merge these two.
+            let selection: HashSet<_> = find_new_units.union(&chainged_units).copied().collect();
+            // Recover the original assignments on the retained units.
+            self.encoded_reads
+                .iter_mut()
+                .zip(original_assignments)
+                .for_each(|(read, (id, log))| {
+                    assert_eq!(read.id, id);
+                    recover_original_assignments(read, &log, &selection);
+                });
+            // Reclustering.
+            crate::local_clustering::local_clustering_selected(self, &selection);
+        }
+    }
+}
+// Logging the original assignment into a vector.
+fn log_original_assignments(ds: &DataSet) -> Vec<(u64, Vec<(u64, u64)>)> {
+    ds.encoded_reads
+        .iter()
+        .map(|r| {
+            let xs: Vec<_> = r.nodes.iter().map(|u| (u.unit, u.cluster)).collect();
+            (r.id, xs)
+        })
+        .collect()
+}
+
+// Recover the previous clustering. Note that sometimes the node is added
+// so that the length of the read is different from the logged one.
+// But it does not removed!
+fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)], except: &HashSet<u64>) {
+    let mut read = read.nodes.iter_mut();
+    for &(unit, cluster) in log {
+        for node in &mut read {
+            if node.unit == unit {
+                if !except.contains(&node.unit) {
+                    node.cluster = cluster;
+                }
+                break;
+            }
+        }
+    }
+}
+
 /// The second argument is the vector of (index,unit_id) of the previous failed trials.
 /// for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
 /// position of the i-th read, and failed it.
@@ -32,8 +127,8 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
         // i->vector of failed index and units.
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
         for i in 0..INNER_LOOP {
-            let failed_trials = failed_trials.par_iter_mut();
             let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
+            let failed_trials = failed_trials.par_iter_mut();
             let reads = ds.encoded_reads.par_iter_mut().zip(failed_trials);
             let filtered_reads = reads.filter(|(r, _)| r.nodes.len() > 1);
             let newly_encoded_units: Vec<_> = filtered_reads
@@ -135,7 +230,7 @@ pub fn correct_deletion_error(
         }
         let mut tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
         tail_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
-        let tail_best = try_encoding_tail(&tail_cand, consensi, units, seq, sim_thr);
+        let tail_best = try_encoding_tail(nodes, &tail_cand, idx, consensi, units, seq, sim_thr);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
             None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.2))),
@@ -170,6 +265,7 @@ fn try_encoding_head(
 ) -> Option<(Node, i32)> {
     head_cand
         .iter()
+        .filter(|&&(start_position, _, _)| start_position < seq.len())
         .filter_map(|&(start_position, direction, uid)| {
             let unit = *units.get(&uid)?;
             let consensi = consensi.get(&uid)?.iter();
@@ -183,12 +279,25 @@ fn try_encoding_head(
                         }
                         None => false,
                     };
-                    if start_position < end_position && !is_the_same_encode {
-                        let position = (start_position, end_position, direction);
-                        let unit_info = (unit, cluster, cons.as_slice());
-                        encode_node(seq, position, unit_info, sim_thr)
-                    } else {
-                        None
+                    assert!(start_position < end_position);
+                    if is_the_same_encode {
+                        return None;
+                    }
+                    let position = (start_position, end_position, direction);
+                    let unit_info = (unit, cluster, cons.as_slice());
+                    match encode_node(seq, position, unit_info, sim_thr) {
+                        Some(res) => Some(res),
+                        None => {
+                            trace!(
+                                "FAILHEAD\t{}\t{}\t{}\t{}\t{}",
+                                idx,
+                                nodes.len(),
+                                start_position,
+                                end_position,
+                                seq.len()
+                            );
+                            None
+                        }
                     }
                 })
                 .max_by_key(|x| x.1)
@@ -197,7 +306,9 @@ fn try_encoding_head(
 }
 
 fn try_encoding_tail(
+    nodes: &[Node],
     tail_cand: &[(usize, bool, u64)],
+    idx: usize,
     consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
     units: &HashMap<u64, &Unit>,
     seq: &[u8],
@@ -213,12 +324,33 @@ fn try_encoding_tail(
                 .filter_map(|&(cluster, ref cons)| {
                     let end_position = end_position.min(seq.len());
                     let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
-                    if start_position < end_position {
-                        let positions = (start_position, end_position, direction);
-                        let unit_info = (unit, cluster, cons.as_slice());
-                        encode_node(seq, positions, unit_info, sim_thr)
-                    } else {
-                        None
+                    assert!(start_position < end_position);
+                    let is_the_same_encode = match nodes.get(idx) {
+                        Some(node) => {
+                            node.unit == uid
+                                && abs(node.position_from_start, start_position) < cons.len()
+                        }
+                        None => false,
+                    };
+                    if is_the_same_encode {
+                        return None;
+                    }
+                    assert!(start_position < end_position);
+                    let positions = (start_position, end_position, direction);
+                    let unit_info = (unit, cluster, cons.as_slice());
+                    match encode_node(seq, positions, unit_info, sim_thr) {
+                        Some(res) => Some(res),
+                        None => {
+                            trace!(
+                                "FAILTAIL\t{}\t{}\t{}\t{}\t{}",
+                                idx,
+                                nodes.len(),
+                                start_position,
+                                end_position,
+                                seq.len()
+                            );
+                            None
+                        }
                     }
                 })
                 .max_by_key(|x| x.1)
@@ -236,9 +368,17 @@ fn encode_node(
     sim_thr: f64,
 ) -> Option<(Node, i32)> {
     // Initial filter.
-    if (end - start) < 4 * unitseq.len() / 5 {
+    // If the query is shorter than the unitseq,
+    // at least we need the edit operations to fill the gaps.
+    // This is lower bound of the sequence identity.
+    let edit_dist_lower_bound = unitseq.len().saturating_sub(end - start);
+    let diff_lower_bound = edit_dist_lower_bound as f64 / unitseq.len() as f64;
+    if sim_thr < diff_lower_bound {
         return None;
     }
+    // if (end - start) < 4 * unitseq.len() / 5 {
+    //     return None;
+    // }
     // Tune the query...
     let query = if is_forward {
         query[start..end].to_vec()
@@ -306,7 +446,8 @@ fn fine_mapping<'a>(
         let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
         let identity = mat_num as f64 / ops.len() as f64;
         let (rlen, qlen) = (unitseq.len(), query.len());
-        let info = format!("{}\t{}\t{}\t{}\t{}", unit.id, cluster, identity, rlen, qlen);
+        let id = unit.id;
+        let info = format!("{}\t{}\t{:.2}\t{}\t{}", id, cluster, identity, rlen, qlen);
         ((1f64 - sim_thr) < identity, info)
     };
     // let (below_dissim, below_indel, info) = {
@@ -683,7 +824,7 @@ impl Pileup {
             .filter(|&(num, _, _)| threshold <= num)
             .filter_map(|(_, uid, direction)| {
                 let (_, after_offset) = self.information_tail(uid, direction);
-                let end_position = (end_position + after_offset?) as usize + OFFSET;
+                let end_position = (end_position - after_offset?).max(0) as usize + OFFSET;
                 Some((end_position, direction, uid))
             })
             .collect()

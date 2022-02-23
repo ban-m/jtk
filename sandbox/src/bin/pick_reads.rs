@@ -28,6 +28,7 @@ fn main() -> std::io::Result<()> {
     let units: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
     let range = 10;
     for read in ds.encoded_reads.iter() {
+        let len = read.original_length;
         let mut dumps = vec![format!("{:<5}", 0); range];
         for (idx, node) in read
             .nodes
@@ -55,14 +56,13 @@ fn main() -> std::io::Result<()> {
                 false => id2desc[&read.id].contains("251v2"),
                 true => id2desc[&read.id].contains("hapA"),
             };
-            println!("{}\t{}\t{}", is_hap1, node.cluster, dumps.join("\t"));
-            // println!(
-            //     "{}\t{}\t{}\t{}",
-            //     read.id,
-            //     is_hap1,
-            //     node.cluster,
-            //     dumps.join("\t")
-            // );
+            println!(
+                "{}\t{}\t{}\t{}",
+                is_hap1,
+                node.cluster,
+                dumps.join("\t"),
+                len
+            );
         }
     }
     Ok(())

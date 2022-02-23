@@ -1019,11 +1019,9 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
     let sim_thr = dataset.read_type.sim_thr();
-    use haplotyper::encode::deletion_fill;
-    let find_new_node = deletion_fill::correct_unit_deletion(dataset, sim_thr);
-    if to_recal {
-        haplotyper::local_clustering::local_clustering_selected(dataset, &find_new_node);
-    }
+    use haplotyper::encode::deletion_fill::*;
+    let config = CorrectDeletionConfig::new(to_recal, sim_thr);
+    dataset.correct_deletion(&config);
 }
 
 fn correct_multiplicity(matches: &clap::ArgMatches, dataset: &mut DataSet) {

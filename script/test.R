@@ -458,3 +458,23 @@ rand.data <- full_join(rand.data, fasthmm.combined %>% select(Unit,CopyNum))
 rand.data %>% ggplot() + geom_violin(aes(y=RndIndex,x=Type)) + facet_wrap(vars(CopyNum))
 rand.data %>% pivot_wider(names_from=Type,values_from = RndIndex)%>%
     ggplot() + geom_point(aes(x=Fast,y=Previous)) + facet_wrap(vars(CopyNum))
+
+
+datasets<- map(list.files("./temp/", pattern = ".tsv"), ~ list(name=., data=read_tsv(paste0("./temp/",.))))
+
+
+summarize_dataset <- function(df){
+    df %>% group_by(unit) %>%
+        filter(1 < n()) %>% ungroup() %>% summarize(n=n(), purity=mean(purity))
+}
+
+summarize_to_df <- function(ls){
+    summarize_dataset(ls$data) %>% mutate(id=gsub("COX_PGF_ONT_30x_aligned_reads.","",ls$name))
+}
+
+datasets %>% map_dfr(summarize_to_df)
+
+correction.comparison <- full_join(
+    datasets[[6]]$data %>% group_by(unit) %>% summarize(purity=mean(purity)) %>% rename(after=purity),
+    datasets[[2]]$data %>% group_by(unit) %>% summarize(purity=mean(purity)) %>% rename(before=purity))
+
