@@ -113,8 +113,8 @@ impl Stats for definitions::DataSet {
             let num_nodes: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
             writeln!(&mut wtr, "====EncodedRead====")?;
             writeln!(&mut wtr, "Gappy read:{}\nGapMean:{}", gap_read, gap_mean)?;
-            writeln!(&mut wtr, "EncodedRate:{:.4}", cover_rate)?;
-            writeln!(&mut wtr, "EncodedNode:{:.4}%", num_nodes)?;
+            writeln!(&mut wtr, "EncodedRate:{:.4}%", cover_rate)?;
+            writeln!(&mut wtr, "EncodedNode:{:.4}", num_nodes)?;
             let lens: Vec<_> = self.encoded_reads.iter().map(|e| e.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&lens);
             writeln!(&mut wtr, "{}", hist.format(20, 40))?;
@@ -181,15 +181,28 @@ impl Stats for definitions::DataSet {
         ErrorRate::new(del_summary, ins_summary, mism_summary, total_summary)
     }
 }
+
+//Return median and median absolute deviation.
 fn summarize<I: std::iter::Iterator<Item = f64>>(error_rates: I) -> (f64, f64) {
-    let (mut sum, mut sumsq, mut count) = (0f64, 0f64, 0);
-    for x in error_rates {
-        sum += x;
-        sumsq += x * x;
-        count += 1;
-    }
-    let mean = sum / count as f64;
-    let variance = sumsq / count as f64 - mean * mean;
-    assert!(0f64 <= variance);
-    (mean, variance.sqrt())
+    let mut errors: Vec<_> = error_rates.collect();
+    let idx = errors.len() / 2;
+    let median = *errors
+        .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
+        .1;
+    // Convert to abs deviation.
+    errors.iter_mut().for_each(|x| *x = (*x - median).abs());
+    let mad = *errors
+        .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
+        .1;
+    (median, mad)
+    // let (mut sum, mut sumsq, mut count) = (0f64, 0f64, 0);
+    // for x in error_rates {
+    //     sum += x;
+    //     sumsq += x * x;
+    //     count += 1;
+    // }
+    // let mean = sum / count as f64;
+    // let variance = sumsq / count as f64 - mean * mean;
+    // assert!(0f64 <= variance);
+    // (mean, variance.sqrt())
 }

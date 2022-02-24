@@ -89,27 +89,16 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
             let (seqs, mut ops): (Vec<_>, Vec<_>) = units
                 .iter()
-                .map(|node| {
-                    let mut ops = vec![];
-                    for op in node.cigar.iter() {
-                        match op {
-                            Op::Match(l) => {
-                                ops.extend(std::iter::repeat(kiley::Op::Match).take(*l))
-                            }
-                            Op::Del(l) => ops.extend(std::iter::repeat(kiley::Op::Del).take(*l)),
-                            Op::Ins(l) => ops.extend(std::iter::repeat(kiley::Op::Ins).take(*l)),
-                        }
-                    }
-                    (node.seq(), ops)
-                })
+                .map(|node| (node.seq(), ops_to_kiley_ops(&node.cigar)))
                 .unzip();
-            let cov = seqs.len();
             let band_width = read_type.band_width(ref_unit.seq().len()) / 2;
             let start = std::time::Instant::now();
             use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
+            let refseq = ref_unit.seq();
+            let take = (coverage * 2f64).floor() as usize;
             let consensus =
-                hmm.polish_until_converge_with(ref_unit.seq(), &seqs, &mut ops, band_width);
+                hmm.polish_until_converge_with_take(refseq, &seqs, &mut ops, band_width, take);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 kmeans::clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config)
@@ -123,10 +112,10 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             for (node, asn) in units.iter_mut().zip(asn) {
                 node.cluster = asn as u64;
             }
-            // Change cigar string...
             let end = std::time::Instant::now();
             let elapsed = (end - start).as_millis();
             let len = consensus.len();
+            let cov = units.len();
             debug!(
                 "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
                 unit_id, elapsed, len, score, cov
@@ -173,19 +162,7 @@ pub fn estimate_model_parameters_neo<N: std::borrow::Borrow<Node>>(
             let band_width = 2 * read_type.band_width(ref_unit.seq().len());
             let ops: Vec<Vec<_>> = nodes
                 .iter()
-                .map(|n| {
-                    n.borrow()
-                        .cigar
-                        .iter()
-                        .flat_map(|op| match *op {
-                            definitions::Op::Del(l) => std::iter::repeat(kiley::Op::Del).take(l),
-                            definitions::Op::Ins(l) => std::iter::repeat(kiley::Op::Ins).take(l),
-                            definitions::Op::Match(l) => {
-                                std::iter::repeat(kiley::Op::Match).take(l)
-                            }
-                        })
-                        .collect()
-                })
+                .map(|n| ops_to_kiley_ops(&n.borrow().cigar))
                 .collect();
             let seqs: Vec<_> = nodes.iter().map(|n| n.borrow().seq()).collect();
             (ref_unit.seq().to_vec(), seqs, ops, band_width)
@@ -267,6 +244,17 @@ pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(
     }
 }
 
+fn ops_to_kiley_ops(ops: &[definitions::Op]) -> Vec<kiley::Op> {
+    ops.iter()
+        .flat_map(|op| match op {
+            Op::Match(l) => std::iter::repeat(kiley::Op::Match).take(*l),
+            Op::Del(l) => std::iter::repeat(kiley::Op::Del).take(*l),
+            Op::Ins(l) => std::iter::repeat(kiley::Op::Ins).take(*l),
+        })
+        .collect()
+}
+
+// This is used to fix the alignment ... which is not needed anymore!
 fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)>) {
     ds.encoded_reads
         .par_iter_mut()
@@ -279,8 +267,6 @@ fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)
             let band_size = (cons.len() / 10).max(5);
             let ops =
                 kiley::bialignment::global_banded(cons, node.seq(), 2, -5, -6, -1, band_size).1;
-            // I think we need not to filtering out weak alignment node,
-            // it is task to the downstream algorithm.
             node.cigar = crate::encode::compress_kiley_ops(&ops);
         });
 }

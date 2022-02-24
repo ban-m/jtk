@@ -30,8 +30,8 @@ pub struct DataSet {
     pub read_type: ReadType,
     // /// Estimated parameter for a statistical model (used to phase local region)
     // pub model_params: Option<ModelParameters>,
-    // /// Estimated error rate.
-    // pub error_rate: ErrorRate,
+    /// Estimated error rate.
+    pub error_rate: ErrorRate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
@@ -105,7 +105,7 @@ impl std::default::Default for DataSet {
             assignments: vec![],
             read_type: ReadType::None,
             // model_params: None,
-            // error_rate: ErrorRate::default(),
+            error_rate: ErrorRate::default(),
         }
     }
 }
@@ -138,7 +138,7 @@ impl DataSet {
             assignments,
             read_type,
             // model_params: None,
-            // error_rate: ErrorRate::guess(read_type),
+            error_rate: ErrorRate::guess(read_type),
         }
     }
     /// Sanity check function. Call it to ensure that some properties indeed holds.
@@ -409,7 +409,13 @@ impl Edge {
         let label = if start <= end {
             String::new()
         } else {
-            String::from_utf8_lossy(&seq[end..start]).to_string()
+            seq.iter()
+                .take(start)
+                .skip(end)
+                .map(u8::to_ascii_uppercase)
+                .map(|x| x as char)
+                .collect()
+            // String::from_utf8_lossy(&seq[end..start]).to_string()
         };
         Edge {
             from: from.unit,

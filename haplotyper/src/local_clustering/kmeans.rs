@@ -83,35 +83,32 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     } = *config;
     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
     let copy_num = copy_num as usize;
-    const NEWFEATURE: bool = false;
-    let selected_variants = match NEWFEATURE {
-        true => feature_extract(&profiles, copy_num, coverage, template.len(), rng),
-        false => {
-            let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
-            if log_enabled!(log::Level::Trace) {
-                // DUMP Hot columns.
-                for (pos, lk) in probes.iter() {
-                    let (idx, t) = (pos / 9, pos % 9);
-                    if idx < template.len() {
-                        trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
+    // const NEWFEATURE: bool = false;
+    let selected_variants: Vec<_> = {
+        let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
+        if log_enabled!(log::Level::Trace) {
+            // DUMP Hot columns.
+            for (pos, lk) in probes.iter() {
+                let (idx, t) = (pos / 9, pos % 9);
+                if idx < template.len() {
+                    trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
+                } else {
+                    let idx = pos - 9 * template.len();
+                    if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+                        let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+                        trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
                     } else {
-                        let idx = pos - 9 * template.len();
-                        if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-                            let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                            trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
-                        } else {
-                            let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-                            let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-                            trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
-                        };
-                    }
+                        let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+                        let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
+                        trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
+                    };
                 }
             }
-            profiles
-                .iter()
-                .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
-                .collect()
         }
+        profiles
+            .iter()
+            .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
+            .collect()
     };
     let num = 2;
     // TODO:Move to other.
@@ -624,11 +621,10 @@ fn filter_profiles_neo<T: std::borrow::Borrow<[f64]>>(
             *count += (0.00001 < *p) as usize;
         }
     }
-
     let base_position = |pos: usize| pos / kiley::hmm::guided::NUM_ROW;
     let in_mask = |pos: usize| {
         let pos = base_position(pos);
-        pos < MASK_LENGTH || (template_len - MASK_LENGTH) < pos
+        pos < 2 || (template_len - 2) < pos
     };
     let probes: Vec<(usize, f64)> = total_improvement
         .into_iter()
@@ -682,7 +678,7 @@ fn filter_profiles_neo<T: std::borrow::Borrow<[f64]>>(
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
                     // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
                     // the sokal michener's similarity would be 0.975.
-                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
+                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < 2 {
                         *selected = 2;
                     }
                     if 0.75 < sim {
@@ -758,16 +754,16 @@ fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: us
     mismatches.max(matches) as f64 / profiles.len() as f64
 }
 
-fn sokal_michener_sign<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
-    let matches = profiles
-        .iter()
-        .filter(|prof| {
-            let prof = prof.borrow();
-            (prof[i] * prof[j]).is_sign_positive()
-        })
-        .count();
-    matches as f64 / profiles.len() as f64
-}
+// fn sokal_michener_sign<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
+//     let matches = profiles
+//         .iter()
+//         .filter(|prof| {
+//             let prof = prof.borrow();
+//             (prof[i] * prof[j]).is_sign_positive()
+//         })
+//         .count();
+//     matches as f64 / profiles.len() as f64
+// }
 
 // Return true if i correlate with j.
 #[allow(dead_code)]
@@ -812,140 +808,140 @@ fn is_correlate<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usiz
     corel_aic < full_aic
 }
 
-fn p2p(pos: usize, template_len: usize) -> usize {
-    let idx = pos / 9;
-    if idx < template_len {
-        idx
-    } else {
-        let idx = pos - 9 * template_len;
-        if idx < (DEL_SIZE - 1) * (template_len - DEL_SIZE) {
-            idx / (DEL_SIZE - 1)
-        } else {
-            let idx = idx - (DEL_SIZE - 1) * (template_len - DEL_SIZE);
-            idx / REP_SIZE
-        }
-    }
-}
+// fn p2p(pos: usize, template_len: usize) -> usize {
+//     let idx = pos / 9;
+//     if idx < template_len {
+//         idx
+//     } else {
+//         let idx = pos - 9 * template_len;
+//         if idx < (DEL_SIZE - 1) * (template_len - DEL_SIZE) {
+//             idx / (DEL_SIZE - 1)
+//         } else {
+//             let idx = idx - (DEL_SIZE - 1) * (template_len - DEL_SIZE);
+//             idx / REP_SIZE
+//         }
+//     }
+// }
 
-fn feature_extract<R: Rng>(
-    profiles: &[Vec<f64>],
-    cluster_num: usize,
-    coverage: f64,
-    template_len: usize,
-    rng: &mut R,
-) -> Vec<Vec<f64>> {
-    let mut total_improvement = vec![(0f64, 0); profiles[0].len()];
-    for prof in profiles.iter() {
-        for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
-            *maxgain += p.max(0f64);
-            *count += (0.00001 < *p) as usize;
-        }
-    }
-    let mut probes: Vec<(usize, f64)> = total_improvement
-        .iter()
-        .enumerate()
-        .map(|(pos, &(maxgain, count))| {
-            let max_lk = (1..cluster_num + 1)
-                .map(|k| poisson_lk(count, coverage * k as f64))
-                .max_by(|x, y| x.partial_cmp(y).unwrap())
-                .unwrap_or_else(|| panic!("{}", cluster_num));
-            (pos, max_lk + maxgain)
-        })
-        .filter(|&(_, lk)| lk.is_sign_positive())
-        .collect();
-    probes.sort_by(|x, y| x.1.partial_cmp(&y.1).unwrap());
-    // There's no feature currently.
-    let mut features: Vec<Vec<f64>> = vec![vec![]; profiles.len()];
-    let mut max_lk_gains = vec![];
-    for _ in 0..3 * (cluster_num.max(2) - 1) {
-        // Pop the current maximum variants.
-        let (pos, mut lk_gain) = match probes.pop() {
-            Some(res) => res,
-            None => break,
-        };
-        let pos_in_bp = p2p(pos, template_len);
-        trace!("SEED\t{}\t{}", pos_in_bp, lk_gain);
-        let mut feature: Vec<_> = profiles.iter().map(|fs| fs[pos]).collect();
-        let mut pushed_pos = vec![pos_in_bp];
-        probes.retain(|&(pos2, max_lk)| {
-            let pos2_in_bp = p2p(pos2, template_len);
-            let is_the_same = 0.99 < cosine_similarity(profiles, pos, pos2);
-            let sokal_mich_sim = sokal_michener_sign(profiles, pos, pos2);
-            let is_near = pushed_pos
-                .iter()
-                .any(|&pos_bp| pos_bp.max(pos2_in_bp) - pos_bp.min(pos2_in_bp) < MASK_LENGTH);
-            if is_the_same {
-                false
-            } else if 0.95 < sokal_mich_sim {
-                if !is_near {
-                    feature
-                        .iter_mut()
-                        .zip(profiles.iter().map(|fs| fs[pos2]))
-                        .for_each(|(x, y)| *x += y);
-                    trace!("FOLLOW\t{}\t+\t{}", p2p(pos2, template_len), max_lk);
-                    lk_gain += max_lk;
-                }
-                pushed_pos.push(pos2_in_bp);
-                false
-            } else if sokal_mich_sim < 0.05 {
-                if !is_near {
-                    feature
-                        .iter_mut()
-                        .zip(profiles.iter().map(|fs| fs[pos2]))
-                        .for_each(|(x, y)| *x -= y);
-                    trace!("FOLLOW\t{}\t-\t{}", p2p(pos2, template_len), max_lk);
-                    lk_gain += max_lk;
-                }
-                pushed_pos.push(pos2_in_bp);
-                false
-            } else {
-                true
-            }
-        });
-        for (fs, &x) in features.iter_mut().zip(feature.iter()) {
-            fs.push(x);
-        }
-        max_lk_gains.push(lk_gain);
-    }
-    let gains = try_clustering(&features, cluster_num, coverage, rng);
-    trace!("{:?}", max_lk_gains);
-    trace!("{:?}", gains);
-    let is_ok_position: Vec<_> = gains
-        .iter()
-        .zip(max_lk_gains.iter())
-        .map(|(&gain, &upperbound)| upperbound / 2f64 < gain)
-        .collect();
-    for fs in features.iter_mut() {
-        let mut idx = 0;
-        fs.retain(|_| {
-            idx += 1;
-            is_ok_position[idx - 1]
-        });
-    }
-    features
-}
+// fn feature_extract<R: Rng>(
+//     profiles: &[Vec<f64>],
+//     cluster_num: usize,
+//     coverage: f64,
+//     template_len: usize,
+//     rng: &mut R,
+// ) -> Vec<Vec<f64>> {
+//     let mut total_improvement = vec![(0f64, 0); profiles[0].len()];
+//     for prof in profiles.iter() {
+//         for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
+//             *maxgain += p.max(0f64);
+//             *count += (0.00001 < *p) as usize;
+//         }
+//     }
+//     let mut probes: Vec<(usize, f64)> = total_improvement
+//         .iter()
+//         .enumerate()
+//         .map(|(pos, &(maxgain, count))| {
+//             let max_lk = (1..cluster_num + 1)
+//                 .map(|k| poisson_lk(count, coverage * k as f64))
+//                 .max_by(|x, y| x.partial_cmp(y).unwrap())
+//                 .unwrap_or_else(|| panic!("{}", cluster_num));
+//             (pos, max_lk + maxgain)
+//         })
+//         .filter(|&(_, lk)| lk.is_sign_positive())
+//         .collect();
+//     probes.sort_by(|x, y| x.1.partial_cmp(&y.1).unwrap());
+//     // There's no feature currently.
+//     let mut features: Vec<Vec<f64>> = vec![vec![]; profiles.len()];
+//     let mut max_lk_gains = vec![];
+//     for _ in 0..3 * (cluster_num.max(2) - 1) {
+//         // Pop the current maximum variants.
+//         let (pos, mut lk_gain) = match probes.pop() {
+//             Some(res) => res,
+//             None => break,
+//         };
+//         let pos_in_bp = p2p(pos, template_len);
+//         trace!("SEED\t{}\t{}", pos_in_bp, lk_gain);
+//         let mut feature: Vec<_> = profiles.iter().map(|fs| fs[pos]).collect();
+//         let mut pushed_pos = vec![pos_in_bp];
+//         probes.retain(|&(pos2, max_lk)| {
+//             let pos2_in_bp = p2p(pos2, template_len);
+//             let is_the_same = 0.99 < cosine_similarity(profiles, pos, pos2);
+//             let sokal_mich_sim = sokal_michener_sign(profiles, pos, pos2);
+//             let is_near = pushed_pos
+//                 .iter()
+//                 .any(|&pos_bp| pos_bp.max(pos2_in_bp) - pos_bp.min(pos2_in_bp) < MASK_LENGTH);
+//             if is_the_same {
+//                 false
+//             } else if 0.95 < sokal_mich_sim {
+//                 if !is_near {
+//                     feature
+//                         .iter_mut()
+//                         .zip(profiles.iter().map(|fs| fs[pos2]))
+//                         .for_each(|(x, y)| *x += y);
+//                     trace!("FOLLOW\t{}\t+\t{}", p2p(pos2, template_len), max_lk);
+//                     lk_gain += max_lk;
+//                 }
+//                 pushed_pos.push(pos2_in_bp);
+//                 false
+//             } else if sokal_mich_sim < 0.05 {
+//                 if !is_near {
+//                     feature
+//                         .iter_mut()
+//                         .zip(profiles.iter().map(|fs| fs[pos2]))
+//                         .for_each(|(x, y)| *x -= y);
+//                     trace!("FOLLOW\t{}\t-\t{}", p2p(pos2, template_len), max_lk);
+//                     lk_gain += max_lk;
+//                 }
+//                 pushed_pos.push(pos2_in_bp);
+//                 false
+//             } else {
+//                 true
+//             }
+//         });
+//         for (fs, &x) in features.iter_mut().zip(feature.iter()) {
+//             fs.push(x);
+//         }
+//         max_lk_gains.push(lk_gain);
+//     }
+//     let gains = try_clustering(&features, cluster_num, coverage, rng);
+//     trace!("{:?}", max_lk_gains);
+//     trace!("{:?}", gains);
+//     let is_ok_position: Vec<_> = gains
+//         .iter()
+//         .zip(max_lk_gains.iter())
+//         .map(|(&gain, &upperbound)| upperbound / 2f64 < gain)
+//         .collect();
+//     for fs in features.iter_mut() {
+//         let mut idx = 0;
+//         fs.retain(|_| {
+//             idx += 1;
+//             is_ok_position[idx - 1]
+//         });
+//     }
+//     features
+// }
 
-fn try_clustering<R: Rng>(
-    data: &[Vec<f64>],
-    cluster_num: usize,
-    coverage: f64,
-    rng: &mut R,
-) -> Vec<f64> {
-    let (asn, _): (Vec<_>, _) = (0..2)
-        .map(|_| mcmc_clustering(data, cluster_num, coverage, rng))
-        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-        .unwrap();
-    let mut gains = vec![vec![0f64; data[0].len()]; cluster_num];
-    for (asn, prof) in asn.iter().zip(data.iter()) {
-        assert_eq!(prof.len(), gains[*asn as usize].len());
-        for (slot, x) in gains[*asn as usize].iter_mut().zip(prof.iter()) {
-            *slot += x;
-        }
-    }
-    (0..data[0].len())
-        .map(|pos| gains.iter().map(|lks| lks[pos].max(0f64)).sum::<f64>())
-        .collect()
-}
+// fn try_clustering<R: Rng>(
+//     data: &[Vec<f64>],
+//     cluster_num: usize,
+//     coverage: f64,
+//     rng: &mut R,
+// ) -> Vec<f64> {
+//     let (asn, _): (Vec<_>, _) = (0..2)
+//         .map(|_| mcmc_clustering(data, cluster_num, coverage, rng))
+//         .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+//         .unwrap();
+//     let mut gains = vec![vec![0f64; data[0].len()]; cluster_num];
+//     for (asn, prof) in asn.iter().zip(data.iter()) {
+//         assert_eq!(prof.len(), gains[*asn as usize].len());
+//         for (slot, x) in gains[*asn as usize].iter_mut().zip(prof.iter()) {
+//             *slot += x;
+//         }
+//     }
+//     (0..data[0].len())
+//         .map(|pos| gains.iter().map(|lks| lks[pos].max(0f64)).sum::<f64>())
+//         .collect()
+// }
 
 // Return log Poiss{x|lambda}
 fn poisson_lk(x: usize, lambda: f64) -> f64 {

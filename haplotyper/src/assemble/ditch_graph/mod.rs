@@ -628,10 +628,11 @@ impl<'a> DitchGraph<'a> {
             self.resolve_repeats(reads, c, llr as f64);
         }
         self.remove_lightweight_edges(0, true);
-        if read_type == ReadType::CLR {
-            self.zip_up_overclustering();
-        }
+        // if read_type == ReadType::CLR {
+        self.zip_up_overclustering();
+        // }
         self.assign_copy_number_mcmc(cov, lens);
+        self.remove_zero_copy_elements(lens, 0.8);
         self.remove_zero_copy_path(0.3);
     }
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(

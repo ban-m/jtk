@@ -40,7 +40,7 @@ impl DirichletMixtureCorrection for DataSet {
             .map(|c| (c.id, c.cluster_num))
             .collect();
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            assert_eq!(node.posterior.len(), cl_num[&node.unit]);
+            assert_eq!(node.posterior.len(), cl_num[&node.unit], "{}", node.unit);
         }
         // It is OK to use c.cluster_num here, not c.copy_num.
         // This is because c.cluster_num is a more correct guess of the

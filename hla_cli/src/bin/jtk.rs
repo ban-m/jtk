@@ -363,6 +363,15 @@ fn subcommand_estimate_multiplicity() -> App<'static> {
                 .help("If given, output draft GFA to PATH.")
                 .takes_value(true),
         )
+        .arg(
+            Arg::new("purge")
+                .short('p')
+                .long("purge_copy_num")
+                .required(false)
+                .value_name("COPY NUM")
+                .help("If given, remove all the chunks with copy number >= COPY_NUM")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_correct_multiplicity() -> App<'static> {
@@ -967,6 +976,10 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::multiplicity_estimation::*;
     let config = MultiplicityEstimationConfig::new(threads, seed, path);
     dataset.estimate_multiplicity(&config);
+    let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
+    if let Some(upper_copy_num) = purge {
+        dataset.purge_multiplicity(upper_copy_num);
+    }
 }
 
 fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -1018,7 +1031,10 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let sim_thr = dataset.read_type.sim_thr();
+    let sim_thr =
+        haplotyper::determine_units::calc_sim_thr(&dataset, 0.999).max(dataset.read_type.sim_thr());
+    // let sim_thr = dataset.read_type.sim_thr();
+    debug!("DELFIL\t0.999 quantile{}", sim_thr);
     use haplotyper::encode::deletion_fill::*;
     let config = CorrectDeletionConfig::new(to_recal, sim_thr);
     dataset.correct_deletion(&config);

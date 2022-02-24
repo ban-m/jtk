@@ -2,6 +2,7 @@ use crate::assemble::{ditch_graph::DitchGraph, *};
 use definitions::DataSet;
 use serde::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiplicityEstimationConfig {
     seed: u64,
@@ -21,6 +22,8 @@ impl MultiplicityEstimationConfig {
 
 pub trait MultiplicityEstimation {
     fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig);
+    // Remove units with copy number more than or equal to `upper`
+    fn purge_multiplicity(&mut self, upper: usize);
 }
 
 impl MultiplicityEstimation for DataSet {
@@ -44,7 +47,7 @@ impl MultiplicityEstimation for DataSet {
         let thr = match self.read_type {
             definitions::ReadType::CCS => 1,
             definitions::ReadType::CLR => 2,
-            definitions::ReadType::ONT => 1,
+            definitions::ReadType::ONT => 2,
             definitions::ReadType::None => 1,
         };
         graph.remove_lightweight_edges(thr, true);
@@ -106,6 +109,40 @@ impl MultiplicityEstimation for DataSet {
             let gfa = convert_to_gfa(&graph, &assemble_config);
             writeln!(&mut file, "{}", gfa).unwrap();
         }
+    }
+
+    fn purge_multiplicity(&mut self, upper: usize) {
+        let to_remove: HashSet<_> = self
+            .selected_chunks
+            .iter()
+            .filter_map(|c| (upper <= c.copy_num).then(|| c.id))
+            .collect();
+        let raw_seq: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+        self.selected_chunks.retain(|x| !to_remove.contains(&x.id));
+        let convert_table: HashMap<_, _> = self
+            .selected_chunks
+            .iter_mut()
+            .enumerate()
+            .map(|(idx, chunk)| {
+                let convert = (chunk.id, idx as u64);
+                chunk.id = idx as u64;
+                convert
+            })
+            .collect();
+        self.encoded_reads.iter_mut().for_each(|read| {
+            read.nodes.retain(|n| !to_remove.contains(&n.unit));
+            read.nodes
+                .iter_mut()
+                .for_each(|n| n.unit = convert_table[&n.unit]);
+        });
+        self.encoded_reads.retain(|read| !read.nodes.is_empty());
+        self.encoded_reads.iter_mut().for_each(|read| {
+            assert!(!read.nodes.is_empty());
+            let mut nodes = Vec::with_capacity(read.nodes.len());
+            nodes.append(&mut read.nodes);
+            let seq = raw_seq[&read.id];
+            *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+        });
     }
 }
 

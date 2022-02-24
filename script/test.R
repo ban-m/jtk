@@ -406,10 +406,13 @@ cov.flip.unit.summary %>% filter(score < 500) %>%  ggplot() + geom_histogram(aes
 
 
 
-error.rate.data <- read_tsv("mock.tsv")
+error.rate.data <- read_tsv("./result/sim.error.tsv")
+error.rate.data <- read_tsv("./simerror")
 
 error.rate.data %>% ggplot() + geom_histogram(aes(x=mism+ins+del))
 
+error.rate.data %>% mutate(total = mism + ins + del) %>% summarize(across(everything(), sd))
+puerror.rate.data %>% mutate(total = mism + ins + del) %>% summarize(across(everything(), mean))
 
 error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
     group_by(unitid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
@@ -420,9 +423,15 @@ error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del)
     ggplot() + geom_point(aes(x=mean, y = sd/mean))
 
 
-error.rate.data <- read_tsv("hg002_hmg_ont.tsv")
+error.rate.data <- read_tsv("./result/real.error.tsv")
 
 error.rate.data %>% ggplot() + geom_histogram(aes(x=mism+ins+del))
+
+
+error.rate.data %>% group_by(unit,cluster) %>% summarize(total=mean(mism+ins+del))
+
+error.rate.data %>% mutate(total = mism + ins + del) %>% summarize(across(everything(), sd))
+error.rate.data %>% mutate(total = mism + ins + del) %>% summarize(across(everything(), mean))
 
 
 error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
@@ -433,31 +442,6 @@ error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del)
     group_by(readid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
     ggplot() + geom_point(aes(x=mean, y = sd/mean))
 
-
-slowhmm <- read_tsv("./result/slowhmm.tsv")
-slowhmm.time <- read_tsv("./result/slowhmm_time.tsv", col_names=FALSE)
-
-slowhmm.combined <- full_join(slowhmm, slowhmm.time %>% rename(Unit=X1,Time=X2,Len=X3) %>% select(Unit,Time,Len)) %>% mutate(Type="Previous")
-
-fasthmm <- read_tsv("fasthmm.tsv")
-fasthmm.time <- read_tsv("fasthmm_time.tsv", col_names=FALSE)
-
-fasthmm.combined <- full_join(fasthmm, fasthmm.time %>% rename(Unit=X1,Time=X2,Len=X3) %>% select(Unit,Time,Len)) %>% mutate(Type="Fast")
-
-
-time.data <- bind_rows(fasthmm.combined %>% select(Unit,Time,Type),
-                       slowhmm.combined %>% select(Unit,Time,Type))
-time.data <- full_join(time.data, fasthmm.combined %>% select(Unit,CopyNum))
-time.data %>% ggplot() + geom_violin(aes(x=Type,y=Time)) + facet_wrap(vars(CopyNum))
-time.data %>% pivot_wider(names_from = Type, values_from = Time) %>% ggplot() + geom_point(aes(x=Fast,y=Previous)) + facet_wrap(vars(CopyNum))
-
-
-rand.data <- bind_rows(fasthmm.combined %>% select(Unit,RndIndex, Type),
-                       slowhmm.combined %>% select(Unit,RndIndex, Type))
-rand.data <- full_join(rand.data, fasthmm.combined %>% select(Unit,CopyNum))
-rand.data %>% ggplot() + geom_violin(aes(y=RndIndex,x=Type)) + facet_wrap(vars(CopyNum))
-rand.data %>% pivot_wider(names_from=Type,values_from = RndIndex)%>%
-    ggplot() + geom_point(aes(x=Fast,y=Previous)) + facet_wrap(vars(CopyNum))
 
 
 datasets<- map(list.files("./temp/", pattern = ".tsv"), ~ list(name=., data=read_tsv(paste0("./temp/",.))))
@@ -479,5 +463,3 @@ correction.comparison <- full_join(
     datasets[[2]]$data %>% group_by(unit) %>% summarize(purity=mean(purity)) %>% rename(before=purity))
 
 
-datasets %>%
-    map(~list(name=.$name, data = filter(.$data, unit %in% c(1685,1591,813)) %>% arrange(unit)))

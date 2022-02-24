@@ -4,7 +4,10 @@ use definitions::*;
 use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
-
+// identity would be increased by this value when evaluating the edges.
+const EDGE_BONUS: f64 = 0.05;
+// Evaluating length of each side.
+const EDGE_LEN: usize = 500;
 #[derive(Debug, Clone)]
 pub struct CorrectDeletionConfig {
     re_clustering: bool,
@@ -376,9 +379,6 @@ fn encode_node(
     if sim_thr < diff_lower_bound {
         return None;
     }
-    // if (end - start) < 4 * unitseq.len() / 5 {
-    //     return None;
-    // }
     // Tune the query...
     let query = if is_forward {
         query[start..end].to_vec()
@@ -445,10 +445,19 @@ fn fine_mapping<'a>(
     let (below_dissim, info) = {
         let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
         let identity = mat_num as f64 / ops.len() as f64;
+        let (head_identity, tail_identity) = edge_identity(unitseq, query, &ops, EDGE_LEN);
         let (rlen, qlen) = (unitseq.len(), query.len());
         let id = unit.id;
-        let info = format!("{}\t{}\t{:.2}\t{}\t{}", id, cluster, identity, rlen, qlen);
-        ((1f64 - sim_thr) < identity, info)
+        let info = format!(
+            "{}\t{}\t{:.2}\t{:.2}\t{:.2}\t{}\t{}",
+            id, cluster, identity, head_identity, tail_identity, rlen, qlen
+        );
+        let iden_bound = 1f64 - sim_thr;
+        let identity = identity
+            .min(head_identity + EDGE_BONUS)
+            .min(tail_identity + EDGE_BONUS);
+        (iden_bound < identity, info)
+        // ((1f64 - sim_thr) < identity, info)
     };
     // let (below_dissim, below_indel, info) = {
     // let unitlen = unitseq.len() as f64;
@@ -485,6 +494,32 @@ fn fine_mapping<'a>(
         }
         None
     }
+}
+
+fn edge_identity(unit: &[u8], _: &[u8], ops: &[kiley::Op], len: usize) -> (f64, f64) {
+    let (mut head_aln_len, mut head_match) = (0, 0);
+    let (mut tail_aln_len, mut tail_match) = (0, 0);
+    let head_eval_end = len.min(unit.len());
+    let tail_eval_start = unit.len().saturating_sub(len);
+    let mut rpos = 0;
+    for &op in ops {
+        match op {
+            kiley::Op::Mismatch | kiley::Op::Match => rpos += 1,
+            kiley::Op::Ins => {}
+            kiley::Op::Del => rpos += 1,
+        }
+        if rpos < head_eval_end {
+            head_aln_len += 1;
+            head_match += (kiley::Op::Match == op) as usize;
+        }
+        if tail_eval_start <= rpos {
+            tail_aln_len += 1;
+            tail_match += (kiley::Op::Match == op) as usize;
+        }
+    }
+    let head_identity = head_match as f64 / head_aln_len as f64;
+    let tail_identity = tail_match as f64 / tail_aln_len as f64;
+    (head_identity, tail_identity)
 }
 
 // Triming the head/tail insertion, re-calculate the start and end position.

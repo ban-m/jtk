@@ -33,13 +33,15 @@ else
         jtk correct_deletion -vv --threads ${THREADS} > ${2}.entry.json
 fi
 
+
+UPPER_COPY_NUM=6
 if [ -f ${CLUSTERED} ]
 then
     echo "Clustered file found.Skip clustering proc."
 else
     cat ${2}.entry.json |\
         jtk polish_encoding --threads ${THREADS} -vv |\
-        jtk estimate_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA} |\
+        jtk estimate_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA} --purge_copy_num ${UPPER_COPY_NUM} |\
         tee ${2}.entry.units.encode.json |\
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi

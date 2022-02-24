@@ -3,6 +3,7 @@ use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
 // use super::Encode;
 use definitions::*;
+// use path_phasing::haplotype_cc;
 use rand::prelude::*;
 use rand_xoshiro::Xoroshiro128Plus;
 use std::collections::HashMap;
@@ -122,9 +123,11 @@ impl DetermineUnit for definitions::DataSet {
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
         remove_overlapping_units_dev(self, config).unwrap();
         // 1st polishing.
+        use crate::stats::Stats;
         {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self.encode(config.threads, FIRST_RELAX * self.read_type.sim_thr());
+            debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);
             let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
@@ -132,37 +135,80 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
         }
         // 2nd polishing.
+        // Tuning error rate...?
+        let mut sim_thr = self.read_type.sim_thr();
         {
-            self.encode(config.threads, self.read_type.sim_thr());
+            self.encode(config.threads, sim_thr);
+            sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
+            debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             fill_sparse_region(self, config);
             fill_tail_end(self, config);
-            self.encode(config.threads, self.read_type.sim_thr());
+            // Re-index.
+            self.selected_chunks
+                .iter_mut()
+                .enumerate()
+                .for_each(|(idx, c)| {
+                    c.id = idx as u64;
+                    c.seq.make_ascii_uppercase();
+                });
+            remove_overlapping_units_dev(self, config).unwrap();
+            self.encode(config.threads, sim_thr);
             remove_frequent_units(self, config.upper_count);
             let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
             dump_histogram(self);
             self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
-        }
+        };
         // Final polish
         {
             debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
-            self.encode(config.threads, self.read_type.sim_thr());
+            self.encode(config.threads, sim_thr);
+            sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
+            debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
             debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
-            self.encode(config.threads, self.read_type.sim_thr());
+            self.encode(config.threads, sim_thr);
+            remove_frequent_units(self, config.upper_count);
+            sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
+            debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
             dump_histogram(self);
             self.polish_unit(&polish_config);
+            debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
+        // Tune the length, removing high-frequent units...
         self.selected_chunks
             .retain(|unit| config.chunk_len < unit.seq.len());
+        self.selected_chunks
+            .iter_mut()
+            .for_each(|unit| unit.seq.truncate(config.chunk_len));
+        {
+            self.encode(config.threads, sim_thr);
+            debug!("ERRORRATE\t{}", self.error_rate());
+            remove_frequent_units(self, config.upper_count);
+            dump_histogram(self);
+        }
+        let mut convert_table: HashMap<u64, u64> = HashMap::new();
         for (idx, unit) in self.selected_chunks.iter_mut().enumerate() {
-            unit.seq.truncate(config.chunk_len);
+            convert_table.insert(unit.id, idx as u64);
             unit.id = idx as u64;
         }
-        self.encode(config.threads, self.read_type.sim_thr());
+        let raw_seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+        self.encoded_reads
+            .iter_mut()
+            .filter(|r| !r.nodes.is_empty())
+            .for_each(|read| re_encode(read, &convert_table, raw_seqs[&read.id]));
     }
+}
+
+fn re_encode(read: &mut EncodedRead, convert_table: &HashMap<u64, u64>, seq: &[u8]) {
+    let mut nodes = Vec::with_capacity(read.nodes.len());
+    nodes.append(&mut read.nodes);
+    nodes
+        .iter_mut()
+        .for_each(|n| n.unit = convert_table[&n.unit]);
+    *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
 }
 
 fn remove_frequent_units(ds: &mut DataSet, upper_count: usize) {
@@ -260,15 +306,14 @@ pub fn is_proper_overlap(paf: &bio_utils::paf::PAF) -> bool {
 
 fn remove_overlapping_units_dev(ds: &mut DataSet, config: &UnitConfig) -> std::io::Result<()> {
     let unit_len = ds.selected_chunks.len();
-    let mut edges: Vec<_> = (0..unit_len).map(|i| vec![0; i]).collect();
     // How long one overlap should be at least.
-    let overlap_len = config.chunk_len * 3 / 4;
+    let overlap_len = config.chunk_len / 2;
     // This is the percent identy.
     let overlap_thr: f64 = match ds.read_type {
-        ReadType::CCS => 0.05,
-        ReadType::CLR => 0.35,
-        ReadType::ONT => 0.15,
-        ReadType::None => 0.15,
+        ReadType::CCS => 0.95,
+        ReadType::CLR => 0.75,
+        ReadType::ONT => 0.85,
+        ReadType::None => 0.85,
     };
     let mm2 = mm2_unit_overlap(ds, config)?;
     let alignments = String::from_utf8_lossy(&mm2);
@@ -280,6 +325,8 @@ fn remove_overlapping_units_dev(ds: &mut DataSet, config: &UnitConfig) -> std::i
             let identity = paf.matchnum as f64 / paf.blocklen as f64;
             overlap_thr < identity && overlap_len < paf.blocklen
         });
+    // TODO: FIXME.
+    let mut edges: Vec<_> = (0..unit_len).map(|i| vec![0; i]).collect();
     for aln in alignments {
         let node_unit: usize = aln.tname.parse().unwrap();
         let mode_unit: usize = aln.qname.parse().unwrap();
@@ -309,6 +356,7 @@ fn dump_histogram(ds: &DataSet) {
     let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
     counts.sort_unstable();
     let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
+    debug!("Hi-Freqs:{:?}", &counts[counts.len() - 10..]);
     debug!("Histgrapm\n{}", hist.format(40, 20));
 }
 
@@ -498,6 +546,7 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     let unit_len = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
     let unit_len = unit_len as usize + 1;
     assert!(ds.selected_chunks.len() <= unit_len);
+    // TODO: FIXME
     // Maybe it became infeasible due to O(N^2) allcation would be occured.
     let mut edges: Vec<_> = (0..unit_len).map(|i| vec![false; i]).collect();
     for read in ds.encoded_reads.iter() {
@@ -584,261 +633,31 @@ fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
     to_be_removed
 }
 
-// #[allow(dead_code)]
-// fn filter_unit(mut ds: DataSet, config: &UnitConfig) -> DataSet {
-//     let mut counts: HashMap<_, usize> = HashMap::new();
-//     let (lower, upper) = (config.lower_count, config.upper_count);
-//     for read in ds.encoded_reads.iter() {
-//         for node in read.nodes.iter() {
-//             *counts.entry(node.unit).or_default() += 1;
-//         }
-//     }
-//     let original_len = ds.selected_chunks.len();
-//     let filtered_unit: HashMap<u64, u64> = counts
-//         .iter()
-//         .filter_map(|(&key, &val)| match val {
-//             x if lower < x && x < upper => Some(key),
-//             _ => None,
-//         })
-//         .enumerate()
-//         .map(|(idx, key)| (key, idx as u64))
-//         .collect();
-//     debug!("# of units:{}=>{}", original_len, filtered_unit.len());
-//     ds.selected_chunks
-//         .retain(|chunk| filtered_unit.contains_key(&chunk.id));
-//     // Never panic.
-//     ds.selected_chunks
-//         .iter_mut()
-//         .for_each(|chunk| chunk.id = *filtered_unit.get(&chunk.id).unwrap());
-//     let prev = ds.encoded_reads.len();
-//     let node_prev = ds
-//         .encoded_reads
-//         .iter()
-//         .map(|r| r.nodes.len())
-//         .sum::<usize>();
-//     ds.encoded_reads.iter_mut().for_each(|read| {
-//         read.nodes
-//             .retain(|node| filtered_unit.contains_key(&node.unit));
-//         read.nodes
-//             .iter_mut()
-//             .for_each(|n| n.unit = *filtered_unit.get(&n.unit).unwrap());
-//     });
-//     ds.encoded_reads.retain(|read| !read.nodes.is_empty());
-//     let now = ds.encoded_reads.len();
-//     let node_now = ds
-//         .encoded_reads
-//         .iter()
-//         .map(|r| r.nodes.len())
-//         .sum::<usize>();
-//     debug!(
-//         "Encoded Reads{}->{}(Raw reads{})",
-//         prev,
-//         now,
-//         ds.raw_reads.len()
-//     );
-//     debug!("Number of Unit {}->{}", node_prev, node_now);
-//     ds
-// }
+fn error(node: &definitions::Node, ref_unit: &Unit) -> f64 {
+    let (query, aln, refr) = node.recover(ref_unit);
+    let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
+    let del = query.iter().filter(|&&x| x == b' ').count() as f64;
+    let ins = refr.iter().filter(|&&x| x == b' ').count() as f64;
+    let aln_len = aln.len() as f64;
+    (mismat + del + ins) / aln_len
+}
 
-// #[allow(dead_code)]
-// fn to_u64(kmer: &[u8]) -> u64 {
-//     let mut res = 0;
-//     for x in kmer {
-//         res = res << 2;
-//         res += match x {
-//             b'A' | b'a' => 0,
-//             b'C' | b'c' => 1,
-//             b'G' | b'g' => 2,
-//             b'T' | b't' => 3,
-//             _ => 0,
-//         };
-//     }
-//     res
-// }
-
-// fn to_index(kmer: &[u8]) -> usize {
-//     kmer.iter().fold(0, |x, y| match y {
-//         b'A' => (x << 2),
-//         b'C' => (x << 2) + 1,
-//         b'G' => (x << 2) + 2,
-//         b'T' => (x << 2) + 3,
-//         _ => panic!(),
-//     })
-// }
-
-// fn remove_overlapping_units_mm2(
-//     mut units: Vec<Vec<u8>>,
-//     config: &UnitConfig,
-//     followup: bool,
-// ) -> Option<Vec<Vec<u8>>> {
-//     use rand::{thread_rng, Rng};
-//     let mut rng = thread_rng();
-//     let id: u64 = rng.gen::<u64>() % 100_000_000;
-//     let mut c_dir = std::env::current_dir().ok()?;
-//     c_dir.push(format!("{}", id));
-//     debug!("Creating {:?}.", c_dir);
-//     std::fs::create_dir(&c_dir).ok()?;
-//     let unit = {
-//         use bio_utils::fasta::Writer;
-//         let mut path = c_dir.clone();
-//         path.push("units.fa");
-//         let mut wtr = std::fs::File::create(&path).map(Writer::new).ok()?;
-//         for (i, unit) in units.iter().enumerate() {
-//             let id = format!("{}", i);
-//             let record = bio_utils::fasta::Record::with_data(&id, &None, unit);
-//             wtr.write_record(&record).ok()?;
-//         }
-//         path.into_os_string().into_string().ok()?
-//     };
-//     let preset = if followup { "asm10" } else { "map-pb" };
-//     let mm2 = crate::minimap2::minimap2(&unit, &unit, config.threads, preset, true, false);
-//     let mm2: Vec<_> = String::from_utf8(mm2)
-//         .unwrap()
-//         .lines()
-//         .filter_map(bio_utils::paf::PAF::new)
-//         .collect();
-//     debug!("{} Alignments.", mm2.len());
-//     debug!("Removing {:?}", c_dir);
-//     std::fs::remove_dir_all(c_dir).ok()?;
-//     let mut edges: Vec<_> = (0..units.len()).map(|i| vec![false; i]).collect();
-//     // TODO: Make as parameters.
-//     for aln in mm2
-//         .iter()
-//         .filter(|a| a.matchnum > 500 && a.qname != a.tname)
-//     {
-//         let qname: usize = aln.qname.parse().ok()?;
-//         let rname: usize = aln.tname.parse().ok()?;
-//         let (i, j) = if qname < rname {
-//             (rname, qname)
-//         } else {
-//             (qname, rname)
-//         };
-//         if i == j {
-//             debug!("{:?}", aln);
-//         }
-//         edges[i][j] = true;
-//     }
-//     let num_edges = edges
-//         .iter()
-//         .map(|e| e.iter().filter(|&&b| b).count())
-//         .sum::<usize>();
-//     debug!("Graph constructed. {} edges.", num_edges);
-//     let to_be_removed = approx_vertex_cover(edges, units.len());
-//     let mut idx = 0;
-//     units.retain(|_| {
-//         idx += 1;
-//         !to_be_removed[idx - 1]
-//     });
-//     debug!("Resulting {} units.", units.len());
-//     Some(units)
-// }
-
-// #[allow(dead_code)]
-// fn remove_overlapping_units(
-//     mut units: Vec<Vec<u8>>,
-//     config: &UnitConfig,
-//     followup: bool,
-// ) -> Vec<Vec<u8>> {
-//     debug!("Collected {} units", units.len());
-//     let k = config.k;
-//     let kmer_vec: Vec<(Vec<_>, Vec<_>)> = units
-//         .par_iter()
-//         .map(|unit| {
-//             let mut forward: Vec<_> = unit.windows(k).map(to_u64).collect();
-//             forward.sort();
-//             forward.dedup();
-//             let mut reverse: Vec<_> = bio_utils::revcmp(unit).windows(k).map(to_u64).collect();
-//             reverse.sort();
-//             reverse.dedup();
-//             (forward, reverse)
-//         })
-//         .collect();
-//     let edges: Vec<Vec<bool>> = (0..units.len())
-//         .into_par_iter()
-//         .map(|i| {
-//             let kmer = &kmer_vec[i].0;
-//             (0..i)
-//                 .into_par_iter()
-//                 .map(|j| {
-//                     let &(ref f, ref r) = &kmer_vec[j];
-//                     if !followup {
-//                         compute_jaccard(kmer, f) > config.jaccard_thr
-//                             || compute_jaccard(kmer, r) > config.jaccard_thr
-//                     } else {
-//                         (compute_jaccard(kmer, f) > config.jaccard_thr
-//                             && alignment(&units[i], &units[j]) > config.alignment_thr)
-//                             || (compute_jaccard(kmer, r) > config.jaccard_thr
-//                                 && alignment(&units[i], &bio_utils::revcmp(&units[j]))
-//                                     > config.alignment_thr)
-//                     }
-//                 })
-//                 .collect()
-//         })
-//         .collect();
-//     let num_edges = edges
-//         .iter()
-//         .map(|e| e.iter().filter(|&&b| b).count())
-//         .sum::<usize>();
-//     debug!("Graph constructed. {} edges.", num_edges);
-//     let to_be_removed = approx_vertex_cover(edges, units.len());
-//     let mut idx = 0;
-//     units.retain(|_| {
-//         idx += 1;
-//         !to_be_removed[idx - 1]
-//     });
-//     debug!("Resulting {} units.", units.len());
-//     units
-// }
-
-// #[allow(dead_code)]
-// fn compute_jaccard(kmer1: &[u64], kmer2: &[u64]) -> f64 {
-//     let mut union = 0;
-//     let mut intersection = 0;
-//     let (mut p1, mut p2) = (0, 0);
-//     while p1 < kmer1.len() && p2 < kmer2.len() {
-//         union += 1;
-//         use std::cmp::Ordering::*;
-//         match kmer1[p1].cmp(&kmer2[p2]) {
-//             Equal => {
-//                 intersection += 1;
-//                 p1 += 1;
-//                 p2 += 1;
-//             }
-//             Less => {
-//                 p1 += 1;
-//             }
-//             Greater => {
-//                 p2 += 1;
-//             }
-//         }
-//     }
-//     union += (kmer1.len() - p1 - 1) + (kmer2.len() - p2 - 1);
-//     intersection as f64 / union as f64
-// }
-
-// fn compute_jaccard(kmer_vec1: &[bool], kmer_vec2: &[bool], thr: f64) -> bool {
-//     let (mut union, mut intersection) = (0, 0);
-//     for (x, y) in kmer_vec1.iter().zip(kmer_vec2.iter()) {
-//         union += (x | y) as u32;
-//         intersection += (x & y) as u32;
-//     }
-//     intersection as f64 / union as f64 > thr
-// }
-
-// Overlapping alignment.
-// #[allow(dead_code)]
-// fn alignment(seq1: &[u8], seq2: &[u8]) -> f64 {
-//     let mut dp = vec![vec![0; seq2.len() + 1]; seq1.len() + 1];
-//     for i in 1..seq1.len() + 1 {
-//         for j in 1..seq2.len() + 1 {
-//             let is_match = seq1[i - 1].to_ascii_uppercase() == seq2[j - 1].to_ascii_uppercase();
-//             let m = if is_match { 1 } else { -1 };
-//             dp[i][j] = (dp[i - 1][j] - 1)
-//                 .max(dp[i][j - 1] - 1)
-//                 .max(dp[i - 1][j - 1] + m);
-//         }
-//     }
-//     let column_max = dp.iter().map(|x| x[seq2.len()]).max().unwrap();
-//     let row_max = *dp[seq1.len()].iter().max().unwrap();
-//     column_max.max(row_max) as f64 / ((seq1.len() * seq2.len()) as f64).sqrt()
-// }
+// Return the error rate of `quantile`-quantile.
+pub fn calc_sim_thr(ds: &DataSet, quantile: f64) -> f64 {
+    use rayon::prelude::*;
+    let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    let mut error_rates: Vec<f64> = ds
+        .encoded_reads
+        .par_iter()
+        .flat_map(|r| {
+            r.nodes
+                .par_iter()
+                .map(|n| error(n, ref_units[&n.unit]))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    error_rates.sort_by(|x, y| x.partial_cmp(&y).unwrap());
+    assert!(quantile <= 1f64);
+    let idx = ((error_rates.len() as f64 * quantile).floor() as usize).max(error_rates.len() - 1);
+    error_rates[idx]
+}

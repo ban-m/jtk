@@ -28,7 +28,8 @@ impl PurgeDivergent for DataSet {
             .map(|c| (c.id, c.copy_num))
             .collect();
         let error_rate = self.error_rate();
-        let thr = error_rate.total + 4f64 * error_rate.total_sd;
+        // let thr = error_rate.total + 3f64 * error_rate.total_sd;
+        let thr = error_rate.total + 3f64 * error_rate.total_sd;
         debug!(
             "PD\tTHR\t{}\t{}\t{}",
             error_rate.total, error_rate.total_sd, thr
@@ -106,6 +107,16 @@ fn purge_diverged_nodes(
     config: &PurgeDivConfig,
 ) -> Vec<(u64, Vec<usize>)> {
     let diverged_clusters = get_diverged_clusters(ds, thr, config);
+    // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
+    let diverged_clusters: Vec<_> = diverged_clusters
+        .into_iter()
+        .map(|mut xs| {
+            if xs.iter().all(|&x| x) {
+                xs.iter_mut().for_each(|x| *x = false);
+            }
+            xs
+        })
+        .collect();
     let has_diverged_cluster: Vec<bool> = diverged_clusters
         .iter()
         .map(|xs| xs.iter().any(|&x| x))
