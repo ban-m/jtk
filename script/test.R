@@ -406,13 +406,12 @@ cov.flip.unit.summary %>% filter(score < 500) %>%  ggplot() + geom_histogram(aes
 
 
 
-error.rate.data <- read_tsv("./result/sim.error.tsv")
-error.rate.data <- read_tsv("./simerror")
+error.rate.data <- read_tsv("./result/sim.error.tsv")%>% mutate(total = mism + ins + del) 
 
 error.rate.data %>% ggplot() + geom_histogram(aes(x=mism+ins+del))
 
-error.rate.data %>% mutate(total = mism + ins + del) %>% summarize(across(everything(), sd))
-puerror.rate.data %>% mutate(total = mism + ins + del) %>% summarize(across(everything(), mean))
+error.rate.data %>% summarize(across(everything(), sd))
+puerror.rate.data %>% summarize(across(everything(), mean))
 
 error.rate.data %>% mutate(error = mism + ins + del) %>% select(-mism,-ins,-del) %>%
     group_by(unitid) %>% summarize(mean = mean(error), sd =sd(error)) %>%
@@ -463,3 +462,5 @@ correction.comparison <- full_join(
     datasets[[2]]$data %>% group_by(unit) %>% summarize(purity=mean(purity)) %>% rename(before=purity))
 
 
+error.pre <- read_tsv("./result/error.pre.tsv")
+error.post <- read_tsv("./result/error.post.tsv")

@@ -623,13 +623,17 @@ impl<'a> DitchGraph<'a> {
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
         let llr_stream = (0..10).rev().map(|x| x as f64).take_while(|&x| min_llr < x);
-        for llr in llr_stream {
+        for (i, llr) in llr_stream.enumerate() {
+            debug!("REPEATRESOLVE\t{}", i);
             self.assign_copy_number_mcmc(cov, lens);
             self.resolve_repeats(reads, c, llr as f64);
+            if log_enabled!(log::Level::Trace) {
+                dump(self, i, c);
+            }
         }
         self.remove_lightweight_edges(0, true);
         // if read_type == ReadType::CLR {
-        self.zip_up_overclustering();
+        // self.zip_up_overclustering();
         // }
         self.assign_copy_number_mcmc(cov, lens);
         self.remove_zero_copy_elements(lens, 0.8);
@@ -715,6 +719,54 @@ impl<'a> DitchGraph<'a> {
                 .occ += 1;
         }
         Some(())
+    }
+}
+
+fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
+    let (segments, edge, group, summaries) = graph.spell(c);
+    let nodes = segments.into_iter().map(|node| {
+        let tags = match summaries.iter().find(|x| x.id == node.sid) {
+            Some(contigsummary) => {
+                let ids: Vec<_> = contigsummary
+                    .summary
+                    .iter()
+                    .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                    .collect();
+                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                let coverage =
+                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                log::debug!(
+                    "CONUNIT\t{}\t{}\t{}",
+                    contigsummary.id,
+                    total / contigsummary.summary.len(),
+                    ids.join("\t")
+                );
+                vec![coverage]
+            }
+            None => Vec::new(),
+        };
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+    });
+    let edges = edge
+        .into_iter()
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+    let header = gfa::Content::Header(gfa::Header::default());
+    let header = gfa::Record::from_contents(header, vec![]);
+    let records = std::iter::once(header)
+        .chain(std::iter::once(group))
+        .chain(nodes)
+        .chain(edges)
+        .collect();
+    let gfa = gfa::GFA::from_records(records);
+    if let Some(mut wtr) = std::fs::File::create(format!("{}.gfa", i))
+        .map(std::io::BufWriter::new)
+        .ok()
+    {
+        use std::io::Write;
+        if let Err(why) = writeln!(&mut wtr, "{}", gfa) {
+            trace!("{:?}", why);
+        }
     }
 }
 
@@ -1868,9 +1920,8 @@ impl<'a> DitchGraph<'a> {
             match label {
                 EdgeLabel::Ovlp(l) => {
                     node_seq.reverse();
-                    for _ in 0..(-l) as usize {
-                        node_seq.pop().unwrap();
-                    }
+                    let truncate = (node_seq.len() as i64 + *l).max(0);
+                    node_seq.truncate(truncate as usize);
                     node_seq.reverse();
                 }
                 EdgeLabel::Seq(seq) => node_seq.extend(seq),

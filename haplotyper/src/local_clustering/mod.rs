@@ -99,6 +99,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let take = (coverage * 2f64).floor() as usize;
             let consensus =
                 hmm.polish_until_converge_with_take(refseq, &seqs, &mut ops, band_width, take);
+            // let consensus = hmm.polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 kmeans::clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config)

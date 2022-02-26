@@ -624,7 +624,7 @@ fn filter_profiles_neo<T: std::borrow::Borrow<[f64]>>(
     let base_position = |pos: usize| pos / kiley::hmm::guided::NUM_ROW;
     let in_mask = |pos: usize| {
         let pos = base_position(pos);
-        pos < 2 || (template_len - 2) < pos
+        pos < MASK_LENGTH || (template_len - MASK_LENGTH) < pos
     };
     let probes: Vec<(usize, f64)> = total_improvement
         .into_iter()
@@ -678,7 +678,7 @@ fn filter_profiles_neo<T: std::borrow::Borrow<[f64]>>(
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
                     // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
                     // the sokal michener's similarity would be 0.975.
-                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < 2 {
+                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
                         *selected = 2;
                     }
                     if 0.75 < sim {

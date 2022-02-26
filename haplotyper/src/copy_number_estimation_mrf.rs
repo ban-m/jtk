@@ -27,9 +27,7 @@ impl Config {
     }
 }
 const ERROR_FRAC: f64 = 0.25;
-const BURN_IN: usize = 10_000;
-// const BURN_IN: usize = 300_000;
-// const SAMPLE_LEN: usize = 1_000;
+const BURN_IN: usize = 20_000;
 // target of consistency factor.
 const TARGET: f64 = 20f64;
 const CHOICES: [usize; 3] = [0, 1, 2];

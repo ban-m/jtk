@@ -28,8 +28,10 @@ impl PurgeDivergent for DataSet {
             .map(|c| (c.id, c.copy_num))
             .collect();
         let error_rate = self.error_rate();
-        // let thr = error_rate.total + 3f64 * error_rate.total_sd;
-        let thr = error_rate.total + 3f64 * error_rate.total_sd;
+        let thr = {
+            // TODO: Tune this fraction appropreately...
+            (error_rate.total + 4f64 * 1.5 * error_rate.total_sd).max(0.11f64)
+        };
         debug!(
             "PD\tTHR\t{}\t{}\t{}",
             error_rate.total, error_rate.total_sd, thr

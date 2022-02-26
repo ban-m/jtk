@@ -181,8 +181,11 @@ impl<'a> super::DitchGraph<'a> {
             assert_eq!(selected_edge.from, node);
             assert_eq!(selected_edge.from_position, position);
             // Succeed along with the edge.
+            // TODO: The Ovlp branch might be wrong...?
             match &selected_edge.seq {
-                EdgeLabel::Ovlp(l) => assert!((0..(-l)).all(|_| seq.pop().is_some())),
+                EdgeLabel::Ovlp(l) => {
+                    (0..(-l)).filter(|_| seq.pop().is_some()).count();
+                }
                 EdgeLabel::Seq(label) => seq.extend(label.iter().map(|&x| x as char)),
             };
             // Append nodes proxied by this edge to the last node. The order is correct(I created so.).

@@ -415,6 +415,7 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
 }
 
 // TODO: This should be much more efficient!
+// TODO: Encode other edges if you have encoded one.
 fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
