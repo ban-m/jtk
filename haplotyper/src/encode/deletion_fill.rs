@@ -206,7 +206,7 @@ pub fn correct_unit_deletion_dev(ds: &mut DataSet, fallback: f64) -> HashSet<u64
                     let median = errors
                         .select_nth_unstable_by(x / 2, |x, y| x.partial_cmp(&y).unwrap())
                         .1;
-                    *median + 3f64 * sd_mean
+                    *median + 4f64 * sd_mean
                 }
             })
             .collect()

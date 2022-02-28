@@ -355,8 +355,9 @@ fn dump_histogram(ds: &DataSet) {
     }
     let mut counts: Vec<usize> = counts.iter().map(|x| *(x.1)).collect();
     counts.sort_unstable();
-    let hist = histgram_viz::Histgram::new(&counts[..counts.len() - 10]);
-    debug!("Hi-Freqs:{:?}", &counts[counts.len() - 10..]);
+    let end_pos = counts.len().max(10) - 10;
+    debug!("Hi-Freqs:{:?}", &counts[end_pos..]);
+    let hist = histgram_viz::Histgram::new(&counts[..end_pos]);
     debug!("Histgrapm\n{}", hist.format(40, 20));
 }
 
