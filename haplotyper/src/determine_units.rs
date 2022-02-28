@@ -184,7 +184,7 @@ impl DetermineUnit for definitions::DataSet {
             .iter_mut()
             .for_each(|unit| unit.seq.truncate(config.chunk_len));
         {
-            self.encode(config.threads, sim_thr);
+            self.encode_dev(config.threads, sim_thr);
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);

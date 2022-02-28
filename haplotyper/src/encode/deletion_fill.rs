@@ -159,6 +159,101 @@ pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
     find_new_node
 }
 
+/// Auto-tune the similarity threshold.
+pub fn correct_unit_deletion_dev(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
+    let raw_seq: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .map(|read| (read.id, read.seq()))
+        .collect();
+    let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+    let read_error_rate: Vec<_> = {
+        let ref_chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+        let error_rates: Vec<Vec<_>> = ds
+            .encoded_reads
+            .par_iter()
+            .map(|r| {
+                r.nodes
+                    .iter()
+                    .map(|n| {
+                        let (_, aln, _) = n.recover(ref_chunks[&n.unit]);
+                        let error = aln.iter().filter(|&&b| b != b'|').count();
+                        error as f64 / aln.len() as f64
+                    })
+                    .collect()
+            })
+            .collect();
+        let (sd_sum, sd_num) = error_rates
+            .iter()
+            .filter(|errs| errs.len() > 2)
+            .map(|errs| {
+                let (sum, sumsq) = errs
+                    .iter()
+                    .fold((0f64, 0f64), |(sum, sumsq), x| (sum + x, sumsq + x * x));
+                let mean = sum / errs.len() as f64;
+                let var = sumsq / errs.len() as f64 - mean * mean;
+                assert!(0f64 <= var);
+                var.sqrt()
+            })
+            .fold((0f64, 0), |(sdsum, num), sd| (sdsum + sd, num + 1));
+        let sd_mean = sd_sum / sd_num as f64;
+        debug!("MEAN of SD\t{:.3}", sd_mean);
+        error_rates
+            .into_par_iter()
+            .map(|mut errors| match errors.len() {
+                0..=2 => fallback,
+                x => {
+                    let median = errors
+                        .select_nth_unstable_by(x / 2, |x, y| x.partial_cmp(&y).unwrap())
+                        .1;
+                    *median + 3f64 * sd_mean
+                }
+            })
+            .collect()
+    };
+    const OUTER_LOOP: usize = 3;
+    const INNER_LOOP: usize = 15;
+    let mut find_new_node = HashSet::new();
+    'outer: for t in 0..OUTER_LOOP {
+        let representative = take_consensus_sequence(ds);
+        let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
+        // i->vector of failed index and units.
+        let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
+        for i in 0..INNER_LOOP {
+            let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
+            let failed_trials = failed_trials.par_iter_mut();
+            let read_error_rate = read_error_rate.par_iter();
+            let reads = ds
+                .encoded_reads
+                .par_iter_mut()
+                .zip(failed_trials)
+                .zip(read_error_rate);
+            let filtered_reads = reads.filter(|((r, _), _)| r.nodes.len() > 1);
+            let newly_encoded_units: Vec<_> = filtered_reads
+                .flat_map(|((r, fails), &sim_thr)| {
+                    let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
+                    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+                    let r_sk = &read_skeltons;
+                    let r = (r, seq.as_slice());
+                    correct_deletion_error(r, fails, &representative, &units, &r_sk, sim_thr)
+                })
+                .collect();
+            find_new_node.extend(newly_encoded_units);
+            let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+            debug!("Filled:{}\t{}", current, after);
+            if after <= current && i == 0 {
+                debug!("Filled\tBREAK\tOuter\t{}", t);
+                break 'outer;
+            } else if after <= current {
+                debug!("Filled\tBREAK\tInner");
+                break;
+            }
+            current = after;
+        }
+    }
+    find_new_node
+}
+
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {

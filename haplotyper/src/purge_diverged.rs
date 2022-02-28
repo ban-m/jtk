@@ -15,6 +15,7 @@ impl PurgeDivConfig {
 
 pub trait PurgeDivergent {
     fn purge(&mut self, config: &PurgeDivConfig);
+    fn purge_dev(&mut self, config: &PurgeDivConfig);
 }
 
 use rayon::prelude::*;
@@ -22,11 +23,6 @@ use rayon::prelude::*;
 use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
-        let copy_number: HashMap<_, _> = self
-            .selected_chunks
-            .iter()
-            .map(|c| (c.id, c.copy_num))
-            .collect();
         let error_rate = self.error_rate();
         let thr = {
             // TODO: Tune this fraction appropreately...
@@ -60,47 +56,142 @@ impl PurgeDivergent for DataSet {
         });
         debug!("PD\tEncodedRead\t{}\t{}", prev, self.encoded_reads.len());
         // Reclustering...
-        {
-            // Preserve clustering.
-            let preserve: Vec<_> = self
-                .encoded_reads
-                .iter()
-                .map(|r| {
-                    let cls: Vec<_> = r.nodes.iter().map(|n| n.cluster).collect();
-                    (r.id, cls, r.nodes.len())
-                })
-                .collect();
-            self.encoded_reads
-                .iter_mut()
-                .flat_map(|r| r.nodes.iter_mut())
-                .for_each(|n| n.cluster = 0);
-            use crate::multiplicity_estimation::*;
-            let multip_config = MultiplicityEstimationConfig::new(config.threads, 230493, None);
-            self.estimate_multiplicity(&multip_config);
-            // Recover.
-            for (r, (id, cls, len)) in self.encoded_reads.iter_mut().zip(preserve) {
-                assert_eq!(r.id, id);
-                assert_eq!(r.nodes.len(), len);
-                r.nodes
-                    .iter_mut()
-                    .zip(cls)
-                    .for_each(|(n, cl)| n.cluster = cl);
-            }
-        }
-        use std::collections::HashSet;
-        let changed_units: HashSet<_> = self
-            .selected_chunks
+        re_cluster(self, config.threads);
+    }
+    fn purge_dev(&mut self, config: &PurgeDivConfig) {
+        purge_disjoint_cluster(self, config);
+        re_cluster(self, config.threads);
+    }
+}
+
+fn purge_disjoint_cluster(ds: &mut DataSet, _config: &PurgeDivConfig) {
+    let mut pileups: HashMap<_, Vec<_>> = HashMap::new();
+    ds.encoded_reads
+        .iter_mut()
+        .flat_map(|r| r.nodes.iter_mut())
+        .for_each(|n| {
+            pileups.entry(n.unit).or_default().push(n);
+        });
+    let mut new_units = Vec::new();
+    let unit_seqs: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c.seq())).collect();
+    let mut max_unit_id = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
+    for (id, pileup) in pileups.into_iter().filter(|(_, p)| !p.is_empty()) {
+        let seq = unit_seqs.get(&id).unwrap();
+        let split_units = split_disjoint_cluster(pileup, seq, max_unit_id);
+        max_unit_id += split_units.len() as u64;
+        new_units.extend(split_units);
+    }
+}
+
+const LK_THRESHOLD: f64 = -20f64;
+fn split_disjoint_cluster(mut nodes: Vec<&mut Node>, seq: &[u8], unit_id: u64) -> Vec<Unit> {
+    let num_cluster = nodes[0].posterior.len();
+    assert!(nodes.iter().all(|n| n.posterior.len() == num_cluster));
+    let mut fu = crate::find_union::FindUnion::new(num_cluster);
+    for posterior in nodes.iter().map(|n| n.posterior.as_slice()) {
+        let mut high_post = posterior
             .iter()
-            .filter_map(|c| {
-                copy_number
-                    .get(&c.id)
-                    .filter(|&&copy_num| copy_num != c.copy_num)
-                    .map(|_| c.id)
+            .enumerate()
+            .filter(|&x| *x.1 > LK_THRESHOLD);
+        let mut current = match high_post.next() {
+            Some(idx) => idx.0,
+            None => continue,
+        };
+        for (next, _) in high_post {
+            fu.unite(next, current);
+            current = next;
+        }
+    }
+    let (cluster_mapped_to, cluster_sizes) = {
+        let mut map = HashMap::new();
+        let mut cluster_size = Vec::new();
+        for i in 0..num_cluster {
+            let len = map.len();
+            let parent = fu.find(i).unwrap();
+            if !map.contains_key(&parent) {
+                map.insert(i, len);
+                cluster_size.push(0);
+            }
+            cluster_size[i] += 1;
+        }
+        let cluster_mapped_to: Vec<_> = (0..num_cluster)
+            .map(|i| map[&fu.find(i).unwrap()])
+            .collect();
+        (cluster_mapped_to, cluster_size)
+    };
+    // There's no split. Retain clusterings.
+    if cluster_sizes.len() == 1 {
+        return Vec::new();
+    } else {
+        // There ARE splits. Erase clustering information.
+        for node in nodes.iter_mut() {
+            let mapped_to = cluster_mapped_to[node.cluster as usize];
+            if mapped_to != 0 {
+                node.unit = unit_id + mapped_to as u64;
+            }
+            let cluster_size = cluster_sizes[mapped_to];
+            node.posterior.clear();
+            node.posterior
+                .extend(std::iter::repeat((cluster_size as f64).recip()).take(cluster_size));
+            node.cluster = 0;
+        }
+        let seq = String::from_utf8_lossy(seq).to_string();
+        cluster_sizes
+            .into_iter()
+            .enumerate()
+            .skip(1)
+            .map(|(i, cl)| Unit::new(unit_id + i as u64, seq.clone(), cl))
+            .collect()
+    }
+}
+
+fn re_cluster(ds: &mut DataSet, threads: usize) {
+    let copy_number: HashMap<_, _> = ds
+        .selected_chunks
+        .iter()
+        .map(|c| (c.id, c.copy_num))
+        .collect();
+
+    {
+        // Preserve clustering.
+        let preserve: Vec<_> = ds
+            .encoded_reads
+            .iter()
+            .map(|r| {
+                let cls: Vec<_> = r.nodes.iter().map(|n| n.cluster).collect();
+                (r.id, cls, r.nodes.len())
             })
             .collect();
-        debug!("PD\tReClustering\t{}", changed_units.len());
-        crate::local_clustering::local_clustering_selected(self, &changed_units);
+        ds.encoded_reads
+            .iter_mut()
+            .flat_map(|r| r.nodes.iter_mut())
+            .for_each(|n| n.cluster = 0);
+        use crate::multiplicity_estimation::*;
+        let multip_config = MultiplicityEstimationConfig::new(threads, 230493, None);
+        ds.estimate_multiplicity(&multip_config);
+        // Recover.
+        for (r, (id, cls, len)) in ds.encoded_reads.iter_mut().zip(preserve) {
+            assert_eq!(r.id, id);
+            assert_eq!(r.nodes.len(), len);
+            r.nodes
+                .iter_mut()
+                .zip(cls)
+                .for_each(|(n, cl)| n.cluster = cl);
+        }
     }
+    use std::collections::HashSet;
+    let changed_units: HashSet<_> = ds
+        .selected_chunks
+        .iter()
+        .filter_map(|c| {
+            copy_number
+                .get(&c.id)
+                .filter(|&&copy_num| copy_num != c.copy_num)
+                .map(|_| c.id)
+        })
+        .collect();
+    debug!("PD\tReClustering\t{}", changed_units.len());
+    crate::local_clustering::local_clustering_selected(ds, &changed_units);
 }
 
 fn purge_diverged_nodes(

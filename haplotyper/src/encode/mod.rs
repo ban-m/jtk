@@ -18,12 +18,20 @@ pub const INDEL_FRACTION: f64 = 1f64 / 20f64;
 pub const MIN_INDEL_SIZE: usize = 20;
 pub trait Encode {
     fn encode(&mut self, threads: usize, sim_thr: f64);
+    fn encode_dev(&mut self, threads: usize, sim_thr: f64);
 }
 
 impl Encode for definitions::DataSet {
     fn encode(&mut self, threads: usize, sim_thr: f64) {
         encode_by_mm2(self, threads, sim_thr).unwrap();
         deletion_fill::correct_unit_deletion(self, sim_thr);
+        debug!("Encoded {} reads.", self.encoded_reads.len());
+        assert!(self.encoded_reads.iter().all(is_uppercase));
+    }
+    fn encode_dev(&mut self, threads: usize, sim_thr: f64) {
+        encode_by_mm2(self, threads, sim_thr).unwrap();
+        deletion_fill::correct_unit_deletion(self, sim_thr);
+        deletion_fill::correct_unit_deletion_dev(self, sim_thr);
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(is_uppercase));
     }

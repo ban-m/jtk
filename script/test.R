@@ -464,3 +464,25 @@ correction.comparison <- full_join(
 
 error.pre <- read_tsv("./result/error.pre.tsv")
 error.post <- read_tsv("./result/error.post.tsv")
+
+
+threshold <- 200000
+summarize.dataset <- function(df){
+    df %>%
+        group_by(Acccession) %>%
+        summarize(total=sum(Length),
+                  longer.than.200 = sum(Length[Length>threshold]),
+                  percent.in.bp = longer.than.200 / total,
+                  read.num = length(Length),
+                  longer.than.200.num = sum(Length>threshold),
+                  percent.read.num = longer.than.200.num / read.num
+                  )
+}
+
+
+longer.summary <- read.length %>% summarize(total=sum(Length),
+                                            longer=sum(Length[Length>threshold]),
+                                            read.num=length(Length),
+                                            longer.num=sum(Length>threshold),
+                                            percent.in.bp = longer * 100 / total,
+                                            percent.in.num = longer.num * 100/ read.num)
