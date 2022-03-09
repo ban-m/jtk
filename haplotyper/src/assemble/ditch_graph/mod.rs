@@ -7,7 +7,7 @@ mod sequence_generation;
 use std::collections::HashMap;
 use std::collections::HashSet;
 pub mod dg_test;
-const ERROR_PROB: f64 = 0.1;
+const ERROR_PROB: f64 = 0.05;
 /// Position::Head is the up-stream position of a unit, and Tail is downstream by default.
 #[derive(Debug, Clone, Eq, PartialEq, Copy, Hash, PartialOrd, Ord)]
 pub enum Position {
