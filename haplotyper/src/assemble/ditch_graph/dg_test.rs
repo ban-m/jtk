@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn validate_large() {
         let c = AssembleConfig::default();
-        let (reads, answer) = gen_mock_large();
+        let (reads, _answer) = gen_mock_large();
         let reads: Vec<_> = reads.iter().collect();
         let graph = DitchGraph::new(&reads, None, ReadType::ONT, &c);
         eprintln!("{:?}", graph);
