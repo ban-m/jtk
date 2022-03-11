@@ -34,3 +34,5 @@ mod tests {
         assert_eq!(2 + 2, 4);
     }
 }
+
+pub const ALN_PARAMETER: (i32, i32, i32, i32) = (2, -6, -5, -1);

@@ -18,7 +18,6 @@ pub const INDEL_FRACTION: f64 = 1f64 / 20f64;
 pub const MIN_INDEL_SIZE: usize = 20;
 pub trait Encode {
     fn encode(&mut self, threads: usize, sim_thr: f64);
-    fn encode_dev(&mut self, threads: usize, sim_thr: f64);
 }
 
 impl Encode for definitions::DataSet {
@@ -27,13 +26,17 @@ impl Encode for definitions::DataSet {
         deletion_fill::correct_unit_deletion(self, sim_thr);
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(is_uppercase));
-    }
-    fn encode_dev(&mut self, threads: usize, sim_thr: f64) {
-        encode_by_mm2(self, threads, sim_thr).unwrap();
-        deletion_fill::correct_unit_deletion(self, sim_thr);
-        deletion_fill::correct_unit_deletion_dev(self, sim_thr);
-        debug!("Encoded {} reads.", self.encoded_reads.len());
-        assert!(self.encoded_reads.iter().all(is_uppercase));
+        if log_enabled!(log::Level::Debug) {
+            use std::collections::HashSet;
+            let encoded: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
+            let no_aln_reads: Vec<_> = self
+                .raw_reads
+                .iter()
+                .filter_map(|read| !encoded.contains(&read.id).then(|| read.seq().len()))
+                .collect();
+            let lensum: usize = no_aln_reads.iter().sum();
+            debug!("ENCODE\tNotEncoded\t{}\t{}", lensum, no_aln_reads.len());
+        }
     }
 }
 
@@ -69,15 +72,6 @@ pub fn encode_by(ds: &mut DataSet, alignments: &[bio_utils::paf::PAF]) {
     for aln in alignments.iter() {
         bucket.entry(aln.qname.clone()).or_default().push(aln);
     }
-    if log_enabled!(log::Level::Debug) {
-        let no_aln_reads: Vec<_> = ds
-            .raw_reads
-            .iter()
-            .filter(|read| bucket.get(&read.name).is_none())
-            .collect();
-        let lensum: usize = no_aln_reads.iter().map(|x| x.seq().len()).sum();
-        debug!("ENCODE\tNotEncoded\t{}\t{}", lensum, no_aln_reads.len());
-    }
     ds.encoded_reads = ds
         .raw_reads
         .par_iter()
@@ -103,7 +97,6 @@ fn encode_read_by_paf(
 pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<EncodedRead> {
     let leading_gap: Vec<_> = {
         let start_pos = nodes.first()?.position_from_start;
-        // seq[..start_pos]
         seq.iter()
             .take(start_pos)
             .map(u8::to_ascii_uppercase)
@@ -116,7 +109,6 @@ pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<En
             .skip(end_pos)
             .map(u8::to_ascii_uppercase)
             .collect()
-        // seq[end_pos..].to_vec()
     };
     let edges: Vec<_> = nodes.windows(2).map(|w| Edge::from_nodes(w, seq)).collect();
     Some(EncodedRead {

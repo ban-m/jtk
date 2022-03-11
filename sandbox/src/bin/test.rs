@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
     use haplotyper::encode::deletion_fill;
-    deletion_fill::correct_unit_deletion_dev(&mut ds, 0.15);
+    deletion_fill::correct_unit_deletion(&mut ds, 0.15);
     let dump = serde_json::ser::to_string(&ds).unwrap();
     println!("{}", dump);
     // let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();

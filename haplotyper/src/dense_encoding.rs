@@ -2,6 +2,8 @@ use definitions::*;
 use log::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+
+use crate::ALN_PARAMETER;
 const CONS_MIN_LENGTH: usize = 200;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
@@ -54,7 +56,6 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
         let rawseq = &rawseq[&read.id];
         edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
     });
-
     let unit_ids: HashSet<_> = edge_units
         .values()
         .flat_map(|x| x.iter().map(|x| x.id))
@@ -87,7 +88,7 @@ fn edge_encode(
     read_type: definitions::ReadType,
     _config: &DenseEncodingConfig,
 ) {
-    let inserts = fill_edges_by_new_units_dev(read, seq, edges, tips, &read_type);
+    let inserts = fill_edges_by_new_units(read, seq, edges, tips, &read_type);
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
         match idx + accum_inserts {
             pos if pos < read.nodes.len() => read.nodes.insert(idx + accum_inserts, node),
@@ -141,33 +142,33 @@ fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)]) {
 //     total / ds.selected_chunks.len()
 // }
 
-pub fn fill_edges_by_new_units(
-    read: &EncodedRead,
-    seq: &[u8],
-    edge_encoding_patterns: &HashMap<DEdge, Vec<Unit>>,
-    read_type: &definitions::ReadType,
-) -> Vec<(usize, Node)> {
-    let mut inserts = vec![];
-    for (idx, window) in read.nodes.windows(2).enumerate() {
-        // What is important is the direction, the label, and the start-end position. Thats all.
-        let (start, end) = (
-            window[0].position_from_start + window[0].seq().len(),
-            window[1].position_from_start,
-        );
-        let (edge, direction) = edge_and_direction(window);
-        let unit_info = match edge_encoding_patterns.get(&edge) {
-            Some(units) => units,
-            None => continue,
-        };
-        for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
-            // idx=0 -> Insert at the first edge. So, the index should be 1.
-            inserts.push((idx + 1, node));
-        }
-    }
-    inserts
-}
+// pub fn fill_edges_by_new_units(
+//     read: &EncodedRead,
+//     seq: &[u8],
+//     edge_encoding_patterns: &HashMap<DEdge, Vec<Unit>>,
+//     read_type: &definitions::ReadType,
+// ) -> Vec<(usize, Node)> {
+//     let mut inserts = vec![];
+//     for (idx, window) in read.nodes.windows(2).enumerate() {
+//         // What is important is the direction, the label, and the start-end position. Thats all.
+//         let (start, end) = (
+//             window[0].position_from_start + window[0].seq().len(),
+//             window[1].position_from_start,
+//         );
+//         let (edge, direction) = edge_and_direction(window);
+//         let unit_info = match edge_encoding_patterns.get(&edge) {
+//             Some(units) => units,
+//             None => continue,
+//         };
+//         for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
+//             // idx=0 -> Insert at the first edge. So, the index should be 1.
+//             inserts.push((idx + 1, node));
+//         }
+//     }
+//     inserts
+// }
 
-pub fn fill_edges_by_new_units_dev(
+pub fn fill_edges_by_new_units(
     read: &EncodedRead,
     seq: &[u8],
     edges: &EdgeAndUnit,
@@ -387,30 +388,30 @@ fn get_reverse_d_edge_from_window(w: &[Node]) -> DEdge {
 
 // formatting the two nodes so that it is from small unit to unit with larger ID.
 // If the direction is reversed, the 2nd argument would be false.
-fn edge_and_direction(nodes: &[Node]) -> (DEdge, bool) {
-    let (from, to) = match nodes {
-        [from, to] => (from, to),
-        _ => panic!(),
-    };
-    match from.unit.cmp(&to.unit) {
-        std::cmp::Ordering::Less => {
-            let from_elm = (from.unit, from.cluster, from.is_forward);
-            let to_elm = (to.unit, to.cluster, !to.is_forward);
-            let edge = (from_elm, to_elm);
-            (edge, true)
-        }
-        std::cmp::Ordering::Equal if from.is_forward => {
-            let from_elm = (from.unit, from.cluster, from.is_forward);
-            let to_elm = (to.unit, to.cluster, !to.is_forward);
-            ((from_elm, to_elm), true)
-        }
-        _ => {
-            let from_elm = (to.unit, to.cluster, !to.is_forward);
-            let to_elm = (from.unit, from.cluster, from.is_forward);
-            ((from_elm, to_elm), false)
-        }
-    }
-}
+// fn edge_and_direction(nodes: &[Node]) -> (DEdge, bool) {
+//     let (from, to) = match nodes {
+//         [from, to] => (from, to),
+//         _ => panic!(),
+//     };
+//     match from.unit.cmp(&to.unit) {
+//         std::cmp::Ordering::Less => {
+//             let from_elm = (from.unit, from.cluster, from.is_forward);
+//             let to_elm = (to.unit, to.cluster, !to.is_forward);
+//             let edge = (from_elm, to_elm);
+//             (edge, true)
+//         }
+//         std::cmp::Ordering::Equal if from.is_forward => {
+//             let from_elm = (from.unit, from.cluster, from.is_forward);
+//             let to_elm = (to.unit, to.cluster, !to.is_forward);
+//             ((from_elm, to_elm), true)
+//         }
+//         _ => {
+//             let from_elm = (to.unit, to.cluster, !to.is_forward);
+//             let to_elm = (from.unit, from.cluster, from.is_forward);
+//             ((from_elm, to_elm), false)
+//         }
+//     }
+// }
 
 // Note that the seq[start..end] can be much longer than the contig itself....
 fn encode_edge(
@@ -576,17 +577,13 @@ fn tune_position<'a>(
     let (ctg_start, ctg_end) = alignment.locations.unwrap()[0];
     let ctg_end = ctg_end + 1;
     let contig = &contig[ctg_start..ctg_end];
-    // let ops: Vec<_> = alignment
-    //     .operations
-    //     .unwrap()
-    //     .iter()
-    //     .map(|&op| {
-    //         use kiley::Op::*;
-    //         [Match, Ins, Del, Mismatch][op as usize]
-    //     })
-    //     .collect();
-    // use kiley::bialignment::guided::global_guided;
-    // let (_, ops) = global_guided(contig, &seq, &ops, band, (2, -5, -6, -1));
-    let (_, ops) = kiley::bialignment::global_banded(contig, &seq, 2, -5, -6, -1, band);
+    let alignment = alignment.operations.unwrap();
+    let edlib_to_op = {
+        use kiley::Op::*;
+        [Match, Ins, Del, Mismatch]
+    };
+    let ops: Vec<_> = alignment.iter().map(|&x| edlib_to_op[x as usize]).collect();
+    let (_, ops) =
+        kiley::bialignment::guided::global_guided(contig, &seq, &ops, band, ALN_PARAMETER);
     ((seq_start, seq_end, seq), (ctg_start, ctg_end, contig), ops)
 }

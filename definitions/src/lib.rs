@@ -51,7 +51,6 @@ pub const CLR_CLR_SIM: f64 = 0.20;
 pub const HIFI_SIM_THR: f64 = 0.05;
 pub const ONT_SIM_THR: f64 = 0.15;
 
-// (* 0.03 2000.0)
 pub const CLR_BAND_FRAC: f64 = 0.03;
 pub const ONT_BAND_FRAC: f64 = 0.03;
 pub const HIFI_BAND_FRAC: f64 = 0.01;
@@ -148,23 +147,43 @@ impl DataSet {
     /// 3: Every encoded read can be correctly recovered into the original sequence.
     /// Of course, these should be hold at any steps in the pipeline,
     /// So, this is just a checking function.
-    pub fn sanity_check(&self) -> bool {
-        std::path::Path::new(&self.input_file).exists() && self.encoded_reads_can_be_recovered()
+    pub fn sanity_check(&self) {
+        assert!(std::path::Path::new(&self.input_file).exists());
+        self.encoded_reads_can_be_recovered();
+        use std::collections::HashSet;
+        let mut units = HashSet::new();
+        for unit in self.selected_chunks.iter() {
+            assert!(!units.contains(&unit.id));
+            units.insert(unit.id);
+        }
     }
-    fn encoded_reads_can_be_recovered(&self) -> bool {
+    fn encoded_reads_can_be_recovered(&self) {
         use std::collections::HashMap;
         let seq: HashMap<_, _> = self.raw_reads.iter().map(|x| (x.id, x.seq())).collect();
-        self.encoded_reads.iter().all(|read| {
+        self.encoded_reads.iter().for_each(|read| {
             let orig: Vec<_> = match seq.get(&read.id) {
                 Some(res) => res.iter().map(u8::to_ascii_uppercase).collect(),
-                None => return false,
+                None => panic!(),
             };
             let recover: Vec<_> = read
                 .recover_raw_read()
                 .iter()
                 .map(u8::to_ascii_uppercase)
                 .collect();
-            orig == recover
+            assert_eq!(orig.len(), recover.len());
+            let not_matched = orig
+                .iter()
+                .zip(recover.iter())
+                .enumerate()
+                .filter(|(_, (x, y))| x != y);
+            for (idx, _) in not_matched {
+                eprintln!("{}", idx);
+            }
+            if orig != recover {
+                eprintln!("{}", read.leading_gap.len());
+                eprintln!("{}", read.trailing_gap.len());
+                panic!();
+            }
         })
     }
 }
@@ -415,7 +434,6 @@ impl Edge {
                 .map(u8::to_ascii_uppercase)
                 .map(|x| x as char)
                 .collect()
-            // String::from_utf8_lossy(&seq[end..start]).to_string()
         };
         Edge {
             from: from.unit,

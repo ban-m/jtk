@@ -1,6 +1,9 @@
+use crate::ALN_PARAMETER;
+
 use super::encode::Encode;
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
+use rayon::prelude::*;
 // use super::Encode;
 use definitions::*;
 // use path_phasing::haplotype_cc;
@@ -141,8 +144,10 @@ impl DetermineUnit for definitions::DataSet {
             self.encode(config.threads, sim_thr);
             sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
-            fill_sparse_region(self, config);
-            fill_tail_end(self, config);
+            for _ in 0..4 {
+                fill_sparse_region_dev(self, config);
+                crate::encode::deletion_fill::correct_unit_deletion(self, sim_thr);
+            }
             // Re-index.
             self.selected_chunks
                 .iter_mut()
@@ -184,7 +189,7 @@ impl DetermineUnit for definitions::DataSet {
             .iter_mut()
             .for_each(|unit| unit.seq.truncate(config.chunk_len));
         {
-            self.encode_dev(config.threads, sim_thr);
+            self.encode(config.threads, sim_thr);
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);
@@ -415,8 +420,182 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
     Ok(chunks)
 }
 
-// TODO: This should be much more efficient!
-// TODO: Encode other edges if you have encoded one.
+fn normalize_edge(w: &[Node]) -> (((u64, bool), (u64, bool)), bool) {
+    let forward = ((w[0].unit, w[0].is_forward), (w[1].unit, w[1].is_forward));
+    let reverse = ((w[1].unit, !w[1].is_forward), (w[0].unit, !w[0].is_forward));
+    if forward <= reverse {
+        (forward, true)
+    } else {
+        (reverse, false)
+    }
+}
+
+type FilledEdge = ((u64, bool), (u64, bool));
+// Offset from the `from` position.
+const SKIP_OFFSET: usize = 5;
+type FilledEdges = HashMap<FilledEdge, Unit>;
+fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> FilledEdges {
+    let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
+    for read in ds.encoded_reads.iter().filter(|r| !r.nodes.is_empty()) {
+        assert_eq!(read.nodes.len(), read.edges.len() + 1);
+        for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
+            let label = edge.label();
+            if config.chunk_len + SKIP_OFFSET < label.len() {
+                let (edge, is_forward) = normalize_edge(w);
+                let mut label: Vec<_> = if is_forward {
+                    label
+                        .iter()
+                        .skip(SKIP_OFFSET)
+                        .take(config.chunk_len)
+                        .copied()
+                        .collect()
+                } else {
+                    let start = label.len() - SKIP_OFFSET - config.chunk_len;
+                    bio_utils::revcmp(&label[start..])
+                };
+                label.iter_mut().for_each(u8::make_ascii_uppercase);
+                edge_count.entry(edge).or_default().push(label);
+            }
+        }
+    }
+    // We fill units for each sparsed region.
+    let count_thr = {
+        let mut count: HashMap<_, usize> = HashMap::new();
+        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            *count.entry(node.unit).or_default() += 1;
+        }
+        let mut count: Vec<_> = count.into_values().collect();
+        let median = count.len() / 2;
+        *count.select_nth_unstable(median).1 / 4
+    };
+    debug!("FillSparse\tThreshold\t{}", count_thr);
+    let mut edge_units: HashMap<_, _> = edge_count
+        .into_par_iter()
+        .filter(|x| count_thr < x.1.len())
+        .map(|(key, ref seqs)| {
+            let radius = ds.read_type.band_width(config.chunk_len);
+            let consensus = kiley::ternary_consensus_by_chunk(&seqs, radius);
+            let seq = String::from_utf8(consensus).unwrap();
+            let unit = Unit::new(0, seq, 2);
+            (key, unit)
+        })
+        .collect();
+    let max_idx: u64 = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
+    edge_units.values_mut().enumerate().for_each(|(idx, unit)| {
+        unit.id = max_idx + 1 + idx as u64;
+    });
+    edge_units
+}
+
+fn fill_edge(
+    read: &mut EncodedRead,
+    seq: &[u8],
+    edge_units: &FilledEdges,
+    readtype: ReadType,
+    config: &UnitConfig,
+) {
+    let inserts = fill_sparse_edges_in_read(read, seq, edge_units, readtype, config);
+    for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+        match idx + accum_inserts {
+            pos if pos < read.nodes.len() => read.nodes.insert(idx + accum_inserts, node),
+            _ => read.nodes.push(node),
+        }
+    }
+    re_encode_read(read, seq);
+}
+
+fn fill_sparse_edges_in_read(
+    read: &EncodedRead,
+    seq: &[u8],
+    edge_units: &FilledEdges,
+    readtype: ReadType,
+    _config: &UnitConfig,
+) -> Vec<(usize, Node)> {
+    let mut inserts = vec![];
+    for (idx, w) in read.nodes.windows(2).enumerate() {
+        let (edge, is_forward) = normalize_edge(w);
+        let start = w[0].position_from_start + w[0].seq().len();
+        let end = w[1].position_from_start;
+        if let Some(unit) = edge_units.get(&edge) {
+            if let Some(node) = encode_edge(seq, start, end, is_forward, unit, readtype) {
+                inserts.push((idx + 1, node))
+            }
+        }
+    }
+    inserts
+}
+
+fn encode_edge(
+    seq: &[u8],
+    start: usize,
+    end: usize,
+    direction: bool,
+    unit: &Unit,
+    readtype: ReadType,
+) -> Option<Node> {
+    let unit_len = unit.seq().len();
+    let (start, end) = match direction {
+        true => (start, (start + unit_len + SKIP_OFFSET).min(end)),
+        false => (end.saturating_sub(unit_len + SKIP_OFFSET), end),
+    };
+    let mut seq = match direction {
+        true => seq[start..end].to_vec(),
+        false => bio_utils::revcmp(&seq[start..end]),
+    };
+    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+    let mode = edlib_sys::AlignMode::Infix;
+    let task = edlib_sys::AlignTask::Alignment;
+    let alignment = edlib_sys::edlib_align(unit.seq(), &seq, mode, task);
+    let (seq_start, seq_end) = alignment.locations.unwrap()[0];
+    let seq_end = seq_end + 1;
+    let position_from_start = match direction {
+        true => start + seq_start,
+        false => start + seq.len() - seq_end,
+    };
+    let seq = &seq[seq_start..seq_end];
+    let band = readtype.band_width(unit.seq().len());
+    let edlib_to_op = {
+        use kiley::Op::*;
+        [Match, Del, Ins, Mismatch]
+    };
+    let alignment = alignment.operations.unwrap();
+    let ops: Vec<_> = alignment.iter().map(|&x| edlib_to_op[x as usize]).collect();
+    let (_, ops) =
+        kiley::bialignment::guided::global_guided(unit.seq(), &seq, &ops, band, ALN_PARAMETER);
+    let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
+    let identity = mat_num as f64 / ops.len() as f64;
+    (1f64 - identity < readtype.sim_thr()).then(|| {
+        let cigar = crate::encode::compress_kiley_ops(&ops);
+        Node::new(unit.id, direction, seq, cigar, position_from_start, 2)
+    })
+}
+
+fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
+    if !read.nodes.is_empty() {
+        let mut nodes = vec![];
+        nodes.append(&mut read.nodes);
+        use crate::encode::{nodes_to_encoded_read, remove_slippy_alignment};
+        nodes.sort_by_key(|n| n.unit);
+        nodes = remove_slippy_alignment(nodes);
+        nodes.sort_by_key(|n| n.position_from_start);
+        nodes = remove_slippy_alignment(nodes);
+        *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+    }
+}
+
+fn fill_sparse_region_dev(ds: &mut DataSet, config: &UnitConfig) {
+    let edge_units = enumerate_filled_edges(ds, config);
+    let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    let readtype = ds.read_type;
+    ds.encoded_reads.par_iter_mut().for_each(|read| {
+        let rawseq = &rawseq[&read.id];
+        fill_edge(read, rawseq, &edge_units, readtype, config);
+    });
+    debug!("FillSparse\t{}", edge_units.len());
+    ds.selected_chunks.extend(edge_units.into_values());
+}
+
+#[allow(dead_code)]
 fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
@@ -433,7 +612,6 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
         let median = count.len() / 2;
         *count.select_nth_unstable(median).1 / 4
     };
-    let sparse_thr = config.chunk_len as i64;
     let mut picked_units = vec![];
     for (_, edges) in edge_count {
         let total_len: i64 = edges
@@ -444,7 +622,7 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
             })
             .sum();
         let mean_len = total_len / edges.len() as i64;
-        if sparse_thr < mean_len && count_thr < edges.len() {
+        if (config.chunk_len as i64) < mean_len && count_thr < edges.len() {
             let edge = edges.iter().max_by_key(|e| e.label().len()).unwrap();
             let seq = edge.label();
             let new_units = (0..)
@@ -465,6 +643,7 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
         }));
 }
 
+#[allow(dead_code)]
 fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
     let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
     for read in ds.encoded_reads.iter() {

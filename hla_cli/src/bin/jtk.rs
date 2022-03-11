@@ -1,11 +1,11 @@
-use clap::{App, Arg};
+use clap::{Arg, Command};
 use definitions::*;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
 #[macro_use]
 extern crate log;
-fn subcommand_entry() -> App<'static> {
-    App::new("entry")
+fn subcommand_entry() -> Command<'static> {
+    Command::new("entry")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Entry point. It encodes a fasta file into HLA-class file.")
@@ -50,8 +50,8 @@ fn subcommand_entry() -> App<'static> {
 }
 
 const TARGETS: [&str; 4] = ["raw_reads", "hic_reads", "units", "assignments"];
-fn subcommand_extract() -> App<'static> {
-    App::new("extract")
+fn subcommand_extract() -> Command<'static> {
+    Command::new("extract")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Exit point. It extract fasta/q file from a HLA-class file.")
@@ -80,8 +80,8 @@ fn subcommand_extract() -> App<'static> {
         )
 }
 
-fn subcommand_stats() -> App<'static> {
-    App::new("stats")
+fn subcommand_stats() -> Command<'static> {
+    Command::new("stats")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Write stats to the specified file.")
@@ -101,8 +101,8 @@ fn subcommand_stats() -> App<'static> {
         )
 }
 
-fn subcommand_select_unit() -> App<'static> {
-    App::new("select_unit")
+fn subcommand_select_unit() -> Command<'static> {
+    Command::new("select_unit")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Pick subsequence from raw reads.")
@@ -177,8 +177,8 @@ fn subcommand_select_unit() -> App<'static> {
         )
 }
 
-fn subcommand_polish_unit() -> App<'static> {
-    App::new("polish_unit")
+fn subcommand_polish_unit() -> Command<'static> {
+    Command::new("polish_unit")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Polishing units by consuming encoded reads")
@@ -212,8 +212,8 @@ fn subcommand_polish_unit() -> App<'static> {
         )
 }
 
-fn subcommand_mask_repeats() -> App<'static> {
-    App::new("mask_repeats")
+fn subcommand_mask_repeats() -> Command<'static> {
+    Command::new("mask_repeats")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Mask Repeat(i.e., frequent k-mer)")
@@ -256,8 +256,8 @@ fn subcommand_mask_repeats() -> App<'static> {
         )
 }
 
-fn subcommand_encode() -> App<'static> {
-    App::new("encode")
+fn subcommand_encode() -> Command<'static> {
+    Command::new("encode")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Encode reads by alignments (Internally invoke `minimap2` tools).")
@@ -277,8 +277,8 @@ fn subcommand_encode() -> App<'static> {
         )
 }
 
-fn subcommand_polish_encoding() -> App<'static> {
-    App::new("polish_encoding")
+fn subcommand_polish_encoding() -> Command<'static> {
+    Command::new("polish_encoding")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Remove nodes from reads.")
@@ -298,8 +298,8 @@ fn subcommand_polish_encoding() -> App<'static> {
         )
 }
 
-fn subcommand_pick_components() -> App<'static> {
-    App::new("pick_components")
+fn subcommand_pick_components() -> Command<'static> {
+    Command::new("pick_components")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Take top n largest components, discarding the rest and empty reads.")
@@ -328,8 +328,8 @@ fn subcommand_pick_components() -> App<'static> {
         )
 }
 
-fn subcommand_estimate_multiplicity() -> App<'static> {
-    App::new("estimate_multiplicity")
+fn subcommand_estimate_multiplicity() -> Command<'static> {
+    Command::new("estimate_multiplicity")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Determine multiplicities of units.")
@@ -374,8 +374,8 @@ fn subcommand_estimate_multiplicity() -> App<'static> {
         )
 }
 
-fn subcommand_correct_multiplicity() -> App<'static> {
-    App::new("correct_multiplicity")
+fn subcommand_correct_multiplicity() -> Command<'static> {
+    Command::new("correct_multiplicity")
         .version("0.1")
         .author("Bansho Masutani")
         .about("Fix multiplicities of units, re-clustering if needed.")
@@ -411,8 +411,8 @@ fn subcommand_correct_multiplicity() -> App<'static> {
         )
 }
 
-fn subcommand_partition_local() -> App<'static> {
-    App::new("partition_local")
+fn subcommand_partition_local() -> Command<'static> {
+    Command::new("partition_local")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Clustering reads. (Local)")
@@ -434,8 +434,8 @@ fn subcommand_partition_local() -> App<'static> {
         )
 }
 
-fn subcommand_purge_diverged() -> App<'static> {
-    App::new("purge_diverged")
+fn subcommand_purge_diverged() -> Command<'static> {
+    Command::new("purge_diverged")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Purge diverged clusters")
@@ -457,8 +457,8 @@ fn subcommand_purge_diverged() -> App<'static> {
         )
 }
 
-fn subcommand_correct_deletion() -> App<'static> {
-    App::new("correct_deletion")
+fn subcommand_correct_deletion() -> Command<'static> {
+    Command::new("correct_deletion")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Correct unit deletion")
@@ -487,8 +487,8 @@ fn subcommand_correct_deletion() -> App<'static> {
         )
 }
 
-fn subcommand_partition_global() -> App<'static> {
-    App::new("partition_global")
+fn subcommand_partition_global() -> Command<'static> {
+    Command::new("partition_global")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Clustering reads (Global).")
@@ -565,8 +565,8 @@ fn subcommand_partition_global() -> App<'static> {
         )
 }
 
-fn subcommand_resolve_tangle() -> App<'static> {
-    App::new("resolve_tangle")
+fn subcommand_resolve_tangle() -> Command<'static> {
+    Command::new("resolve_tangle")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Resolve tangle by re-estimate copy numbers.")
@@ -608,8 +608,8 @@ fn subcommand_resolve_tangle() -> App<'static> {
         )
 }
 
-fn subcommand_correct_clustering() -> App<'static> {
-    App::new("correct_clustering")
+fn subcommand_correct_clustering() -> Command<'static> {
+    Command::new("correct_clustering")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Correct local clustering by EM algorithm.")
@@ -651,8 +651,8 @@ fn subcommand_correct_clustering() -> App<'static> {
         )
 }
 
-fn subcommand_encode_densely() -> App<'static> {
-    App::new("encode_densely")
+fn subcommand_encode_densely() -> Command<'static> {
+    Command::new("encode_densely")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Encoding homologoud diplotig in densely.")
@@ -684,8 +684,8 @@ fn subcommand_encode_densely() -> App<'static> {
         )
 }
 
-fn subcommand_assemble() -> App<'static> {
-    App::new("assemble")
+fn subcommand_assemble() -> Command<'static> {
+    Command::new("assemble")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Assemble reads.")
@@ -1264,11 +1264,11 @@ fn flush_file(dataset: &DataSet) -> std::io::Result<()> {
 }
 
 fn main() -> std::io::Result<()> {
-    let matches = App::new("jtk")
+    let matches = Command::new("jtk")
         .version("0.1")
         .author("Bansho Masutani")
         .about("HLA toolchain")
-        .setting(clap::AppSettings::ArgRequiredElseHelp)
+        .arg_required_else_help(true)
         .subcommand(subcommand_entry())
         .subcommand(subcommand_extract())
         .subcommand(subcommand_stats())

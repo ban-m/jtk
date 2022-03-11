@@ -1,13 +1,13 @@
 //! A small K-means clustering algorithm.
 #[allow(dead_code)]
 const DIFF_SIZE: usize = 9;
-const DEL_SIZE: usize = 4;
-const REP_SIZE: usize = 4;
+// const DEL_SIZE: usize = 4;
+// const REP_SIZE: usize = 4;
 // Average LK gain for one read. If you increment the number of the cluster,
 // you should gain AVERAGE_LK * coverage log-likelihood.
-const CLR_AVERAGE_LK: f64 = 1.1;
-const ONT_AVERAGE_LK: f64 = 1.8;
-const CCS_AVERAGE_LK: f64 = 3.0;
+// const CLR_AVERAGE_LK: f64 = 1.1;
+// const ONT_AVERAGE_LK: f64 = 1.8;
+// const CCS_AVERAGE_LK: f64 = 3.0;
 // See `clustering_dev`for detail.
 // const SMALL_LK: f64 = -1000f64;
 // const DEL_LK: f64 = 3f64;
@@ -18,27 +18,34 @@ const CCS_AVERAGE_LK: f64 = 3.0;
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
 use definitions::ReadType;
-// TODO:Tune this on-the-fly?
-// Anyway, set this to be very high value, I do not want to drop something.
-// const ERROR_PROB: f64 = 0.25;
 use rand::Rng;
 
 // use crate::assemble::string_graph::consensus;
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct ClusteringConfig {
     read_type: ReadType,
     band_width: usize,
+    // Minimum required Likelihood gain.
+    gain: f64,
     // Coverage for haploid.
     coverage: f64,
     pub copy_num: u8,
 }
 
 impl ClusteringConfig {
-    pub fn new(band_width: usize, copy_num: u8, coverage: f64, read_type: ReadType) -> Self {
+    pub fn new(
+        band_width: usize,
+        copy_num: u8,
+        coverage: f64,
+        gain: f64,
+        read_type: ReadType,
+    ) -> Self {
         Self {
             read_type,
             band_width,
             coverage,
+            gain,
             copy_num,
         }
     }
@@ -47,100 +54,109 @@ impl ClusteringConfig {
 // Assignments, posterior, likelihood, consensus.
 type ClusteringResult = (Vec<u8>, Vec<Vec<f64>>, f64, Vec<u8>);
 /// Usual "flat(non-recursive)" clustering. Return assignments, template, and LK.
-// TODO:Maybe we need hmm in the configuration.
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
     config: &ClusteringConfig,
 ) -> Option<ClusteringResult> {
     let band = config.band_width;
-    let cons_template = kiley::consensus(reads, rng.gen(), 10, band);
-    let band_width = 100;
-    use kiley::gphmm::*;
-    let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    let hmm = hmm.fit_banded(&cons_template, reads, band_width);
-    clustering_dev(&cons_template, reads, rng, &hmm, config)
-        .map(|(asn, gains, lk, _)| (asn, gains, lk, cons_template))
+    let mut template = kiley::ternary_consensus_by_chunk(reads, band);
+    let mut hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    let mut ops: Vec<_> = reads
+        .iter()
+        .map(|x| hmm.align(&template, x.borrow(), band).1)
+        .collect();
+    for _ in 0..5 {
+        hmm.fit(&template, reads, band);
+        template = hmm.polish_until_converge_with(&template, reads, &mut ops, band);
+    }
+    clustering_neo(&template, reads, &mut ops, rng, &hmm, config)
+        .map(|(asn, gains, lk, _)| (asn, gains, lk, template))
+    // let band_width = 100;
+    // use kiley::gphmm::*;
+    // let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
+    // let hmm = hmm.fit_banded(&cons_template, reads, band_width);
+    // clustering_dev(&cons_template, reads, rng, &hmm, config)
+    //     .map(|(asn, gains, lk, _)| (asn, gains, lk, cons_template))
 }
 
 type ClusteringDevResult = (Vec<u8>, Vec<Vec<f64>>, f64, u8);
-/// If everything goes fine, return the assignment of each read,
-/// likelihood vectors and its total likelihood gain.
-/// Specifically, if the returned value is `(asms,lks,lk),
-/// then, `lks[i][k]` is equal to the gain of the likelihood of the i-th read when in the k-th cluster.
-pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
-    template: &[u8],
-    reads: &[T],
-    rng: &mut R,
-    hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
-    config: &ClusteringConfig,
-) -> Option<ClusteringDevResult> {
-    let ClusteringConfig {
-        band_width,
-        copy_num,
-        coverage,
-        read_type,
-    } = *config;
-    let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
-    let copy_num = copy_num as usize;
-    // const NEWFEATURE: bool = false;
-    let selected_variants: Vec<_> = {
-        let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
-        if log_enabled!(log::Level::Trace) {
-            // DUMP Hot columns.
-            for (pos, lk) in probes.iter() {
-                let (idx, t) = (pos / 9, pos % 9);
-                if idx < template.len() {
-                    trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
-                } else {
-                    let idx = pos - 9 * template.len();
-                    if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-                        let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-                        trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
-                    } else {
-                        let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-                        let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-                        trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
-                    };
-                }
-            }
-        }
-        profiles
-            .iter()
-            .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
-            .collect()
-    };
-    let num = 2;
-    // TODO:Move to other.
-    let average_lk = match read_type {
-        ReadType::CCS => CLR_AVERAGE_LK,
-        ReadType::CLR => CCS_AVERAGE_LK,
-        ReadType::ONT => ONT_AVERAGE_LK,
-        ReadType::None => CLR_AVERAGE_LK,
-    };
-    let estim_cov = (reads.len() as f64 / copy_num as f64 + coverage) / 2f64;
-    let init_copy_num = copy_num.max(4) - 3;
-    let (assignments, score, k) = (init_copy_num..=copy_num)
-        .filter_map(|k| {
-            let (asn, score) = (0..num)
-                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
-                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-            trace!("LK\t{}\t{:.3}", k, score);
-            let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
-            Some((asn, score - expected_gain, k))
-        })
-        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    let score = score + (k - 1) as f64 * average_lk * estim_cov;
-    let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
-    to_posterior_probability(&mut likelihood_gains);
-    if log_enabled!(log::Level::Trace) {
-        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-            trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
-        }
-    }
-    Some((assignments, likelihood_gains, score, k as u8))
-}
+// /// If everything goes fine, return the assignment of each read,
+// /// likelihood vectors and its total likelihood gain.
+// /// Specifically, if the returned value is `(asms,lks,lk),
+// /// then, `lks[i][k]` is equal to the gain of the likelihood of the i-th read when in the k-th cluster.
+// pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
+//     template: &[u8],
+//     reads: &[T],
+//     rng: &mut R,
+//     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
+//     config: &ClusteringConfig,
+// ) -> Option<ClusteringDevResult> {
+//     let ClusteringConfig {
+//         band_width,
+//         copy_num,
+//         coverage,
+//         read_type,
+//     } = *config;
+//     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
+//     let copy_num = copy_num as usize;
+//     // const NEWFEATURE: bool = false;
+//     let selected_variants: Vec<_> = {
+//         let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
+//         if log_enabled!(log::Level::Trace) {
+//             // DUMP Hot columns.
+//             for (pos, lk) in probes.iter() {
+//                 let (idx, t) = (pos / 9, pos % 9);
+//                 if idx < template.len() {
+//                     trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
+//                 } else {
+//                     let idx = pos - 9 * template.len();
+//                     if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
+//                         let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
+//                         trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
+//                     } else {
+//                         let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
+//                         let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
+//                         trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
+//                     };
+//                 }
+//             }
+//         }
+//         profiles
+//             .iter()
+//             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
+//             .collect()
+//     };
+//     let num = 2;
+//     let average_lk = match read_type {
+//         ReadType::CCS => CLR_AVERAGE_LK,
+//         ReadType::CLR => CCS_AVERAGE_LK,
+//         ReadType::ONT => ONT_AVERAGE_LK,
+//         ReadType::None => CLR_AVERAGE_LK,
+//     };
+//     let estim_cov = (reads.len() as f64 / copy_num as f64 + coverage) / 2f64;
+//     let init_copy_num = copy_num.max(4) - 3;
+//     let (assignments, score, k) = (init_copy_num..=copy_num)
+//         .filter_map(|k| {
+//             let (asn, score) = (0..num)
+//                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+//                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+//             trace!("LK\t{}\t{:.3}", k, score);
+//             let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
+//             Some((asn, score - expected_gain, k))
+//         })
+//         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+//     let score = score + (k - 1) as f64 * average_lk * estim_cov;
+//     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
+//     to_posterior_probability(&mut likelihood_gains);
+//     if log_enabled!(log::Level::Trace) {
+//         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+//             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+//             trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+//         }
+//     }
+//     Some((assignments, likelihood_gains, score, k as u8))
+// }
 
 pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
@@ -154,7 +170,9 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
         band_width,
         copy_num,
         coverage,
-        read_type,
+        gain: average_lk,
+        ..
+        // _read_type,
     } = *config;
     let profiles: Vec<_> = reads
         .iter()
@@ -175,14 +193,7 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
             .collect()
     };
-    let num = 2;
-    let average_lk = match read_type {
-        ReadType::CCS => CLR_AVERAGE_LK,
-        ReadType::CLR => CCS_AVERAGE_LK,
-        ReadType::ONT => ONT_AVERAGE_LK,
-        ReadType::None => CLR_AVERAGE_LK,
-    };
-    let estim_cov = (reads.len() as f64 / copy_num as f64 + coverage) / 2f64;
+    let num = 3;
     let init_copy_num = copy_num.max(4) - 3;
     let (assignments, score, k) = (init_copy_num..=copy_num)
         .filter_map(|k| {
@@ -190,11 +201,11 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             trace!("LK\t{}\t{:.3}", k, score);
-            let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
+            let expected_gain = (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
             Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    let score = score + (k - 1) as f64 * average_lk * estim_cov;
+    let score = score + (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
     if log_enabled!(log::Level::Trace) {
@@ -323,33 +334,32 @@ fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<
         .collect()
 }
 
-#[allow(dead_code)]
-fn calibrate_likelihoods(profiles: &[Vec<f64>], coverage: f64) -> Vec<Vec<f64>> {
-    let mut counts = vec![0; profiles[0].len()];
-    for profile in profiles.iter() {
-        for (i, _) in profile.iter().enumerate().filter(|&(_, &x)| 0f64 < x) {
-            counts[i] += 1;
-        }
-    }
-    let max_copy_num = (profiles.len() as f64 / coverage).ceil() as usize * 2;
-    let likelihoods: Vec<_> = counts
-        .iter()
-        .map(|&c| max_poisson_lk(c, coverage, 1, max_copy_num))
-        .collect();
-    let max_lk = likelihoods.iter().fold(f64::NEG_INFINITY, |x, y| x.max(*y));
-    // TODO: Can we justify this code? I do not think so.
-    let weights: Vec<_> = likelihoods.iter().map(|x| (x - max_lk) / 2f64).collect();
-    // let dump: Vec<_> = weights
-    //     .iter()
-    //     .enumerate()
-    //     .map(|(i, x)| format!("{}:{}", i, x))
-    //     .collect();
-    // debug!("{}", dump.join("\t"));
-    profiles
-        .iter()
-        .map(|xs| xs.iter().zip(weights.iter()).map(|(x, y)| x - y).collect())
-        .collect()
-}
+// #[allow(dead_code)]
+// fn calibrate_likelihoods(profiles: &[Vec<f64>], coverage: f64) -> Vec<Vec<f64>> {
+//     let mut counts = vec![0; profiles[0].len()];
+//     for profile in profiles.iter() {
+//         for (i, _) in profile.iter().enumerate().filter(|&(_, &x)| 0f64 < x) {
+//             counts[i] += 1;
+//         }
+//     }
+//     let max_copy_num = (profiles.len() as f64 / coverage).ceil() as usize * 2;
+//     let likelihoods: Vec<_> = counts
+//         .iter()
+//         .map(|&c| max_poisson_lk(c, coverage, 1, max_copy_num))
+//         .collect();
+//     let max_lk = likelihoods.iter().fold(f64::NEG_INFINITY, |x, y| x.max(*y));
+// let weights: Vec<_> = likelihoods.iter().map(|x| (x - max_lk) / 2f64).collect();
+// let dump: Vec<_> = weights
+//     .iter()
+//     .enumerate()
+//     .map(|(i, x)| format!("{}:{}", i, x))
+//     .collect();
+// debug!("{}", dump.join("\t"));
+//     profiles
+//         .iter()
+//         .map(|xs| xs.iter().zip(weights.iter()).map(|(x, y)| x - y).collect())
+//         .collect()
+// }
 
 // #[allow(dead_code)]
 // Recursively clustering profiles into cluster_num size.
@@ -456,155 +466,154 @@ fn retrieve_used_positions<T: std::borrow::Borrow<[f64]>>(
     })
 }
 
-fn get_profiles<T: std::borrow::Borrow<[u8]>>(
-    template: &[u8],
-    hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
-    reads: &[T],
-    band_width: isize,
-) -> Option<Vec<Vec<f64>>> {
-    use kiley::gphmm::*;
-    let template = kiley::padseq::PadSeq::new(template);
-    let mut profiles = vec![];
-    for read in reads.iter() {
-        let read = kiley::padseq::PadSeq::new(read.borrow());
-        let prof = match banded::ProfileBanded::new(hmm, &template, &read, band_width) {
-            Some(res) => res,
-            None => {
-                for read in reads.iter() {
-                    let read = String::from_utf8(read.borrow().to_vec()).unwrap();
-                    error!("READ\tKMEANS\t{}", read);
-                }
-                let template = String::from_utf8(template.clone().into()).unwrap();
-                error!("TEMPLATE\tKMEANS\t{}", template);
-                error!("{}", hmm);
-                return None;
-            }
-        };
-        let lk = prof.lk();
-        // Modif.
-        let mut modif_table = prof.to_modification_table();
-        modif_table.truncate(9 * template.len());
-        // Del table
-        let del_table = prof.to_deletion_table(DEL_SIZE);
-        assert_eq!(
-            del_table.len(),
-            (DEL_SIZE - 1) * (template.len() - DEL_SIZE)
-        );
-        modif_table.extend(del_table);
-        // Copy Table.
-        let copy_table = prof.to_copy_table(REP_SIZE);
-        assert_eq!(copy_table.len(), REP_SIZE * (template.len() - REP_SIZE));
-        modif_table.extend(copy_table);
-        // Normalize.
-        modif_table.iter_mut().for_each(|x| *x -= lk);
-        profiles.push(modif_table);
-    }
-    Some(profiles)
-}
+// fn get_profiles<T: std::borrow::Borrow<[u8]>>(
+//     template: &[u8],
+//     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
+//     reads: &[T],
+//     band_width: isize,
+// ) -> Option<Vec<Vec<f64>>> {
+//     use kiley::gphmm::*;
+//     let template = kiley::padseq::PadSeq::new(template);
+//     let mut profiles = vec![];
+//     for read in reads.iter() {
+//         let read = kiley::padseq::PadSeq::new(read.borrow());
+//         let prof = match banded::ProfileBanded::new(hmm, &template, &read, band_width) {
+//             Some(res) => res,
+//             None => {
+//                 for read in reads.iter() {
+//                     let read = String::from_utf8(read.borrow().to_vec()).unwrap();
+//                     error!("READ\tKMEANS\t{}", read);
+//                 }
+//                 let template = String::from_utf8(template.clone().into()).unwrap();
+//                 error!("TEMPLATE\tKMEANS\t{}", template);
+//                 error!("{}", hmm);
+//                 return None;
+//             }
+//         };
+//         let lk = prof.lk();
+//         // Modif.
+//         let mut modif_table = prof.to_modification_table();
+//         modif_table.truncate(9 * template.len());
+//         // Del table
+//         let del_table = prof.to_deletion_table(DEL_SIZE);
+//         assert_eq!(
+//             del_table.len(),
+//             (DEL_SIZE - 1) * (template.len() - DEL_SIZE)
+//         );
+//         modif_table.extend(del_table);
+//         // Copy Table.
+//         let copy_table = prof.to_copy_table(REP_SIZE);
+//         assert_eq!(copy_table.len(), REP_SIZE * (template.len() - REP_SIZE));
+//         modif_table.extend(copy_table);
+//         // Normalize.
+//         modif_table.iter_mut().for_each(|x| *x -= lk);
+//         profiles.push(modif_table);
+//     }
+//     Some(profiles)
+// }
 
 // Select round * (cluster_num-1) variants
-// TODO: FIXME
-fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
-    profiles: &[T],
-    cluster_num: usize,
-    round: usize,
-    coverage: f64,
-    template_len: usize,
-) -> Vec<(usize, f64)> {
-    // (sum, maximum gain, number of positive element)
-    let mut total_improvement = vec![(0f64, 0); profiles[0].borrow().len()];
-    for prof in profiles.iter().map(|x| x.borrow()) {
-        for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
-            *maxgain += p.max(0f64);
-            *count += (0.00001 < *p) as usize;
-        }
-    }
-    let base_position = |pos: usize| match pos / (9 * template_len) {
-        0 => pos / 9,
-        _ => {
-            let pos = pos - 9 * template_len;
-            match pos / ((DEL_SIZE - 1) * (template_len - DEL_SIZE)) {
-                0 => pos / (DEL_SIZE - 1),
-                _ => (pos - (DEL_SIZE - 1) * (template_len - DEL_SIZE)) / REP_SIZE,
-            }
-        }
-    };
-    let in_mask = |pos: usize| {
-        let pos = base_position(pos);
-        pos < MASK_LENGTH || (template_len - MASK_LENGTH) < pos
-    };
-    // trace!("LKSUM\tpos\tbp\tlen\ttype\tlkdelta");
-    let probes: Vec<(usize, f64)> = total_improvement
-        .into_iter()
-        .enumerate()
-        .filter(|&(pos, _)| !in_mask(pos))
-        .map(|(pos, (maxgain, count))| {
-            let max_lk = (1..cluster_num + 1)
-                .map(|k| poisson_lk(count, coverage * k as f64))
-                .max_by(|x, y| x.partial_cmp(y).unwrap())
-                .unwrap_or_else(|| panic!("{}", cluster_num));
-            let total_lk = max_lk + maxgain;
-            (pos, total_lk)
-        })
-        .collect();
-    // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
-    // Currently, find and sweep. So, to select one variant,
-    // It takes O(L) time to find a variant, and O(L) time to sweep linked variant.
-    // So, in total, O(ML) time to select M variants. It is OK I think, because
-    // usually L is 2K, M is around 3-20.
-    let mut is_selected = vec![0; probes.len()];
-    'outer: for _ in 0..round {
-        let mut weights: Vec<_> = vec![1f64; probes.len()];
-        for _ in 0..cluster_num.max(2) - 1 {
-            let next_var_idx = probes
-                .iter()
-                .map(|x| x.1)
-                .zip(weights.iter())
-                .zip(is_selected.iter())
-                .enumerate()
-                .max_by(|(_, ((lk1, w1), picked1)), (_, ((lk2, w2), picked2))| {
-                    match (picked1, picked2) {
-                        (1, _) | (2, _) => std::cmp::Ordering::Less,
-                        (_, 1) | (_, 2) => std::cmp::Ordering::Greater,
-                        _ => (lk1 * *w1).partial_cmp(&(lk2 * *w2)).unwrap(),
-                    }
-                });
-            if let Some((next_var_idx, _)) = next_var_idx {
-                let picked_pos = probes[next_var_idx].0;
-                let picked_pos_in_bp = base_position(picked_pos);
-                is_selected[next_var_idx] = 1;
-                for ((&(pos, _), weight), selected) in probes
-                    .iter()
-                    .zip(weights.iter_mut())
-                    .zip(is_selected.iter_mut())
-                    .filter(|&(_, &mut selected)| selected == 0)
-                {
-                    let pos_in_bp = base_position(pos);
-                    let diff_in_bp =
-                        pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
-                    let sim = sokal_michener(profiles, picked_pos, pos);
-                    let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
-                    // the sokal michener's similarity would be 0.975.
-                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
-                        *selected = 2;
-                    }
-                    if 0.75 < sim {
-                        *weight *= 1f64 - sim;
-                    }
-                }
-            } else {
-                break 'outer;
-            }
-        }
-    }
-    let selected_variants: Vec<_> = probes
-        .into_iter()
-        .zip(is_selected)
-        .filter_map(|(x, y)| (y == 1).then(|| x))
-        .collect();
-    selected_variants
-}
+// fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
+//     profiles: &[T],
+//     cluster_num: usize,
+//     round: usize,
+//     coverage: f64,
+//     template_len: usize,
+// ) -> Vec<(usize, f64)> {
+//     // (sum, maximum gain, number of positive element)
+//     let mut total_improvement = vec![(0f64, 0); profiles[0].borrow().len()];
+//     for prof in profiles.iter().map(|x| x.borrow()) {
+//         for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
+//             *maxgain += p.max(0f64);
+//             *count += (0.00001 < *p) as usize;
+//         }
+//     }
+//     let base_position = |pos: usize| match pos / (9 * template_len) {
+//         0 => pos / 9,
+//         _ => {
+//             let pos = pos - 9 * template_len;
+//             match pos / ((DEL_SIZE - 1) * (template_len - DEL_SIZE)) {
+//                 0 => pos / (DEL_SIZE - 1),
+//                 _ => (pos - (DEL_SIZE - 1) * (template_len - DEL_SIZE)) / REP_SIZE,
+//             }
+//         }
+//     };
+//     let in_mask = |pos: usize| {
+//         let pos = base_position(pos);
+//         pos < MASK_LENGTH || (template_len - MASK_LENGTH) < pos
+//     };
+//     // trace!("LKSUM\tpos\tbp\tlen\ttype\tlkdelta");
+//     let probes: Vec<(usize, f64)> = total_improvement
+//         .into_iter()
+//         .enumerate()
+//         .filter(|&(pos, _)| !in_mask(pos))
+//         .map(|(pos, (maxgain, count))| {
+//             let max_lk = (1..cluster_num + 1)
+//                 .map(|k| poisson_lk(count, coverage * k as f64))
+//                 .max_by(|x, y| x.partial_cmp(y).unwrap())
+//                 .unwrap_or_else(|| panic!("{}", cluster_num));
+//             let total_lk = max_lk + maxgain;
+//             (pos, total_lk)
+//         })
+//         .collect();
+//     // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
+//     // Currently, find and sweep. So, to select one variant,
+//     // It takes O(L) time to find a variant, and O(L) time to sweep linked variant.
+//     // So, in total, O(ML) time to select M variants. It is OK I think, because
+//     // usually L is 2K, M is around 3-20.
+//     let mut is_selected = vec![0; probes.len()];
+//     'outer: for _ in 0..round {
+//         let mut weights: Vec<_> = vec![1f64; probes.len()];
+//         for _ in 0..cluster_num.max(2) - 1 {
+//             let next_var_idx = probes
+//                 .iter()
+//                 .map(|x| x.1)
+//                 .zip(weights.iter())
+//                 .zip(is_selected.iter())
+//                 .enumerate()
+//                 .max_by(|(_, ((lk1, w1), picked1)), (_, ((lk2, w2), picked2))| {
+//                     match (picked1, picked2) {
+//                         (1, _) | (2, _) => std::cmp::Ordering::Less,
+//                         (_, 1) | (_, 2) => std::cmp::Ordering::Greater,
+//                         _ => (lk1 * *w1).partial_cmp(&(lk2 * *w2)).unwrap(),
+//                     }
+//                 });
+//             if let Some((next_var_idx, _)) = next_var_idx {
+//                 let picked_pos = probes[next_var_idx].0;
+//                 let picked_pos_in_bp = base_position(picked_pos);
+//                 is_selected[next_var_idx] = 1;
+//                 for ((&(pos, _), weight), selected) in probes
+//                     .iter()
+//                     .zip(weights.iter_mut())
+//                     .zip(is_selected.iter_mut())
+//                     .filter(|&(_, &mut selected)| selected == 0)
+//                 {
+//                     let pos_in_bp = base_position(pos);
+//                     let diff_in_bp =
+//                         pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
+//                     let sim = sokal_michener(profiles, picked_pos, pos);
+//                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
+//                     // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
+//                     // the sokal michener's similarity would be 0.975.
+//                     if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
+//                         *selected = 2;
+//                     }
+//                     if 0.75 < sim {
+//                         *weight *= 1f64 - sim;
+//                     }
+//                 }
+//             } else {
+//                 break 'outer;
+//             }
+//         }
+//     }
+//     let selected_variants: Vec<_> = probes
+//         .into_iter()
+//         .zip(is_selected)
+//         .filter_map(|(x, y)| (y == 1).then(|| x))
+//         .collect();
+//     selected_variants
+// }
 
 fn filter_profiles_neo<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
@@ -710,34 +719,33 @@ fn cosine_similarity<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j:
 }
 
 // Return true if it is the same bipartition.
-#[allow(dead_code)]
-fn is_the_same_bipart<T: std::borrow::Borrow<[f64]>>(
-    profiles: &[T],
-    i: usize,
-    j: usize,
-    cov: f64,
-) -> bool {
-    let (error_num, total) = profiles
-        .iter()
-        .map(|prf| (prf.borrow()[i], prf.borrow()[j]))
-        .filter(|(ith, jth)| 0.5 < ith.abs() && 0.5 < jth.abs())
-        .fold((0, 0), |(err, tot), (ith, jth)| {
-            let is_err = ith.is_sign_positive() != jth.is_sign_positive();
-            (err + is_err as usize, tot + 1)
-        });
-    let error_num = error_num.min(total - error_num);
-    let poisson_prob: f64 = (0..2 * total / cov.round() as usize)
-        .map(|cp| poisson_lk(error_num, cp as f64 * cov))
-        .fold(f64::NEG_INFINITY, |x, y| x.max(y));
-    let error_prob: f64 = 0.05;
-    let binom_prob =
-        error_prob.ln() * error_num as f64 + (1f64 - error_prob).ln() * (total - error_num) as f64;
-    let pattern_lk: f64 = (0..error_num)
-        .map(|i| ((total - i) as f64).ln() - ((error_num - i) as f64).ln())
-        .sum();
-    let binom_prob = binom_prob + pattern_lk;
-    poisson_prob < binom_prob
-}
+// fn is_the_same_bipart<T: std::borrow::Borrow<[f64]>>(
+//     profiles: &[T],
+//     i: usize,
+//     j: usize,
+//     cov: f64,
+// ) -> bool {
+//     let (error_num, total) = profiles
+//         .iter()
+//         .map(|prf| (prf.borrow()[i], prf.borrow()[j]))
+//         .filter(|(ith, jth)| 0.5 < ith.abs() && 0.5 < jth.abs())
+//         .fold((0, 0), |(err, tot), (ith, jth)| {
+//             let is_err = ith.is_sign_positive() != jth.is_sign_positive();
+//             (err + is_err as usize, tot + 1)
+//         });
+//     let error_num = error_num.min(total - error_num);
+//     let poisson_prob: f64 = (0..2 * total / cov.round() as usize)
+//         .map(|cp| poisson_lk(error_num, cp as f64 * cov))
+//         .fold(f64::NEG_INFINITY, |x, y| x.max(y));
+//     let error_prob: f64 = 0.05;
+//     let binom_prob =
+//         error_prob.ln() * error_num as f64 + (1f64 - error_prob).ln() * (total - error_num) as f64;
+//     let pattern_lk: f64 = (0..error_num)
+//         .map(|i| ((total - i) as f64).ln() - ((error_num - i) as f64).ln())
+//         .sum();
+//     let binom_prob = binom_prob + pattern_lk;
+//     poisson_prob < binom_prob
+// }
 
 // Return Max-Sokal-Michener similarity of the i-th column and j-th (flipped) column.
 fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
@@ -766,47 +774,46 @@ fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: us
 // }
 
 // Return true if i correlate with j.
-#[allow(dead_code)]
-fn is_correlate<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> bool {
-    fn xlogx(x: f64) -> f64 {
-        if x.abs() < 0.00001 {
-            0f64
-        } else {
-            x * x.ln()
-        }
-    }
-    fn partlk(p: f64) -> f64 {
-        xlogx(p) + xlogx(1f64 - p)
-    }
-    let mut counts = [0; 4];
-    for prof in profiles.iter().map(|x| x.borrow()) {
-        let (ith, jth) = (prof[i], prof[j]);
-        if ith.abs() < 0.5 || jth.abs() < 0.5 {
-            continue;
-        }
-        match (ith.is_sign_positive(), jth.is_sign_positive()) {
-            (true, true) => counts[0] += 1,
-            (true, false) => counts[1] += 1,
-            (false, true) => counts[2] += 1,
-            (false, false) => counts[3] += 1,
-        }
-    }
-    let total: usize = counts.iter().sum();
-    let frac_true = (counts[0] + counts[1]) as f64 / total as f64;
-    let error_rate = (counts[1] + counts[2]) as f64 / total as f64;
-    let corel_model_lk = (partlk(frac_true) + partlk(error_rate)) * total as f64;
-    let full_model_lk: f64 = counts.iter().map(|&x| xlogx(x as f64 / total as f64)).sum();
-    let full_model_lk = full_model_lk * total as f64;
-    let corel_aic = -2f64 * corel_model_lk + 2f64 * 2f64;
-    let full_aic = -2f64 * full_model_lk + 2f64 * 3f64;
-    // let (i, ied) = (i / 9, i % 9);
-    // let (j, jed) = (j / 9, j % 9);
-    // debug!(
-    //     "CHISQ\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-    //     i, ied, j, jed, total, corel_aic, full_aic
-    // );
-    corel_aic < full_aic
-}
+// fn is_correlate<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> bool {
+//     fn xlogx(x: f64) -> f64 {
+//         if x.abs() < 0.00001 {
+//             0f64
+//         } else {
+//             x * x.ln()
+//         }
+//     }
+//     fn partlk(p: f64) -> f64 {
+//         xlogx(p) + xlogx(1f64 - p)
+//     }
+//     let mut counts = [0; 4];
+//     for prof in profiles.iter().map(|x| x.borrow()) {
+//         let (ith, jth) = (prof[i], prof[j]);
+//         if ith.abs() < 0.5 || jth.abs() < 0.5 {
+//             continue;
+//         }
+//         match (ith.is_sign_positive(), jth.is_sign_positive()) {
+//             (true, true) => counts[0] += 1,
+//             (true, false) => counts[1] += 1,
+//             (false, true) => counts[2] += 1,
+//             (false, false) => counts[3] += 1,
+//         }
+//     }
+//     let total: usize = counts.iter().sum();
+//     let frac_true = (counts[0] + counts[1]) as f64 / total as f64;
+//     let error_rate = (counts[1] + counts[2]) as f64 / total as f64;
+//     let corel_model_lk = (partlk(frac_true) + partlk(error_rate)) * total as f64;
+//     let full_model_lk: f64 = counts.iter().map(|&x| xlogx(x as f64 / total as f64)).sum();
+//     let full_model_lk = full_model_lk * total as f64;
+//     let corel_aic = -2f64 * corel_model_lk + 2f64 * 2f64;
+//     let full_aic = -2f64 * full_model_lk + 2f64 * 3f64;
+//     // let (i, ied) = (i / 9, i % 9);
+//     // let (j, jed) = (j / 9, j % 9);
+//     // debug!(
+//     //     "CHISQ\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+//     //     i, ied, j, jed, total, corel_aic, full_aic
+//     // );
+//     corel_aic < full_aic
+// }
 
 // fn p2p(pos: usize, template_len: usize) -> usize {
 //     let idx = pos / 9;
@@ -948,7 +955,6 @@ fn poisson_lk(x: usize, lambda: f64) -> f64 {
     x as f64 * lambda.ln() - lambda - (1..x + 1).map(|c| (c as f64).ln()).sum::<f64>()
 }
 
-#[allow(dead_code)]
 // Return max_c log Poiss{x|c * lambda}. 1<=c.
 fn max_poisson_lk(x: usize, lambda: f64, c_start: usize, c_end: usize) -> f64 {
     (c_start.max(1)..=c_end)
@@ -958,33 +964,30 @@ fn max_poisson_lk(x: usize, lambda: f64, c_start: usize, c_end: usize) -> f64 {
 
 // Return log Binom(x|size=size,prob=prob)
 // Prob is the probability to success.
-#[allow(dead_code)]
-fn binom_lk(x: usize, size: usize, prob: f64) -> f64 {
-    assert!(prob <= 1.0000001);
-    let combin: f64 = (1..size - x + 1)
-        .map(|i| ((x as f64 / i as f64) + 1.0).ln())
-        .sum();
-    combin + x as f64 * prob.ln() + (size - x) as f64 * (1.0 - prob).ln()
-}
+// fn binom_lk(x: usize, size: usize, prob: f64) -> f64 {
+//     assert!(prob <= 1.0000001);
+//     let combin: f64 = (1..size - x + 1)
+//         .map(|i| ((x as f64 / i as f64) + 1.0).ln())
+//         .sum();
+//     combin + x as f64 * prob.ln() + (size - x) as f64 * (1.0 - prob).ln()
+// }
 
-#[allow(dead_code)]
-fn max_binom_lk(x: usize, size: usize, prob: f64) -> f64 {
-    (1..)
-        .take_while(|&c| (prob * c as f64) < 1f64)
-        .map(|c| binom_lk(x, size, prob * c as f64))
-        .fold(f64::NEG_INFINITY, |x, y| x.max(y))
-}
+// fn max_binom_lk(x: usize, size: usize, prob: f64) -> f64 {
+//     (1..)
+//         .take_while(|&c| (prob * c as f64) < 1f64)
+//         .map(|c| binom_lk(x, size, prob * c as f64))
+//         .fold(f64::NEG_INFINITY, |x, y| x.max(y))
+// }
 
-// Likelihood of each size of the clsuters.
-#[allow(dead_code)]
-fn poisson_likelihood(asn: &[u8], cluster_num: u8) -> f64 {
-    let mut count = vec![0; cluster_num as usize];
-    for &a in asn.iter() {
-        count[a as usize] += 1;
-    }
-    let mean = asn.len() as f64 / cluster_num as f64;
-    count.into_iter().map(|c| poisson_lk(c, mean)).sum()
-}
+// // Likelihood of each size of the clsuters.
+// fn poisson_likelihood(asn: &[u8], cluster_num: u8) -> f64 {
+//     let mut count = vec![0; cluster_num as usize];
+//     for &a in asn.iter() {
+//         count[a as usize] += 1;
+//     }
+//     let mean = asn.len() as f64 / cluster_num as f64;
+//     count.into_iter().map(|c| poisson_lk(c, mean)).sum()
+// }
 
 // Return the gain of likelihood for a given dataset.
 // To calculate the gain,we compute the following metrics:
@@ -992,19 +995,18 @@ fn poisson_likelihood(asn: &[u8], cluster_num: u8) -> f64 {
 // 2. For each sum, the element of the positve values would be selected,
 // or we acceept the edit operation at that point.
 // 3. Sum up the positive values of summing-upped vector for each cluster.
-#[allow(dead_code)]
-fn score(data: &[Vec<f64>], asn: &[u8], k: u8) -> f64 {
-    let dim = data[0].len();
-    let mut sums = vec![vec![0f64; dim]; k as usize];
-    for (xs, &asn) in data.iter().zip(asn.iter()) {
-        xs.iter()
-            .zip(sums[asn as usize].iter_mut())
-            .for_each(|(x, y)| *y += x);
-    }
-    sums.iter()
-        .map(|xs| -> f64 { xs.iter().map(|&x| x.max(0f64)).sum() })
-        .sum()
-}
+// fn score(data: &[Vec<f64>], asn: &[u8], k: u8) -> f64 {
+//     let dim = data[0].len();
+//     let mut sums = vec![vec![0f64; dim]; k as usize];
+//     for (xs, &asn) in data.iter().zip(asn.iter()) {
+//         xs.iter()
+//             .zip(sums[asn as usize].iter_mut())
+//             .for_each(|(x, y)| *y += x);
+//     }
+//     sums.iter()
+//         .map(|xs| -> f64 { xs.iter().map(|&x| x.max(0f64)).sum() })
+//         .sum()
+// }
 
 // #[allow(dead_code)]
 // fn clustering_features(data: &[Vec<f64>], assignments: &mut [u8], k: u8) {
@@ -1066,7 +1068,6 @@ fn score(data: &[Vec<f64>], asn: &[u8], k: u8) -> f64 {
 //     }
 // }
 
-#[allow(dead_code)]
 fn logsumexp(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return 0.;
@@ -1293,26 +1294,25 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
 
 // Return the P(n_1,...,n_k|theta), where the model behide is Chinese Restaurant Process.
 // Note that the zero-sized cluster would be supressed.
-#[allow(dead_code)]
-fn log_partition(clusters: &[usize], theta: f64) -> f64 {
-    // Return log theta^K * Prod((n_k-1)!) / theta / (theta+1) / ... / (theta+n-1)
-    // where K= # non-zero elements
-    let log_theta: f64 = theta.ln();
-    fn log_fact(n: usize) -> f64 {
-        match n {
-            0 => 0f64,
-            _ => (1..n + 1).map(|x| (x as f64).ln()).sum(),
-        }
-    }
-    let numerator: f64 = clusters
-        .iter()
-        .filter(|&&x| x != 0)
-        .map(|&x| log_theta + log_fact(x - 1))
-        .sum();
-    let total: usize = clusters.iter().copied().sum();
-    let denominator: f64 = (0..total).map(|i| (theta + i as f64).ln()).sum();
-    numerator - denominator
-}
+// fn log_partition(clusters: &[usize], theta: f64) -> f64 {
+//     // Return log theta^K * Prod((n_k-1)!) / theta / (theta+1) / ... / (theta+n-1)
+//     // where K= # non-zero elements
+//     let log_theta: f64 = theta.ln();
+//     fn log_fact(n: usize) -> f64 {
+//         match n {
+//             0 => 0f64,
+//             _ => (1..n + 1).map(|x| (x as f64).ln()).sum(),
+//         }
+//     }
+//     let numerator: f64 = clusters
+//         .iter()
+//         .filter(|&&x| x != 0)
+//         .map(|&x| log_theta + log_fact(x - 1))
+//         .sum();
+//     let total: usize = clusters.iter().copied().sum();
+//     let denominator: f64 = (0..total).map(|i| (theta + i as f64).ln()).sum();
+//     numerator - denominator
+// }
 
 // Return the maximum likelihood.
 // In this function, we sample the assignemnts of the data, then evaluate the
@@ -1347,10 +1347,7 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
         }
     }
     // Current Likelihood of the data.
-    let data_lk: f64 = lks
-        .iter()
-        .flat_map(|xs| xs.iter())
-        .fold(0f64, |x, y| x + y.max(0f64));
+    let data_lk: f64 = lks.iter().flatten().fold(0f64, |x, y| x + y.max(0f64));
     let partition_lk = clusters.iter().map(|&x| partition_lks[x]).sum::<f64>();
     let mut lk = data_lk + partition_lk;
     let total = 2_000_000 * k as usize;
@@ -1368,7 +1365,14 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
         }
     }
     assign.iter_mut().zip(argmax).for_each(|(x, y)| *x = y);
-    max
+    // max
+    let mut lks = vec![vec![0f64; data[0].len()]; k];
+    for (xs, &asn) in data.iter().zip(assign.iter()) {
+        for (lk, x) in lks[asn as usize].iter_mut().zip(xs) {
+            *lk += x;
+        }
+    }
+    lks.iter().flatten().fold(0f64, |x, y| x + y.max(0f64))
 }
 
 fn update<R: Rng>(
