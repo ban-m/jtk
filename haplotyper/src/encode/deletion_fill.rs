@@ -174,8 +174,8 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     let mut find_new_node = HashSet::new();
     'outer: for t in 0..OUTER_LOOP {
         let representative = take_consensus_sequence(ds);
-        let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
         // i->vector of failed index and units.
+        let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
         for i in 0..INNER_LOOP {
             let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
@@ -373,6 +373,15 @@ fn try_encoding_head(
             consensi
                 .filter_map(|&(cluster, ref cons)| {
                     let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
+                    if (end_position - start_position) < cons.len() {
+                        trace!(
+                            "SHORT\t{}\t{}\t{}\t{}",
+                            idx,
+                            nodes.len(),
+                            start_position,
+                            end_position
+                        );
+                    }
                     let is_the_same_encode = match nodes.get(idx) {
                         Some(node) => {
                             node.unit == uid
@@ -386,20 +395,7 @@ fn try_encoding_head(
                     }
                     let position = (start_position, end_position, direction);
                     let unit_info = (unit, cluster, cons.as_slice());
-                    match encode_node(seq, position, unit_info, sim_thr) {
-                        Some(res) => Some(res),
-                        None => {
-                            trace!(
-                                "FAILHEAD\t{}\t{}\t{}\t{}\t{}",
-                                idx,
-                                nodes.len(),
-                                start_position,
-                                end_position,
-                                seq.len()
-                            );
-                            None
-                        }
-                    }
+                    encode_node(seq, position, unit_info, sim_thr)
                 })
                 .max_by_key(|x| x.1)
         })
@@ -425,6 +421,15 @@ fn try_encoding_tail(
                 .filter_map(|&(cluster, ref cons)| {
                     let end_position = end_position.min(seq.len());
                     let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
+                    if (end_position - start_position) < cons.len() {
+                        trace!(
+                            "SHORT\t{}\t{}\t{}\t{}",
+                            idx,
+                            nodes.len(),
+                            start_position,
+                            end_position
+                        );
+                    }
                     assert!(start_position < end_position);
                     let is_the_same_encode = match nodes.get(idx) {
                         Some(node) => {
@@ -439,20 +444,7 @@ fn try_encoding_tail(
                     assert!(start_position < end_position);
                     let positions = (start_position, end_position, direction);
                     let unit_info = (unit, cluster, cons.as_slice());
-                    match encode_node(seq, positions, unit_info, sim_thr) {
-                        Some(res) => Some(res),
-                        None => {
-                            trace!(
-                                "FAILTAIL\t{}\t{}\t{}\t{}\t{}",
-                                idx,
-                                nodes.len(),
-                                start_position,
-                                end_position,
-                                seq.len()
-                            );
-                            None
-                        }
-                    }
+                    encode_node(seq, positions, unit_info, sim_thr)
                 })
                 .max_by_key(|x| x.1)
         })

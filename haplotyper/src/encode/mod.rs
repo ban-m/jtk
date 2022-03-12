@@ -32,7 +32,7 @@ impl Encode for definitions::DataSet {
             let no_aln_reads: Vec<_> = self
                 .raw_reads
                 .iter()
-                .filter_map(|read| !encoded.contains(&read.id).then(|| read.seq().len()))
+                .filter_map(|read| (!encoded.contains(&read.id)).then(|| read.seq().len()))
                 .collect();
             let lensum: usize = no_aln_reads.iter().sum();
             debug!("ENCODE\tNotEncoded\t{}\t{}", lensum, no_aln_reads.len());
