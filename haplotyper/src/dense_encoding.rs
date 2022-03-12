@@ -537,6 +537,11 @@ fn encode_edge(
 // This.
 // So, we need two-round infix alignment so that, in first alignment, the sequence would be truncted,
 // and the second round the contig would be tructed.
+type TunedPosition<'a> = (
+    (usize, usize, Vec<u8>),
+    (usize, usize, &'a [u8]),
+    Vec<kiley::Op>,
+);
 fn tune_position<'a>(
     start: usize,
     end: usize,
@@ -544,11 +549,7 @@ fn tune_position<'a>(
     is_forward: bool,
     contig: &'a [u8],
     band: usize,
-) -> (
-    (usize, usize, Vec<u8>),
-    (usize, usize, &'a [u8]),
-    Vec<kiley::Op>,
-) {
+) -> TunedPosition<'a> {
     let mut seq = if is_forward {
         seq[start..end].to_vec()
     } else {

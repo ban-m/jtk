@@ -317,7 +317,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
             .iter()
             .map(|segment| {
                 let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
-                polish_segment(ds, &segment, summary, c, &ds.read_type)
+                polish_segment(ds, segment, summary, c, &ds.read_type)
             })
             .collect()
     } else {

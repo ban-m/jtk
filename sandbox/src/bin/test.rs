@@ -18,16 +18,31 @@ use std::io::*;
 //     let aln_len = aln.len() as f64;
 //     (mismat / aln_len, del / aln_len, ins / aln_len)
 // }
+
 fn main() -> std::io::Result<()> {
-    env_logger::init();
-    let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
-        .map(BufReader::new)
-        .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    use haplotyper::encode::deletion_fill;
-    deletion_fill::correct_unit_deletion(&mut ds, 0.15);
-    let dump = serde_json::ser::to_string(&ds).unwrap();
-    println!("{}", dump);
+    let unitseq = b"AAAAACGTCAGTAAAAAC";
+    let query = b"CGTCAGTC";
+    let ops = vec![
+        vec![kiley::Op::Del; 5],
+        vec![kiley::Op::Match; 7],
+        vec![kiley::Op::Del; 5],
+        vec![kiley::Op::Match],
+    ]
+    .concat();
+    let band = 2;
+    use haplotyper::ALN_PARAMETER;
+    use kiley::bialignment::guided::infix_guided;
+    let (score, ops) = infix_guided(unitseq, query, &ops, band, ALN_PARAMETER);
+    eprintln!("{}\n{:?}", score, ops);
+    // env_logger::init();
+    // let args: Vec<_> = std::env::args().collect();
+    // let mut ds: DataSet = std::fs::File::open(&args[1])
+    //     .map(BufReader::new)
+    //     .map(|r| serde_json::de::from_reader(r).unwrap())?;
+    // use haplotyper::encode::deletion_fill;
+    // deletion_fill::correct_unit_deletion(&mut ds, 0.15);
+    // let dump = serde_json::ser::to_string(&ds).unwrap();
+    // println!("{}", dump);
     // let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     // use rayon::prelude::*;
     // let error_rates: Vec<_> = ds

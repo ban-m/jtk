@@ -48,7 +48,7 @@ impl Stats for definitions::DataSet {
                 .map(|&x| format!("{:.1}K", x as f64 / 1_000f64))
                 .collect();
             let lens = &lens[lens.len().min(20)..];
-            let hist = histgram_viz::Histgram::new(&lens);
+            let hist = histgram_viz::Histgram::new(lens);
             writeln!(&mut wtr, "Top 20 Occurences:{}", top_20.join("\t"))?;
             writeln!(&mut wtr, "{}", hist.format(20, 40))?;
         }

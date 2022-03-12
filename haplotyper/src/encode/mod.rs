@@ -230,14 +230,14 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
 }
 
 fn semiglobal(xs: &[u8], ys: &[u8]) -> Vec<kiley::Op> {
-    if xs.len() == 0 {
+    if xs.is_empty() {
         return vec![kiley::Op::Ins; ys.len()];
-    } else if ys.len() == 0 {
+    } else if ys.is_empty() {
         return vec![kiley::Op::Del; xs.len()];
     }
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
-    let aln = edlib_sys::edlib_align(&xs, &ys, mode, task);
+    let aln = edlib_sys::edlib_align(xs, ys, mode, task);
     let (start, end) = aln.locations.unwrap()[0];
     let end = end + 1;
     let mut ops = vec![kiley::Op::Ins; start];

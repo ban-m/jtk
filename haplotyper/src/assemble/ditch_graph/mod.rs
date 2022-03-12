@@ -759,10 +759,7 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
         .chain(edges)
         .collect();
     let gfa = gfa::GFA::from_records(records);
-    if let Some(mut wtr) = std::fs::File::create(format!("{}.gfa", i))
-        .map(std::io::BufWriter::new)
-        .ok()
-    {
+    if let Ok(mut wtr) = std::fs::File::create(format!("{}.gfa", i)).map(std::io::BufWriter::new) {
         use std::io::Write;
         if let Err(why) = writeln!(&mut wtr, "{}", gfa) {
             trace!("{:?}", why);
@@ -1889,9 +1886,9 @@ impl<'a> DitchGraph<'a> {
                     .filter(|e| matches!(e.copy_number, Some(cp) if cp > 0))
                     .map(|edge| ((edge.from, edge.from_position), (edge.to, edge.to_position)))
                     .collect();
-                reduced
-                    .into_iter()
-                    .for_each(|(from, to)| self.decrement_edge_copy_number(from, to));
+                for (from, to) in reduced {
+                    self.decrement_edge_copy_number(from, to)
+                }
                 // This unwrap never panics.
                 let node = self.nodes.get_mut(&from).unwrap();
                 match node.copy_number {

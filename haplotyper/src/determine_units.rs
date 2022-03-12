@@ -142,7 +142,7 @@ impl DetermineUnit for definitions::DataSet {
         let mut sim_thr = self.read_type.sim_thr();
         {
             self.encode(config.threads, sim_thr);
-            sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
+            sim_thr = calc_sim_thr(self, 0.999).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             for _ in 0..4 {
                 fill_sparse_region_dev(self, config);
@@ -168,14 +168,14 @@ impl DetermineUnit for definitions::DataSet {
         {
             debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
             self.encode(config.threads, sim_thr);
-            sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
+            sim_thr = calc_sim_thr(self, 0.999).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
             debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
             self.encode(config.threads, sim_thr);
             remove_frequent_units(self, config.upper_count);
-            sim_thr = calc_sim_thr(&self, 0.999).max(self.read_type.sim_thr());
+            sim_thr = calc_sim_thr(self, 0.999).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
             dump_histogram(self);
@@ -420,7 +420,8 @@ fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Uni
     Ok(chunks)
 }
 
-fn normalize_edge(w: &[Node]) -> (((u64, bool), (u64, bool)), bool) {
+type NormedEdge = ((u64, bool), (u64, bool));
+fn normalize_edge(w: &[Node]) -> (NormedEdge, bool) {
     let forward = ((w[0].unit, w[0].is_forward), (w[1].unit, w[1].is_forward));
     let reverse = ((w[1].unit, !w[1].is_forward), (w[0].unit, !w[0].is_forward));
     if forward <= reverse {
@@ -474,7 +475,7 @@ fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> FilledEdges {
         .filter(|x| count_thr < x.1.len())
         .map(|(key, ref seqs)| {
             let radius = ds.read_type.band_width(config.chunk_len);
-            let consensus = kiley::ternary_consensus_by_chunk(&seqs, radius);
+            let consensus = kiley::ternary_consensus_by_chunk(seqs, radius);
             let seq = String::from_utf8(consensus).unwrap();
             let unit = Unit::new(0, seq, 2);
             (key, unit)
@@ -561,7 +562,7 @@ fn encode_edge(
     let alignment = alignment.operations.unwrap();
     let ops: Vec<_> = alignment.iter().map(|&x| edlib_to_op[x as usize]).collect();
     let (_, ops) =
-        kiley::bialignment::guided::global_guided(unit.seq(), &seq, &ops, band, ALN_PARAMETER);
+        kiley::bialignment::guided::global_guided(unit.seq(), seq, &ops, band, ALN_PARAMETER);
     let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
     let identity = mat_num as f64 / ops.len() as f64;
     (1f64 - identity < readtype.sim_thr()).then(|| {
@@ -837,7 +838,7 @@ pub fn calc_sim_thr(ds: &DataSet, quantile: f64) -> f64 {
                 .collect::<Vec<_>>()
         })
         .collect();
-    error_rates.sort_by(|x, y| x.partial_cmp(&y).unwrap());
+    error_rates.sort_by(|x, y| x.partial_cmp(y).unwrap());
     assert!(quantile <= 1f64);
     let idx = ((error_rates.len() as f64 * quantile).floor() as usize).max(error_rates.len() - 1);
     error_rates[idx]

@@ -193,7 +193,7 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
                     seq.iter_mut().for_each(u8::make_ascii_uppercase);
                     let r_sk = &read_skeltons;
                     let r = (r, seq.as_slice());
-                    correct_deletion_error(r, fails, &representative, &units, &r_sk, sim_thr)
+                    correct_deletion_error(r, fails, &representative, &units, r_sk, sim_thr)
                 })
                 .collect();
             find_new_node.extend(newly_encoded_units);
@@ -249,7 +249,7 @@ fn estimate_upper_error_rate(ds: &DataSet, fallback: f64) -> Vec<f64> {
             0..=2 => fallback,
             x => {
                 let median = errors
-                    .select_nth_unstable_by(x / 2, |x, y| x.partial_cmp(&y).unwrap())
+                    .select_nth_unstable_by(x / 2, |x, y| x.partial_cmp(y).unwrap())
                     .1;
                 *median + 4f64 * sd_mean
             }
@@ -321,10 +321,10 @@ pub fn correct_deletion_error(
     let nodes = &read.nodes;
     let mut inserts = vec![];
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    for (idx, pileup) in pileups.iter().enumerate() {
+    for (idx, pileup) in pileups.iter().enumerate().skip(1) {
         let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
         head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
-        let head_best = try_encoding_head(nodes, &head_cand, idx, &consensi, &units, seq, sim_thr);
+        let head_best = try_encoding_head(nodes, &head_cand, idx, consensi, units, seq, sim_thr);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
             None => failed_trials.extend(head_cand.into_iter().map(|x| (idx, x.2))),
@@ -373,15 +373,6 @@ fn try_encoding_head(
             consensi
                 .filter_map(|&(cluster, ref cons)| {
                     let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
-                    if (end_position - start_position) < cons.len() {
-                        trace!(
-                            "SHORT\t{}\t{}\t{}\t{}",
-                            idx,
-                            nodes.len(),
-                            start_position,
-                            end_position
-                        );
-                    }
                     let is_the_same_encode = match nodes.get(idx) {
                         Some(node) => {
                             node.unit == uid
@@ -421,15 +412,6 @@ fn try_encoding_tail(
                 .filter_map(|&(cluster, ref cons)| {
                     let end_position = end_position.min(seq.len());
                     let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
-                    if (end_position - start_position) < cons.len() {
-                        trace!(
-                            "SHORT\t{}\t{}\t{}\t{}",
-                            idx,
-                            nodes.len(),
-                            start_position,
-                            end_position
-                        );
-                    }
                     assert!(start_position < end_position);
                     let is_the_same_encode = match nodes.get(idx) {
                         Some(node) => {
@@ -480,56 +462,58 @@ fn encode_node(
         fine_mapping(&query, (unit, cluster, unitseq), sim_thr)?;
     let ops = super::compress_kiley_ops(&kops);
     let cl = unit.cluster_num;
-    let position_from_start = if is_forward {
-        start + aln_start
-    } else {
-        start + query.len() - aln_end
+    let position_from_start = match is_forward {
+        true => start + aln_start,
+        false => start + query.len() - aln_end,
     };
-    {
-        // Sanity check
-        let (rlen, qlen) = ops.iter().fold((0, 0), |(rlen, qlen), op| match op {
-            Op::Match(l) => (rlen + l, qlen + l),
-            Op::Del(l) => (rlen + l, qlen),
-            Op::Ins(l) => (rlen, qlen + l),
-        });
-        assert_eq!((rlen, qlen), (unit.seq().len(), seq.len()));
-    }
     // I think we should NOT make likelihood gain to some biased value,
     // as 1. if the alignment gives the certaintly, then we can impute the clustering by the alignment,
     // 2. if `cluster` assignment is just by chance,
     // then we just should not introduce any bias into the likelihood gain.
-    let mut node = Node::new(unit.id, is_forward, &seq, ops, position_from_start, cl);
+    let mut node = Node::new(unit.id, is_forward, seq, ops, position_from_start, cl);
     node.cluster = cluster;
     Some((node, score))
 }
 
+type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
 fn fine_mapping<'a>(
     query: &'a [u8],
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
-) -> Option<(&'a [u8], usize, usize, Vec<kiley::Op>, i32)> {
-    use kiley::bialignment::guided::global_guided;
+) -> Option<FineMapping<'a>> {
+    //use kiley::bialignment::guided::global_guided;
+    use kiley::bialignment::guided::infix_guided;
     fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
         use kiley::Op::*;
         ops.iter()
-            .map(|&op| [Match, Del, Ins, Mismatch][op as usize])
+            .map(|&op| [Match, Ins, Del, Mismatch][op as usize])
             .collect()
     }
+    let origlen = query.len();
     let (query, aln_start, aln_end, ops, band) = {
         let mode = edlib_sys::AlignMode::Infix;
         let task = edlib_sys::AlignTask::Alignment;
         // Note that unit.seq would be smaller than query! So the operations should be reversed.
-        let alignment = edlib_sys::edlib_align(unitseq, &query, mode, task);
-        let locations = alignment.locations.unwrap();
-        let (aln_start, aln_end) = locations[0];
+        let alignment = edlib_sys::edlib_align(unitseq, query, mode, task);
+        let (aln_start, aln_end) = alignment.locations.unwrap()[0];
         let aln_end = aln_end + 1;
         let band = (((aln_end - aln_start + 1) as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-        let ops = edlib_op_to_kiley_op(&alignment.operations.unwrap());
-        let query = &query[aln_start..aln_end];
-        let (_, mut ops) = global_guided(unitseq, query, &ops, band, ALN_PARAMETER);
+        let mut ops = Vec::with_capacity(3 * query.len() / 2);
+        ops.extend(std::iter::repeat(kiley::Op::Del).take(aln_start));
+        ops.extend(edlib_op_to_kiley_op(&alignment.operations.unwrap()));
+        ops.extend(std::iter::repeat(kiley::Op::Del).take(query.len() - aln_end));
+        let (_, mut ops) = infix_guided(query, unitseq, &ops, band, ALN_PARAMETER);
+        // Reverse ops
+        for op in ops.iter_mut() {
+            *op = match *op {
+                kiley::Op::Ins => kiley::Op::Del,
+                kiley::Op::Del => kiley::Op::Ins,
+                x => x,
+            }
+        }
         let (start, end) = trim_head_tail_insertion(&mut ops);
         let query = &query[start..query.len() - end];
-        (query, aln_start + start, aln_end - end, ops, band)
+        (query, start, query.len() - end, ops, band)
     };
     let (below_dissim, info) = {
         let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
@@ -538,8 +522,8 @@ fn fine_mapping<'a>(
         let (rlen, qlen) = (unitseq.len(), query.len());
         let id = unit.id;
         let info = format!(
-            "{}\t{}\t{:.2}\t{:.2}\t{:.2}\t{}\t{}",
-            id, cluster, identity, head_identity, tail_identity, rlen, qlen
+            "{}\t{}\t{:.2}\t{}\t{}\t{}",
+            id, cluster, identity, rlen, qlen, origlen,
         );
         let iden_bound = 1f64 - sim_thr;
         let identity = identity
@@ -548,13 +532,13 @@ fn fine_mapping<'a>(
         (iden_bound < identity, info)
     };
     if below_dissim {
-        trace!("FILLDEL{}\tOK", info);
-        let (score, new_ops) = global_guided(unit.seq(), &query, &ops, band, ALN_PARAMETER);
+        trace!("FILLDEL\t{}\tOK", info);
+        let (score, new_ops) = infix_guided(unit.seq(), query, &ops, band, ALN_PARAMETER);
         Some((query, aln_start, aln_end, new_ops, score))
     } else {
         trace!("FILLDEL\t{}\tNG", info);
         if log_enabled!(log::Level::Trace) {
-            let (xr, ar, yr) = kiley::recover(unitseq, &query, &ops);
+            let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
             for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                 eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
                 eprintln!("ALN\t{}", String::from_utf8_lossy(ar));

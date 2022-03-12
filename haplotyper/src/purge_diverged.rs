@@ -121,7 +121,7 @@ fn split_disjoint_cluster(mut nodes: Vec<&mut Node>, seq: &[u8], unit_id: u64) -
     };
     // There's no split. Retain clusterings.
     if cluster_sizes.len() == 1 {
-        return Vec::new();
+        Vec::new()
     } else {
         // There ARE splits. Erase clustering information.
         for node in nodes.iter_mut() {

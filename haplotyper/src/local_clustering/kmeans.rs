@@ -178,7 +178,7 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .iter()
         .zip(ops.iter_mut())
         .map(|(seq, op)| {
-            let (mut table, lk) = hmm.modification_table(&template, seq.borrow(), band_width, op);
+            let (mut table, lk) = hmm.modification_table(template, seq.borrow(), band_width, op);
             assert!(table.iter().all(|x| x.is_finite()));
             assert!(table.iter().all(|x| !x.is_nan()));
             table.iter_mut().for_each(|x| *x -= lk);
