@@ -137,37 +137,6 @@ fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)]) {
     }
 }
 
-// fn get_average_unit_length(ds: &DataSet) -> usize {
-//     let total: usize = ds.selected_chunks.iter().map(|x| x.seq().len()).sum();
-//     total / ds.selected_chunks.len()
-// }
-
-// pub fn fill_edges_by_new_units(
-//     read: &EncodedRead,
-//     seq: &[u8],
-//     edge_encoding_patterns: &HashMap<DEdge, Vec<Unit>>,
-//     read_type: &definitions::ReadType,
-// ) -> Vec<(usize, Node)> {
-//     let mut inserts = vec![];
-//     for (idx, window) in read.nodes.windows(2).enumerate() {
-//         // What is important is the direction, the label, and the start-end position. Thats all.
-//         let (start, end) = (
-//             window[0].position_from_start + window[0].seq().len(),
-//             window[1].position_from_start,
-//         );
-//         let (edge, direction) = edge_and_direction(window);
-//         let unit_info = match edge_encoding_patterns.get(&edge) {
-//             Some(units) => units,
-//             None => continue,
-//         };
-//         for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
-//             // idx=0 -> Insert at the first edge. So, the index should be 1.
-//             inserts.push((idx + 1, node));
-//         }
-//     }
-//     inserts
-// }
-
 pub fn fill_edges_by_new_units(
     read: &EncodedRead,
     seq: &[u8],
@@ -195,9 +164,6 @@ pub fn fill_edges_by_new_units(
         if let Some(units) = tips.get(&key) {
             // |<Node[0]|-Tip--
             // |FromNode|-Unit-
-            // if head.unit == 815 {
-            //     debug!("DE\tTRACE\tHit\tTailNode");
-            // }
             for unit_info in units {
                 let nodes = encode_edge(seq, start, end, false, unit_info, read_type);
                 inserts.extend(nodes.into_iter().map(|x| (0, x)));
@@ -217,6 +183,12 @@ pub fn fill_edges_by_new_units(
         } else {
             continue;
         };
+        if end <= start {
+            let start = window[0].position_from_start;
+            let end = window[1].position_from_start;
+            let seqlen = window[0].seq().len();
+            panic!("{}\t{}\t{}\t{}\t{}", read.id, start, end, seqlen, len);
+        }
         for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
@@ -225,8 +197,8 @@ pub fn fill_edges_by_new_units(
     // Tail tip
     if let Some(tail) = read.nodes.last() {
         let idx = read.nodes.len();
-        let (start, end) = (tail.position_from_start + tail.seq().len(), seq.len());
-        let (start, end) = (start.max(MARGIN) - MARGIN, (end + MARGIN).min(len));
+        let (start, end) = ((tail.position_from_start + tail.seq().len()).min(len), len);
+        let (start, end) = (start.saturating_sub(MARGIN), (end + MARGIN).min(len));
         let key = (tail.unit, tail.cluster, tail.is_forward, true);
         if let Some(units) = tips.get(&key) {
             // | Last>  |-Tip--
@@ -386,33 +358,6 @@ fn get_reverse_d_edge_from_window(w: &[Node]) -> DEdge {
     (from, to)
 }
 
-// formatting the two nodes so that it is from small unit to unit with larger ID.
-// If the direction is reversed, the 2nd argument would be false.
-// fn edge_and_direction(nodes: &[Node]) -> (DEdge, bool) {
-//     let (from, to) = match nodes {
-//         [from, to] => (from, to),
-//         _ => panic!(),
-//     };
-//     match from.unit.cmp(&to.unit) {
-//         std::cmp::Ordering::Less => {
-//             let from_elm = (from.unit, from.cluster, from.is_forward);
-//             let to_elm = (to.unit, to.cluster, !to.is_forward);
-//             let edge = (from_elm, to_elm);
-//             (edge, true)
-//         }
-//         std::cmp::Ordering::Equal if from.is_forward => {
-//             let from_elm = (from.unit, from.cluster, from.is_forward);
-//             let to_elm = (to.unit, to.cluster, !to.is_forward);
-//             ((from_elm, to_elm), true)
-//         }
-//         _ => {
-//             let from_elm = (to.unit, to.cluster, !to.is_forward);
-//             let to_elm = (from.unit, from.cluster, from.is_forward);
-//             ((from_elm, to_elm), false)
-//         }
-//     }
-// }
-
 // Note that the seq[start..end] can be much longer than the contig itself....
 fn encode_edge(
     seq: &[u8],
@@ -488,13 +433,6 @@ fn encode_edge(
             let (uid, _unitlen) = (unit.id, unit.seq().len());
             let ylen = alignments.iter().filter(|&&x| x != kiley::Op::Del).count();
             let cigar = crate::encode::compress_kiley_ops(&alignments);
-            // let indel_mism = alignments
-            //     .iter()
-            //     .map(|&op| 1 - 2 * (op == kiley::Op::Match) as i32);
-            // let max_indel = crate::encode::max_region(indel_mism).max(0) as usize;
-            // let unitlen = unitlen as f64;
-            // let gap_thr = ((unitlen * crate::encode::INDEL_FRACTION).round() as usize)
-            //     .max(crate::encode::MIN_INDEL_SIZE);
             let percent_identity = {
                 let (aln, mat) = alignments.iter().fold((0, 0), |(aln, mat), &op| match op {
                     kiley::Op::Match => (aln + 1, mat + 1),
@@ -550,6 +488,7 @@ fn tune_position<'a>(
     contig: &'a [u8],
     band: usize,
 ) -> TunedPosition<'a> {
+    assert!(start < end);
     let mut seq = if is_forward {
         seq[start..end].to_vec()
     } else {

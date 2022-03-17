@@ -47,7 +47,6 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
         .filter_map(bio_utils::paf::PAF::new)
         .filter(|a| a.tstart < ALLOWED_END_GAP && a.tlen - a.tend < ALLOWED_END_GAP)
         .filter_map(|aln| {
-            // Check the max-indel.
             use bio_utils::sam;
             let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
             let (aln_len, mat_num) = cigar.iter().fold((0, 0), |(aln, mat), &op| match op {

@@ -148,6 +148,11 @@ impl DataSet {
     /// Of course, these should be hold at any steps in the pipeline,
     /// So, this is just a checking function.
     pub fn sanity_check(&self) {
+        let units: HashSet<_> = self.selected_chunks.iter().map(|c| c.id).collect();
+        self.encoded_reads
+            .iter()
+            .flat_map(|r| r.nodes.iter())
+            .for_each(|n| assert!(units.contains(&n.unit)));
         assert!(std::path::Path::new(&self.input_file).exists());
         self.encoded_reads_can_be_recovered();
         use std::collections::HashSet;
@@ -170,7 +175,9 @@ impl DataSet {
                 .iter()
                 .map(u8::to_ascii_uppercase)
                 .collect();
-            assert_eq!(orig.len(), recover.len());
+            assert_eq!(orig.len(), recover.len(), "{}", read.nodes.len());
+            let orig_len = read.original_length;
+            assert_eq!(orig.len(), orig_len);
             let not_matched = orig
                 .iter()
                 .zip(recover.iter())
@@ -318,7 +325,10 @@ impl EncodedRead {
         if i + 1 == len {
             let removed_edge = self.edges.remove(i - 1);
             let node_seq = removed_node.original_seq();
-            let skip = (-removed_edge.offset.min(-0)) as usize;
+            let skip = match removed_edge.offset {
+                x if x < 0 => -x as usize,
+                _ => 0,
+            };
             let trailing_seq: Vec<_> = removed_edge
                 .label()
                 .iter()
@@ -338,52 +348,44 @@ impl EncodedRead {
             }
         } else {
             let removed_edge = self.edges.remove(i);
-            let skip = (-self.edges[i - 1].offset.min(-0)) as usize;
-            self.edges[i - 1].to = removed_edge.to;
-            self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
-            self.edges[i - 1]
+            // First add the removed sequence and edges into the current edges.
+            let mut edge: Vec<_> = self.edges[i - 1]
                 .label
-                .extend(removed_node.original_seq().chars().skip(skip));
-            for _ in 0..(-removed_edge.offset) {
-                self.edges[i - 1].label.pop();
+                .bytes()
+                .chain(removed_node.original_seq().bytes())
+                .chain(removed_edge.label.bytes())
+                .collect();
+            // Then, fix the offset by the offset.
+            if self.edges[i - 1].offset < 0 {
+                edge.reverse();
+                for _ in 0..-self.edges[i - 1].offset {
+                    edge.pop();
+                }
+                edge.reverse();
             }
-            self.edges[i - 1].label += &removed_edge.label;
+            if removed_edge.offset < 0 {
+                for _ in 0..-removed_edge.offset {
+                    edge.pop();
+                }
+            }
+            self.edges[i - 1].to = removed_edge.to;
+            self.edges[i - 1].label = edge.iter().map(|&x| x as char).collect();
+            self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
         }
         assert_eq!(self.nodes.len(), self.edges.len() + 1);
     }
     pub fn recover_raw_read(&self) -> Vec<u8> {
         let mut original_seq = self.leading_gap.to_vec();
         for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
-            if n.is_forward {
-                original_seq.extend(n.seq());
-            } else {
-                let seq = n.seq().iter().rev().map(|x| match x.to_ascii_uppercase() {
-                    b'A' => b'T',
-                    b'C' => b'G',
-                    b'G' => b'C',
-                    b'T' => b'A',
-                    _ => unreachable!(),
-                });
-                original_seq.extend(seq);
-            }
+            assert_eq!(n.unit, e.from);
+            original_seq.extend(n.original_seq().as_bytes());
             for _ in 0..(-e.offset).max(0) {
                 original_seq.pop();
             }
             original_seq.extend(e.label());
         }
         if let Some(n) = self.nodes.last() {
-            if n.is_forward {
-                original_seq.extend(n.seq());
-            } else {
-                let seq = n.seq().iter().rev().map(|x| match x.to_ascii_uppercase() {
-                    b'A' => b'T',
-                    b'C' => b'G',
-                    b'G' => b'C',
-                    b'T' => b'A',
-                    _ => unreachable!(),
-                });
-                original_seq.extend(seq);
-            }
+            original_seq.extend(n.original_seq().as_bytes());
         }
         original_seq.extend(self.trailing_gap.iter());
         original_seq

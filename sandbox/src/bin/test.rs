@@ -10,30 +10,46 @@ use rand::SeedableRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
 use std::collections::{HashMap, HashSet};
 use std::io::*;
-// fn error(node: &definitions::Node, ref_unit: &Unit) -> (f64, f64, f64) {
-//     let (query, aln, refr) = node.recover(ref_unit);
-//     let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
-//     let del = query.iter().filter(|&&x| x == b' ').count() as f64;
-//     let ins = refr.iter().filter(|&&x| x == b' ').count() as f64;
-//     let aln_len = aln.len() as f64;
-//     (mismat / aln_len, del / aln_len, ins / aln_len)
-// }
 
 fn main() -> std::io::Result<()> {
-    let unitseq = b"AAAAACGTCAGTAAAAAC";
-    let query = b"CGTCAGTC";
-    let ops = vec![
-        vec![kiley::Op::Del; 5],
-        vec![kiley::Op::Match; 7],
-        vec![kiley::Op::Del; 5],
-        vec![kiley::Op::Match],
-    ]
-    .concat();
-    let band = 2;
-    use haplotyper::ALN_PARAMETER;
-    use kiley::bialignment::guided::infix_guided;
-    let (score, ops) = infix_guided(unitseq, query, &ops, band, ALN_PARAMETER);
-    eprintln!("{}\n{:?}", score, ops);
+    env_logger::init();
+    let args: Vec<_> = std::env::args().collect();
+    let mut ds: DataSet =
+        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
+            .unwrap();
+    for read in ds.encoded_reads.iter_mut() {
+        let len = read.recover_raw_read().len();
+        assert_eq!(len, read.original_length);
+    }
+    for read in ds.encoded_reads.iter_mut() {
+        let idx = read.nodes.len() / 2;
+        read.remove(idx);
+    }
+    // let (read_error_rate, unit_error_rate, sd) =
+    //     haplotyper::encode::deletion_fill::estimate_error_rate(&ds, 0.15);
+    // let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
+    // eprintln!("{}", sd);
+
+    // use haplotyper::encode::nodes_to_encoded_read;
+    // for read in ds.encoded_reads.iter_mut() {
+    //     let mut seq = read.recover_raw_read();
+    //     seq.iter_mut().for_each(u8::make_ascii_uppercase);
+    //     let id = read.id;
+    //     read.nodes.retain(|node| {
+    //         let (_, aln, _) = node.recover(units[&node.unit]);
+    //         let diff = aln.iter().filter(|&&x| x != b'|').count();
+    //         let error_rate = diff as f64 / aln.len() as f64;
+    //         let expected =
+    //             read_error_rate[id as usize] + unit_error_rate[node.unit as usize].max(0f64);
+    //         let threshold = expected + 10f64 * sd;
+    //         error_rate < threshold
+    //     });
+    //     let mut nodes = Vec::with_capacity(read.nodes.len());
+    //     nodes.append(&mut read.nodes);
+    //     *read = nodes_to_encoded_read(read.id, nodes, &seq).unwrap();
+    // }
+    // ds.sanity_check();
+    // println!("{}", serde_json::ser::to_string(&ds).unwrap());
     // env_logger::init();
     // let args: Vec<_> = std::env::args().collect();
     // let mut ds: DataSet = std::fs::File::open(&args[1])

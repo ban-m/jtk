@@ -614,6 +614,9 @@ impl<'a> DitchGraph<'a> {
         read_type: definitions::ReadType,
     ) {
         self.assign_copy_number(cov, lens);
+        if log_enabled!(log::Level::Trace) {
+            dump(self, 0, c);
+        }
         self.remove_zero_copy_elements(lens, 0.2);
         self.assign_copy_number(cov, lens);
         self.remove_zero_copy_elements(lens, 0.5);
@@ -628,7 +631,7 @@ impl<'a> DitchGraph<'a> {
             self.assign_copy_number_mcmc(cov, lens);
             self.resolve_repeats(reads, c, llr as f64);
             if log_enabled!(log::Level::Trace) {
-                dump(self, i, c);
+                dump(self, i + 1, c);
             }
         }
         self.remove_lightweight_edges(0, true);

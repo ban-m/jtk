@@ -794,6 +794,7 @@ fn stats(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<(
     use haplotyper::stats::Stats;
     debug!("START\tStats step");
     let wtr = std::io::BufWriter::new(std::fs::File::create(matches.value_of("file").unwrap())?);
+    dataset.sanity_check();
     dataset.stats(wtr)?;
     Ok(())
 }
@@ -1031,10 +1032,10 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    let sim_thr =
-        haplotyper::determine_units::calc_sim_thr(&dataset, 0.999).max(dataset.read_type.sim_thr());
-    // let sim_thr = dataset.read_type.sim_thr();
-    debug!("DELFIL\t0.999 quantile{}", sim_thr);
+    // let sim_thr =
+    //     haplotyper::determine_units::calc_sim_thr(&dataset, 0.999).max(dataset.read_type.sim_thr());
+    let sim_thr = dataset.read_type.sim_thr();
+    // debug!("DELFIL\t0.999 quantile{}", sim_thr);
     use haplotyper::encode::deletion_fill::*;
     let config = CorrectDeletionConfig::new(to_recal, sim_thr);
     dataset.correct_deletion(&config);

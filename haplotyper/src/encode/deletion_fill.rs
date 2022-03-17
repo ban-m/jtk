@@ -6,9 +6,9 @@ use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
 // identity would be increased by this value when evaluating the edges.
-const EDGE_BONUS: f64 = 0.05;
+const EDGE_BONUS: f64 = 0.15;
 // Evaluating length of each side.
-const EDGE_LEN: usize = 500;
+const EDGE_LEN: usize = 100;
 #[derive(Debug, Clone)]
 pub struct CorrectDeletionConfig {
     re_clustering: bool,
@@ -103,116 +103,215 @@ fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)], exce
     }
 }
 
-// pub fn correct_unit_deletion(ds: &mut DataSet, sim_thr: f64) -> HashSet<u64> {
-//     let raw_seq: HashMap<_, _> = ds
-//         .raw_reads
-//         .iter()
-//         .map(|read| (read.id, read.seq()))
-//         .collect();
-//     let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-//     const OUTER_LOOP: usize = 3;
-//     const INNER_LOOP: usize = 15;
-//     let mut find_new_node = HashSet::new();
-//     'outer: for t in 0..OUTER_LOOP {
-//         let representative = take_consensus_sequence(ds);
-//         let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
-//         // i->vector of failed index and units.
-//         let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
-//         for i in 0..INNER_LOOP {
-//             let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
-//             let failed_trials = failed_trials.par_iter_mut();
-//             let reads = ds.encoded_reads.par_iter_mut().zip(failed_trials);
-//             let filtered_reads = reads.filter(|(r, _)| r.nodes.len() > 1);
-//             let newly_encoded_units: Vec<_> = filtered_reads
-//                 .flat_map(|(r, fails)| {
-//                     let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
-//                     seq.iter_mut().for_each(u8::make_ascii_uppercase);
-//                     let r_sk = &read_skeltons;
-//                     let r = (r, seq.as_slice());
-//                     correct_deletion_error(r, fails, &representative, &units, &r_sk, sim_thr)
-//                 })
-//                 .collect();
-//             find_new_node.extend(newly_encoded_units);
-//             let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-//             debug!("Filled:{}\t{}", current, after);
-//             if after <= current && i == 0 {
-//                 debug!("Filled\tBREAK\tOuter\t{}", t);
-//                 break 'outer;
-//             } else if after <= current {
-//                 debug!("Filled\tBREAK\tInner");
-//                 break;
-//             }
-//             current = after;
-//         }
-//     }
-//     find_new_node
-// }
-
-/// The second argument is the vector of (index,unit_id) of the previous failed trials.
-/// for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
-/// position of the i-th read, and failed it.
-/// If we can encode some position in the i-th read, the failed trials would be erased, as it change the
-/// condition of the read, making it possible to encode an unit previously failed to encode.
-/// sim_thr is the similarity threshold.
-/// This function corrects "unit-deletions". To do that,
-/// it first align other reads onto a read to be corrected in unit resolution, detecting putative insertions.
-/// Then, it tries to encode these putative insertions in base-pair resolution.
-/// Note that, in the first - unit resolution - alignment, there's no distinction between clusters.
-/// However, in the second alignment, it tries to encode the putative region by each cluster's representative.
-/// Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
-/// Auto-tune the similarity threshold.
+/**
+The second argument is the vector of (index,unit_id) of the previous failed trials.
+for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
+position of the i-th read, and failed it.
+If we can encode some position in the i-th read, the failed trials would be erased, as it change the
+condition of the read, making it possible to encode an unit previously failed to encode.
+sim_thr is the similarity threshold.
+This function corrects "unit-deletions". To do that,
+it first align other reads onto a read to be corrected in unit resolution, detecting putative insertions.
+Then, it tries to encode these putative insertions in base-pair resolution.
+Note that, in the first - unit resolution - alignment, there's no distinction between clusters.
+However, in the second alignment, it tries to encode the putative region by each cluster's representative.
+Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
+Auto-tune the similarity threshold.
+ */
+const DEV: bool = false;
 pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
-    let raw_seq: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|read| (read.id, read.seq()))
-        .collect();
-    let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-    let read_error_rate: Vec<_> = estimate_upper_error_rate(ds, fallback);
     const OUTER_LOOP: usize = 3;
-    const INNER_LOOP: usize = 15;
     let mut find_new_node = HashSet::new();
-    'outer: for t in 0..OUTER_LOOP {
-        let representative = take_consensus_sequence(ds);
-        // i->vector of failed index and units.
-        let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
-        let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
-        for i in 0..INNER_LOOP {
-            let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
-            let failed_trials = failed_trials.par_iter_mut();
-            let read_error_rate = read_error_rate.par_iter();
-            let reads = ds
-                .encoded_reads
-                .par_iter_mut()
-                .zip(failed_trials)
-                .zip(read_error_rate);
-            let filtered_reads = reads.filter(|((r, _), _)| r.nodes.len() > 1);
-            let newly_encoded_units: Vec<_> = filtered_reads
-                .flat_map(|((r, fails), &sim_thr)| {
-                    let mut seq: Vec<_> = raw_seq[&r.id].to_vec();
-                    seq.iter_mut().for_each(u8::make_ascii_uppercase);
-                    let r_sk = &read_skeltons;
-                    let r = (r, seq.as_slice());
-                    correct_deletion_error(r, fails, &representative, &units, r_sk, sim_thr)
-                })
-                .collect();
-            find_new_node.extend(newly_encoded_units);
-            let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-            debug!("Filled:{}\t{}", current, after);
-            if after <= current && i == 0 {
-                debug!("Filled\tBREAK\tOuter\t{}", t);
-                break 'outer;
-            } else if after <= current {
-                debug!("Filled\tBREAK\tInner");
-                break;
-            }
-            current = after;
+    for t in 0..OUTER_LOOP {
+        let (read_error_rate, unit_error_rate, variance) = match DEV {
+            false => estimate_upper_error_rate(ds, fallback),
+            true => estimate_error_rate(ds, fallback),
+        };
+        debug!("Variance\t{}\t{}", t, variance);
+        let (new_nodes, is_updated) =
+            filling_until_stable(ds, (&read_error_rate, &unit_error_rate, variance));
+        find_new_node.extend(new_nodes);
+        if !is_updated {
+            break;
         }
     }
     find_new_node
 }
 
-fn estimate_upper_error_rate(ds: &DataSet, fallback: f64) -> Vec<f64> {
+fn filling_until_stable(
+    ds: &mut DataSet,
+    (read_error_rate, unit_error_rate, variance): (&[f64], &[f64], f64),
+) -> (HashSet<u64>, bool) {
+    let raw_seq: HashMap<_, _> = ds
+        .raw_reads
+        .iter()
+        .map(|read| (read.id, read.seq()))
+        .collect();
+    const INNER_LOOP: usize = 15;
+    let mut find_new_node = HashSet::new();
+    let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+    let representative = take_consensus_sequence(ds);
+    // i->vector of failed index and units.
+    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
+    let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
+    for i in 0..INNER_LOOP {
+        let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
+        let newly_encoded_units: Vec<_> = if DEV {
+            let failed_trials = failed_trials.par_iter_mut();
+            let reads = ds.encoded_reads.par_iter_mut().zip(failed_trials);
+            let filtered_reads = reads.filter(|(r, _)| r.nodes.len() > 1);
+            let newly_encoded_units: Vec<_> = filtered_reads
+                .flat_map(|(read, fails)| {
+                    let error_rate = read_error_rate[read.id as usize];
+                    let mut seq: Vec<_> = raw_seq[&read.id].to_vec();
+                    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+                    let read = (read, seq.as_slice(), error_rate);
+                    let units = (&units, unit_error_rate, &representative);
+                    correct_deletion_error(read, fails, units, variance, &read_skeltons)
+                })
+                .collect();
+            ds.encoded_reads.retain(|r| !r.nodes.is_empty());
+            newly_encoded_units
+        } else {
+            let failed_trials = failed_trials.par_iter_mut();
+            let reads = ds
+                .encoded_reads
+                .par_iter_mut()
+                .zip(failed_trials)
+                .zip(read_error_rate.par_iter());
+            let filtered_reads = reads.filter(|((r, _), _)| r.nodes.len() > 1);
+            filtered_reads
+                .flat_map(|((read, fails), error_rate)| {
+                    let mut seq: Vec<_> = raw_seq[&read.id].to_vec();
+                    seq.iter_mut().for_each(u8::make_ascii_uppercase);
+                    let read = (read, seq.as_slice(), *error_rate);
+                    let units = (&units, unit_error_rate, &representative);
+                    correct_deletion_error(read, fails, units, variance, &read_skeltons)
+                })
+                .collect()
+        };
+        find_new_node.extend(newly_encoded_units);
+        let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
+        debug!("Filled:{}\t{}", current, after);
+        if after == current && i == 0 {
+            debug!("Filled\tBREAK\tOuter");
+            return (find_new_node, false);
+        } else if after == current {
+            debug!("Filled\tBREAK\tInner");
+            break;
+        }
+        current = after;
+    }
+    (find_new_node, true)
+}
+
+pub fn estimate_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, f64) {
+    fn residual(errors: &[(u64, Vec<(u64, f64)>)], reads: &[f64], units: &[f64]) -> f64 {
+        let residual: f64 = errors
+            .iter()
+            .map(|(readid, errors)| -> f64 {
+                let read = reads[*readid as usize];
+                let data_error: f64 = errors
+                    .iter()
+                    .map(|(unitid, error)| (error - read - units[*unitid as usize]).powi(2))
+                    .sum();
+                data_error
+            })
+            .sum();
+        let reg_term: f64 = units.iter().map(|x| x * x).sum();
+        residual + reg_term
+    }
+    let max_read_id = ds.raw_reads.iter().map(|r| r.id).max().unwrap() as usize;
+    let max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap() as usize;
+    let mut read_error_rate = vec![0f64; max_read_id + 1];
+    let mut unit_error_rate = vec![0f64; max_unit_id + 1];
+    for read in ds.encoded_reads.iter() {
+        read_error_rate[read.id as usize] = fallback;
+    }
+    let unit_counts: Vec<_> = {
+        let mut counts = vec![0; max_unit_id + 1];
+        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            counts[node.unit as usize] += 1;
+        }
+        counts
+    };
+    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    let errors: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .map(|read| {
+            let errors: Vec<_> = read
+                .nodes
+                .iter()
+                .map(|node| {
+                    let aln = node.recover(units[&node.unit]).1;
+                    let errors = aln.iter().filter(|&&x| x != b'|').count();
+                    let error = errors as f64 / aln.len() as f64;
+                    (node.unit, error)
+                })
+                .collect::<Vec<_>>();
+            (read.id, errors)
+        })
+        .collect();
+    let mut current_resid = residual(&errors, &read_error_rate, &unit_error_rate);
+    loop {
+        // Re-estimate read error rate
+        for (readid, errors) in errors.iter() {
+            let residual: f64 = errors
+                .iter()
+                .map(|&(unitid, error)| error - unit_error_rate[unitid as usize])
+                .sum();
+            read_error_rate[*readid as usize] = residual / errors.len() as f64;
+        }
+        // Re-estimation of unit error rate
+        unit_error_rate.iter_mut().for_each(|x| *x = 0f64);
+        for (readid, errors) in errors.iter() {
+            let read_error = read_error_rate[*readid as usize];
+            for &(unitid, error) in errors.iter() {
+                unit_error_rate[unitid as usize] += error - read_error;
+            }
+        }
+        unit_error_rate
+            .iter_mut()
+            .zip(unit_counts.iter())
+            .filter(|&(_, &count)| 0 < count)
+            .for_each(|(x, c)| {
+                *x = *x / (*c as f64 + 1f64);
+            });
+        let resid = residual(&errors, &read_error_rate, &unit_error_rate);
+        if (current_resid - resid).abs() < 0.001 {
+            break;
+        }
+        current_resid = resid;
+    }
+    let mut residuals: Vec<f64> = errors
+        .iter()
+        .flat_map(|(readid, errors)| {
+            let readerror = read_error_rate[*readid as usize];
+            errors
+                .iter()
+                .map(|(unitid, error)| {
+                    let expect = unit_error_rate[*unitid as usize] + readerror;
+                    error - expect
+                })
+                .map(|residual| residual.powi(2))
+                .collect::<Vec<f64>>()
+        })
+        .collect();
+    let idx = residuals.len() / 2;
+    let median = residuals
+        .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
+        .1
+        .sqrt();
+    // Fix read error rate
+    for (&readid, len) in errors.iter().map(|(id, es)| (id, es.len() as f64)) {
+        let error = read_error_rate[readid as usize];
+        read_error_rate[readid as usize] = (error * len + fallback) / (len + 1f64);
+    }
+    (read_error_rate, unit_error_rate, median)
+}
+
+fn estimate_upper_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, f64) {
     let ref_chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     let error_rates: Vec<Vec<_>> = ds
         .encoded_reads
@@ -243,7 +342,7 @@ fn estimate_upper_error_rate(ds: &DataSet, fallback: f64) -> Vec<f64> {
         .fold((0f64, 0), |(sdsum, num), sd| (sdsum + sd, num + 1));
     let sd_mean = sd_sum / sd_num as f64;
     debug!("MEAN of SD\t{:.3}", sd_mean);
-    error_rates
+    let error_rate: Vec<_> = error_rates
         .into_par_iter()
         .map(|mut errors| match errors.len() {
             0..=2 => fallback,
@@ -254,7 +353,8 @@ fn estimate_upper_error_rate(ds: &DataSet, fallback: f64) -> Vec<f64> {
                 *median + 4f64 * sd_mean
             }
         })
-        .collect()
+        .collect();
+    (error_rate, vec![], 0f64)
 }
 
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
@@ -307,13 +407,17 @@ fn abs(x: usize, y: usize) -> usize {
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
 const OFFSET: usize = 300;
 // returns the ids of the units newly encoded.
+type UnitInfo<'a> = (
+    &'a HashMap<u64, &'a Unit>,
+    &'a [f64],
+    &'a HashMap<u64, Vec<(u64, Vec<u8>)>>,
+);
 pub fn correct_deletion_error(
-    (read, seq): (&mut EncodedRead, &[u8]),
+    (read, seq, read_error): (&mut EncodedRead, &[u8], f64),
     failed_trials: &mut Vec<(usize, u64)>,
-    consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
-    units: &HashMap<u64, &Unit>,
+    unitinfo: UnitInfo,
+    variance: f64,
     reads: &[ReadSkelton],
-    sim_thr: f64,
 ) -> Vec<u64> {
     let pileups = get_pileup(read, reads);
     // TODO:Parametrize here.
@@ -321,28 +425,36 @@ pub fn correct_deletion_error(
     let nodes = &read.nodes;
     let mut inserts = vec![];
     assert!(seq.iter().all(|x| x.is_ascii_uppercase()));
-    for (idx, pileup) in pileups.iter().enumerate().skip(1) {
+    for (idx, pileup) in pileups.iter().enumerate() {
         let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
         head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
-        let head_best = try_encoding_head(nodes, &head_cand, idx, consensi, units, seq, sim_thr);
+        let head_best =
+            try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, variance);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
             None => failed_trials.extend(head_cand.into_iter().map(|x| (idx, x.2))),
         }
         let mut tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
         tail_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
-        let tail_best = try_encoding_tail(nodes, &tail_cand, idx, consensi, units, seq, sim_thr);
+        let tail_best =
+            try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, variance);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
             None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.2))),
         }
     }
+    let mut is_changed = !inserts.is_empty();
     let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.unit).collect();
     if !inserts.is_empty() {
         failed_trials.clear();
         for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
             read.nodes.insert(idx + accum_inserts, node);
         }
+    }
+    if DEV {
+        is_changed |= remove_highly_erroneous(read, read_error, unitinfo, variance);
+    }
+    if is_changed && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_slippy_alignment};
@@ -355,14 +467,33 @@ pub fn correct_deletion_error(
     new_inserts
 }
 
+fn remove_highly_erroneous(
+    read: &mut EncodedRead,
+    read_error: f64,
+    (units, unit_error_rate, _): UnitInfo,
+    variance: f64,
+) -> bool {
+    let orig_len = read.nodes.len();
+    read.nodes.retain(|node| {
+        let (_, aln, _) = node.recover(units[&node.unit]);
+        let diff = aln.iter().filter(|&&x| x != b'|').count();
+        let error_rate = diff as f64 / aln.len() as f64;
+        let expected = read_error + unit_error_rate[node.unit as usize].max(0f64);
+        let threshold = expected + THR * variance;
+        error_rate < threshold
+    });
+    read.nodes.len() != orig_len
+}
+
+const THR: f64 = 7f64;
 fn try_encoding_head(
     nodes: &[Node],
     head_cand: &[(usize, bool, u64)],
     idx: usize,
-    consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
-    units: &HashMap<u64, &Unit>,
+    (units, unit_error_rate, consensi): UnitInfo,
     seq: &[u8],
-    sim_thr: f64,
+    read_error: f64,
+    variance: f64,
 ) -> Option<(Node, i32)> {
     head_cand
         .iter()
@@ -384,9 +515,15 @@ fn try_encoding_head(
                     if is_the_same_encode {
                         return None;
                     }
+                    let error_rate_bound = match DEV {
+                        false => read_error,
+                        true => {
+                            read_error + unit_error_rate[uid as usize].max(0f64) + THR * variance
+                        }
+                    };
                     let position = (start_position, end_position, direction);
                     let unit_info = (unit, cluster, cons.as_slice());
-                    encode_node(seq, position, unit_info, sim_thr)
+                    encode_node(seq, position, unit_info, error_rate_bound)
                 })
                 .max_by_key(|x| x.1)
         })
@@ -397,10 +534,10 @@ fn try_encoding_tail(
     nodes: &[Node],
     tail_cand: &[(usize, bool, u64)],
     idx: usize,
-    consensi: &HashMap<u64, Vec<(u64, Vec<u8>)>>,
-    units: &HashMap<u64, &Unit>,
+    (units, unit_error_rate, consensi): UnitInfo,
     seq: &[u8],
-    sim_thr: f64,
+    read_error: f64,
+    variance: f64,
 ) -> Option<(Node, i32)> {
     tail_cand
         .iter()
@@ -426,7 +563,13 @@ fn try_encoding_tail(
                     assert!(start_position < end_position);
                     let positions = (start_position, end_position, direction);
                     let unit_info = (unit, cluster, cons.as_slice());
-                    encode_node(seq, positions, unit_info, sim_thr)
+                    let error_rate_bound = match DEV {
+                        false => read_error,
+                        true => {
+                            read_error + unit_error_rate[uid as usize].max(0f64) + THR * variance
+                        }
+                    };
+                    encode_node(seq, positions, unit_info, error_rate_bound)
                 })
                 .max_by_key(|x| x.1)
         })
@@ -458,13 +601,13 @@ fn encode_node(
         bio_utils::revcmp(&query[start..end])
     };
     query.iter_mut().for_each(u8::make_ascii_uppercase);
-    let (seq, aln_start, aln_end, kops, score) =
+    let (seq, trim_head, trim_tail, kops, score) =
         fine_mapping(&query, (unit, cluster, unitseq), sim_thr)?;
     let ops = super::compress_kiley_ops(&kops);
     let cl = unit.cluster_num;
     let position_from_start = match is_forward {
-        true => start + aln_start,
-        false => start + query.len() - aln_end,
+        true => start + trim_head,
+        false => start + trim_tail,
     };
     // I think we should NOT make likelihood gain to some biased value,
     // as 1. if the alignment gives the certaintly, then we can impute the clustering by the alignment,
@@ -475,13 +618,13 @@ fn encode_node(
     Some((node, score))
 }
 
+// Sequence, trimed base from the head, trimed base from the tail, ops, score.
 type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
 fn fine_mapping<'a>(
     query: &'a [u8],
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<FineMapping<'a>> {
-    //use kiley::bialignment::guided::global_guided;
     use kiley::bialignment::guided::infix_guided;
     fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
         use kiley::Op::*;
@@ -490,7 +633,7 @@ fn fine_mapping<'a>(
             .collect()
     }
     let origlen = query.len();
-    let (query, aln_start, aln_end, ops, band) = {
+    let (query, trim_head, trim_tail, ops, band) = {
         let mode = edlib_sys::AlignMode::Infix;
         let task = edlib_sys::AlignTask::Alignment;
         // Note that unit.seq would be smaller than query! So the operations should be reversed.
@@ -511,9 +654,9 @@ fn fine_mapping<'a>(
                 x => x,
             }
         }
-        let (start, end) = trim_head_tail_insertion(&mut ops);
-        let query = &query[start..query.len() - end];
-        (query, start, query.len() - end, ops, band)
+        let (trim_head, trim_tail) = trim_head_tail_insertion(&mut ops);
+        let query = &query[trim_head..query.len() - trim_tail];
+        (query, trim_head, trim_tail, ops, band)
     };
     let (below_dissim, info) = {
         let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
@@ -534,7 +677,7 @@ fn fine_mapping<'a>(
     if below_dissim {
         trace!("FILLDEL\t{}\tOK", info);
         let (score, new_ops) = infix_guided(unit.seq(), query, &ops, band, ALN_PARAMETER);
-        Some((query, aln_start, aln_end, new_ops, score))
+        Some((query, trim_head, trim_tail, new_ops, score))
     } else {
         trace!("FILLDEL\t{}\tNG", info);
         if log_enabled!(log::Level::Trace) {
