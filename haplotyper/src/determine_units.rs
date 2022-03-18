@@ -129,7 +129,7 @@ impl DetermineUnit for definitions::DataSet {
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);
-            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
+            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 20);
             self.consensus_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
         }
@@ -184,15 +184,6 @@ impl DetermineUnit for definitions::DataSet {
         compaction_units(self);
     }
 }
-
-// fn re_encode(read: &mut EncodedRead, convert_table: &HashMap<u64, u64>, seq: &[u8]) {
-//     let mut nodes = Vec::with_capacity(read.nodes.len());
-//     nodes.append(&mut read.nodes);
-//     nodes
-//         .iter_mut()
-//         .for_each(|n| n.unit = convert_table[&n.unit]);
-//     *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-// }
 
 fn remove_frequent_units(ds: &mut DataSet, upper_count: usize) {
     let mut counts: HashMap<_, usize> = HashMap::new();
@@ -872,31 +863,8 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     let to_be_removed = approx_vertex_cover(edges, unit_len);
     let remaining = to_be_removed.iter().filter(|&&b| !b).count();
     debug!("UNITNUM\t{}\tVertexCovering", remaining);
-    // let mut count: HashMap<_, i32> = HashMap::new();
-    // for read in ds.encoded_reads.iter() {
-    //     for node in read.nodes.iter() {
-    //         *count.entry(node.unit).or_default() += 1;
-    //     }
-    // }
-    // let median = {
-    //     let mut count: Vec<_> = count.values().copied().collect();
-    //     let median = count.len() / 2;
-    //     *count.select_nth_unstable(median).1 as i32
-    // };
-    // let (lower, upper) = match ds.read_type {
-    //     ReadType::CCS => ((median / 10).max(2), 10 * median),
-    //     ReadType::CLR => ((median / 10).max(4), 5 * median),
-    //     ReadType::ONT => ((median / 10).max(4), 5 * median),
-    //     ReadType::None => (median / 10, 200),
-    // };
-    ds.selected_chunks.retain(|unit| {
-        // let coverage = match count.get(&unit.id) {
-        //     Some(res) => *res,
-        //     None => return false,
-        // };
-        // !to_be_removed[unit.id as usize] && lower < coverage && coverage < upper
-        !to_be_removed[unit.id as usize]
-    });
+    ds.selected_chunks
+        .retain(|unit| !to_be_removed[unit.id as usize]);
     ds.encoded_reads.par_iter_mut().for_each(|read| {
         let mut idx = 0;
         loop {
@@ -907,11 +875,6 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
             }
         }
     });
-    // ds.selected_chunks.iter_mut().for_each(|unit| {
-    //     unit.id = idx;
-    //     idx += 1;
-    // });
-    // ds.encoded_reads.clear();
 }
 
 fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {

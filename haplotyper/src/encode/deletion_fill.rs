@@ -118,7 +118,7 @@ However, in the second alignment, it tries to encode the putative region by each
 Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
 Auto-tune the similarity threshold.
  */
-const DEV: bool = false;
+const DEV: bool = true;
 pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
