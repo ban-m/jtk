@@ -1,5 +1,5 @@
-const IS_MOCK: bool = false;
 use definitions::*;
+use sandbox::IS_MOCK;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();

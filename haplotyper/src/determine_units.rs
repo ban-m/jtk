@@ -105,6 +105,8 @@ impl DetermineUnit for definitions::DataSet {
     // TODO: Parametrize the number of reads used in consensus generation.
     // TOOD: Maybe we can remove some low-quality reads by
     fn select_chunks(&mut self, config: &UnitConfig) {
+        self.selected_chunks.clear();
+        self.encoded_reads.clear();
         let filter_size = match self.read_type {
             ReadType::CCS => 2,
             ReadType::None | ReadType::CLR => 5,
@@ -234,7 +236,9 @@ fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> V
         .choose_multiple(rng, config.unit_num)
         .enumerate()
         .map(|(idx, seq)| {
-            let seq = String::from_utf8_lossy(seq).to_string();
+            let mut seq = seq.to_vec();
+            seq.iter_mut().for_each(u8::make_ascii_uppercase);
+            let seq = String::from_utf8(seq).unwrap();
             Unit::new(idx as u64, seq, config.min_cluster)
         })
         .collect()

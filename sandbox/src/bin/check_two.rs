@@ -37,6 +37,7 @@ fn main() -> std::io::Result<()> {
                 break var_type;
             }
         };
+        log::debug!("POS\t{}\t{}", var_pos, var_type);
         match var_type {
             0..=3 => {
                 seq[var_pos] = b"ACGT"[var_type];

@@ -130,7 +130,6 @@ impl Assemble for DataSet {
     fn zip_up_suspicious_haplotig(&mut self, c: &AssembleConfig, count: u32, len: usize) {
         let (_, summaries) = assemble(self, c);
         // Select unique units.
-        // let unique_units = filter_non_unique_units(&summaries);
         let copy_numbers = get_contig_copy_numbers(&summaries);
         let shared_read_counts = count_contig_connection(self, &summaries);
         // Squishing. Unit -> Vec<Cluster>

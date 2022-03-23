@@ -472,9 +472,6 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
         Some(units) => units.iter().map(|u| (u.id, u.seq())).collect(),
         None => HashMap::new(),
     };
-    // use kiley::gphmm::*;
-    // let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    // let config = kiley::PolishConfig::with_model(100, 0, 0, 0, 0, hmm);
     let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
     let node_consensus: HashMap<_, _> = nodes
         .into_par_iter()
@@ -504,7 +501,6 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
                     .collect();
                 let band = read_type.band_width(draft.len());
                 hmm.polish_until_converge_with(&draft, &seqs, &mut ops, band)
-                // kiley::polish_chunk_by_parts(&draft, &seqs, &config)
             } else {
                 draft
             };
@@ -2173,7 +2169,8 @@ impl<'a> DitchGraph<'a> {
             let to_nodes = self
                 .get_edges(node, !p)
                 .map(|e| (dist + e.proxying.len() + 1, e.to, e.to_position))
-                .filter(|&(d, _, _)| d <= max_reach);
+                .filter(|&(d, _, _)| d <= max_reach)
+                .filter(|&(d, node, p)| !nodes_at[d - 1].contains(&(node, p)));
             active_nodes.extend(to_nodes);
             nodes_at[dist - 1].push((node, p));
         }
@@ -2219,80 +2216,6 @@ impl<'a> DitchGraph<'a> {
             .filter(|&(_, &count)| min_span <= count)
             .fold(0, |dist, (&(_, d), _)| d.max(dist))
     }
-    // fn get_covered_nodes(reads: &[&EncodedRead], thr: usize) -> HashSet<Node> {
-    //     let mut counts: HashMap<_, usize> = HashMap::new();
-    //     for node in reads.iter().flat_map(|r| r.nodes.iter()) {
-    //         *counts.entry((node.unit, node.cluster)).or_default() += 1;
-    //     }
-    //     counts.retain(|_, val| thr <= *val);
-    //     counts.keys().copied().collect()
-    // }
-    // /// Return nodes achievable from the given node.
-    // /// The i-th vector is the nodes reachable from `node` in i+1 hop.
-    // /// Fot the i-th vector, one of the node shoule be in the
-    // /// covered region.
-    // pub fn enumerate_node_upto(
-    //     &self,
-    //     node: &DitchNode,
-    //     pos: Position,
-    //     covered: &HashSet<Node>,
-    // ) -> Vec<Vec<(Node, Position)>> {
-    //     let mut has_arrived = HashSet::new();
-    //     let initial_nodes: Vec<_> = node
-    //         .edges
-    //         .iter()
-    //         .filter(|edge| edge.from_position == pos)
-    //         .map(|edge| (edge.to, edge.to_position))
-    //         .collect();
-    //     let mut nodes_at: Vec<Vec<_>> = vec![initial_nodes];
-    //     for i in 0.. {
-    //         let mut next_nodes = vec![];
-    //         for &(node, p) in nodes_at[i].iter() {
-    //             has_arrived.insert(node);
-    //             let to_nodes = self
-    //                 .get_edges(node, !p)
-    //                 .filter(|e| !has_arrived.contains(&e.to))
-    //                 .map(|e| (e.to, e.to_position));
-    //             next_nodes.extend(to_nodes);
-    //         }
-    //         next_nodes.sort();
-    //         next_nodes.dedup();
-    //         if next_nodes.iter().all(|n| !covered.contains(&(n.0))) {
-    //             break;
-    //         } else {
-    //             nodes_at.push(next_nodes);
-    //         }
-    //     }
-    //     nodes_at
-    // }
-    // /// Remove edge from given reads.
-    // pub fn remove_edges_from_short_reads(&mut self, reads: &[&EncodedRead]) {
-    //     for read in reads.iter() {
-    //         for w in read.nodes.windows(2) {
-    //             let from = (w[0].unit, w[0].cluster);
-    //             use Position::*;
-    //             let from_pos = if w[0].is_forward { Tail } else { Head };
-    //             let to = (w[1].unit, w[1].cluster);
-    //             let to_pos = if w[1].is_forward { Tail } else { Head };
-    //             let mock_edge = DitchEdge::new(from, from_pos, to, to_pos, EdgeLabel::Ovlp(0));
-    //             let forward_edge = self
-    //                 .nodes
-    //                 .get_mut(&from)
-    //                 .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
-    //             if let Some(forward_edge) = forward_edge {
-    //                 forward_edge.occ -= 1;
-    //             }
-    //             let mock_edge = mock_edge.reverse();
-    //             let reverse_edge = self
-    //                 .nodes
-    //                 .get_mut(&to)
-    //                 .and_then(|n| n.edges.iter_mut().find(|e| e == &&mock_edge));
-    //             if let Some(reverse_edge) = reverse_edge {
-    //                 reverse_edge.occ -= 1;
-    //             }
-    //         }
-    //     }
-    // }
     /// Remove lightweight edges with occurence less than or equal to `thr`.
     /// To retain that edge if the edge is the only edge from its terminal,
     /// set `retain_single_edge` to `true`.

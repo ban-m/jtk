@@ -9,7 +9,6 @@ use std::collections::HashMap;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let mut c = ClusteringConfig::default();
-    // c.poa_config = poa_hmm::DEFAULT_CONFIG;
     c.read_type = definitions::ReadType::CLR;
     c.limit = 60;
     let args: Vec<_> = std::env::args().collect();

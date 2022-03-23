@@ -1,5 +1,5 @@
 use log::debug;
-// use poa_hmm::gen_sample;
+pub const IS_MOCK: bool = true;
 use rand::Rng;
 pub fn test() {
     let xs: Vec<_> = (0..1000).collect();
@@ -30,7 +30,7 @@ pub fn generate_test_data<T: Rng>(
         .map(|&idx| kiley::gen_seq::introduce_randomness(&templates[idx], rng, profile))
         .collect();
     assert_eq!(dataset.len(), answer.len());
-    debug!("Index1\tIndex2\tDist");
+    // debug!("Index1\tIndex2\tDist");
     let answer: Vec<u8> = answer.iter().map(|&x| x as u8).collect();
     (dataset, answer)
 }

@@ -66,18 +66,28 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .iter()
         .map(|x| hmm.align(&template, x.borrow(), band).1)
         .collect();
-    for _ in 0..5 {
-        hmm.fit(&template, reads, band);
-        template = hmm.polish_until_converge_with(&template, reads, &mut ops, band);
+    for t in 1..3 {
+        hmm.fit_naive_with(&template, reads, &ops, band / t);
+        template = hmm.polish_until_converge_with(&template, reads, &mut ops, band / t);
     }
-    clustering_neo(&template, reads, &mut ops, rng, &hmm, config)
+    // for (i, (seq, ops)) in reads.iter().zip(ops.iter()).enumerate() {
+    //     let (xr, ar, yr) = kiley::recover(&template, seq.borrow(), ops);
+    //     let mut pos = 0;
+    //     let start = xr
+    //         .iter()
+    //         .take_while(|&&x| {
+    //             pos += (x != b' ') as usize;
+    //             pos < 1950
+    //         })
+    //         .count();
+    //     let end = start + 20;
+    //     eprintln!("{}", i);
+    //     eprintln!("{}", String::from_utf8_lossy(&xr[start..end]));
+    //     eprintln!("{}", String::from_utf8_lossy(&ar[start..end]));
+    //     eprintln!("{}\n", String::from_utf8_lossy(&yr[start..end]));
+    // }
+    clustering_dev(&template, reads, &mut ops, rng, &hmm, config)
         .map(|(asn, gains, lk, _)| (asn, gains, lk, template))
-    // let band_width = 100;
-    // use kiley::gphmm::*;
-    // let hmm = kiley::gphmm::GPHMM::<Cond>::clr();
-    // let hmm = hmm.fit_banded(&cons_template, reads, band_width);
-    // clustering_dev(&cons_template, reads, rng, &hmm, config)
-    //     .map(|(asn, gains, lk, _)| (asn, gains, lk, cons_template))
 }
 
 type ClusteringDevResult = (Vec<u8>, Vec<Vec<f64>>, f64, u8);
@@ -158,6 +168,133 @@ type ClusteringDevResult = (Vec<u8>, Vec<Vec<f64>>, f64, u8);
 //     Some((assignments, likelihood_gains, score, k as u8))
 // }
 
+pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    ops: &mut [Vec<kiley::Op>],
+    rng: &mut R,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    config: &ClusteringConfig,
+) -> Option<ClusteringDevResult> {
+    trace!("{}", String::from_utf8_lossy(template));
+    let ClusteringConfig {
+        band_width,
+        copy_num,
+        coverage,
+        gain: average_lk,
+        ..
+    } = *config;
+    let profiles: Vec<Vec<_>> = reads
+        .iter()
+        .zip(ops.iter_mut())
+        .map(|(seq, op)| {
+            let (mut table, lk) = hmm.modification_table(template, seq.borrow(), band_width, op);
+            assert!(table.iter().all(|x| x.is_finite()));
+            assert!(table.iter().all(|x| !x.is_nan()));
+            table.iter_mut().for_each(|x| *x -= lk);
+            table
+        })
+        .collect();
+    let copy_num = copy_num as usize;
+    let probes = filter_profiles_neo(&profiles, copy_num, 3, coverage, template.len());
+    for (pos, lk) in probes.iter() {
+        let (pos, var) = (
+            pos / kiley::hmm::guided::NUM_ROW,
+            pos % kiley::hmm::guided::NUM_ROW,
+        );
+        trace!("DUMP\t{}\t{}\t{}", pos, var, lk);
+    }
+    let selected_variants: Vec<_> = profiles
+        .iter()
+        .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
+        .collect();
+    let num = 3;
+    let init_copy_num = copy_num.max(4) - 3;
+    let (assignments, score, posterior, k) = (init_copy_num..=copy_num)
+        .filter_map(|k| {
+            let (asn, _) = (0..num)
+                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
+                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+            let sequencepack = (template, reads, ops.as_ref());
+            let modelpack = (hmm, band_width);
+            let (asn, score, posterior) =
+                re_eval_clustering(sequencepack, modelpack, &asn, coverage, k);
+            let expected_gain = (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
+            trace!("LK\t{}\t{:.3}", k, score);
+            Some((asn, score - expected_gain, posterior, k))
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let score = score + (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
+    if log_enabled!(log::Level::Trace) {
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+            trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+        }
+    }
+    Some((assignments, posterior, score, k as u8))
+}
+type HMM = kiley::hmm::guided::PairHiddenMarkovModel;
+fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
+    (template, reads, ops): (&[u8], &[T], &[Vec<kiley::Op>]),
+    (hmm, band): (&HMM, usize),
+    assignments: &[u8],
+    coverage: f64,
+    k: usize,
+) -> (Vec<u8>, f64, Vec<Vec<f64>>) {
+    let likelihood_on_clusters: Vec<Vec<f64>> = (0..k)
+        .map(|cl| {
+            let mut packed_data: Vec<_> = reads
+                .iter()
+                .zip(ops.to_vec())
+                .zip(assignments.iter())
+                .enumerate()
+                .collect();
+            packed_data.sort_by_key(|(_, x)| (*x.1 != cl as u8));
+            let template = {
+                let (sorted, mut ops): (Vec<_>, Vec<_>) = packed_data
+                    .iter_mut()
+                    .map(|(_, ((read, ops), _))| (read.borrow(), ops))
+                    .unzip();
+                let take = assignments.iter().filter(|&&asn| asn == cl as u8).count();
+                hmm.polish_until_converge_with_take(&template, &sorted, &mut ops, band, take)
+            };
+            packed_data.sort_unstable_by_key(|x| x.0);
+            packed_data
+                .iter()
+                .map(|(_, ((seq, ops), _))| {
+                    hmm.likelihood_guided(&template, seq.borrow(), &ops, band)
+                })
+                .collect()
+        })
+        .collect();
+    let mut lk = 0f64;
+    let (posterior, assignments): (Vec<_>, Vec<_>) = (0..reads.len())
+        .map(|i| {
+            let mut read_lks: Vec<_> = likelihood_on_clusters.iter().map(|lks| lks[i]).collect();
+            let read_lk: f64 = logsumexp(&read_lks);
+            lk += read_lk;
+            read_lks.iter_mut().for_each(|x| *x = (*x - read_lk).exp());
+            let (asn, _) = read_lks
+                .iter()
+                .enumerate()
+                .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+                .unwrap();
+            (read_lks, asn as u8)
+        })
+        .unzip();
+    let partition_lk: f64 = {
+        let mut counts = vec![0; k];
+        for &asn in assignments.iter() {
+            counts[asn as usize] += 1;
+        }
+        counts
+            .iter()
+            .map(|&count| max_poisson_lk(count, coverage, 1, k))
+            .sum()
+    };
+    (assignments, lk + partition_lk, posterior)
+}
+
 pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
@@ -166,13 +303,13 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
     config: &ClusteringConfig,
 ) -> Option<ClusteringDevResult> {
+    trace!("{}", String::from_utf8_lossy(template));
     let ClusteringConfig {
         band_width,
         copy_num,
         coverage,
         gain: average_lk,
         ..
-        // _read_type,
     } = *config;
     let profiles: Vec<_> = reads
         .iter()
@@ -188,6 +325,13 @@ pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let copy_num = copy_num as usize;
     let selected_variants: Vec<_> = {
         let probes = filter_profiles_neo(&profiles, copy_num, 3, coverage, template.len());
+        for (pos, lk) in probes.iter() {
+            let (pos, var) = (
+                pos / kiley::hmm::guided::NUM_ROW,
+                pos % kiley::hmm::guided::NUM_ROW,
+            );
+            trace!("DUMP\t{}\t{}\t{}", pos, var, lk);
+        }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
