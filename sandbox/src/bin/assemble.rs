@@ -14,10 +14,10 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    ds.encoded_reads
-        .iter_mut()
-        .flat_map(|n| n.nodes.iter_mut())
-        .for_each(|n| n.cluster = 0);
+    // ds.encoded_reads
+    //     .iter_mut()
+    //     .flat_map(|n| n.nodes.iter_mut())
+    //     .for_each(|n| n.cluster = 0);
     let config = AssembleConfig::new(1, 100, false, true, 3, 4f64);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());

@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "edlib_sys"
 version = "0.1.0"
-source = "git+https://github.com/ban-m/edlib-sys.git?branch=master#8c8b085ce826916dcba33737731d9656cfc5cf70"
+source = "git+https://github.com/ban-m/edlib-sys.git?branch=master#4f9966ead0de0d7e9623e344a72b628d5ad11d05"
 dependencies = [
  "bindgen",
  "cc",
@@ -403,7 +403,7 @@ dependencies = [
 [[package]]
 name = "histgram_viz"
 version = "0.1.0"
-source = "git+https://github.com/ban-m/histgram_viz?branch=master#def3d3783d2f6507396ed5cd64156c48c2e49ab3"
+source = "git+https://github.com/ban-m/histgram_viz?branch=master#9260229e514289cc9c0e35f9b52f174fe03e805f"
 
 [[package]]
 name = "hla_cli"

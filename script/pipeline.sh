@@ -69,7 +69,7 @@ then
     echo "Global clustering seems to be done. Just assemble these files."
 else
     cat ${RESOLVED} |\
-        jtk correct_clustering -vv  --threads ${THREADS} |\
+        # jtk correct_clustering -vv  --threads ${THREADS} |\
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
 

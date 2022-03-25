@@ -1,4 +1,3 @@
-const IS_NEO: bool = true;
 use definitions::*;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
@@ -105,10 +104,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 use kmeans::*;
-                let cls = match IS_NEO {
-                    true => clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config),
-                    false => clustering_dev(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config),
-                };
+                let cls = clustering_inner(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
                 cls.unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
             } else {
                 (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
@@ -200,10 +196,7 @@ fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64
     let lk1 = hmm.likelihood(&template, &query1, 20);
     // Edit dist == 4
     let lk2 = hmm.likelihood(&template, &query2, 20);
-    match IS_NEO {
-        true => (lk1 - lk2) / 3f64,
-        false => (lk1 - lk2) / 4f64,
-    }
+    (lk1 - lk2) / 3f64
 }
 
 // use kiley::gphmm::Cond;
