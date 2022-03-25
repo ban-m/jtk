@@ -1,3 +1,4 @@
+const IS_NEO: bool = true;
 use definitions::*;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
@@ -103,8 +104,12 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 hmm.polish_until_converge_with_take(refseq, &seqs, &mut ops, band_width, take);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
-                kmeans::clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config)
-                    .unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
+                use kmeans::*;
+                let cls = match IS_NEO {
+                    true => clustering_neo(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config),
+                    false => clustering_dev(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config),
+                };
+                cls.unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
             } else {
                 (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
             };
@@ -188,12 +193,17 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
 fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 239048;
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED);
-    let template = kiley::gen_seq::generate_seq(&mut rng, 1000);
+    let template = kiley::gen_seq::generate_seq(&mut rng, 500);
     let query1 = kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 2, 2);
     let query2 = kiley::gen_seq::introduce_errors(&query1, &mut rng, 0, 1, 1);
+    // Edit dist == 2
     let lk1 = hmm.likelihood(&template, &query1, 20);
+    // Edit dist == 4
     let lk2 = hmm.likelihood(&template, &query2, 20);
-    (lk1 - lk2) / 3f64
+    match IS_NEO {
+        true => (lk1 - lk2) / 3f64,
+        false => (lk1 - lk2) / 4f64,
+    }
 }
 
 // use kiley::gphmm::Cond;

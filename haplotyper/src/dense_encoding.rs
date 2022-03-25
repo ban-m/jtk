@@ -235,7 +235,19 @@ fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> Edg
     use crate::assemble::*;
     let (min_span_reads, lk_ratio) = weak_resolve(ds.read_type);
     let config = AssembleConfig::new(1, 1000, false, true, min_span_reads, lk_ratio);
-    let (_, summaries) = assemble(ds, &config);
+    let (records, summaries) = assemble(ds, &config);
+    if log_enabled!(log::Level::Trace) {
+        let header = gfa::Content::Header(gfa::Header::default());
+        let header = gfa::Record::from_contents(header, vec![]);
+        let records = std::iter::once(header).chain(records).collect();
+        let gfa = gfa::GFA::from_records(records);
+        if let Ok(mut wtr) = std::fs::File::create("de.gfa").map(std::io::BufWriter::new) {
+            use std::io::Write;
+            if let Err(why) = writeln!(&mut wtr, "{}", gfa) {
+                trace!("{:?}", why);
+            }
+        }
+    }
     let edges: HashMap<_, _> = summaries
         .iter()
         .filter(|summary| !summary.summary.is_empty())

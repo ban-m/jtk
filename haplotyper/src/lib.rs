@@ -16,7 +16,7 @@ pub mod local_clustering;
 pub mod minimap2;
 pub mod multiplicity_estimation;
 pub mod pick_component;
-pub mod polish_clustering;
+// pub mod polish_clustering;
 pub mod polish_units;
 pub mod purge_diverged;
 pub mod remove_erroneous_nodes;

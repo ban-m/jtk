@@ -91,83 +91,6 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
 }
 
 type ClusteringDevResult = (Vec<u8>, Vec<Vec<f64>>, f64, u8);
-// /// If everything goes fine, return the assignment of each read,
-// /// likelihood vectors and its total likelihood gain.
-// /// Specifically, if the returned value is `(asms,lks,lk),
-// /// then, `lks[i][k]` is equal to the gain of the likelihood of the i-th read when in the k-th cluster.
-// pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
-//     template: &[u8],
-//     reads: &[T],
-//     rng: &mut R,
-//     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
-//     config: &ClusteringConfig,
-// ) -> Option<ClusteringDevResult> {
-//     let ClusteringConfig {
-//         band_width,
-//         copy_num,
-//         coverage,
-//         read_type,
-//     } = *config;
-//     let profiles = get_profiles(template, hmm, reads, band_width as isize)?;
-//     let copy_num = copy_num as usize;
-//     // const NEWFEATURE: bool = false;
-//     let selected_variants: Vec<_> = {
-//         let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
-//         if log_enabled!(log::Level::Trace) {
-//             // DUMP Hot columns.
-//             for (pos, lk) in probes.iter() {
-//                 let (idx, t) = (pos / 9, pos % 9);
-//                 if idx < template.len() {
-//                     trace!("POS\t{}\t{}\t{}\tED\t{:.3}", pos, idx, t, lk);
-//                 } else {
-//                     let idx = pos - 9 * template.len();
-//                     if idx < (DEL_SIZE - 1) * (template.len() - DEL_SIZE) {
-//                         let (idx, len) = (idx / (DEL_SIZE - 1), idx % (DEL_SIZE - 1));
-//                         trace!("POS\t{}\t{}\t{}\tDEL\t{:.3}", pos, idx, len, lk);
-//                     } else {
-//                         let idx = idx - (DEL_SIZE - 1) * (template.len() - DEL_SIZE);
-//                         let (idx, len) = (idx / REP_SIZE, idx % REP_SIZE + 1);
-//                         trace!("POS\t{}\t{}\t{}\tCP\t{:.3}", pos, idx, len, lk);
-//                     };
-//                 }
-//             }
-//         }
-//         profiles
-//             .iter()
-//             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
-//             .collect()
-//     };
-//     let num = 2;
-//     let average_lk = match read_type {
-//         ReadType::CCS => CLR_AVERAGE_LK,
-//         ReadType::CLR => CCS_AVERAGE_LK,
-//         ReadType::ONT => ONT_AVERAGE_LK,
-//         ReadType::None => CLR_AVERAGE_LK,
-//     };
-//     let estim_cov = (reads.len() as f64 / copy_num as f64 + coverage) / 2f64;
-//     let init_copy_num = copy_num.max(4) - 3;
-//     let (assignments, score, k) = (init_copy_num..=copy_num)
-//         .filter_map(|k| {
-//             let (asn, score) = (0..num)
-//                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
-//                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-//             trace!("LK\t{}\t{:.3}", k, score);
-//             let expected_gain = (k - 1) as f64 * average_lk * estim_cov;
-//             Some((asn, score - expected_gain, k))
-//         })
-//         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-//     let score = score + (k - 1) as f64 * average_lk * estim_cov;
-//     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
-//     to_posterior_probability(&mut likelihood_gains);
-//     if log_enabled!(log::Level::Trace) {
-//         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-//             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-//             trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
-//         }
-//     }
-//     Some((assignments, likelihood_gains, score, k as u8))
-// }
-
 pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
@@ -176,7 +99,6 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
     config: &ClusteringConfig,
 ) -> Option<ClusteringDevResult> {
-    trace!("{}", String::from_utf8_lossy(template));
     let ClusteringConfig {
         band_width,
         copy_num,
@@ -197,34 +119,39 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .collect();
     let copy_num = copy_num as usize;
     let probes = filter_profiles_neo(&profiles, copy_num, 3, coverage, template.len());
-    for (pos, lk) in probes.iter() {
-        let (pos, var) = (
-            pos / kiley::hmm::guided::NUM_ROW,
-            pos % kiley::hmm::guided::NUM_ROW,
-        );
-        trace!("DUMP\t{}\t{}\t{}", pos, var, lk);
-    }
     let selected_variants: Vec<_> = profiles
         .iter()
         .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
         .collect();
+    let initial_lk: f64 = reads
+        .iter()
+        .zip(ops.iter())
+        .map(|(seq, ops)| hmm.likelihood_guided(&template, seq.borrow(), ops, band_width))
+        .sum();
     let num = 3;
     let init_copy_num = copy_num.max(4) - 3;
     let (assignments, score, posterior, k) = (init_copy_num..=copy_num)
         .filter_map(|k| {
-            let (asn, _) = (0..num)
+            let (asn, old_score) = (0..num)
                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
             let sequencepack = (template, reads, ops.as_ref());
             let modelpack = (hmm, band_width);
             let (asn, score, posterior) =
                 re_eval_clustering(sequencepack, modelpack, &asn, coverage, k);
-            let expected_gain = (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
-            trace!("LK\t{}\t{:.3}", k, score);
-            Some((asn, score - expected_gain, posterior, k))
+            let clnum = k as f64;
+            let expected_gain_per_read = ((clnum - 1f64 + average_lk.exp()) / clnum).ln();
+            let expected_gain =
+                expected_gain_per_read * (clnum - 1f64) / clnum * reads.len() as f64;
+            trace!(
+                "Score\t{k}\t{old_score}\t{}\t{expected_gain}",
+                score - initial_lk
+            );
+            let score = score - expected_gain - initial_lk;
+            trace!("LK\t{}\t{:.3}\t{}", k, score, template.len());
+            Some((asn, score, posterior, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    let score = score + (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
@@ -238,32 +165,37 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
     (template, reads, ops): (&[u8], &[T], &[Vec<kiley::Op>]),
     (hmm, band): (&HMM, usize),
     assignments: &[u8],
-    coverage: f64,
+    _coverage: f64,
     k: usize,
 ) -> (Vec<u8>, f64, Vec<Vec<f64>>) {
-    let likelihood_on_clusters: Vec<Vec<f64>> = (0..k)
-        .map(|cl| {
-            let mut packed_data: Vec<_> = reads
+    let fracs: Vec<f64> = {
+        let mut counts = vec![0; k];
+        for &asn in assignments.iter() {
+            counts[asn as usize] += 1;
+        }
+        counts
+            .iter()
+            .map(|&x| (x as f64).max(0.00001).ln() - (reads.len() as f64).ln())
+            .collect()
+    };
+    let likelihood_on_clusters: Vec<Vec<f64>> = fracs
+        .iter()
+        .enumerate()
+        .map(|(cl, fr)| {
+            let mut packed_data: PackedData<T> = reads
                 .iter()
                 .zip(ops.to_vec())
                 .zip(assignments.iter())
                 .enumerate()
+                .map(|(i, ((read, ops), asn))| (i, read, ops, *asn))
                 .collect();
-            packed_data.sort_by_key(|(_, x)| (*x.1 != cl as u8));
-            let template = {
-                let (sorted, mut ops): (Vec<_>, Vec<_>) = packed_data
-                    .iter_mut()
-                    .map(|(_, ((read, ops), _))| (read.borrow(), ops))
-                    .unzip();
-                let take = assignments.iter().filter(|&&asn| asn == cl as u8).count();
-                hmm.polish_until_converge_with_take(&template, &sorted, &mut ops, band, take)
-            };
+            packed_data.sort_by_key(|x| (x.3 != cl as u8));
+            let consensus = get_consensus_of(&template, &mut packed_data, hmm, band, cl);
             packed_data.sort_unstable_by_key(|x| x.0);
             packed_data
                 .iter()
-                .map(|(_, ((seq, ops), _))| {
-                    hmm.likelihood_guided(&template, seq.borrow(), &ops, band)
-                })
+                .map(|(_, seq, ops, _)| hmm.likelihood_guided(&consensus, seq.borrow(), &ops, band))
+                .map(|lk| lk + fr)
                 .collect()
         })
         .collect();
@@ -273,7 +205,7 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
             let mut read_lks: Vec<_> = likelihood_on_clusters.iter().map(|lks| lks[i]).collect();
             let read_lk: f64 = logsumexp(&read_lks);
             lk += read_lk;
-            read_lks.iter_mut().for_each(|x| *x = (*x - read_lk).exp());
+            read_lks.iter_mut().for_each(|x| *x -= read_lk);
             let (asn, _) = read_lks
                 .iter()
                 .enumerate()
@@ -282,17 +214,23 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
             (read_lks, asn as u8)
         })
         .unzip();
-    let partition_lk: f64 = {
-        let mut counts = vec![0; k];
-        for &asn in assignments.iter() {
-            counts[asn as usize] += 1;
-        }
-        counts
-            .iter()
-            .map(|&count| max_poisson_lk(count, coverage, 1, k))
-            .sum()
-    };
-    (assignments, lk + partition_lk, posterior)
+    (assignments, lk, posterior)
+}
+
+type PackedData<'a, T> = Vec<(usize, &'a T, Vec<kiley::Op>, u8)>;
+fn get_consensus_of<T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    packed_data: &mut PackedData<T>,
+    hmm: &HMM,
+    band: usize,
+    cl: usize,
+) -> Vec<u8> {
+    let take = packed_data.iter().filter(|x| x.3 == cl as u8).count();
+    let (sorted, mut ops): (Vec<_>, Vec<_>) = packed_data
+        .iter_mut()
+        .map(|(_, read, ops, _)| (read.borrow(), ops))
+        .unzip();
+    hmm.polish_until_converge_with_take_cons(&template, &sorted, &mut ops, band, take, 0.0)
 }
 
 pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(

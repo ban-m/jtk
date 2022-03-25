@@ -1,5 +1,5 @@
 use crate::ALN_PARAMETER;
-
+const SEED: u64 = 394;
 use super::encode::Encode;
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
@@ -113,7 +113,7 @@ impl DetermineUnit for definitions::DataSet {
             ReadType::ONT => 3,
         };
         debug!("Select Unit: Configuration:{:?}", config);
-        let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(342903);
+        let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
         self.selected_chunks = {
             let mut config = config.clone();
             config.chunk_len = 12 * config.chunk_len / 10;

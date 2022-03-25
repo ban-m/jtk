@@ -509,7 +509,6 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
     // (unit,cluster) -> indices of the summary whose either terminal is (unit,cluster), if there is any.
     let mut contig_terminals: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
     for (i, summary) in summaries.iter().enumerate() {
-        // trace!("{}->{}", i, summary);
         let mut summary = summary.summary.iter();
         let first = summary.next().unwrap();
         contig_terminals

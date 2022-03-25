@@ -394,9 +394,7 @@ pub fn correct_deletion_error(
     variance: f64,
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
-    let start = std::time::Instant::now();
     let pileups = get_pileup(read, reads);
-    let pu = std::time::Instant::now();
     let threshold = 3;
     let nodes = &read.nodes;
     let mut inserts = vec![];
@@ -426,7 +424,6 @@ pub fn correct_deletion_error(
             read.nodes.insert(idx + accum_inserts, node);
         }
     }
-    let enc = std::time::Instant::now();
     is_changed |= remove_highly_erroneous(read, read_error, unitinfo, variance);
     if is_changed && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
@@ -438,13 +435,6 @@ pub fn correct_deletion_error(
         nodes = remove_slippy_alignment(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
-    let reenc = std::time::Instant::now();
-    debug!(
-        "{}\t{}\t{}",
-        (pu - start).as_micros(),
-        (enc - pu).as_micros(),
-        (reenc - enc).as_micros()
-    );
     new_inserts
 }
 
