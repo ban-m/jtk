@@ -80,7 +80,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         });
     });
     let coverage = ds.coverage.unwrap();
-    // let hmm = estimate_model_parameters(ds.read_type, &pileups, &chunks);
     let gain = estimate_minimum_gain(&hmm);
     debug!("MinGain\t{:.3}", gain);
     let read_type = ds.read_type;
@@ -200,11 +199,11 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
 }
 
 fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
-    const SEED: u64 = 239048;
-    const SAMPLE_NUM: usize = 100;
+    const SEED: u64 = 23908;
+    const SAMPLE_NUM: usize = 300;
     const LEN: usize = 100;
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED);
-    let lkmin = (0..SAMPLE_NUM)
+    let mut lks: Vec<_> = (0..SAMPLE_NUM)
         .map(|i| {
             let template = kiley::gen_seq::generate_seq(&mut rng, LEN);
             let query = match i % 2 == 0 {
@@ -215,9 +214,9 @@ fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64
             let lk_diff = hmm.likelihood(&template, &query, 10);
             lk_base - lk_diff
         })
-        .min_by(|x, y| x.partial_cmp(y).unwrap())
-        .unwrap();
-    lkmin * 0.95
+        .collect();
+    lks.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    lks[SAMPLE_NUM / 100]
     // let lkdiff: Vec<_> = (0..SAMPLE_NUM)
     //     .map(|i| {
     //         let template = kiley::gen_seq::generate_seq(&mut rng, LEN);

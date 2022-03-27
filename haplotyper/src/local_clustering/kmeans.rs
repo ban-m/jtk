@@ -112,8 +112,7 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .flat_map(|k| std::iter::repeat(k).take(num))
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            let clnum = k as f64;
-            let expected_gain_per_read = (clnum - 1f64) / clnum * average_lk - clnum.ln();
+            let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
             let expected_gain = expected_gain_per_read * reads.len() as f64;
             (asn, score - expected_gain, k)
         })
@@ -136,6 +135,20 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
     }
     Some((assignments, posterior, score, k as u8))
 }
+
+fn calc_expected_gain_per_read(k: usize, lk: f64) -> f64 {
+    let kf = k as f64;
+    let cons_cluster = (1f64 + (kf - 1f64) * (-lk).exp()).ln();
+    let other_cluster = match k {
+        1 => (1f64 + (-2f64 * lk).exp()).ln() + lk,
+        _ => (1f64 + (-2.0 * lk).exp() + (-3.0 * lk).exp() * (kf - 2.0)).ln() + lk,
+    };
+    let reg_term = kf.ln();
+    (cons_cluster + (kf - 1.0) * other_cluster) / kf - reg_term
+    // let clnum = k as f64;
+    // (clnum - 1f64) / clnum * lk - clnum.ln()
+}
+
 type HMM = kiley::hmm::guided::PairHiddenMarkovModel;
 fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
     (template, reads, ops): (&[u8], &[T], &[Vec<kiley::Op>]),
