@@ -151,13 +151,6 @@ pub fn get_tuned_model(ds: &DataSet) -> kiley::hmm::guided::PairHiddenMarkovMode
             bucket.push(node);
         }
     }
-    // pileups.iter_mut().for_each(|(unit_id, nodes)| {
-    //     nodes.sort_by_cached_key(|node| {
-    //         let ref_unit = chunks.get(unit_id).unwrap();
-    //         let (_, aln, _) = node.recover(ref_unit);
-    //         aln.iter().filter(|&&x| x != b'|').count()
-    //     });
-    // });
     estimate_model_parameters(ds.read_type, &pileups, &chunks)
 }
 
