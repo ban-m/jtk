@@ -785,7 +785,6 @@ fn alignment(read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Option<Vec<O
     };
     let match_num = get_match_units(&ops);
     let score_thr = if read.nodes.len() == 2 { 1 } else { SCORE_THR };
-    // Dovetails should be proper. Not Del->In or In -> Del transition should reside.
     (MIN_MATCH <= match_num && score_thr <= score && is_proper(&ops)).then(|| ops)
 }
 

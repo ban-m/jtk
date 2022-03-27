@@ -66,6 +66,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         .filter(|c| selection.contains(&c.id))
         .map(|c| (c.id, c))
         .collect();
+    let hmm = get_tuned_model(ds);
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         if let Some(bucket) = pileups.get_mut(&node.unit) {
             bucket.push(node);
@@ -79,7 +80,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         });
     });
     let coverage = ds.coverage.unwrap();
-    let hmm = estimate_model_parameters(ds.read_type, &pileups, &chunks);
+    // let hmm = estimate_model_parameters(ds.read_type, &pileups, &chunks);
     let gain = estimate_minimum_gain(&hmm);
     debug!("MinGain\t{:.3}", gain);
     let read_type = ds.read_type;
@@ -93,7 +94,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 .iter()
                 .map(|node| (node.seq(), ops_to_kiley_ops(&node.cigar)))
                 .unzip();
-            let band_width = read_type.band_width(ref_unit.seq().len()) / 2;
+            let band_width = read_type.band_width(ref_unit.seq().len());
             let start = std::time::Instant::now();
             use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
@@ -139,6 +140,25 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     }
     // re_encode_reads(ds, &consensus_and_clusternum);
     normalize::normalize_local_clustering(ds);
+}
+
+pub fn get_tuned_model(ds: &DataSet) -> kiley::hmm::guided::PairHiddenMarkovModel {
+    let mut pileups: HashMap<u64, Vec<_>> =
+        ds.selected_chunks.iter().map(|u| (u.id, vec![])).collect();
+    let chunks: HashMap<u64, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        if let Some(bucket) = pileups.get_mut(&node.unit) {
+            bucket.push(node);
+        }
+    }
+    // pileups.iter_mut().for_each(|(unit_id, nodes)| {
+    //     nodes.sort_by_cached_key(|node| {
+    //         let ref_unit = chunks.get(unit_id).unwrap();
+    //         let (_, aln, _) = node.recover(ref_unit);
+    //         aln.iter().filter(|&&x| x != b'|').count()
+    //     });
+    // });
+    estimate_model_parameters(ds.read_type, &pileups, &chunks)
 }
 
 fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
@@ -188,15 +208,41 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
 
 fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 239048;
+    const SAMPLE_NUM: usize = 100;
+    const LEN: usize = 100;
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED);
-    let template = kiley::gen_seq::generate_seq(&mut rng, 500);
-    let query1 = kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 2, 2);
-    let query2 = kiley::gen_seq::introduce_errors(&query1, &mut rng, 0, 1, 1);
-    // Edit dist == 2
-    let lk1 = hmm.likelihood(&template, &query1, 20);
-    // Edit dist == 4
-    let lk2 = hmm.likelihood(&template, &query2, 20);
-    (lk1 - lk2) / 3f64
+    let lkmin = (0..SAMPLE_NUM)
+        .map(|i| {
+            let template = kiley::gen_seq::generate_seq(&mut rng, LEN);
+            let query = match i % 2 == 0 {
+                true => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 0, 1),
+                false => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 1, 0),
+            };
+            let lk_base = hmm.likelihood(&template, &template, 10);
+            let lk_diff = hmm.likelihood(&template, &query, 10);
+            lk_base - lk_diff
+        })
+        .min_by(|x, y| x.partial_cmp(y).unwrap())
+        .unwrap();
+    lkmin * 0.95
+    // let lkdiff: Vec<_> = (0..SAMPLE_NUM)
+    //     .map(|i| {
+    //         let template = kiley::gen_seq::generate_seq(&mut rng, LEN);
+    //         let query = match i % 2 == 0 {
+    //             true => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 0, 1),
+    //             false => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 1, 0),
+    //         };
+    //         let lk_base = hmm.likelihood(&template, &template, 10);
+    //         let lk_diff = hmm.likelihood(&template, &query, 10);
+    //         lk_base - lk_diff
+    //     })
+    //     .collect();
+    // let template = kiley::gen_seq::generate_seq(&mut rng, 500);
+    // let query1 = kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 2, 2);
+    // let query2 = kiley::gen_seq::introduce_errors(&query1, &mut rng, 0, 1, 1);
+    // let lk1 = hmm.likelihood(&template, &query1, 20);
+    // let lk2 = hmm.likelihood(&template, &query2, 20);
+    // (lk1 - lk2) / 3f64
 }
 
 // use kiley::gphmm::Cond;
@@ -260,7 +306,7 @@ fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64
 //     }
 // }
 
-fn ops_to_kiley_ops(ops: &[definitions::Op]) -> Vec<kiley::Op> {
+pub fn ops_to_kiley_ops(ops: &[definitions::Op]) -> Vec<kiley::Op> {
     ops.iter()
         .flat_map(|op| match op {
             Op::Match(l) => std::iter::repeat(kiley::Op::Match).take(*l),

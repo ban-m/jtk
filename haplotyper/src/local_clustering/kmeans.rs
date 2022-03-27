@@ -1,26 +1,9 @@
 //! A small K-means clustering algorithm.
-#[allow(dead_code)]
-const DIFF_SIZE: usize = 9;
-// const DEL_SIZE: usize = 4;
-// const REP_SIZE: usize = 4;
-// Average LK gain for one read. If you increment the number of the cluster,
-// you should gain AVERAGE_LK * coverage log-likelihood.
-// const CLR_AVERAGE_LK: f64 = 1.1;
-// const ONT_AVERAGE_LK: f64 = 1.8;
-// const CCS_AVERAGE_LK: f64 = 3.0;
-// See `clustering_dev`for detail.
-// const SMALL_LK: f64 = -1000f64;
-// const DEL_LK: f64 = 3f64;
-// return expected number of variants under the null hypothesis.
-// fn expected_mis_num(cov: usize) -> f64 {
-//     cov as f64 * 0.1f64 + 0.35
-// }
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 const MASK_LENGTH: usize = 5;
 use definitions::ReadType;
 use rand::Rng;
 
-// use crate::assemble::string_graph::consensus;
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub struct ClusteringConfig {
@@ -123,37 +106,29 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .iter()
         .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
         .collect();
+    let num = 3;
+    let init_copy_num = copy_num.max(4) - 3;
+    let (asn, score, k) = (init_copy_num..=copy_num)
+        .flat_map(|k| std::iter::repeat(k).take(num))
+        .map(|k| {
+            let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
+            let clnum = k as f64;
+            let expected_gain_per_read = (clnum - 1f64) / clnum * average_lk - clnum.ln();
+            let expected_gain = expected_gain_per_read * reads.len() as f64;
+            (asn, score - expected_gain, k)
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    trace!("Init\t{}\t{}", k, score);
+    let sequencepack = (template, reads, ops.as_ref());
+    let modelpack = (hmm, band_width);
+    let (assignments, score, posterior) =
+        re_eval_clustering(sequencepack, modelpack, &asn, coverage, k);
     let initial_lk: f64 = reads
         .iter()
         .zip(ops.iter())
         .map(|(seq, ops)| hmm.likelihood_guided(&template, seq.borrow(), ops, band_width))
         .sum();
-    let num = 3;
-    let init_copy_num = copy_num.max(4) - 3;
-    let (assignments, score, posterior, k) = (init_copy_num..=copy_num)
-        .filter_map(|k| {
-            let (asn, old_score) = (0..num)
-                .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
-                .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-            let sequencepack = (template, reads, ops.as_ref());
-            let modelpack = (hmm, band_width);
-            let (asn, score, posterior) =
-                re_eval_clustering(sequencepack, modelpack, &asn, coverage, k);
-            let clnum = k as f64;
-            let expected_gain_per_read = (clnum - 1f64) / clnum * average_lk - clnum.ln();
-            let expected_gain = expected_gain_per_read * reads.len() as f64;
-            // let expected_gain_per_read = ((clnum - 1f64 + average_lk.exp()) / clnum).ln();
-            // let expected_gain =
-            //     expected_gain_per_read * (clnum - 1f64) / clnum * reads.len() as f64;
-            trace!(
-                "Score\t{k}\t{old_score}\t{}\t{expected_gain}",
-                score - initial_lk
-            );
-            let score = score - expected_gain - initial_lk;
-            trace!("LK\t{}\t{:.3}\t{}", k, score, template.len());
-            Some((asn, score, posterior, k))
-        })
-        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let score = score - initial_lk;
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
@@ -193,10 +168,8 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
                 .collect();
             packed_data.sort_by_key(|x| (x.3 != cl as u8));
             let consensus = get_consensus_of(&template, &mut packed_data, hmm, band, cl);
-            trace!(
-                "CONS\t{cl}\t{}",
-                edlib_sys::global_dist(&consensus, template)
-            );
+            let dist = edlib_sys::global_dist(template, &consensus);
+            trace!("CONS\t{}\t{}", cl, dist);
             packed_data.sort_unstable_by_key(|x| x.0);
             packed_data
                 .iter()
@@ -216,7 +189,12 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
                 .iter()
                 .map(|x| format!("{:.2}", x - orig_lk))
                 .collect();
-            trace!("{k}\t{i}\t{}\t{}", assignments[i], dump.join("\t"));
+            trace!(
+                "{k}\t{i}\t{}\t{}\t{}",
+                assignments[i],
+                seq.borrow().len(),
+                dump.join("\t")
+            );
             let read_lk: f64 = logsumexp(&read_lks);
             lk += read_lk;
             read_lks.iter_mut().for_each(|x| *x -= read_lk);
@@ -244,7 +222,8 @@ fn get_consensus_of<T: std::borrow::Borrow<[u8]>>(
         .iter_mut()
         .map(|(_, read, ops, _)| (read.borrow(), ops))
         .unzip();
-    hmm.polish_until_converge_with_take_cons(&template, &sorted, &mut ops, band, take, 0.0)
+    let config = kiley::hmm::guided::HMMConfig::new(band, take, MASK_LENGTH);
+    hmm.polish_until_converge_with_conf(&template, &sorted, &mut ops, &config)
 }
 
 // pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
@@ -1257,50 +1236,6 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
     if k <= 1 || data.iter().all(|xs| xs.is_empty()) || data.len() <= k {
         return (vec![0; data.len()], 0f64);
     }
-    // // 1. Construct the first assignments.
-    // let mut centers: Vec<&[f64]> = vec![];
-    // let indices: Vec<_> = (0..data.len()).collect();
-    // // Choosing centers.
-    // use rand::seq::SliceRandom;
-    // while centers.len() < k as usize {
-    //     // calculate distance to the most nearest centers.
-    //     let mut dists: Vec<_> = data
-    //         .iter()
-    //         .map(|xs| {
-    //             centers
-    //                 .iter()
-    //                 .map(|c| euclid_norm_f64(xs, c))
-    //                 .min_by(|x, y| x.partial_cmp(y).unwrap())
-    //                 .unwrap_or(1f64)
-    //                 .powi(2)
-    //         })
-    //         .collect();
-    //     let total: f64 = dists.iter().sum();
-    //     dists.iter_mut().for_each(|x| *x /= total);
-    //     let idx = match indices.choose_weighted(rng, |&idx| dists[idx]) {
-    //         Ok(res) => *res,
-    //         Err(why) => {
-    //             for d in data.iter() {
-    //                 error!("{:?}", d);
-    //             }
-    //             panic!("{:?}", why);
-    //         }
-    //     };
-    //     centers.push(&data[idx]);
-    // }
-    // let mut assignments: Vec<_> = data
-    //     .iter()
-    //     .map(|xs| {
-    //         centers
-    //             .iter()
-    //             .enumerate()
-    //             .map(|(i, center)| (i as u8, euclid_norm_f64(center, xs)))
-    //             .min_by(|x, y| x.1.partial_cmp(&(y.1)).unwrap())
-    //             .unwrap()
-    //             .0
-    //     })
-    //     .collect();
-    // Calculate lower bound .
     let var_dim = data[0].len();
     let lower_bound: f64 = (0..var_dim)
         .map(|pos| {

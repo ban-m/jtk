@@ -20,40 +20,59 @@ pub trait PurgeDivergent {
 
 use rayon::prelude::*;
 
+const SD_SIGMA: f64 = 6f64;
+const REDEFINE: bool = false;
 use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
         let error_rate = self.error_rate();
-        let thr = {
-            // TODO: Tune this fraction appropreately...
-            (error_rate.total + 4f64 * 1.5 * error_rate.total_sd).max(0.11f64)
-        };
+        let thr = error_rate.total + SD_SIGMA * error_rate.total_sd;
         debug!(
             "PD\tTHR\t{}\t{}\t{}",
             error_rate.total, error_rate.total_sd, thr
         );
-        let to_be_removed = purge_diverged_nodes(self, thr, config);
-        let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
-        debug!("PD\tREMOVED\t{}", removed_nodes);
-        let seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
         let prev = self.encoded_reads.len();
-        self.encoded_reads
-            .par_iter_mut()
-            .zip(to_be_removed)
-            .for_each(|(read, (id, indices))| {
-                assert_eq!(read.id, id);
-                assert!(indices.is_sorted());
-                for &index in indices.iter().rev() {
-                    read.remove(index);
-                }
+        if REDEFINE {
+            let re_defined_chunks = purge_diverged_nodes_dev(self, thr, config);
+            let changed_nodes: usize = self
+                .encoded_reads
+                .par_iter_mut()
+                .map(|read| {
+                    read.nodes
+                        .iter_mut()
+                        .filter(|n| re_defined_chunks.contains_key(&(n.unit, n.cluster)))
+                        .map(|n| {
+                            let (u, c) = re_defined_chunks[&(n.unit, n.cluster)];
+                            n.unit = u;
+                            n.cluster = c;
+                        })
+                        .count()
+                })
+                .sum();
+            debug!("PD\tChanged\t{}", changed_nodes);
+        } else {
+            let to_be_removed = purge_diverged_nodes(self, thr, config);
+            let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
+            debug!("PD\tREMOVED\t{}", removed_nodes);
+            let seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+            self.encoded_reads
+                .par_iter_mut()
+                .zip(to_be_removed)
+                .for_each(|(read, (id, indices))| {
+                    assert_eq!(read.id, id);
+                    assert!(indices.is_sorted());
+                    for &index in indices.iter().rev() {
+                        read.remove(index);
+                    }
+                });
+            self.encoded_reads.retain(|read| !read.nodes.is_empty());
+            self.encoded_reads.par_iter_mut().for_each(|read| {
+                let mut nodes = vec![];
+                nodes.append(&mut read.nodes);
+                let seq = seqs[&read.id];
+                *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
             });
-        self.encoded_reads.retain(|read| !read.nodes.is_empty());
-        self.encoded_reads.par_iter_mut().for_each(|read| {
-            let mut nodes = vec![];
-            nodes.append(&mut read.nodes);
-            let seq = seqs[&read.id];
-            *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-        });
+        }
         debug!("PD\tEncodedRead\t{}\t{}", prev, self.encoded_reads.len());
         // Reclustering...
         re_cluster(self, config.threads);
@@ -302,4 +321,71 @@ fn remove_diverged(node: &mut Node, cluster_info: &[bool]) {
         i += 1;
         !cluster_info[i - 1]
     });
+}
+
+fn purge_diverged_nodes_dev(
+    _ds: &mut DataSet,
+    _thr: f64,
+    _config: &PurgeDivConfig,
+) -> HashMap<(u64, u64), (u64, u64)> {
+    todo!()
+    // let diverged_clusters = get_diverged_clusters(ds, thr, config);
+    // // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
+    // let diverged_clusters: Vec<_> = diverged_clusters
+    //     .into_iter()
+    //     .map(|mut xs| {
+    //         if xs.iter().all(|&x| x) {
+    //             xs.iter_mut().for_each(|x| *x = false);
+    //         }
+    //         xs
+    //     })
+    //     .collect();
+    // let has_diverged_cluster: Vec<bool> = diverged_clusters
+    //     .iter()
+    //     .map(|xs| xs.iter().any(|&x| x))
+    //     .collect();
+    // let removed_clusters: usize = diverged_clusters
+    //     .iter()
+    //     .map(|cls| cls.iter().filter(|&&x| x).count())
+    //     .sum();
+    // debug!("PD\tPurge\t{}", removed_clusters);
+    // for (id, x) in diverged_clusters.iter().enumerate() {
+    //     for (cl, _) in x.iter().enumerate().filter(|x| *x.1) {
+    //         debug!("PD\tPurge\t{}\t{}", id, cl);
+    //     }
+    // }
+    // // Modify cluster number.
+    // for unit in ds
+    //     .selected_chunks
+    //     .iter_mut()
+    //     .filter(|u| has_diverged_cluster[u.id as usize])
+    // {
+    //     let squished = diverged_clusters[unit.id as usize]
+    //         .iter()
+    //         .filter(|&&x| x)
+    //         .count();
+    //     unit.cluster_num -= squished;
+    // }
+    // // Maybe we need to modify the copy number, thoguth....
+    // ds.encoded_reads
+    //     .iter_mut()
+    //     .map(|r| {
+    //         let indices: Vec<_> = r
+    //             .nodes
+    //             .iter_mut()
+    //             .enumerate()
+    //             .filter(|(_, node)| has_diverged_cluster[node.unit as usize])
+    //             .filter_map(|(idx, node)| {
+    //                 let cluster_info = &diverged_clusters[node.unit as usize];
+    //                 if cluster_info[node.cluster as usize] {
+    //                     Some(idx)
+    //                 } else {
+    //                     remove_diverged(node, cluster_info);
+    //                     None
+    //                 }
+    //             })
+    //             .collect();
+    //         (r.id, indices)
+    //     })
+    //     .collect()
 }

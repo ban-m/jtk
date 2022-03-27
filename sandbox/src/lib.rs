@@ -1,4 +1,3 @@
-use log::debug;
 pub const IS_MOCK: bool = false;
 use rand::Rng;
 pub fn test() {

@@ -114,11 +114,7 @@ impl DetermineUnit for definitions::DataSet {
         };
         debug!("Select Unit: Configuration:{:?}", config);
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
-        self.selected_chunks = {
-            let mut config = config.clone();
-            config.chunk_len = 12 * config.chunk_len / 10;
-            pick_random(&self.raw_reads, &config, &mut rng)
-        };
+        self.selected_chunks = pick_random(&self.raw_reads, &config, &mut rng);
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
         remove_overlapping_units_dev(self, config).unwrap();
         compaction_units(self);
@@ -171,12 +167,8 @@ impl DetermineUnit for definitions::DataSet {
             self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
-        // Tune the length, removing high-frequent units...
-        self.selected_chunks
-            .retain(|unit| config.chunk_len < unit.seq.len());
-        self.selected_chunks
-            .iter_mut()
-            .for_each(|unit| unit.seq.truncate(config.chunk_len));
+        // self.selected_chunks
+        //     .retain(|unit| config.chunk_len + 50 < unit.seq.len());
         {
             self.encode(config.threads, sim_thr);
             debug!("ERRORRATE\t{}", self.error_rate());
@@ -359,7 +351,6 @@ fn dump_histogram(ds: &DataSet) {
     let end_pos = counts.len().max(10) - 10;
     debug!("Hi-Freqs:{:?}", &counts[end_pos..]);
     let hist = histgram_viz::Histgram::new(&counts[..end_pos]);
-    debug!("DUMP\t{:?}", &counts[..end_pos]);
     debug!("Histgrapm\n{}", hist.format(40, 20));
 }
 
