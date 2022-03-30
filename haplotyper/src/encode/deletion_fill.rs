@@ -41,7 +41,7 @@ impl CorrectDeletion for DataSet {
                 .map(|c| (c.id, c.copy_num))
                 .collect();
             // Re-estimate copy number
-            // -> Erase cluster
+            // Erase cluster
             self.encoded_reads
                 .iter_mut()
                 .flat_map(|r| r.nodes.iter_mut())
@@ -382,6 +382,7 @@ fn abs(x: usize, y: usize) -> usize {
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
 const OFFSET: usize = 300;
 // returns the ids of the units newly encoded.
+// Maybe each (unit,cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
     &'a HashMap<u64, &'a Unit>,
     &'a [f64],
@@ -398,7 +399,15 @@ pub fn correct_deletion_error(
     let threshold = 3;
     let nodes = &read.nodes;
     let mut inserts = vec![];
-    for (idx, pileup) in pileups.iter().enumerate() {
+    let len = nodes.len();
+    if read.id == 7191 {
+        eprintln!("{read}");
+        for (i, pu) in pileups.iter().enumerate() {
+            eprintln!("{i}\t{:?}", pu);
+        }
+    }
+    //for (idx, pileup) in pileups.iter().enumerate() {
+    for (idx, pileup) in pileups.iter().enumerate().take(len).skip(1) {
         let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
         head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
         let head_best =
@@ -930,6 +939,7 @@ pub struct Pileup {
     coverage: usize,
 }
 
+// TODO: Maybe we should care abount cluster...?
 impl Pileup {
     // Return the maximum insertion from the same unit, the same direction.
     fn insertion_head(&self) -> impl std::iter::Iterator<Item = (usize, u64, bool)> {
@@ -1004,6 +1014,9 @@ impl Pileup {
                 let (prev_offset, _) = self.information_head(uid, direction);
                 let start_position =
                     (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
+                if uid == 862 {
+                    trace!("SUSPIC\t{uid}\t{:?}\t{idx}", prev_offset);
+                }
                 let start_position = start_position + prev_offset?;
                 let start_position = (start_position as usize).saturating_sub(OFFSET);
                 Some((start_position, direction, uid))

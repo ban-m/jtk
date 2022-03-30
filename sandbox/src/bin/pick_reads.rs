@@ -57,11 +57,10 @@ fn main() -> std::io::Result<()> {
                 true => id2desc[&read.id].contains("hapA"),
             };
             println!(
-                "{}\t{}\t{}\t{}",
-                is_hap1,
+                "{is_hap1}\t{}\t{}\t{len}\t{}",
                 node.cluster,
                 dumps.join("\t"),
-                len
+                read.id,
             );
         }
     }

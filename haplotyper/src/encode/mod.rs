@@ -22,6 +22,7 @@ pub trait Encode {
 
 impl Encode for definitions::DataSet {
     fn encode(&mut self, threads: usize, sim_thr: f64) {
+        debug!("ENCODE\tErrorRate\t{sim_thr}");
         encode_by_mm2(self, threads, sim_thr).unwrap();
         deletion_fill::correct_unit_deletion(self, sim_thr);
         debug!("Encoded {} reads.", self.encoded_reads.len());

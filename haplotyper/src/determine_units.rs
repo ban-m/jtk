@@ -23,7 +23,7 @@ pub struct UnitConfig {
 
 const FIRST_RELAX: f64 = 2f64;
 
-const TAKE_THR: f64 = 0.999;
+pub const TAKE_THR: f64 = 0.999;
 impl UnitConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new_ccs(
@@ -167,8 +167,6 @@ impl DetermineUnit for definitions::DataSet {
             self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
-        // self.selected_chunks
-        //     .retain(|unit| config.chunk_len + 50 < unit.seq.len());
         {
             self.encode(config.threads, sim_thr);
             debug!("ERRORRATE\t{}", self.error_rate());
