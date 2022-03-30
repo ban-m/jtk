@@ -11,7 +11,7 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let mut ds: DataSet = std::fs::File::open(&args[1])
+    let ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
     // ds.encoded_reads

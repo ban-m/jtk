@@ -108,17 +108,15 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .collect();
     let num = 3;
     let init_copy_num = copy_num.max(4) - 3;
-    let (asn, score, k) = (init_copy_num..=copy_num)
+    let (asn, _, k) = (init_copy_num..=copy_num)
         .flat_map(|k| std::iter::repeat(k).take(num))
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            let clnum = k as f64;
-            let expected_gain_per_read = (clnum - 1f64) / clnum * average_lk - clnum.ln();
+            let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
             let expected_gain = expected_gain_per_read * reads.len() as f64;
             (asn, score - expected_gain, k)
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    trace!("Init\t{}\t{}", k, score);
     let sequencepack = (template, reads, ops.as_ref());
     let modelpack = (hmm, band_width);
     let (assignments, score, posterior) =
@@ -137,6 +135,20 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
     }
     Some((assignments, posterior, score, k as u8))
 }
+
+fn calc_expected_gain_per_read(k: usize, lk: f64) -> f64 {
+    let kf = k as f64;
+    let cons_cluster = (1f64 + (kf - 1f64) * (-lk).exp()).ln();
+    let other_cluster = match k {
+        1 => (1f64 + (-2f64 * lk).exp()).ln() + lk,
+        _ => (1f64 + (-2.0 * lk).exp() + (-3.0 * lk).exp() * (kf - 2.0)).ln() + lk,
+    };
+    let reg_term = kf.ln();
+    (cons_cluster + (kf - 1.0) * other_cluster) / kf - reg_term
+    // let clnum = k as f64;
+    // (clnum - 1f64) / clnum * lk - clnum.ln()
+}
+
 type HMM = kiley::hmm::guided::PairHiddenMarkovModel;
 fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
     (template, reads, ops): (&[u8], &[T], &[Vec<kiley::Op>]),
@@ -155,6 +167,7 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
             .map(|&x| (x as f64).max(0.00001).ln() - (reads.len() as f64).ln())
             .collect()
     };
+    // let mut consi = vec![];
     let likelihood_on_clusters: Vec<Vec<f64>> = fracs
         .iter()
         .enumerate()
@@ -168,8 +181,9 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
                 .collect();
             packed_data.sort_by_key(|x| (x.3 != cl as u8));
             let consensus = get_consensus_of(&template, &mut packed_data, hmm, band, cl);
-            let dist = edlib_sys::global_dist(template, &consensus);
-            trace!("CONS\t{}\t{}", cl, dist);
+            // consi.push(consensus.clone());
+            // let dist = edlib_sys::global_dist(template, &consensus);
+            // trace!("CONS\t{}\t{}", cl, dist);
             packed_data.sort_unstable_by_key(|x| x.0);
             packed_data
                 .iter()
@@ -206,6 +220,26 @@ fn re_eval_clustering<T: std::borrow::Borrow<[u8]>>(
             (read_lks, asn as u8)
         })
         .unzip();
+    // if consi.len() > 1 {
+    //     let ed2k = [
+    //         kiley::Op::Match,
+    //         kiley::Op::Ins,
+    //         kiley::Op::Del,
+    //         kiley::Op::Mismatch,
+    //     ];
+    //     for i in 0..consi.len() {
+    //         for j in i + 1..consi.len() {
+    //             let ops = edlib_sys::global(&consi[i], &consi[j]);
+    //             let ops: Vec<_> = ops.iter().map(|&op| ed2k[op as usize]).collect();
+    //             let (xr, ar, yr) = kiley::recover(&consi[i], &consi[j], &ops);
+    //             for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+    //                 eprintln!("{}", String::from_utf8_lossy(xr));
+    //                 eprintln!("{}", String::from_utf8_lossy(ar));
+    //                 eprintln!("{}\n", String::from_utf8_lossy(yr));
+    //             }
+    //         }
+    //     }
+    // }
     (assignments, lk, posterior)
 }
 
