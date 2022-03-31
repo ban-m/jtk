@@ -1646,7 +1646,7 @@ impl<'a> DitchGraph<'a> {
                 if sibs <= 1 {
                     return false;
                 }
-                debug!("FOCUS\tTRY\t{}", focus);
+                // debug!("FOCUS\tTRY\t{}", focus);
                 self.survey_focus(focus).is_some()
             })
             .count()
@@ -1659,7 +1659,7 @@ impl<'a> DitchGraph<'a> {
         let from = (focus.from, focus.from_position);
         let to = (focus.to, focus.to_position);
         let (label, proxying) = self.spell_along_path(&path_to_focus, from);
-        debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
+        // debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
         self.span_region(from, to, &path_to_focus, label, proxying);
         Some(())
     }
@@ -1842,9 +1842,9 @@ impl<'a> DitchGraph<'a> {
             dist -= 1;
         }
         back_track.reverse();
-        for (i, (node, pos)) in back_track.iter().enumerate() {
-            debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
-        }
+        // for (i, (node, pos)) in back_track.iter().enumerate() {
+        //     debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
+        // }
         Some(back_track)
     }
     // Spell along the given path,
@@ -1951,10 +1951,10 @@ impl<'a> DitchGraph<'a> {
         to: Node,
         to_pos: Position,
     ) {
-        debug!(
-            "Removing ({},{},{})-({},{},{})",
-            from.0, from.1, from_pos, to.0, to.1, to_pos
-        );
+        // debug!(
+        //     "Removing ({},{},{})-({},{},{})",
+        //     from.0, from.1, from_pos, to.0, to.1, to_pos
+        // );
         if let Some(node) = self.nodes.get_mut(&from) {
             node.edges.retain(|e| {
                 !(e.from_position == from_pos && e.to == to && e.to_position == to_pos)
@@ -1986,7 +1986,7 @@ impl<'a> DitchGraph<'a> {
                 // The edge is from the *opposite* position of the `to` node!
                 self.remove_edge_and_pruning(to, !to_pos, node, pos);
             }
-            debug!("Removing {:?}", to);
+            // debug!("Removing {:?}", to);
             // Then, removing this node itself.
             if self.nodes.contains_key(&to) {
                 assert!(self.nodes[&to].edges.is_empty());

@@ -17,7 +17,7 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    let selection: HashSet<_> = vec![1841].into_iter().collect();
+    let selection: HashSet<_> = vec![488, 1670].into_iter().collect();
     use haplotyper::local_clustering::LocalClustering;
     haplotyper::local_clustering::local_clustering_selected(&mut ds, &selection);
     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();

@@ -114,6 +114,7 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
             let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
             let expected_gain = expected_gain_per_read * reads.len() as f64;
+            // trace!("EXPT\t{k}\t{expected_gain}");
             (asn, score - expected_gain, k)
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
@@ -139,14 +140,13 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
 fn calc_expected_gain_per_read(k: usize, lk: f64) -> f64 {
     let kf = k as f64;
     let cons_cluster = (1f64 + (kf - 1f64) * (-lk).exp()).ln();
-    let other_cluster = match k {
-        1 => (1f64 + (-2f64 * lk).exp()).ln() + lk,
-        _ => (1f64 + (-2.0 * lk).exp() + (-3.0 * lk).exp() * (kf - 2.0)).ln() + lk,
-    };
+    let other_cluster = (1f64 + (kf - 1f64) * (-lk).exp()).ln() + lk;
+    // let other_cluster = match k {
+    //     1 => (1f64 + (-2f64 * lk).exp()).ln() + lk,
+    //     _ => (1f64 + (-2.0 * lk).exp() + (-3.0 * lk).exp() * (kf - 2.0)).ln() + lk,
+    // };
     let reg_term = kf.ln();
     (cons_cluster + (kf - 1.0) * other_cluster) / kf - reg_term
-    // let clnum = k as f64;
-    // (clnum - 1f64) / clnum * lk - clnum.ln()
 }
 
 type HMM = kiley::hmm::guided::PairHiddenMarkovModel;
@@ -1430,14 +1430,16 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [u8], k: usize, cov: f64, rng: &
         }
     }
     assign.iter_mut().zip(argmax).for_each(|(x, y)| *x = y);
-    // max
+    // get max value.
     let mut lks = vec![vec![0f64; data[0].len()]; k];
     for (xs, &asn) in data.iter().zip(assign.iter()) {
         for (lk, x) in lks[asn as usize].iter_mut().zip(xs) {
             *lk += x;
         }
     }
-    lks.iter().flatten().fold(0f64, |x, y| x + y.max(0f64))
+    let data_lk = lks.iter().flatten().fold(0f64, |x, y| x + y.max(0f64));
+    let partition_lk = clusters.iter().map(|&x| partition_lks[x]).sum::<f64>();
+    data_lk + partition_lk
 }
 
 fn update<R: Rng>(

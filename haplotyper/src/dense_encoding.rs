@@ -25,9 +25,13 @@ pub trait DenseEncoding {
 impl DenseEncoding for DataSet {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
         let original_assignments = log_original_assignments(self);
-        use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-        let correction_config = ClusteringConfig::new(5, 10, 5);
-        self.correct_clustering(&correction_config);
+        // use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+        // let correction_config = ClusteringConfig::new(5, 10, 5);
+        // self.correct_clustering(&correction_config);
+        let (min_span_reads, lk_ratio) = weak_resolve(self.read_type);
+        use crate::assemble::*;
+        let asm_config = AssembleConfig::new(1, 1000, false, true, min_span_reads, lk_ratio);
+        self.squish_small_contig(&asm_config, 3);
         let new_units = encode_polyploid_edges(self, config);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];

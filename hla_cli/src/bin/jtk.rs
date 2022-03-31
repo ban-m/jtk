@@ -1017,6 +1017,7 @@ fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::purge_diverged::*;
     let config = PurgeDivConfig::new(threads);
     dataset.purge(&config);
+    //dataset.purge_dev(&config);
 }
 
 fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {

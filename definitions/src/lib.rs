@@ -257,7 +257,7 @@ impl Unit {
             id,
             seq,
             copy_num,
-            cluster_num: copy_num,
+            cluster_num: 1,
             score: 0f64,
         }
     }

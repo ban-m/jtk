@@ -1,7 +1,7 @@
 //! This modeule includes methods to newly define units
 //! From the result of local clustering.
 use definitions::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Default)]
 pub struct PurgeDivConfig {
     threads: usize,
@@ -24,6 +24,7 @@ const SD_SIGMA: f64 = 6f64;
 use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
+        self.sanity_check();
         let error_rate = self.error_rate();
         let thr = error_rate.total + SD_SIGMA * error_rate.total_sd;
         debug!(
@@ -54,7 +55,8 @@ impl PurgeDivergent for DataSet {
         });
         debug!("PD\tEncodedRead\t{}\t{}", prev, self.encoded_reads.len());
         // Reclustering...
-        re_cluster(self, config.threads);
+        let selection = HashSet::new();
+        re_cluster(self, config.threads, &selection);
     }
     fn purge_dev(&mut self, config: &PurgeDivConfig) {
         let error_rate = self.error_rate();
@@ -63,7 +65,7 @@ impl PurgeDivergent for DataSet {
             "PD\tTHR\t{}\t{}\t{}",
             error_rate.total, error_rate.total_sd, thr
         );
-        let re_defined_chunks = purge_diverged_nodes_dev(self, thr, config);
+        let (re_defined_chunks, selection) = purge_diverged_nodes_dev(self, thr, config);
         self.encoded_reads.par_iter_mut().for_each(|read| {
             let len = read.nodes.len();
             for i in 0..len {
@@ -83,8 +85,7 @@ impl PurgeDivergent for DataSet {
                 }
             }
         });
-        self.sanity_check();
-        re_cluster(self, config.threads);
+        re_cluster(self, config.threads, &selection);
     }
 }
 
@@ -169,7 +170,7 @@ impl PurgeDivergent for DataSet {
 //     }
 // }
 
-fn re_cluster(ds: &mut DataSet, threads: usize) {
+fn re_cluster(ds: &mut DataSet, threads: usize, selection: &HashSet<u64>) {
     let copy_number: HashMap<_, _> = ds
         .selected_chunks
         .iter()
@@ -203,7 +204,6 @@ fn re_cluster(ds: &mut DataSet, threads: usize) {
                 .for_each(|(n, cl)| n.cluster = cl);
         }
     }
-    use std::collections::HashSet;
     let changed_units: HashSet<_> = ds
         .selected_chunks
         .iter()
@@ -213,6 +213,7 @@ fn re_cluster(ds: &mut DataSet, threads: usize) {
                 .filter(|&&copy_num| copy_num != c.copy_num)
                 .map(|_| c.id)
         })
+        .chain(selection.iter().copied())
         .collect();
     debug!("PD\tReClustering\t{}", changed_units.len());
     crate::local_clustering::local_clustering_selected(ds, &changed_units);
@@ -223,7 +224,7 @@ fn purge_diverged_nodes(
     thr: f64,
     config: &PurgeDivConfig,
 ) -> Vec<(u64, Vec<usize>)> {
-    let diverged_clusters = get_diverged_clusters(ds, thr, config);
+    let diverged_clusters = get_diverged_clusters_dev(ds, thr, config);
     // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
     let diverged_clusters: Vec<_> = diverged_clusters
         .into_iter()
@@ -285,6 +286,16 @@ fn purge_diverged_nodes(
 }
 
 // Unit -> Cluster -> If the cluster is very diverged.
+pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
+    use crate::encode::deletion_fill::estimate_error_rate_dev;
+    let (_, unit_error_rate, _) = estimate_error_rate_dev(&ds, 0.35);
+    unit_error_rate
+        .iter()
+        .map(|es| es.iter().map(|&x| thr < x).collect())
+        .collect()
+}
+
+// Unit -> Cluster -> If the cluster is very diverged.
 fn get_diverged_clusters(ds: &DataSet, thr: f64, _config: &PurgeDivConfig) -> Vec<Vec<bool>> {
     let max_unit_id = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
     let mut slots = vec![vec![]; max_unit_id as usize + 1];
@@ -297,7 +308,10 @@ fn get_diverged_clusters(ds: &DataSet, thr: f64, _config: &PurgeDivConfig) -> Ve
         .enumerate()
         .map(|(id, nodes)| {
             assert!(nodes.iter().all(|n| n.unit as usize == id));
-            let ref_unit = chunks.get(&(id as u64)).unwrap();
+            let ref_unit = match chunks.get(&(id as u64)) {
+                Some(res) => res,
+                None => return Vec::new(),
+            };
             let mut div_rates = vec![vec![]; ref_unit.cluster_num];
             for node in nodes.iter() {
                 let (_, aln, _) = node.recover(ref_unit);
@@ -334,10 +348,10 @@ fn purge_diverged_nodes_dev(
     ds: &mut DataSet,
     thr: f64,
     config: &PurgeDivConfig,
-) -> HashMap<(u64, u64), (u64, u64)> {
+) -> (HashMap<(u64, u64), (u64, u64)>, HashSet<u64>) {
     let diverged_clusters = get_diverged_clusters(ds, thr, config);
     // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
-    let diverged_clusters: Vec<_> = diverged_clusters
+    let diverged_clusters: Vec<Vec<bool>> = diverged_clusters
         .into_iter()
         .map(|mut xs| {
             if xs.iter().all(|&x| x) {
@@ -346,6 +360,11 @@ fn purge_diverged_nodes_dev(
             xs
         })
         .collect();
+    for (uid, cls) in diverged_clusters.iter().enumerate() {
+        for (cl, _) in cls.iter().enumerate().filter(|&(_, &b)| b) {
+            debug!("PD\t{uid}\t{cl}");
+        }
+    }
     let has_diverged_cluster: Vec<bool> = diverged_clusters
         .iter()
         .map(|xs| xs.iter().any(|&x| x))
@@ -358,20 +377,26 @@ fn purge_diverged_nodes_dev(
     // Modify cluster number.
     let mut new_units = Vec::new();
     let max_id = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
+    let mut changed = HashSet::new();
     let mappings = ds
         .selected_chunks
         .iter_mut()
         .filter(|u| has_diverged_cluster[u.id as usize])
         .flat_map(|u| {
+            changed.insert(u.id);
             // Tune cluster number.
             let squished = diverged_clusters[u.id as usize]
                 .iter()
                 .filter(|&&x| x)
                 .count();
             u.cluster_num -= squished;
+            u.copy_num -= squished;
             // Create new chunk.
             let id = max_id + 1 + new_units.len() as u64;
-            new_units.push(Unit::new(id, u.seq.clone(), squished));
+            changed.insert(id);
+            let mut new_unit = Unit::new(id, u.seq.clone(), squished);
+            new_unit.cluster_num = squished;
+            new_units.push(new_unit);
             // Determine mappings.
             let mut mapping = Vec::with_capacity(diverged_clusters[u.id as usize].len());
             let (mut new_unit_cl, mut old_unit_cl) = (0, 0);
@@ -392,5 +417,5 @@ fn purge_diverged_nodes_dev(
         })
         .collect();
     ds.selected_chunks.extend(new_units);
-    mappings
+    (mappings, changed)
 }

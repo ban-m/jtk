@@ -117,32 +117,43 @@ impl MultiplicityEstimation for DataSet {
             .iter()
             .filter_map(|c| (upper <= c.copy_num).then(|| c.id))
             .collect();
-        let raw_seq: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
         self.selected_chunks.retain(|x| !to_remove.contains(&x.id));
-        let convert_table: HashMap<_, _> = self
-            .selected_chunks
-            .iter_mut()
-            .enumerate()
-            .map(|(idx, chunk)| {
-                let convert = (chunk.id, idx as u64);
-                chunk.id = idx as u64;
-                convert
-            })
-            .collect();
-        self.encoded_reads.iter_mut().for_each(|read| {
-            read.nodes.retain(|n| !to_remove.contains(&n.unit));
-            read.nodes
-                .iter_mut()
-                .for_each(|n| n.unit = convert_table[&n.unit]);
+        use rayon::prelude::*;
+        self.encoded_reads.par_iter_mut().for_each(|read| {
+            let mut idx = 0;
+            loop {
+                match read.nodes.get(idx) {
+                    Some(node) if to_remove.contains(&node.unit) => read.remove(idx),
+                    Some(_) => idx += 1,
+                    None => break,
+                }
+            }
         });
+        // let raw_seq: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+        // let convert_table: HashMap<_, _> = self
+        //     .selected_chunks
+        //     .iter_mut()
+        //     .enumerate()
+        //     .map(|(idx, chunk)| {
+        //         let convert = (chunk.id, idx as u64);
+        //         chunk.id = idx as u64;
+        //         convert
+        //     })
+        //     .collect();
+        // self.encoded_reads.iter_mut().for_each(|read| {
+        //     read.nodes.retain(|n| !to_remove.contains(&n.unit));
+        //     read.nodes
+        //         .iter_mut()
+        //         .for_each(|n| n.unit = convert_table[&n.unit]);
+        // });
         self.encoded_reads.retain(|read| !read.nodes.is_empty());
-        self.encoded_reads.iter_mut().for_each(|read| {
-            assert!(!read.nodes.is_empty());
-            let mut nodes = Vec::with_capacity(read.nodes.len());
-            nodes.append(&mut read.nodes);
-            let seq = raw_seq[&read.id];
-            *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-        });
+        // self.encoded_reads.iter_mut().for_each(|read| {
+        //     assert!(!read.nodes.is_empty());
+        //     let mut nodes = Vec::with_capacity(read.nodes.len());
+        //     nodes.append(&mut read.nodes);
+        //     let seq = raw_seq[&read.id];
+        //     *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+        // });
     }
 }
 

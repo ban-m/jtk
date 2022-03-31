@@ -576,6 +576,7 @@ fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
 
 fn fill_sparse_region_dev(ds: &mut DataSet, config: &UnitConfig) {
     let edge_units = enumerate_filled_edges(ds, config);
+    debug!("FillSparse\tConsed");
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
     ds.encoded_reads.par_iter_mut().for_each(|read| {
@@ -637,6 +638,7 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
 type FilledTips = HashMap<(u64, bool), Unit>;
 fn fill_tips_dev(ds: &mut DataSet, config: &UnitConfig) {
     let tip_units = enumerate_filled_tips(ds, config);
+    debug!("FillTip\tConsed");
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
     ds.encoded_reads.par_iter_mut().for_each(|read| {

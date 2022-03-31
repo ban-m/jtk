@@ -192,14 +192,26 @@ impl Assemble for DataSet {
             });
     }
     fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
+        // assert!(c.to_resolve);
         let reads: Vec<_> = self.encoded_reads.iter().collect();
-        let cov = self.coverage.unwrap();
+        let cov = self.coverage.unwrap_or_else(|| panic!("Need coverage!"));
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let rt = self.read_type;
-        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), rt, c);
-        graph.remove_lightweight_edges(2, true);
-        graph.assign_copy_number(cov, &lens);
-        graph.remove_zero_copy_elements(&lens, 0.5);
+        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), self.read_type, c);
+        match self.read_type {
+            ReadType::CCS => graph.remove_lightweight_edges(1, true),
+            ReadType::ONT | ReadType::None | ReadType::CLR => {
+                graph.remove_lightweight_edges(2, true)
+            }
+        };
+        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, self.read_type);
+        // let reads: Vec<_> = self.encoded_reads.iter().collect();
+        // let cov = self.coverage.unwrap();
+        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        // let rt = self.read_type;
+        // let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), rt, c);
+        // graph.remove_lightweight_edges(2, true);
+        // graph.assign_copy_number(cov, &lens);
+        // graph.remove_zero_copy_elements(&lens, 0.5);
         let squish = graph.squish_bubbles(len);
         self.encoded_reads
             .iter_mut()

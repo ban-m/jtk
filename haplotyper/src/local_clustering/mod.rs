@@ -201,6 +201,7 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
 fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 23908;
     const SAMPLE_NUM: usize = 300;
+    const TAKE_POS: usize = 5;
     const LEN: usize = 100;
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED);
     let mut lks: Vec<_> = (0..SAMPLE_NUM)
@@ -216,7 +217,7 @@ fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64
         })
         .collect();
     lks.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    lks[SAMPLE_NUM / 100]
+    lks[TAKE_POS]
     // let lkdiff: Vec<_> = (0..SAMPLE_NUM)
     //     .map(|i| {
     //         let template = kiley::gen_seq::generate_seq(&mut rng, LEN);
