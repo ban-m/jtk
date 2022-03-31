@@ -1892,9 +1892,9 @@ impl<'a> DitchGraph<'a> {
                 let node = self.nodes.get_mut(&from).unwrap();
                 match node.copy_number {
                     Some(cp) if 0 < cp => {
-                        if [536, 786].contains(&node.node.0) {
-                            debug!("DUMP\t{}", node);
-                        }
+                        // if [536, 786].contains(&node.node.0) {
+                        //     debug!("DUMP\t{}", node);
+                        // }
                         // TODO: Is this OK? Maybe the copy number is not reliable.
                         // The problem is not the reduction of the copy number -- it should be zero --
                         // but the reduction of the `occ`. Maybe we should substract average coverage

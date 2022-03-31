@@ -11,18 +11,18 @@ fn main() -> std::io::Result<()> {
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
     use haplotyper::encode::deletion_fill::*;
-    // let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate_dev(&ds, 0.35);
-    let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate(&ds, 0.35);
+    let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate_dev(&ds, 0.35);
+    //let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate(&ds, 0.35);
     eprintln!("{deviation}");
     for read in ds.encoded_reads.iter() {
         println!("READ\t{}\t{}", read.id, read_error_rate[read.id as usize]);
     }
     for unit in ds.selected_chunks.iter() {
-        println!("UNIT\t{}\t{}", unit.id, unit_error_rate[unit.id as usize]);
-        // for cl in 0..unit.cluster_num {
-        //     let error = unit_error_rate[unit.id as usize][cl];
-        //     println!("UNIT\t{}\t{cl}\t{error}", unit.id);
-        // }
+        // println!("UNIT\t{}\t{}", unit.id, unit_error_rate[unit.id as usize]);
+        for cl in 0..unit.cluster_num {
+            let error = unit_error_rate[unit.id as usize][cl];
+            println!("UNIT\t{}\t{cl}\t{error}", unit.id);
+        }
     }
     // let header = gfa::Content::Header(gfa::Header::default());
     // let header = gfa::Record::from_contents(header, vec![]);

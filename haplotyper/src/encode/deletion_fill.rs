@@ -155,21 +155,42 @@ fn filling_until_stable(
     let mut is_updated = vec![true; ds.encoded_reads.len()];
     for i in 0..INNER_LOOP {
         let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
-        let reads = ds
-            .encoded_reads
-            .par_iter_mut()
-            .zip(failed_trials.par_iter_mut())
-            .zip(is_updated.par_iter_mut())
-            .filter(|((r, _), is_updated)| 1 < r.nodes.len() && **is_updated);
-        let newly_encoded_units: Vec<_> = reads
-            .flat_map(|((read, fails), is_updated)| {
-                let error_rate = read_error_rate[read.id as usize];
-                let seq = raw_seq[&read.id];
-                let read = (read, seq, error_rate, is_updated);
-                let units = (&units, unit_error_rate, &representative);
-                correct_deletion_error(read, fails, units, deviation, &read_skeltons)
-            })
-            .collect();
+        let newly_encoded_units: Vec<_> = if log_enabled!(log::Level::Trace) {
+            trace!("Tracing. Single thread mode.");
+            let reads = ds
+                .encoded_reads
+                .iter_mut()
+                .zip(failed_trials.iter_mut())
+                .zip(is_updated.iter_mut())
+                .filter(|((r, _), is_updated)| 1 < r.nodes.len() && **is_updated);
+
+            reads
+                .flat_map(|((read, fails), is_updated)| {
+                    let error_rate = read_error_rate[read.id as usize];
+                    let seq = raw_seq[&read.id];
+                    let read = (read, seq, error_rate, is_updated);
+                    let units = (&units, unit_error_rate, &representative);
+                    correct_deletion_error(read, fails, units, deviation, &read_skeltons)
+                })
+                .collect()
+        } else {
+            let reads = ds
+                .encoded_reads
+                .par_iter_mut()
+                .zip(failed_trials.par_iter_mut())
+                .zip(is_updated.par_iter_mut())
+                .filter(|((r, _), is_updated)| 1 < r.nodes.len() && **is_updated);
+
+            reads
+                .flat_map(|((read, fails), is_updated)| {
+                    let error_rate = read_error_rate[read.id as usize];
+                    let seq = raw_seq[&read.id];
+                    let read = (read, seq, error_rate, is_updated);
+                    let units = (&units, unit_error_rate, &representative);
+                    correct_deletion_error(read, fails, units, deviation, &read_skeltons)
+                })
+                .collect()
+        };
         ds.encoded_reads.retain(|r| !r.nodes.is_empty());
         find_new_node.extend(newly_encoded_units);
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
@@ -517,7 +538,9 @@ pub fn correct_deletion_error(
     let threshold = 3;
     let nodes = &read.nodes;
     let mut inserts = vec![];
-    for (idx, pileup) in pileups.iter().enumerate() {
+    //for (idx, pileup) in pileups.iter().enumerate() {
+    let len = nodes.len();
+    for (idx, pileup) in pileups.iter().enumerate().take(len).skip(1) {
         let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
         // Maybe we need more sophisticated selection ... ?
         head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
