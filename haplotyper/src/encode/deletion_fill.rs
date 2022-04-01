@@ -6,9 +6,11 @@ use rayon::prelude::*;
 // use log::*;
 use std::collections::{HashMap, HashSet};
 // identity would be increased by this value when evaluating the edges.
-const EDGE_BONUS: f64 = 0.15;
+const EDGE_BOUND: f64 = 0.5;
 // Evaluating length of each side.
 const EDGE_LEN: usize = 100;
+const INS_THR: usize = 2;
+// Tuple of unit and cluster.
 #[derive(Debug, Clone)]
 pub struct CorrectDeletionConfig {
     re_clustering: bool,
@@ -122,7 +124,6 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
     for t in 0..OUTER_LOOP {
-        // let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate(ds, fallback);
         let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate_dev(ds, fallback);
         debug!("Variance\t{}\t{}", t, deviation);
         let (new_nodes, is_updated) =
@@ -137,7 +138,6 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
 
 fn filling_until_stable(
     ds: &mut DataSet,
-    // (read_error_rate, unit_error_rate, deviation): (&[f64], &[f64], f64),
     (read_error_rate, unit_error_rate, deviation): (&[f64], &[Vec<f64>], f64),
 ) -> (HashSet<u64>, bool) {
     let raw_seq: HashMap<_, _> = ds
@@ -162,8 +162,7 @@ fn filling_until_stable(
                 .iter_mut()
                 .zip(failed_trials.iter_mut())
                 .zip(is_updated.iter_mut())
-                .filter(|((r, _), is_updated)| 1 < r.nodes.len() && **is_updated);
-
+                .filter(|((r, _), is_updated)| 0 < r.nodes.len() && **is_updated);
             reads
                 .flat_map(|((read, fails), is_updated)| {
                     let error_rate = read_error_rate[read.id as usize];
@@ -179,8 +178,7 @@ fn filling_until_stable(
                 .par_iter_mut()
                 .zip(failed_trials.par_iter_mut())
                 .zip(is_updated.par_iter_mut())
-                .filter(|((r, _), is_updated)| 1 < r.nodes.len() && **is_updated);
-
+                .filter(|((r, _), is_updated)| 0 < r.nodes.len() && **is_updated);
             reads
                 .flat_map(|((read, fails), is_updated)| {
                     let error_rate = read_error_rate[read.id as usize];
@@ -474,7 +472,11 @@ pub fn estimate_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, 
 // UnitID->(clsuterID, its consensus).
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
     fn polish(xs: &[&[u8]], unit: &Unit, band: usize) -> Vec<u8> {
-        kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
+        if [459, 453].contains(&unit.id) {
+            kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
+        } else {
+            unit.seq().to_vec()
+        }
     }
     let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<u64, Vec<_>> = HashMap::new();
@@ -523,40 +525,36 @@ const OFFSET: usize = 300;
 // Maybe each (unit,cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
     &'a HashMap<u64, &'a Unit>,
-    //&'a [f64],
     &'a [Vec<f64>],
     &'a HashMap<u64, Vec<(u64, Vec<u8>)>>,
 );
 pub fn correct_deletion_error(
     (read, seq, read_error, is_changed): (&mut EncodedRead, &[u8], f64, &mut bool),
-    failed_trials: &mut Vec<(usize, u64)>,
+    failed_trials: &mut Vec<(usize, LightNode)>,
     unitinfo: UnitInfo,
     deviation: f64,
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
     let pileups = get_pileup(read, reads);
-    let threshold = 3;
     let nodes = &read.nodes;
     let mut inserts = vec![];
-    //for (idx, pileup) in pileups.iter().enumerate() {
-    let len = nodes.len();
-    for (idx, pileup) in pileups.iter().enumerate().take(len).skip(1) {
-        let mut head_cand = pileup.check_insertion_head(nodes, threshold, idx);
-        // Maybe we need more sophisticated selection ... ?
-        head_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
+    let ins_thr = INS_THR.min(nodes.len());
+    for (idx, pileup) in pileups.iter().enumerate() {
+        let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
+        head_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
         let head_best =
             try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, deviation);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
-            None => failed_trials.extend(head_cand.into_iter().map(|x| (idx, x.2))),
+            None => failed_trials.extend(head_cand.into_iter().map(|(n, _)| (idx, n))),
         }
-        let mut tail_cand = pileup.check_insertion_tail(nodes, threshold, idx);
-        tail_cand.retain(|&(_, _, uid)| !failed_trials.contains(&(idx, uid)));
+        let mut tail_cand = pileup.check_insertion_tail(nodes, ins_thr, idx);
+        tail_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
         let tail_best =
             try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, deviation);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
-            None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.2))),
+            None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
         }
     }
     *is_changed = !inserts.is_empty();
@@ -603,7 +601,7 @@ fn remove_highly_erroneous(
 const THR: f64 = 7f64;
 fn try_encoding_head(
     nodes: &[Node],
-    head_cand: &[(usize, bool, u64)],
+    head_cand: &HashMap<LightNode, usize>,
     idx: usize,
     (units, unit_error_rate, consensi): UnitInfo,
     seq: &[u8],
@@ -612,39 +610,34 @@ fn try_encoding_head(
 ) -> Option<(Node, i32)> {
     head_cand
         .iter()
-        .filter(|&&(start_position, _, _)| start_position < seq.len())
-        .filter_map(|&(start_position, direction, uid)| {
+        .filter(|&(_, &start_position)| start_position < seq.len())
+        .filter_map(|(node, &start_position)| {
+            let (uid, cluster) = (node.unit, node.cluster);
             let unit = *units.get(&uid)?;
-            let consensi = consensi.get(&uid)?.iter();
-            consensi
-                .filter_map(|&(cluster, ref cons)| {
-                    let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
-                    let is_the_same_encode = match nodes.get(idx) {
-                        Some(node) => {
-                            node.unit == uid
-                                && abs(node.position_from_start, start_position) < cons.len()
-                        }
-                        None => false,
-                    };
-                    assert!(start_position < end_position);
-                    if is_the_same_encode {
-                        return None;
-                    }
-                    let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
-                    //let expected = read_error + unit_error_rate[uid as usize];
-                    let error_rate_bound = expected + THR * deviation;
-                    let position = (start_position, end_position, direction);
-                    let unit_info = (unit, cluster, cons.as_slice());
-                    encode_node(seq, position, unit_info, error_rate_bound)
-                })
-                .max_by_key(|x| x.1)
+            let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
+            let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
+            let is_the_same_encode = match nodes.get(idx) {
+                Some(node) => {
+                    node.unit == uid && abs(node.position_from_start, start_position) < cons.len()
+                }
+                None => false,
+            };
+            assert!(start_position < end_position);
+            if is_the_same_encode {
+                return None;
+            }
+            let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
+            let error_rate_bound = expected + THR * deviation;
+            let position = (start_position, end_position, node.is_forward);
+            let unit_info = (unit, cluster, cons.as_slice());
+            encode_node(seq, position, unit_info, error_rate_bound)
         })
         .max_by_key(|x| x.1)
 }
 
 fn try_encoding_tail(
     nodes: &[Node],
-    tail_cand: &[(usize, bool, u64)],
+    tail_cand: &HashMap<LightNode, usize>,
     idx: usize,
     (units, unit_error_rate, consensi): UnitInfo,
     seq: &[u8],
@@ -653,34 +646,28 @@ fn try_encoding_tail(
 ) -> Option<(Node, i32)> {
     tail_cand
         .iter()
-        .filter_map(|&(end_position, direction, uid)| {
+        .filter_map(|(node, &end_position)| {
+            let (uid, cluster) = (node.unit, node.cluster);
             let unit = *units.get(&uid)?;
-            consensi
-                .get(&uid)?
-                .iter()
-                .filter_map(|&(cluster, ref cons)| {
-                    let end_position = end_position.min(seq.len());
-                    let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
-                    assert!(start_position < end_position);
-                    let is_the_same_encode = match nodes.get(idx) {
-                        Some(node) => {
-                            node.unit == uid
-                                && abs(node.position_from_start, start_position) < cons.len()
-                        }
-                        None => false,
-                    };
-                    if is_the_same_encode {
-                        return None;
-                    }
-                    assert!(start_position < end_position);
-                    let positions = (start_position, end_position, direction);
-                    let unit_info = (unit, cluster, cons.as_slice());
-                    let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
-                    //let expected = read_error + unit_error_rate[uid as usize];
-                    let error_rate_bound = expected + THR * deviation;
-                    encode_node(seq, positions, unit_info, error_rate_bound)
-                })
-                .max_by_key(|x| x.1)
+            let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
+            let end_position = end_position.min(seq.len());
+            let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
+            assert!(start_position < end_position);
+            let is_the_same_encode = match nodes.get(idx) {
+                Some(node) => {
+                    node.unit == uid && abs(node.position_from_start, start_position) < cons.len()
+                }
+                None => false,
+            };
+            if is_the_same_encode {
+                return None;
+            }
+            assert!(start_position < end_position);
+            let positions = (start_position, end_position, node.is_forward);
+            let unit_info = (unit, cluster, cons.as_slice());
+            let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
+            let error_rate_bound = expected + THR * deviation;
+            encode_node(seq, positions, unit_info, error_rate_bound)
         })
         .max_by_key(|x| x.1)
 }
@@ -778,9 +765,10 @@ fn fine_mapping<'a>(
             id, cluster, identity, rlen, qlen, origlen,
         );
         let iden_bound = 1f64 - sim_thr;
-        let identity = identity
-            .min(head_identity + EDGE_BONUS)
-            .min(tail_identity + EDGE_BONUS);
+        let is_ok = iden_bound < identity && EDGE_BOUND < head_identity.min(tail_identity);
+        // let identity = identity
+        //     .min(head_identity + EDGE_BONUS)
+        //     .min(tail_identity + EDGE_BONUS);
         (iden_bound < identity, info)
     };
     if log_enabled!(log::Level::Trace) {
@@ -804,6 +792,7 @@ fn fine_mapping<'a>(
     })
 }
 
+#[allow(dead_code)]
 fn edge_identity(unit: &[u8], _: &[u8], ops: &[kiley::Op], len: usize) -> (f64, f64) {
     let (mut head_aln_len, mut head_match) = (0, 0);
     let (mut tail_aln_len, mut tail_match) = (0, 0);
@@ -848,6 +837,7 @@ fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>) -> (usize, usize) {
 }
 
 fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton) -> Option<bool> {
+    // fn check_alignment_by_unitmatch(units: &HashSet<LightNode>, query: &ReadSkelton) -> Option<bool> {
     fn count_match(units: &[(u64, u64, bool)], query: &[(u64, u64, bool)]) -> usize {
         let mut r_ptr = units.iter().peekable();
         let mut q_ptr = query.iter().peekable();
@@ -871,23 +861,33 @@ fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton)
     keys.iter_mut().for_each(|x| x.2 = !x.2);
     keys.sort_unstable();
     let reverse_match = count_match(units, &keys);
-    (MIN_MATCH <= forward_match.max(reverse_match)).then(|| reverse_match <= forward_match)
+    // let forward_match = query.nodes.iter().filter(|n| units.contains(n)).count();
+    // let reverse_match = query
+    //     .nodes
+    //     .iter()
+    //     .filter(|n| units.contains(&LightNode::rev(n)))
+    //     .count();
+    let min_match = MIN_MATCH.min(units.len());
+    (min_match <= forward_match.max(reverse_match)).then(|| reverse_match <= forward_match)
 }
 
 // Align read skeltons to read, return the pileup sumamries.
 // i-> insertions before the i-th nodes.
+// The coverage of the last slot is always zero.
 fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
     assert!(!read.nodes.is_empty());
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     let skelton = ReadSkelton::new(read);
     let mut units_in_read: Vec<_> = skelton.nodes.iter().map(|n| n.key()).collect();
     units_in_read.sort_unstable();
+    // let units_in_read: HashSet<_> = skelton.nodes.iter().copied().collect();
     for query in reads.iter() {
         let is_forward = match check_alignment_by_unitmatch(&units_in_read, query) {
             Some(is_forward) => is_forward,
             None => continue,
         };
-        let aln = match alignment(&skelton, query, is_forward) {
+        let id = read.id;
+        let aln = match alignment(id, &skelton, query, is_forward) {
             Some(res) => res,
             None => continue,
         };
@@ -940,7 +940,7 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
 const MIN_MATCH: usize = 2;
 // Minimum required alignment score.
 const SCORE_THR: i32 = 1;
-fn alignment(read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Option<Vec<Op>> {
+fn alignment(_: u64, read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Option<Vec<Op>> {
     let (score, ops) = match dir {
         true => pairwise_alignment_gotoh(read, query),
         false => {
@@ -949,8 +949,8 @@ fn alignment(read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Option<Vec<O
         }
     };
     let match_num = get_match_units(&ops);
-    let score_thr = if read.nodes.len() == 2 { 1 } else { SCORE_THR };
-    (MIN_MATCH <= match_num && score_thr <= score && is_proper(&ops)).then(|| ops)
+    let min_match = MIN_MATCH.min(read.nodes.len()).min(query.nodes.len());
+    (min_match <= match_num && SCORE_THR <= score && is_proper(&ops)).then(|| ops)
 }
 
 // Return true if the alignment is proper dovetail.
@@ -1113,19 +1113,19 @@ pub struct Pileup {
 // TODO: Maybe we should care abount cluster...?
 impl Pileup {
     // Return the maximum insertion from the same unit, the same direction.
-    fn insertion_head(&self) -> impl std::iter::Iterator<Item = (usize, u64, bool)> {
+    fn insertion_head(&self) -> HashMap<LightNode, usize> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.head_inserted.iter() {
-            *count.entry((node.unit, node.is_forward)).or_default() += 1;
+            *count.entry(node.clone()).or_default() += 1;
         }
-        count.into_iter().map(|((a, b), y)| (y, a, b))
+        count
     }
-    fn insertion_tail(&self) -> impl std::iter::Iterator<Item = (usize, u64, bool)> {
+    fn insertion_tail(&self) -> HashMap<LightNode, usize> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.tail_inserted.iter() {
-            *count.entry((node.unit, node.is_forward)).or_default() += 1;
+            *count.entry(node.clone()).or_default() += 1;
         }
-        count.into_iter().map(|((a, b), y)| (y, a, b))
+        count
     }
     fn new() -> Self {
         Self {
@@ -1134,23 +1134,14 @@ impl Pileup {
             coverage: 0,
         }
     }
-    fn information_head(&self, unit: u64, is_forward: bool) -> (Option<isize>, Option<isize>) {
-        let inserts = self
-            .head_inserted
-            .iter()
-            .filter(|node| node.unit == unit && node.is_forward == is_forward);
-        Self::summarize(inserts)
+    fn information_head(&self, node: &LightNode) -> (Option<isize>, Option<isize>) {
+        Self::summarize(&self.head_inserted, node)
     }
-    fn information_tail(&self, unit: u64, is_forward: bool) -> (Option<isize>, Option<isize>) {
-        let inserts = self
-            .tail_inserted
-            .iter()
-            .filter(|node| node.unit == unit && node.is_forward == is_forward);
-        Self::summarize(inserts)
+    fn information_tail(&self, node: &LightNode) -> (Option<isize>, Option<isize>) {
+        Self::summarize(&self.tail_inserted, node)
     }
-    fn summarize<'a>(
-        inserts: impl std::iter::Iterator<Item = &'a LightNode>,
-    ) -> (Option<isize>, Option<isize>) {
+    fn summarize<'a>(inserts: &[LightNode], target: &LightNode) -> (Option<isize>, Option<isize>) {
+        let inserts = inserts.iter().filter(|&node| node == target);
         let (mut prev_count, mut prev_total) = (0, 0);
         let (mut after_count, mut after_total) = (0, 0);
         for node in inserts {
@@ -1178,40 +1169,47 @@ impl Pileup {
         nodes: &[Node],
         threshold: usize,
         idx: usize,
-    ) -> Vec<(usize, bool, u64)> {
-        self.insertion_head()
-            .filter(|&(num, _, _)| threshold <= num)
-            .filter_map(|(_, uid, direction)| {
-                let (prev_offset, _) = self.information_head(uid, direction);
-                let start_position =
-                    (nodes[idx - 1].position_from_start + nodes[idx - 1].query_length()) as isize;
-                // if uid == 862 {
-                //     trace!("SUSPIC\t{uid}\t{:?}\t{idx}", prev_offset);
-                // }
-                let start_position = start_position + prev_offset?;
-                let start_position = (start_position as usize).saturating_sub(OFFSET);
-                Some((start_position, direction, uid))
-            })
-            .collect()
+    ) -> HashMap<LightNode, usize> {
+        let mut inserts = self.insertion_head();
+        inserts.retain(|_, num| threshold <= *num);
+        inserts.retain(|node, num| {
+            let (prev_offset, _) = self.information_head(&node);
+            let start_position = nodes[idx - 1].position_from_start + nodes[idx - 1].query_length();
+            match prev_offset {
+                Some(x) => {
+                    let start_position = start_position as isize + x;
+                    *num = (start_position as usize).saturating_sub(OFFSET);
+                    true
+                }
+                None => false,
+            }
+        });
+        inserts
     }
     fn check_insertion_tail(
         &self,
         nodes: &[Node],
         threshold: usize,
         idx: usize,
-    ) -> Vec<(usize, bool, u64)> {
+    ) -> HashMap<LightNode, usize> {
         let end_position = match nodes.get(idx) {
             Some(res) => res.position_from_start as isize,
-            None => return Vec::new(),
+            None => return HashMap::new(),
         };
-        self.insertion_tail()
-            .filter(|&(num, _, _)| threshold <= num)
-            .filter_map(|(_, uid, direction)| {
-                let (_, after_offset) = self.information_tail(uid, direction);
-                let end_position = (end_position - after_offset?).max(0) as usize + OFFSET;
-                Some((end_position, direction, uid))
-            })
-            .collect()
+        let mut inserts = self.insertion_tail();
+        inserts.retain(|_, num| threshold <= *num);
+        inserts.retain(|node, num| {
+            let (_, after_offset) = self.information_tail(node);
+            match after_offset {
+                Some(x) => {
+                    let end_position = (end_position - x).max(0) as usize + OFFSET;
+                    *num = end_position;
+                    true
+                }
+                None => false,
+            }
+        });
+        inserts
     }
 }
 
@@ -1268,7 +1266,7 @@ impl ReadSkelton {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct LightNode {
     // How long should be add to the last position of the previous node to
     // get the start position of this node.
@@ -1283,13 +1281,29 @@ pub struct LightNode {
     after_offset: Option<isize>,
 }
 
+impl std::cmp::PartialEq for LightNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.unit == other.unit
+            && self.cluster == other.cluster
+            && self.is_forward == other.is_forward
+    }
+}
+
+impl std::cmp::Eq for LightNode {}
+
+impl std::hash::Hash for LightNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.unit.hash(state);
+        self.cluster.hash(state);
+        self.is_forward.hash(state);
+    }
+}
+
 impl std::fmt::Debug for LightNode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if self.is_forward {
-            write!(f, "{}(+)", self.unit)
-        } else {
-            write!(f, "{}(-)", self.unit)
-        }
+        let (u, c) = (self.unit, self.cluster);
+        let dir = if self.is_forward { '+' } else { '-' };
+        write!(f, "{u}-{c}({dir})")
     }
 }
 
@@ -1390,4 +1404,29 @@ mod deletion_fill {
         let (score, ops) = pairwise_alignment_gotoh(&query, &read);
         assert_eq!(score, 2, "{:?}", ops);
     }
+    // #[test]
+    // fn aln_test_gotoh_2() {
+    //     let into_read = |nodes: Vec<(u64, u64, bool)>| {
+    //         let nodes: Vec<_> = nodes
+    //             .into_iter()
+    //             .map(|(unit, cluster, is_forward)| LightNode {
+    //                 prev_offset: None,
+    //                 unit,
+    //                 cluster,
+    //                 is_forward,
+    //                 after_offset: None,
+    //             })
+    //             .collect();
+    //         ReadSkelton { nodes }
+    //     };
+    //     let read = vec![(0, 0, true), (2, 0, true), (3, 0, true), (4, 0, true)];
+    //     let read = into_read(read);
+    //     let query = vec![(1, 0, true), (2, 0, true), (3, 0, true)];
+    //     let query = into_read(query);
+    //     let (score, ops) = pairwise_alignment_gotoh(&read, &query);
+    //     assert_eq!(score, 2);
+    //     use definitions::Op;
+    //     let answer = vec![Op::Ins(1), Op::Del(1), Op::Match(2), Op::Del(1)];
+    //     assert_eq!(ops, answer);
+    // }
 }

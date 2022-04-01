@@ -20,7 +20,7 @@ pub trait PurgeDivergent {
 
 use rayon::prelude::*;
 
-const SD_SIGMA: f64 = 6f64;
+const SD_SIGMA: f64 = 4f64;
 use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {

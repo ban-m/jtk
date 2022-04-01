@@ -12,7 +12,9 @@ DRAFT_GFA_2=${2}.draft2.gfa
 LOG=${2}.log
 STAT=${2}.stat
 READTYPE=${3}
-THREADS=56
+THREADS=32
+
+source /bio/package/gcc/setup8.sh
 
 ### Take number.
 if [ $# -ge 4 ]; then
