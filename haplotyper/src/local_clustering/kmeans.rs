@@ -69,7 +69,8 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     //     eprintln!("{}", String::from_utf8_lossy(&ar[start..end]));
     //     eprintln!("{}\n", String::from_utf8_lossy(&yr[start..end]));
     // }
-    let result = clustering_inner(&template, reads, &mut ops, rng, &hmm, config);
+    //let result = clustering_inner(&template, reads, &mut ops, rng, &hmm, config);
+    let result = clustering_dev(&template, reads, &mut ops, rng, &hmm, config);
     result.map(|(asn, gains, lk, _)| (asn, gains, lk, template))
 }
 
@@ -260,126 +261,128 @@ fn get_consensus_of<T: std::borrow::Borrow<[u8]>>(
     hmm.polish_until_converge_with_conf(&template, &sorted, &mut ops, &config)
 }
 
-// pub fn clustering_neo<R: Rng, T: std::borrow::Borrow<[u8]>>(
-//     template: &[u8],
-//     reads: &[T],
-//     ops: &mut [Vec<kiley::Op>],
-//     rng: &mut R,
-//     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
-//     config: &ClusteringConfig,
-// ) -> Option<ClusteringDevResult> {
-//     trace!("{}", String::from_utf8_lossy(template));
-//     let ClusteringConfig {
-//         band_width,
-//         copy_num,
-//         coverage,
-//         gain: average_lk,
-//         ..
-//     } = *config;
-//     let profiles: Vec<_> = reads
-//         .iter()
-//         .zip(ops.iter_mut())
-//         .map(|(seq, op)| {
-//             let (mut table, lk) = hmm.modification_table(template, seq.borrow(), band_width, op);
-//             assert!(table.iter().all(|x| x.is_finite()));
-//             assert!(table.iter().all(|x| !x.is_nan()));
-//             table.iter_mut().for_each(|x| *x -= lk);
-//             table
-//         })
-//         .collect();
-//     let copy_num = copy_num as usize;
-//     let selected_variants: Vec<_> = {
-//         let probes = filter_profiles_neo(&profiles, copy_num, 3, coverage, template.len());
-//         for (pos, lk) in probes.iter() {
-//             let (pos, var) = (
-//                 pos / kiley::hmm::guided::NUM_ROW,
-//                 pos % kiley::hmm::guided::NUM_ROW,
-//             );
-//             trace!("DUMP\t{}\t{}\t{}", pos, var, lk);
-//         }
-//         profiles
-//             .iter()
-//             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
-//             .collect()
-//     };
-//     let num = 3;
-//     let init_copy_num = copy_num.max(4) - 3;
-//     let (assignments, score, k) = (init_copy_num..=copy_num)
-//         .filter_map(|k| {
-//             let (asn, score) = (0..num)
-//                 .map(|_| mcmc_clustering(&selected_variants, k, coverage, rng))
-//                 .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-//             trace!("LK\t{}\t{:.3}", k, score);
-//             let expected_gain = (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
-//             Some((asn, score - expected_gain, k))
-//         })
-//         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-//     let score = score + (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
-//     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
-//     to_posterior_probability(&mut likelihood_gains);
-//     if log_enabled!(log::Level::Trace) {
-//         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-//             let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-//             trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
-//         }
-//     }
-//     Some((assignments, likelihood_gains, score, k as u8))
-// }
+pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    ops: &mut [Vec<kiley::Op>],
+    rng: &mut R,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    config: &ClusteringConfig,
+) -> Option<ClusteringDevResult> {
+    trace!("{}", String::from_utf8_lossy(template));
+    let ClusteringConfig {
+        band_width,
+        copy_num,
+        coverage,
+        gain: average_lk,
+        ..
+    } = *config;
+    let profiles: Vec<_> = reads
+        .iter()
+        .zip(ops.iter_mut())
+        .map(|(seq, op)| {
+            let (mut table, lk) = hmm.modification_table(template, seq.borrow(), band_width, op);
+            assert!(table.iter().all(|x| x.is_finite()));
+            assert!(table.iter().all(|x| !x.is_nan()));
+            table.iter_mut().for_each(|x| *x -= lk);
+            table
+        })
+        .collect();
+    let copy_num = copy_num as usize;
+    let selected_variants: Vec<_> = {
+        let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
+        for (pos, lk) in probes.iter() {
+            let (pos, var) = (
+                pos / kiley::hmm::guided::NUM_ROW,
+                pos % kiley::hmm::guided::NUM_ROW,
+            );
+            trace!("DUMP\t{}\t{}\t{}", pos, var, lk);
+        }
+        profiles
+            .iter()
+            .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
+            .collect()
+    };
+    let num = 3;
+    let init_copy_num = copy_num.max(4) - 3;
+    let (assignments, score, k) = (init_copy_num..=copy_num)
+        .flat_map(|k| std::iter::repeat(k).take(num))
+        .map(|k| {
+            let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
+            trace!("LK\t{}\t{:.3}", k, score);
+            let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
+            let expected_gain = expected_gain_per_read * reads.len() as f64;
+            (asn, score - expected_gain, k)
+            // let expected_gain = (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
+            // Some((asn, score - expected_gain, k))
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let score = score + (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
+    let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
+    to_posterior_probability(&mut likelihood_gains);
+    if log_enabled!(log::Level::Trace) {
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+            trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+        }
+    }
+    Some((assignments, likelihood_gains, score, k as u8))
+}
 
 // LK->LK-logsumexp(LK).
-// fn to_posterior_probability(lks: &mut [Vec<f64>]) {
-//     for xs in lks.iter_mut() {
-//         let total = logsumexp(xs);
-//         xs.iter_mut().for_each(|x| *x -= total);
-//     }
-// }
+fn to_posterior_probability(lks: &mut [Vec<f64>]) {
+    for xs in lks.iter_mut() {
+        let total = logsumexp(xs);
+        xs.iter_mut().for_each(|x| *x -= total);
+    }
+}
 
 // i->k->the likelihood gain of the i-th read when clustered in the k-th cluster.
 // `copy_num` is the copy number of this unit, not the *cluster number*.
 // Usually, they are the same but sometimes there are exact repeats, and the number of the cluster
 // would be smaller than the copy number.
-// fn get_likelihood_gain(
-//     variants: &[Vec<f64>],
-//     assignments: &[u8],
-//     // copy_num: usize,
-// ) -> Vec<Vec<f64>> {
-//     let cluster_size = *assignments.iter().max().unwrap_or(&0) as usize + 1;
-//     let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; cluster_size];
-//     let mut count = vec![0.000000000001; cluster_size];
-//     for (vars, &asn) in variants.iter().zip(assignments.iter()) {
-//         count[asn as usize] += 1.0;
-//         for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
-//             *total += var;
-//         }
-//     }
-//     let is_used_position: Vec<Vec<_>> = total_lk_gain
-//         .iter()
-//         .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
-//         .collect();
-//     let len: f64 = count.iter().sum();
-//     let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len)).collect();
-//     // Padding -infinity to make sure that there are exactly k-slots.
-//     // This is mainly because we do not want to these `mock` slots.
-//     // Do NOT use std:;f64::NEG_INFINITY as it must cause under flows.
-//     // let pad = std::iter::repeat(SMALL_LK).take(copy_num.saturating_sub(cluster_size));
-//     fn pick_vars(ps: &[bool], vars: &[f64]) -> f64 {
-//         vars.iter()
-//             .zip(ps)
-//             .filter_map(|(lk, &p)| p.then(|| lk))
-//             .sum()
-//     }
-//     variants
-//         .iter()
-//         .map(|vars| {
-//             is_used_position
-//                 .iter()
-//                 .zip(fractions.iter())
-//                 .map(|(ps, f)| f.ln() + pick_vars(ps, vars))
-//                 // .chain(pad.clone())
-//                 .collect()
-//         })
-//         .collect()
-// }
+fn get_likelihood_gain(
+    variants: &[Vec<f64>],
+    assignments: &[u8],
+    // copy_num: usize,
+) -> Vec<Vec<f64>> {
+    let cluster_size = *assignments.iter().max().unwrap_or(&0) as usize + 1;
+    let mut total_lk_gain = vec![vec![0f64; variants[0].len()]; cluster_size];
+    let mut count = vec![0.000000000001; cluster_size];
+    for (vars, &asn) in variants.iter().zip(assignments.iter()) {
+        count[asn as usize] += 1.0;
+        for (total, var) in total_lk_gain[asn as usize].iter_mut().zip(vars.iter()) {
+            *total += var;
+        }
+    }
+    let is_used_position: Vec<Vec<_>> = total_lk_gain
+        .iter()
+        .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
+        .collect();
+    let len: f64 = count.iter().sum();
+    let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len)).collect();
+    // Padding -infinity to make sure that there are exactly k-slots.
+    // This is mainly because we do not want to these `mock` slots.
+    // Do NOT use std:;f64::NEG_INFINITY as it must cause under flows.
+    // let pad = std::iter::repeat(SMALL_LK).take(copy_num.saturating_sub(cluster_size));
+    fn pick_vars(ps: &[bool], vars: &[f64]) -> f64 {
+        vars.iter()
+            .zip(ps)
+            .filter_map(|(lk, &p)| p.then(|| lk))
+            .sum()
+    }
+    variants
+        .iter()
+        .map(|vars| {
+            is_used_position
+                .iter()
+                .zip(fractions.iter())
+                .map(|(ps, f)| f.ln() + pick_vars(ps, vars))
+                // .chain(pad.clone())
+                .collect()
+        })
+        .collect()
+}
 
 // Filter column with small confidence.
 // HowTo: If a column is indeed a variant site, in at least one cluster,

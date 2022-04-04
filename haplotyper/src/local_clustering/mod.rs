@@ -104,7 +104,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 use kmeans::*;
-                let cls = clustering_inner(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
+                // let cls = clustering_inner(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
+                let cls = clustering_dev(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
                 cls.unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
             } else {
                 (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)

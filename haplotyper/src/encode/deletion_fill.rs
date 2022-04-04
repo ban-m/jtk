@@ -766,10 +766,11 @@ fn fine_mapping<'a>(
         );
         let iden_bound = 1f64 - sim_thr;
         let is_ok = iden_bound < identity && EDGE_BOUND < head_identity.min(tail_identity);
+        (is_ok, info)
         // let identity = identity
         //     .min(head_identity + EDGE_BONUS)
         //     .min(tail_identity + EDGE_BONUS);
-        (iden_bound < identity, info)
+        //(iden_bound < identity, info)
     };
     if log_enabled!(log::Level::Trace) {
         if below_dissim {

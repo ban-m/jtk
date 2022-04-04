@@ -85,7 +85,7 @@ impl ReadType {
         match *self {
             ReadType::CCS => 0.1f64,
             ReadType::CLR => 1f64,
-            ReadType::ONT => 0.8f64,
+            ReadType::ONT => 1f64,
             ReadType::None => 1f64,
         }
     }

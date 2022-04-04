@@ -1,7 +1,9 @@
 #![allow(unused_imports)]
 use definitions::*;
+use haplotyper::assemble::ditch_graph::Focus;
 use haplotyper::assemble::*;
 use haplotyper::determine_units::DetermineUnit;
+use sandbox::IS_MOCK;
 use std::collections::HashMap;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
@@ -10,87 +12,45 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    use haplotyper::encode::deletion_fill::*;
-    let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate_dev(&ds, 0.35);
-    //let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate(&ds, 0.35);
-    eprintln!("{deviation}");
-    for read in ds.encoded_reads.iter() {
-        println!("READ\t{}\t{}", read.id, read_error_rate[read.id as usize]);
-    }
-    for unit in ds.selected_chunks.iter() {
-        // println!("UNIT\t{}\t{}", unit.id, unit_error_rate[unit.id as usize]);
-        for cl in 0..unit.cluster_num {
-            let error = unit_error_rate[unit.id as usize][cl];
-            println!("UNIT\t{}\t{cl}\t{error}", unit.id);
-        }
-    }
-    // let header = gfa::Content::Header(gfa::Header::default());
-    // let header = gfa::Record::from_contents(header, vec![]);
-    // let config = AssembleConfig::new(1, 100, false, true, 3, 4f64);
-    // let records = assemble_draft(&ds, &config);
-    // let records = std::iter::once(header.clone()).chain(records).collect();
-    // let gfa = gfa::GFA::from_records(records);
-    // use haplotyper::purge_diverged::*;
-    // use std::io::{BufWriter, Write};
-    // if let Ok(mut wtr) = std::fs::File::create("before.gfa").map(BufWriter::new) {
-    //     writeln!(&mut wtr, "{}", gfa)?;
-    // }
-    // let purge_config = PurgeDivConfig::new(56);
-    // {
-    //     let mut ds = ds.clone();
-    //     ds.purge(&purge_config);
-    //     let records = assemble_draft(&ds, &config);
-    //     let records = std::iter::once(header.clone()).chain(records).collect();
-    //     let gfa = gfa::GFA::from_records(records);
-    //     if let Ok(mut wtr) = std::fs::File::create("old.gfa").map(BufWriter::new) {
-    //         writeln!(&mut wtr, "{}", gfa)?;
-    //     }
-    // }
-    // {
-    //     let mut ds = ds.clone();
-    //     ds.purge_dev(&purge_config);
-    //     let records = assemble_draft(&ds, &config);
-    //     let records = std::iter::once(header).chain(records).collect();
-    //     let gfa = gfa::GFA::from_records(records);
-    //     if let Ok(mut wtr) = std::fs::File::create("new.gfa").map(BufWriter::new) {
-    //         writeln!(&mut wtr, "{}", gfa)?;
-    //     }
-    // }
+    let min_span_read = ds.read_type.min_span_reads();
+    let llr = ds.read_type.min_llr_value();
+    let config = AssembleConfig::new(1, 1000, false, true, min_span_read, llr);
+    check_foci(&ds, &config);
     Ok(())
 }
 
-// pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
-//     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-//     use haplotyper::assemble::ditch_graph::DitchGraph;
-//     let graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
-//     // graph.remove_lightweight_edges(2, true);
-//     let (segments, edge, group, summaries) = graph.spell(c);
-//     let nodes = segments.into_iter().map(|node| {
-//         let tags = match summaries.iter().find(|x| x.id == node.sid) {
-//             Some(contigsummary) => {
-//                 let ids: Vec<_> = contigsummary
-//                     .summary
-//                     .iter()
-//                     .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
-//                     .collect();
-//                 let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
-//                 let coverage =
-//                     gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
-//                 log::debug!(
-//                     "CONUNIT\t{}\t{}\t{}",
-//                     contigsummary.id,
-//                     total / contigsummary.summary.len(),
-//                     ids.join("\t")
-//                 );
-//                 vec![coverage]
-//             }
-//             None => Vec::new(),
-//         };
-//         gfa::Record::from_contents(gfa::Content::Seg(node), tags)
-//     });
-//     let edges = edge
-//         .into_iter()
-//         .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
-//     let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
-//     std::iter::once(group).chain(nodes).chain(edges).collect()
+pub fn check_foci(ds: &DataSet, c: &AssembleConfig) {
+    let reads: Vec<_> = ds.encoded_reads.iter().collect();
+    use haplotyper::assemble::ditch_graph::DitchGraph;
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
+    let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    let cov = ds.coverage.unwrap();
+    graph.remove_zero_copy_elements(&lens, 0.2);
+    graph.assign_copy_number(cov, &lens);
+    graph.remove_zero_copy_elements(&lens, 0.5);
+    let reads: Vec<_> = ds.encoded_reads.iter().collect();
+    let foci = graph.get_foci_dev(&reads, c);
+    let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        let ans = match IS_MOCK {
+            true => id2desc[&read.id].contains("hapA") as usize,
+            false => id2desc[&read.id].contains("000251v2") as usize,
+        };
+        for node in read.nodes.iter() {
+            counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
+        }
+    }
+    // for focus in foci.iter().filter(|f| not_good(f, &counts)) {
+    for focus in foci {
+        let fcount = counts[&focus.from];
+        let tcount = counts[&focus.to];
+        println!("{focus}\t{:?}\t{:?}", fcount, tcount);
+    }
+}
+
+// fn not_good(focus: &Focus, counts: &HashMap<(u64, u64), [u32; 2]>) -> bool {
+//     let fcount = counts[&focus.from];
+//     let tcount = counts[&focus.to];
+//     (fcount[0] < fcount[1]) != (tcount[0] <= tcount[1])
 // }

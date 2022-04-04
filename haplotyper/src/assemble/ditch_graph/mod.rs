@@ -52,6 +52,7 @@ pub struct Focus {
     pub dist: usize,
     /// Log Likelihood ratio between the alt hypothesis/null hypothesis.
     pub log_likelihood_ratio: f64,
+    pub counts: Vec<usize>,
 }
 
 impl std::fmt::Display for Focus {
@@ -63,13 +64,14 @@ impl std::fmt::Display for Focus {
             to_position,
             dist,
             log_likelihood_ratio,
+            ref counts,
         } = self;
         let (fu, fc) = from;
         let (tu, tc) = to;
         write!(
             f,
-            "{},{},{},{},{},{},{},{:.2}",
-            fu, fc, from_position, tu, tc, to_position, dist, log_likelihood_ratio
+            "{fu},{fc},{from_position},{tu},{tc},{to_position},{dist},{:.2},{:?}",
+            log_likelihood_ratio, counts
         )
     }
 }
@@ -86,6 +88,7 @@ impl Focus {
         to_position: Position,
         dist: usize,
         lk: f64,
+        counts: Vec<usize>,
     ) -> Self {
         Self {
             from,
@@ -94,6 +97,7 @@ impl Focus {
             to_position,
             dist,
             log_likelihood_ratio: lk,
+            counts,
         }
     }
 }
@@ -621,7 +625,10 @@ impl<'a> DitchGraph<'a> {
         }
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
-        let llr_stream = (0..10).rev().map(|x| x as f64).take_while(|&x| min_llr < x);
+        let llr_stream = (0..10)
+            .rev()
+            .map(|x| x as f64 + 0.1)
+            .take_while(|&x| min_llr < x);
         for (i, llr) in llr_stream.enumerate() {
             debug!("REPEATRESOLVE\t{}", i);
             self.assign_copy_number_mcmc(cov, lens);
@@ -1629,7 +1636,6 @@ impl<'a> DitchGraph<'a> {
     pub fn survey_foci(&mut self, foci: &[Focus]) -> usize {
         foci.iter()
             .filter(|focus| {
-                let (key, pos) = (focus.from, focus.from_position);
                 // Check if the targets are present in the graph.
                 let from_copy_num = self.nodes.get(&focus.from).and_then(|n| n.copy_number);
                 let to_copy_num = self.nodes.get(&focus.to).and_then(|node| node.copy_number);
@@ -1637,31 +1643,53 @@ impl<'a> DitchGraph<'a> {
                     return false;
                 }
                 // Check if this is branching.
-                let num_edges = self.get_edges(key, pos).count();
-                if num_edges != 1 {
+                let (key, pos) = (focus.from, focus.from_position);
+                if self.get_edges(key, pos).count() != 1 {
                     return false;
                 }
-                let edge = self.get_edges(key, pos).next().unwrap();
-                let sibs = self.get_edges(edge.to, edge.to_position).count();
-                if sibs <= 1 {
-                    return false;
-                }
-                // debug!("FOCUS\tTRY\t{}", focus);
+                // let edge = self.get_edges(key, pos).next().unwrap();
+                // let sibs = self.get_edges(edge.to, edge.to_position).count();
+                // if sibs <= 1 {
+                //     return false;
+                // }
+                debug!("FOCUS\tTRY\t{}", focus);
                 self.survey_focus(focus).is_some()
             })
             .count()
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
-    // fn survey_focus(&mut self, focus: &Focus, info: &HashMap<Node, f64>) -> Option<()> {
+    // TODO:Select path(ButHow?)
     fn survey_focus(&mut self, focus: &Focus) -> Option<()> {
-        let path_to_focus = self.bfs_to_the_target(focus)?;
+        let path_to_focus = self.dfs_to_the_target(focus)?;
+        // If this path is no-branching, it is no use.
+        if !self.is_path_branching(focus, &path_to_focus) {
+            return None;
+        }
         let from = (focus.from, focus.from_position);
         let to = (focus.to, focus.to_position);
         let (label, proxying) = self.spell_along_path(&path_to_focus, from);
-        // debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
+        debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
         self.span_region(from, to, &path_to_focus, label, proxying);
         Some(())
+    }
+    fn is_path_branching(&self, focus: &Focus, path: &[(Node, Position)]) -> bool {
+        let len = path.len();
+        let mut is_branching = false;
+        is_branching |= 1 < self.get_edges(focus.from, focus.from_position).count();
+        let mut check_both = path.iter().take(len.saturating_sub(1));
+        is_branching |= check_both.any(|(node, _)| {
+            let edges = self.nodes[node].edges.iter();
+            let (head, tail) = edges.fold((0, 0), |(h, t), e| match e.from_position {
+                Position::Head => (h + 1, t),
+                Position::Tail => (h, t + 1),
+            });
+            1 < head || 1 < tail
+        });
+        if let Some(&(node, position)) = path.last() {
+            is_branching |= 1 < self.get_edges(node, position).count();
+        }
+        is_branching
     }
     fn span_region(
         &mut self,
@@ -1797,12 +1825,74 @@ impl<'a> DitchGraph<'a> {
     // because of the removed nodes.
     // If it happened, eigther this focus or previous
     // branching is false. Maybe just dropping this focus would be better?
+    // TODO: Faster.
+    #[allow(dead_code)]
+    fn dfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(Node, Position)>> {
+        // Breadth first search until get to the target.
+        // Just !pos to make code tidy.
+        let mut nodes_at = vec![vec![]; focus.dist + 1];
+        let mut parents = vec![vec![]; focus.dist + 1];
+        nodes_at[0].push((focus.from, !focus.from_position));
+        parents[0].push((0, 0));
+        for dist in 0..focus.dist + 1 {
+            // To avoid the borrow checker.
+            let mut nodes_at_temp = vec![];
+            for (idx, &(node, pos)) in nodes_at[dist].iter().enumerate() {
+                let edges = self.get_edges(node, !pos);
+                let edges = edges.map(|e| (e, dist + 1 + e.proxying.len()));
+                for (edge, d) in edges.filter(|&(_, d)| d <= focus.dist) {
+                    nodes_at_temp.push((d, (edge.to, edge.to_position)));
+                    parents[d].push((dist, idx));
+                }
+            }
+            for (d, elm) in nodes_at_temp {
+                nodes_at[d].push(elm);
+            }
+        }
+        assert_eq!(nodes_at.len(), parents.len());
+        nodes_at
+            .iter()
+            .zip(parents.iter())
+            .for_each(|(n, p)| assert_eq!(n.len(), p.len()));
+        // Back-track.
+        let mut dist = focus.dist;
+        let target = (focus.to, focus.to_position);
+        let hit_at = nodes_at[dist].iter().position(|&x| x == target);
+        let mut idx = match hit_at {
+            Some(idx) => idx,
+            None => {
+                debug!("FROM\t{}", self.nodes[&focus.from]);
+                debug!("TO\t{}", self.nodes[&focus.to]);
+                for (i, nodes) in nodes_at.iter().enumerate() {
+                    debug!("DUMP\t{}\t{:?}", i, nodes);
+                }
+                debug!("FOCUS\tFailedToFindTarget\t{}", focus);
+                return None;
+            }
+        };
+        let mut back_track = vec![];
+        while 0 < dist {
+            back_track.push(nodes_at[dist][idx]);
+            let (prev_dist, prev_idx) = parents[dist][idx];
+            idx = prev_idx;
+            dist = prev_dist;
+        }
+        back_track.reverse();
+        for (i, (node, pos)) in back_track.iter().enumerate() {
+            debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
+        }
+        Some(back_track)
+    }
+    #[allow(dead_code)]
     fn bfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(Node, Position)>> {
         // Breadth first search until get to the target.
         // Just !pos to make code tidy.
         let (start, pos) = (focus.from, focus.from_position);
-        let mut nodes_at = vec![vec![(start, !pos)]];
-        let mut parents = vec![vec![]];
+        let mut nodes_at = vec![vec![]; focus.dist + 1];
+        nodes_at[0].push((start, !pos));
+        let mut parents = vec![vec![]; focus.dist + 1];
+        // let mut nodes_at = vec![vec![(start, !pos)]];
+        // let mut parents = vec![vec![]];
         'outer: for dist in 0..focus.dist + 1 {
             let mut next_nodes = vec![];
             let mut parent = vec![];
@@ -1825,13 +1915,13 @@ impl<'a> DitchGraph<'a> {
         // Back-track.
         assert_eq!(nodes_at.len(), parents.len());
         let mut dist = nodes_at.len() - 1;
-        let mut idx = match nodes_at[dist]
+        let mut idx = match nodes_at[focus.dist]
             .iter()
             .position(|&(n, p)| n == focus.to && p == focus.to_position)
         {
             Some(idx) => idx,
             None => {
-                debug!("FOCUS\tFailedToFindTarget{}", focus);
+                debug!("FOCUS\tFailedToFindTarget\t{}", focus);
                 return None;
             }
         };
@@ -1856,13 +1946,14 @@ impl<'a> DitchGraph<'a> {
         (start, pos): (Node, Position),
     ) -> (EdgeLabel, Vec<(Node, bool, usize)>) {
         let first_elm = path[0];
-        let first_label = self
+        let (first_label, mut processed_nodes) = self
             .get_edges(start, pos)
-            .find(|edge| (edge.to, edge.to_position) == first_elm)
-            .map(|edge| edge.seq.clone())
+            .find(|e| (e.to, e.to_position) == first_elm)
+            .map(|edge| (edge.seq.clone(), edge.proxying.clone()))
             .unwrap();
+        // let first_label = first_edge.map(|edge| edge.seq.clone()).unwrap();
+        // let mut processed_nodes = vec![];
         let mut path_label = vec![];
-        let mut processed_nodes = vec![];
         for window in path.windows(2) {
             // !!!Here, each position is the start position of each node!!!!
             let (from, from_pos) = window[0];
@@ -1892,13 +1983,6 @@ impl<'a> DitchGraph<'a> {
                 let node = self.nodes.get_mut(&from).unwrap();
                 match node.copy_number {
                     Some(cp) if 0 < cp => {
-                        // if [536, 786].contains(&node.node.0) {
-                        //     debug!("DUMP\t{}", node);
-                        // }
-                        // TODO: Is this OK? Maybe the copy number is not reliable.
-                        // The problem is not the reduction of the copy number -- it should be zero --
-                        // but the reduction of the `occ`. Maybe we should substract average coverage
-                        // along the path from the `node.occ`.
                         let occ = node.occ / cp;
                         node.occ -= occ;
                         node.copy_number = Some(cp - 1);
@@ -1908,15 +1992,15 @@ impl<'a> DitchGraph<'a> {
                 }
             };
             processed_nodes.push((from, from_pos == Position::Head, occ));
-            let label = self
+            let passed_edge = self
                 .get_edges(from, !from_pos)
                 .find(|edge| edge.to == to && edge.to_position == to_pos)
-                .map(|edge| &edge.seq)
                 .unwrap();
-            match label {
+            processed_nodes.extend(passed_edge.proxying.iter());
+            match &passed_edge.seq {
                 EdgeLabel::Ovlp(l) => {
                     node_seq.reverse();
-                    let truncate = (node_seq.len() as i64 + *l).max(0);
+                    let truncate = (node_seq.len() as i64 + l).max(0);
                     node_seq.truncate(truncate as usize);
                     node_seq.reverse();
                 }
@@ -1951,10 +2035,10 @@ impl<'a> DitchGraph<'a> {
         to: Node,
         to_pos: Position,
     ) {
-        // debug!(
-        //     "Removing ({},{},{})-({},{},{})",
-        //     from.0, from.1, from_pos, to.0, to.1, to_pos
-        // );
+        debug!(
+            "Removing ({},{},{})-({},{},{})",
+            from.0, from.1, from_pos, to.0, to.1, to_pos
+        );
         if let Some(node) = self.nodes.get_mut(&from) {
             node.edges.retain(|e| {
                 !(e.from_position == from_pos && e.to == to && e.to_position == to_pos)
@@ -2008,6 +2092,7 @@ impl<'a> DitchGraph<'a> {
         let mut count = 1;
         while count != 0 {
             let mut foci = self.get_foci(reads, config);
+            //let mut foci = self.get_foci_dev(reads, config);
             let prev = foci.len();
             foci.retain(|val| thr < val.llr());
             foci.retain(|val| val.llr() != std::f64::INFINITY);
@@ -2022,6 +2107,176 @@ impl<'a> DitchGraph<'a> {
             count = self.survey_foci(&foci);
             debug!("FOCI\tTryAndSuccess\t{}\t{}", foci.len(), count);
         }
+    }
+    /// Return all foci, thresholded by `config` parameter.
+    pub fn get_foci_dev(&self, reads: &[&EncodedRead], config: &AssembleConfig) -> Vec<Focus> {
+        let reads_on_nodes = {
+            let mut reads_on_nodes: HashMap<_, Vec<_>> = HashMap::new();
+            for read in reads.iter() {
+                for node in read.nodes.iter() {
+                    reads_on_nodes
+                        .entry((node.unit, node.cluster))
+                        .or_default()
+                        .push(*read);
+                }
+            }
+            reads_on_nodes
+        };
+        reads_on_nodes
+            .into_par_iter()
+            .flat_map(|(tuple, reads)| self.get_focus_dev(tuple, reads, config))
+            .filter_map(std::convert::identity)
+            .collect()
+    }
+    fn get_focus_dev(
+        &self,
+        tuple: (u64, u64),
+        reads: Vec<&EncodedRead>,
+        config: &AssembleConfig,
+    ) -> [Option<Focus>; 2] {
+        let head = self.get_focus_from_dev(tuple, Position::Head, &reads, config);
+        let tail = self.get_focus_from_dev(tuple, Position::Tail, &reads, config);
+        [head, tail]
+    }
+    fn get_count_of_nodes(
+        &self,
+        tuple: (u64, u64),
+        pos: Position,
+        reads: &[&EncodedRead],
+        dist_nodes: &[Vec<(Node, Position)>],
+        _: &AssembleConfig,
+    ) -> Vec<Vec<usize>> {
+        let mut count_at_dist: Vec<_> = dist_nodes.iter().map(|xs| vec![0; xs.len()]).collect();
+        let reads = reads
+            .iter()
+            .filter(|r| r.nodes.iter().any(|n| (n.unit, n.cluster) == tuple));
+        let reads = reads.map(|read| {
+            let mut nodes = read.nodes.iter().enumerate();
+            let (idx, node) = nodes.find(|(_, n)| (n.unit, n.cluster) == tuple).unwrap();
+            (idx, node, read)
+        });
+        let max_dist = dist_nodes.len();
+        for (idx, node, read) in reads {
+            let take_tail = match (node.is_forward, pos) {
+                (true, Position::Tail) | (false, Position::Head) => true,
+                (true, Position::Head) | (false, Position::Tail) => false,
+            };
+            let nodes = read.nodes.iter();
+            if take_tail {
+                let nodes = nodes.skip(idx + 1).enumerate();
+                let nodes = nodes.filter(|&(d, _)| d < max_dist);
+                for (dist, target) in nodes {
+                    let target = match target.is_forward {
+                        true => ((target.unit, target.cluster), Position::Head),
+                        false => ((target.unit, target.cluster), Position::Tail),
+                    };
+                    if let Some(x) = dist_nodes[dist]
+                        .iter()
+                        .zip(count_at_dist[dist].iter_mut())
+                        .find(|&(&key, _)| key == target)
+                    {
+                        *x.1 += 1;
+                    }
+                }
+            } else {
+                let nodes = nodes.take(idx).rev().enumerate();
+                let nodes = nodes.filter(|&(d, _)| d < max_dist);
+                for (dist, target) in nodes {
+                    let target = match target.is_forward {
+                        true => ((target.unit, target.cluster), Position::Tail),
+                        false => ((target.unit, target.cluster), Position::Head),
+                    };
+                    if let Some(x) = dist_nodes[dist]
+                        .iter()
+                        .zip(count_at_dist[dist].iter_mut())
+                        .find(|&(&key, _)| key == target)
+                    {
+                        *x.1 += 1;
+                    }
+                }
+            }
+        }
+        count_at_dist
+    }
+    fn get_focus_from_dev(
+        &self,
+        tuple: (u64, u64),
+        pos: Position,
+        reads: &[&EncodedRead],
+        config: &AssembleConfig,
+    ) -> Option<Focus> {
+        let node = self.nodes.get(&tuple)?;
+        let edge_num = node.edges.iter().filter(|e| e.from_position == pos).count();
+        if edge_num != 1 {
+            return None;
+        }
+        let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
+        let siblings = self.get_edges(edge.to, edge.to_position).count();
+        if siblings <= 1 {
+            return None;
+        }
+        let dist_nodes = self.enumerate_candidate_nodes(&reads, config.min_span_reads, node, pos);
+        let count_at_dist = self.get_count_of_nodes(tuple, pos, reads, &dist_nodes, config);
+        let mut focus: Option<Focus> = None;
+        let dist_nodes_count = dist_nodes.iter().zip(count_at_dist.iter()).enumerate();
+        let dist_nodes_count = dist_nodes_count.filter(|(_, (ns, _))| 1 < ns.len());
+        for (dist, (nodes, counts)) in dist_nodes_count {
+            let total_occs: usize = nodes.iter().map(|n| self.nodes[&n.0].occ).sum();
+            if total_occs == 0 {
+                continue;
+            }
+            let dist = dist + 1;
+            assert_eq!(nodes.len(), counts.len());
+            let ith_ln = {
+                let mut probs: Vec<_> = nodes.iter().map(|n| self.nodes[&n.0].occ as f64).collect();
+                let sum: f64 = probs.iter().sum();
+                probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
+                assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
+                probs
+            };
+            let null_prob: f64 = counts
+                .iter()
+                .zip(ith_ln.iter())
+                .map(|(&occ, ln)| match occ {
+                    0 => 0f64,
+                    _ => occ as f64 * ln,
+                })
+                .sum();
+            assert!(!null_prob.is_nan(), "{:?}\t{:?}", ith_ln, counts);
+            assert!(null_prob < std::f64::INFINITY, "{:?}\t{:?}", ith_ln, counts);
+            let choice_num = nodes.len() as f64;
+            let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
+            let error_lk = {
+                let correct_to_error =
+                    (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0) / choice_num;
+                let error_to_error =
+                    ERROR_PROB / choice_num * ERROR_PROB * (choice_num - 1f64) / choice_num;
+                (correct_to_error + error_to_error).ln()
+            };
+            assert!(!correct_lk.is_nan());
+            assert!(!error_lk.is_nan());
+            let nodes = nodes.iter().enumerate();
+            let single_copy_nodes =
+                nodes.filter(|(_, (node, _))| matches!(self.nodes[node].copy_number, Some(1)));
+            let focus_cands = single_copy_nodes.map(|(k, &n)| {
+                let idx_counts = counts.iter().map(|&x| x as f64).enumerate();
+                let lk: f64 = idx_counts
+                    .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
+                    .sum();
+                assert!(!lk.is_nan());
+                (lk - null_prob, n)
+            });
+            let current_llr = focus.as_ref().map(|f| f.llr()).unwrap_or(0f64);
+            let focus_cand = focus_cands
+                .filter(|&(lk_ratio, _)| current_llr < lk_ratio)
+                .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap());
+            if let Some((lk_ratio, (to, to_pos))) = focus_cand {
+                let counts = counts.to_vec();
+                let f = Focus::new(node.node, pos, to, to_pos, dist, lk_ratio, counts);
+                focus.replace(f);
+            }
+        }
+        focus
     }
     /// Return a hash map containing all foci, thresholded by `config` parameter.
     /// For each (node, position), keep the strongest focus.
@@ -2071,7 +2326,6 @@ impl<'a> DitchGraph<'a> {
         let dist_nodes = self.enumerate_candidate_nodes(&reads, config.min_span_reads, node, pos);
         let mut focus: Option<Focus> = None;
         for (dist, nodes) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
-            // TODO: Maybe we need to clarify condition so that to remove this if-statement...
             let total_occs: usize = nodes.iter().map(|n| self.nodes[&n.0].occ).sum();
             if total_occs == 0 {
                 continue;
@@ -2142,7 +2396,8 @@ impl<'a> DitchGraph<'a> {
                 .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
             {
                 if focus.as_ref().map(|f| f.llr()).unwrap_or(0f64) < lk_ratio {
-                    focus = Some(Focus::new(node.node, pos, to, to_pos, dist, lk_ratio));
+                    let f = Focus::new(node.node, pos, to, to_pos, dist, lk_ratio, occs);
+                    focus.replace(f);
                 }
             }
         }
@@ -2453,7 +2708,6 @@ impl<'a> DitchGraph<'a> {
                         .collect();
                     paths.iter().all(|us| us == &paths[0] && us.len() <= len)
                 };
-                // debug!("BUBBLE\t{:?}\t{}\t{}", node.node, pos, is_bubble);
                 if is_bubble {
                     let mut convert_table: HashMap<u64, u64> = HashMap::new();
                     for (path, _) in path_and_dest.iter() {
@@ -2464,7 +2718,6 @@ impl<'a> DitchGraph<'a> {
                                 .or_insert(cluster);
                         }
                     }
-                    // debug!("CONVERT\t{:?}\t{}\t{:?}", node.node, pos, convert_table);
                     for (path, _) in path_and_dest.iter() {
                         for &(unit, cluster) in path.iter() {
                             squish_to
