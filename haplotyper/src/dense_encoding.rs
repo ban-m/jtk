@@ -9,13 +9,17 @@ const CONS_MIN_LENGTH: usize = 200;
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 // (unit,cluster,direction, if it is `from` part)
 type DTip = (u64, u64, bool, bool);
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DenseEncodingConfig {
     pub len: usize,
+    pub file: Option<String>,
 }
 impl DenseEncodingConfig {
-    pub fn new(len: usize) -> Self {
-        Self { len }
+    pub fn new(len: usize, file: Option<&str>) -> Self {
+        Self {
+            len,
+            file: file.map(|f| f.to_string()),
+        }
     }
 }
 pub trait DenseEncoding {
@@ -235,20 +239,20 @@ fn weak_resolve(read_type: definitions::ReadType) -> (usize, f64) {
 }
 
 type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
-fn enumerate_polyploid_edges(ds: &DataSet, _config: &DenseEncodingConfig) -> EdgeAndUnit {
+fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> EdgeAndUnit {
     use crate::assemble::*;
     let (min_span_reads, lk_ratio) = weak_resolve(ds.read_type);
     let config = AssembleConfig::new(1, 1000, false, true, min_span_reads, lk_ratio);
     let (records, summaries) = assemble(ds, &config);
-    if log_enabled!(log::Level::Trace) {
+    if let Some(file) = de_config.file.as_ref() {
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![]);
         let records = std::iter::once(header).chain(records).collect();
         let gfa = gfa::GFA::from_records(records);
-        if let Ok(mut wtr) = std::fs::File::create("de.gfa").map(std::io::BufWriter::new) {
+        if let Ok(mut wtr) = std::fs::File::create(file).map(std::io::BufWriter::new) {
             use std::io::Write;
             if let Err(why) = writeln!(&mut wtr, "{}", gfa) {
-                trace!("{:?}", why);
+                eprintln!("{:?}", why);
             }
         }
     }

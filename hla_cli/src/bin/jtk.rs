@@ -682,6 +682,15 @@ fn subcommand_encode_densely() -> Command<'static> {
                 .default_value("15")
                 .takes_value(true),
         )
+        .arg(
+            Arg::new("output")
+                .short('o')
+                .long("output")
+                .required(false)
+                .value_name("PATH")
+                .help("Dump the intermediate assembly to the PATH")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_assemble() -> Command<'static> {
@@ -1207,7 +1216,8 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|num| num.parse().ok())
         .unwrap();
     use haplotyper::dense_encoding::*;
-    let config = DenseEncodingConfig::new(length);
+    let file = matches.value_of("output");
+    let config = DenseEncodingConfig::new(length, file);
     dataset.dense_encoding_dev(&config);
 }
 

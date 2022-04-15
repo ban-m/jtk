@@ -1034,12 +1034,6 @@ impl<'a> DitchGraph<'a> {
             .map(|(&node, &pathid)| (node, node_cp[pathid]))
             .collect();
         let mut edge_copy_number = HashMap::new();
-        for (&edge_cp, &(from, fplus, to, tplus, _)) in edge_cp.iter().zip(edges.iter()) {
-            let from = terminals[from][fplus as usize];
-            let to = terminals[to][tplus as usize];
-            edge_copy_number.insert((from, to), edge_cp);
-            edge_copy_number.insert((to, from), edge_cp);
-        }
         for edge in self.nodes.values().flat_map(|node| node.edges.iter()) {
             let from = node_to_pathid[&edge.from];
             let to = node_to_pathid[&edge.to];
@@ -1059,6 +1053,12 @@ impl<'a> DitchGraph<'a> {
                 //     }
                 // }
             }
+        }
+        for (&edge_cp, &(from, fplus, to, tplus, _)) in edge_cp.iter().zip(edges.iter()) {
+            let from = terminals[from][fplus as usize];
+            let to = terminals[to][tplus as usize];
+            edge_copy_number.insert((from, to), edge_cp);
+            edge_copy_number.insert((to, from), edge_cp);
         }
         (node_copy_number, edge_copy_number)
     }
@@ -1162,8 +1162,8 @@ impl<'a> DitchGraph<'a> {
             for ((n, len), cp) in nodes.iter().zip(node_cp.iter()) {
                 trace!("COVCP\tNODE\t{}\t{}\t{}", n, len, cp,);
             }
-            for (e, cp) in edges.iter().zip(edge_cp.iter()) {
-                trace!("COVCP\tEDGE\t{}\t{}", e.4, cp);
+            for ((f, fp, t, tp, cov), cp) in edges.iter().zip(edge_cp.iter()) {
+                trace!("COVCP\tEDGE\t{f}\t{fp}\t{t}\t{tp}\t{cov}\t{cp}");
             }
         }
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
@@ -1647,11 +1647,11 @@ impl<'a> DitchGraph<'a> {
                 if self.get_edges(key, pos).count() != 1 {
                     return false;
                 }
-                // let edge = self.get_edges(key, pos).next().unwrap();
-                // let sibs = self.get_edges(edge.to, edge.to_position).count();
-                // if sibs <= 1 {
-                //     return false;
-                // }
+                let edge = self.get_edges(key, pos).next().unwrap();
+                let sibs = self.get_edges(edge.to, edge.to_position).count();
+                if sibs <= 1 {
+                    return false;
+                }
                 debug!("FOCUS\tTRY\t{}", focus);
                 self.survey_focus(focus).is_some()
             })

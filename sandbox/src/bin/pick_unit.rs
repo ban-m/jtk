@@ -36,11 +36,12 @@ fn main() -> std::io::Result<()> {
             let (query, aln, refr) = node.recover(ref_chunk);
             let dist = aln.iter().filter(|&&x| x != b'|').count();
             let identity = 1f64 - dist as f64 / aln.len() as f64;
-            let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.3}", p)).collect();
+            let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.2}", p)).collect();
             let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));
+            let name = &id2desc[&readid];
             println!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}",
-                readid, is_hap1, i, len, unit, cluster, identity, post
+                "{readid}\t{is_hap1}\t{i}\t{len}\t{unit}\t{cluster}\t{:.2}\t{post}\t{name}",
+                identity,
             );
             println!("ALN\t{}", dist);
             for ((query, aln), refr) in query.chunks(200).zip(aln.chunks(200)).zip(refr.chunks(200))

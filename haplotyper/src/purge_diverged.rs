@@ -19,20 +19,20 @@ pub trait PurgeDivergent {
 }
 
 use rayon::prelude::*;
-
-const SD_SIGMA: f64 = 4f64;
+const THR: f64 = 0.05;
+const SD_SIGMA: f64 = 8f64;
 use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
-        self.sanity_check();
-        let error_rate = self.error_rate();
-        let thr = error_rate.total + SD_SIGMA * error_rate.total_sd;
-        debug!(
-            "PD\tTHR\t{}\t{}\t{}",
-            error_rate.total, error_rate.total_sd, thr
-        );
+        // self.sanity_check();
+        // let error_rate = self.error_rate();
+        // let thr = error_rate.total + SD_SIGMA * error_rate.total_sd;
+        // debug!(
+        //     "PD\tTHR\t{}\t{}\t{}",
+        //     error_rate.total, error_rate.total_sd, thr
+        // );
         let prev = self.encoded_reads.len();
-        let to_be_removed = purge_diverged_nodes(self, thr, config);
+        let to_be_removed = purge_diverged_nodes(self, THR, config);
         let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
         debug!("PD\tREMOVED\t{}", removed_nodes);
         let seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
@@ -288,7 +288,10 @@ fn purge_diverged_nodes(
 // Unit -> Cluster -> If the cluster is very diverged.
 pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
     use crate::encode::deletion_fill::estimate_error_rate_dev;
-    let (_, unit_error_rate, _) = estimate_error_rate_dev(&ds, 0.35);
+    let error_rate = ds.error_rate();
+    let fallback = error_rate.total + SD_SIGMA * error_rate.total_sd;
+    debug!("PD\tFallback\t{fallback}");
+    let (_, unit_error_rate, _) = estimate_error_rate_dev(&ds, fallback);
     unit_error_rate
         .iter()
         .map(|es| es.iter().map(|&x| thr < x).collect())

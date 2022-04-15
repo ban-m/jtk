@@ -305,19 +305,27 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     };
     let num = 3;
     let init_copy_num = copy_num.max(4) - 3;
+    let (assignments, _score, _k) = (init_copy_num..=copy_num)
+        .flat_map(|k| std::iter::repeat(k).take(num))
+        .map(|k| {
+            let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
+            trace!("LK\t{}\t{:.3}\t0", k, score);
+            let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
+            let expected_gain = expected_gain_per_read * reads.len() as f64;
+            (asn, score - expected_gain, k)
+        })
+        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
     let (assignments, score, k) = (init_copy_num..=copy_num)
         .flat_map(|k| std::iter::repeat(k).take(num))
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            trace!("LK\t{}\t{:.3}", k, score);
+            trace!("LK\t{}\t{:.3}\t1", k, score);
             let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
             let expected_gain = expected_gain_per_read * reads.len() as f64;
             (asn, score - expected_gain, k)
-            // let expected_gain = (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
-            // Some((asn, score - expected_gain, k))
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    let score = score + (k - 1) as f64 / k as f64 * average_lk * reads.len() as f64;
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
     if log_enabled!(log::Level::Trace) {
@@ -393,57 +401,80 @@ fn get_likelihood_gain(
 // If this value is too small, we can remove that column from `variants.`
 #[allow(dead_code)]
 fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<Vec<f64>> {
-    let max_asn = *assignments.iter().max().unwrap() as usize;
+    let max_asn = *assignments.iter().max().unwrap() as usize + 1;
     let dim = variants[0].len();
-    let mut count = vec![0; max_asn + 1];
-    let mut neg_count = vec![vec![0; max_asn + 1]; dim];
-    for (&asn, vars) in assignments.iter().zip(variants.iter()) {
-        count[asn as usize] += 1;
-        for (pos, var) in vars.iter().enumerate() {
-            neg_count[pos][asn as usize] += var.is_sign_negative() as usize;
+    let mut counts = vec![vec![(0, 0); dim]; max_asn];
+    for (&asn, xs) in assignments.iter().zip(variants.iter()) {
+        let asn = asn as usize;
+        assert_eq!(counts[asn].len(), xs.len());
+        for (slot, x) in counts[asn].iter_mut().zip(xs.iter()) {
+            slot.0 += 1;
+            slot.1 += x.is_sign_positive() as u32;
         }
     }
-    // Return 1 - cumulative distribution of the binomial distribution Binom(x|N,P).
-    // In other words, i-> sum_{k=i}^{N} Binom(k|N,p).
-    fn cum_dist(n: usize, p: f64) -> Vec<f64> {
-        // Return log(n!), log(0!) = log(1) = 0.
-        let sumlog = |n| -> f64 { (1..n + 1).map(|x| (x as f64).ln()).sum() };
-        let (_, mut cdf) = (0..=n)
-            .map(|i| {
-                sumlog(n) - sumlog(i) - sumlog(n - i)
-                    + i as f64 * p.ln()
-                    + (n - i) as f64 * (1f64 - p).ln()
-            })
-            .fold((0f64, vec![]), |(acc, mut xs), x| {
-                xs.push(acc + x.exp());
-                (acc + x.exp(), xs)
-            });
-        cdf.iter_mut().for_each(|x| *x = 1f64 - *x);
-        cdf
-    }
-    // Error rate is 15%. (Every error operation would erase the variant information, in the worst case.)
-    let err = 0.15;
-    let cum_distibution: Vec<_> = count.iter().map(|&n| cum_dist(n, err)).collect();
-    let is_informative: Vec<bool> = neg_count
-        .iter()
-        .map(|negs| {
-            let max_p_value = negs
-                .iter()
-                .zip(cum_distibution.iter())
-                .map(|(&neg, pvalues)| pvalues[neg])
-                .fold(std::f64::NEG_INFINITY, |x, y| x.max(y));
-            0.01 < max_p_value
-        })
-        .collect();
+    let used_pos = counts.iter().fold(vec![false; dim], |mut used_pos, cs| {
+        let cs = cs.iter().map(|&(total, num_pos)| total < 2 * num_pos);
+        used_pos.iter_mut().zip(cs).for_each(|(x, y)| *x |= y);
+        used_pos
+    });
     variants
         .iter()
-        .map(|vars| {
-            vars.iter()
-                .zip(is_informative.iter())
-                .filter_map(|(&v, &b)| b.then(|| v))
+        .map(|xs| {
+            xs.iter()
+                .zip(used_pos.iter())
+                .filter_map(|(&x, &u)| u.then(|| x))
                 .collect()
         })
         .collect()
+    // let mut count = vec![0; max_asn + 1];
+    // let mut neg_count = vec![vec![0; max_asn + 1]; dim];
+    // for (&asn, vars) in assignments.iter().zip(variants.iter()) {
+    //     count[asn as usize] += 1;
+    //     for (pos, var) in vars.iter().enumerate() {
+    //         neg_count[pos][asn as usize] += var.is_sign_negative() as usize;
+    //     }
+    // }
+    // Return 1 - cumulative distribution of the binomial distribution Binom(x|N,P).
+    // In other words, i-> sum_{k=i}^{N} Binom(k|N,p).
+    // fn cum_dist(n: usize, p: f64) -> Vec<f64> {
+    //     // Return log(n!), log(0!) = log(1) = 0.
+    //     let sumlog = |n| -> f64 { (1..n + 1).map(|x| (x as f64).ln()).sum() };
+    //     let (_, mut cdf) = (0..=n)
+    //         .map(|i| {
+    //             sumlog(n) - sumlog(i) - sumlog(n - i)
+    //                 + i as f64 * p.ln()
+    //                 + (n - i) as f64 * (1f64 - p).ln()
+    //         })
+    //         .fold((0f64, vec![]), |(acc, mut xs), x| {
+    //             xs.push(acc + x.exp());
+    //             (acc + x.exp(), xs)
+    //         });
+    //     cdf.iter_mut().for_each(|x| *x = 1f64 - *x);
+    //     cdf
+    // }
+    // Error rate is 15%. (Every error operation would erase the variant information, in the worst case.)
+    // let err = 0.15;
+    // let cum_distibution: Vec<_> = count.iter().map(|&n| cum_dist(n, err)).collect();
+    // let is_informative: Vec<bool> = neg_count
+    //     .iter()
+    //     .map(|negs| {
+    //         let max_p_value = negs
+    //             .iter()
+    //             .zip(cum_distibution.iter())
+    //             .map(|(&neg, pvalues)| pvalues[neg])
+    //             .fold(std::f64::NEG_INFINITY, |x, y| x.max(y));
+    //         0.01 < max_p_value
+    //     })
+    //     .collect();
+    // variants
+    //     .iter()
+    //     .map(|vars| {
+    //         vars.iter()
+    //             .zip(is_informative.iter())
+    //             .filter_map(|(&v, &b)| b.then(|| v))
+    //             .collect()
+    //     })
+    //     .collect()
 }
 
 // #[allow(dead_code)]
@@ -556,27 +587,26 @@ fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[u8]) -> Vec<
 //         (current_cluster_size, final_clustering)
 //     }
 // }
-#[allow(dead_code)]
 // i->true if there's a cluster using the i-th position to improve the total likelihood.
-fn retrieve_used_positions<T: std::borrow::Borrow<[f64]>>(
-    assignments: &[u8],
-    profiles: &[T],
-    cluster_num: usize,
-) -> Vec<bool> {
-    let len = profiles[0].borrow().len();
-    let mut lks = vec![vec![0f64; len]; cluster_num];
-    for (&asn, xs) in assignments.iter().zip(profiles.iter()) {
-        for (l, &x) in lks[asn as usize].iter_mut().zip(xs.borrow()) {
-            *l += x;
-        }
-    }
-    lks.iter().fold(vec![false; len], |mut acc, xs| {
-        for (is_used, total_lk) in acc.iter_mut().zip(xs) {
-            *is_used |= total_lk.is_sign_positive();
-        }
-        acc
-    })
-}
+// fn retrieve_used_positions<T: std::borrow::Borrow<[f64]>>(
+//     assignments: &[u8],
+//     profiles: &[T],
+//     cluster_num: usize,
+// ) -> Vec<bool> {
+//     let len = profiles[0].borrow().len();
+//     let mut lks = vec![vec![0f64; len]; cluster_num];
+//     for (&asn, xs) in assignments.iter().zip(profiles.iter()) {
+//         for (l, &x) in lks[asn as usize].iter_mut().zip(xs.borrow()) {
+//             *l += x;
+//         }
+//     }
+//     lks.iter().fold(vec![false; len], |mut acc, xs| {
+//         for (is_used, total_lk) in acc.iter_mut().zip(xs) {
+//             *is_used |= total_lk.is_sign_positive();
+//         }
+//         acc
+//     })
+// }
 
 // fn get_profiles<T: std::borrow::Borrow<[u8]>>(
 //     template: &[u8],
@@ -1273,29 +1303,38 @@ fn mcmc_clustering<R: Rng>(data: &[Vec<f64>], k: usize, cov: f64, rng: &mut R) -
     if k <= 1 || data.iter().all(|xs| xs.is_empty()) || data.len() <= k {
         return (vec![0; data.len()], 0f64);
     }
-    let var_dim = data[0].len();
-    let lower_bound: f64 = (0..var_dim)
-        .map(|pos| {
-            let count: usize = data.iter().filter(|xs| xs[pos].is_sign_positive()).count();
-            let part_lk = max_poisson_lk(count, cov, 1, k);
-            let part_lk_2 = max_poisson_lk(data.len() - count, cov, 1, k);
-            let data_lk: f64 = data.iter().map(|xs| xs[pos].max(0f64)).sum();
-            data_lk + part_lk + part_lk_2
+    (0..3)
+        .map(|_| {
+            let mut assignments: Vec<_> =
+                (0..data.len()).map(|_| rng.gen_range(0..k) as u8).collect();
+            let lk = mcmc(data, &mut assignments, k, cov, rng);
+            (assignments, lk)
         })
-        .max_by(|x, y| x.partial_cmp(y).unwrap())
-        .unwrap();
-    let mut assignments = vec![0; data.len()];
-    let mut lk = 0f64;
-    for _t in 0..3 {
-        assignments
-            .iter_mut()
-            .for_each(|x| *x = rng.gen_range(0..k) as u8);
-        lk = mcmc(data, &mut assignments, k, cov, rng);
-        if lower_bound < lk {
-            break;
-        }
-    }
-    (assignments, lk)
+        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+        .unwrap()
+    // let var_dim = data[0].len();
+    // let lower_bound: f64 = (0..var_dim)
+    //     .map(|pos| {
+    //         let count: usize = data.iter().filter(|xs| xs[pos].is_sign_positive()).count();
+    //         let part_lk = max_poisson_lk(count, cov, 1, k);
+    //         let part_lk_2 = max_poisson_lk(data.len() - count, cov, 1, k);
+    //         let data_lk: f64 = data.iter().map(|xs| xs[pos].max(0f64)).sum();
+    //         data_lk + part_lk + part_lk_2
+    //     })
+    //     .max_by(|x, y| x.partial_cmp(y).unwrap())
+    //     .unwrap();
+    // let mut assignments = vec![0; data.len()];
+    // let mut lk = 0f64;
+    // for _t in 0..3 {
+    //     assignments
+    //         .iter_mut()
+    //         .for_each(|x| *x = rng.gen_range(0..k) as u8);
+    //     lk = mcmc(data, &mut assignments, k, cov, rng);
+    //     if lower_bound < lk {
+    //         break;
+    //     }
+    // }
+    // (assignments, lk)
 }
 
 // #[allow(dead_code)]

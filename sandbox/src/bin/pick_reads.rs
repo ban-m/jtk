@@ -29,13 +29,13 @@ fn main() -> std::io::Result<()> {
     let range = 10;
     for read in ds.encoded_reads.iter() {
         let len = read.original_length;
-        let mut dumps = vec![format!("{:<5}", 0); range];
         for (idx, node) in read
             .nodes
             .iter()
             .enumerate()
             .filter(|(_, n)| units.contains(&n.unit))
         {
+            let mut dumps = vec![format!("{:<5}", 0); range];
             let (nodes, idx) = {
                 let mut nodes: Vec<_> = read.nodes.iter().map(|n| n.unit).collect();
                 match node.is_forward {

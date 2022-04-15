@@ -155,6 +155,8 @@ fn filling_until_stable(
     let mut is_updated = vec![true; ds.encoded_reads.len()];
     for i in 0..INNER_LOOP {
         let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
+        assert_eq!(ds.encoded_reads.len(), failed_trials.len());
+        assert_eq!(ds.encoded_reads.len(), is_updated.len());
         let newly_encoded_units: Vec<_> = if log_enabled!(log::Level::Trace) {
             trace!("Tracing. Single thread mode.");
             let reads = ds
@@ -189,7 +191,6 @@ fn filling_until_stable(
                 })
                 .collect()
         };
-        ds.encoded_reads.retain(|r| !r.nodes.is_empty());
         find_new_node.extend(newly_encoded_units);
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
         debug!("Filled:{}\t{}", current, after);
@@ -202,6 +203,7 @@ fn filling_until_stable(
         }
         current = after;
     }
+    ds.encoded_reads.retain(|r| !r.nodes.is_empty());
     (find_new_node, true)
 }
 
@@ -262,14 +264,6 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
         .collect();
     let mut current_resid = residual(&errors, &read_error_rate, &unit_error_rate);
     loop {
-        // Re-estimate read error rate
-        for (readid, errors) in errors.iter() {
-            let residual: f64 = errors
-                .iter()
-                .map(|&(unit, cluster, error)| error - unit_error_rate[unit][cluster])
-                .sum();
-            read_error_rate[*readid as usize] = residual / errors.len() as f64;
-        }
         // Re-estimation of unit error rate
         unit_error_rate.iter_mut().flatten().for_each(|x| *x = 0f64);
         for (readid, errors) in errors.iter() {
@@ -280,8 +274,17 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
         }
         for (resid, counts) in unit_error_rate.iter_mut().zip(unit_counts.iter()) {
             for (err, count) in resid.iter_mut().zip(counts) {
-                *err /= *count as f64 + 1f64;
+                // *err = *err / (*count as f64 + 1f64);
+                *err = err.max(0f64) / (*count as f64 + 1f64);
             }
+        }
+        // Re-estimate read error rate
+        for (readid, errors) in errors.iter() {
+            let residual: f64 = errors
+                .iter()
+                .map(|&(unit, cluster, error)| error - unit_error_rate[unit][cluster])
+                .sum();
+            read_error_rate[*readid as usize] = residual / errors.len() as f64;
         }
         let resid = residual(&errors, &read_error_rate, &unit_error_rate);
         if (current_resid - resid).abs() < 0.001 {

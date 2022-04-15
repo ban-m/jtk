@@ -144,6 +144,9 @@ impl DetermineUnit for definitions::DataSet {
             compaction_units(self);
             remove_overlapping_units_dev(self, config).unwrap();
             remove_frequent_units(self, config.upper_count);
+            // Added!
+            filter_unit_by_ovlp(self, config);
+            debug!("UNITNUM\t{}\tFILTERED\t1", self.selected_chunks.len());
             let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
             dump_histogram(self);
             self.polish_unit(&polish_config);
@@ -152,13 +155,19 @@ impl DetermineUnit for definitions::DataSet {
         // Final polish
         {
             debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
+            //Added!
+            use crate::encode::encode_by_mm2;
+            encode_by_mm2(self, config.threads, sim_thr).unwrap();
+            remove_frequent_units(self, config.upper_count);
+            filter_unit_by_ovlp(self, config);
+
             self.encode(config.threads, sim_thr);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
             compaction_units(self);
-            debug!("UNITNUM\t{}\tFILTERED", self.selected_chunks.len());
+            debug!("UNITNUM\t{}\tFILTERED\t2", self.selected_chunks.len());
             remove_frequent_units(self, config.upper_count);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
@@ -856,10 +865,9 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
         }
     }
     let to_be_removed = approx_vertex_cover(edges, unit_len);
-    let remaining = to_be_removed.iter().filter(|&&b| !b).count();
-    debug!("UNITNUM\t{}\tVertexCovering", remaining);
     ds.selected_chunks
         .retain(|unit| !to_be_removed[unit.id as usize]);
+    debug!("UNITNUM\t{}\tVertexCovering", ds.selected_chunks.len());
     ds.encoded_reads.par_iter_mut().for_each(|read| {
         let mut idx = 0;
         loop {

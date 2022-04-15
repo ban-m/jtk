@@ -14,13 +14,13 @@ bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 # dirichlet_fit = {git = "https://github.com/ban-m/dirichlet_fit.git"}
 dirichlet_fit = {path = "../../dirichlet_fit"}
 serde = {version = "1.0", features = ["derive"]}
+serde_json = "*"
 rayon = "*"
 rand = "*"
 rand_xoshiro = "*"
 rand_distr = "*"
 de_bruijn_graph = {git = "https://github.com/ban-m/de_bruijn_graph.git", branch = "hla_module"}
 nalgebra  = "*"
-serde_json = "*"
 histgram_viz = {git = "https://github.com/ban-m/histgram_viz", branch = "master"}
 mcl = {path = "../mcl"}
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}

@@ -60,7 +60,7 @@ then
 else
     cat ${PURGED} |\
         jtk correct_deletion -vv --threads ${THREADS} --re_cluster |\
-        jtk encode_densely -vv --threads ${THREADS} |\
+        jtk encode_densely -vv --threads ${THREADS} --output ${DRAFT_GFA_2} |\
         jtk correct_deletion -vv --threads ${THREADS} --re_cluster >${RESOLVED}
 fi
 
