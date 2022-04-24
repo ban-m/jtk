@@ -21,6 +21,14 @@ if [ $# -ge 4 ]; then
 else
     UNIT_GUESS=500
 fi
+### Haploid Coverage estimates
+HAP_COV=""
+if [ $# -ge 5 ]; then
+    echo "Haploid coverage estimate is " $5
+    HAP_COV="--coverage $5"
+    echo "Giving " $HAP_COV " to jtk"
+fi
+
 
 if [ -f ${2}.entry.json ]
 then
@@ -41,7 +49,8 @@ then
 else
     cat ${2}.entry.json |\
         jtk polish_encoding --threads ${THREADS} -vv |\
-        jtk estimate_multiplicity -vv --threads ${THREADS} --draft_assembly ${DRAFT_GFA} --purge_copy_num ${UPPER_COPY_NUM} |\
+        jtk estimate_multiplicity -vv --threads ${THREADS} ${HAP_COV} \
+            --draft_assembly ${DRAFT_GFA} --purge_copy_num ${UPPER_COPY_NUM} |\
         tee ${2}.entry.units.encode.json |\
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi

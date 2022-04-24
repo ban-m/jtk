@@ -24,13 +24,6 @@ const SD_SIGMA: f64 = 8f64;
 use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
-        // self.sanity_check();
-        // let error_rate = self.error_rate();
-        // let thr = error_rate.total + SD_SIGMA * error_rate.total_sd;
-        // debug!(
-        //     "PD\tTHR\t{}\t{}\t{}",
-        //     error_rate.total, error_rate.total_sd, thr
-        // );
         let prev = self.encoded_reads.len();
         let to_be_removed = purge_diverged_nodes(self, THR, config);
         let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
@@ -192,7 +185,7 @@ fn re_cluster(ds: &mut DataSet, threads: usize, selection: &HashSet<u64>) {
             .flat_map(|r| r.nodes.iter_mut())
             .for_each(|n| n.cluster = 0);
         use crate::multiplicity_estimation::*;
-        let multip_config = MultiplicityEstimationConfig::new(threads, 230493, None);
+        let multip_config = MultiplicityEstimationConfig::new(threads, 230493, ds.coverage, None);
         ds.estimate_multiplicity(&multip_config);
         // Recover.
         for (r, (id, cls, len)) in ds.encoded_reads.iter_mut().zip(preserve) {
@@ -397,7 +390,7 @@ fn purge_diverged_nodes_dev(
             // Create new chunk.
             let id = max_id + 1 + new_units.len() as u64;
             changed.insert(id);
-            let mut new_unit = Unit::new(id, u.seq.clone(), squished);
+            let mut new_unit = Unit::new(id, u.seq.clone().into(), squished);
             new_unit.cluster_num = squished;
             new_units.push(new_unit);
             // Determine mappings.

@@ -114,8 +114,8 @@ pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<En
     Some(EncodedRead {
         id,
         original_length: seq.len(),
-        leading_gap,
-        trailing_gap,
+        leading_gap: leading_gap.into(),
+        trailing_gap: trailing_gap.into(),
         nodes,
         edges,
     })
@@ -359,11 +359,11 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
     let nodes = read
         .nodes
         .iter()
-        .all(|node| node.seq.chars().all(|c| c.is_ascii_uppercase()));
+        .all(|node| node.seq.iter().all(|c| c.is_ascii_uppercase()));
     let edges = read
         .edges
         .iter()
-        .all(|edge| edge.label.chars().all(|c| c.is_ascii_uppercase()));
+        .all(|edge| edge.label.iter().all(|c| c.is_ascii_uppercase()));
     nodes && edges
 }
 

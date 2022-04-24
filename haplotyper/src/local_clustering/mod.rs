@@ -46,7 +46,7 @@ fn set_coverage(ds: &mut DataSet) {
         counts.sort_unstable();
         counts[counts.len() / 2] as f64 / 2f64
     };
-    debug!("COVERAGE\t{}\tHAPLOID", cov);
+    debug!("LOCALCLUSTERING\tSetCoverage{cov}");
     ds.coverage = Some(cov);
 }
 
@@ -117,7 +117,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 node.cluster = asn as u64;
             }
             for (node, ops) in units.iter_mut().zip(ops) {
-                node.cigar = crate::encode::compress_kiley_ops(&ops);
+                node.cigar = crate::encode::compress_kiley_ops(&ops).into();
             }
             let end = std::time::Instant::now();
             let elapsed = (end - start).as_millis();
@@ -133,7 +133,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     debug!("LC\t{}", consensus_and_clusternum.len());
     for unit in ds.selected_chunks.iter_mut() {
         if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-            unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+            // unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+            unit.seq = consensus.to_vec().into();
             unit.score = *score;
             unit.cluster_num = *cluster_num as usize;
         }
@@ -300,7 +301,7 @@ fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64
 //     }
 // }
 
-pub fn ops_to_kiley_ops(ops: &[definitions::Op]) -> Vec<kiley::Op> {
+pub fn ops_to_kiley_ops(ops: &definitions::Ops) -> Vec<kiley::Op> {
     ops.iter()
         .flat_map(|op| match op {
             Op::Match(l) => std::iter::repeat(kiley::Op::Match).take(*l),

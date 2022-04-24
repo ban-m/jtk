@@ -50,7 +50,7 @@ impl CorrectDeletion for DataSet {
                 .for_each(|n| n.cluster = 0);
             use crate::multiplicity_estimation::*;
             let seed = (231043290490.0 * config.sim_thr).round() as u64;
-            let config = MultiplicityEstimationConfig::new(1, seed, None);
+            let config = MultiplicityEstimationConfig::new(1, seed, self.coverage, None);
             self.estimate_multiplicity(&config);
             // Retain all the units changed their copy numbers.
             let chainged_units: HashSet<_> = self
@@ -475,11 +475,7 @@ pub fn estimate_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, 
 // UnitID->(clsuterID, its consensus).
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
     fn polish(xs: &[&[u8]], unit: &Unit, band: usize) -> Vec<u8> {
-        if [459, 453].contains(&unit.id) {
-            kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
-        } else {
-            unit.seq().to_vec()
-        }
+        kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
     }
     let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<u64, Vec<_>> = HashMap::new();

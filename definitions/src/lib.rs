@@ -204,12 +204,12 @@ pub struct RawRead {
     pub id: u64,
     /// Sequence. It is a string on an alphabet of A,C,G,T,a,c,g,t.
     /// (i.e., lowercase included)
-    pub seq: String,
+    pub seq: DNASeq,
 }
 
 impl RawRead {
     pub fn seq(&self) -> &[u8] {
-        self.seq.as_bytes()
+        &self.seq.0
     }
 }
 
@@ -240,8 +240,8 @@ impl HiCPair {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit {
     pub id: u64,
-    /// Unit sequence. This is a string on a alphabet A,C,G,T,a,c,g,t
-    pub seq: String,
+    /// Unit sequence.
+    pub seq: DNASeq,
     /// Current estimation of the cluster number.
     pub cluster_num: usize,
     /// Current estimation of the copy number. This is an upper bound of the cluster number.
@@ -251,18 +251,72 @@ pub struct Unit {
     pub score: f64,
 }
 
+use serde_with::DeserializeFromStr;
+use serde_with::SerializeDisplay;
+#[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, Default)]
+pub struct DNASeq(Vec<u8>);
+
+impl std::fmt::Display for DNASeq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", std::str::from_utf8(&self.0).unwrap())
+    }
+}
+
+impl DNASeq {
+    pub fn pop(&mut self) -> Option<u8> {
+        self.0.pop()
+    }
+    pub fn extend<I: std::iter::IntoIterator<Item = u8>>(&mut self, iter: I) {
+        self.0.extend(iter);
+    }
+    pub fn iter(&self) -> std::slice::Iter<'_, u8> {
+        self.0.iter()
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn as_mut(&mut self) -> &mut [u8] {
+        self.0.as_mut()
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl std::str::FromStr for DNASeq {
+    type Err = u64;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(DNASeq(s.as_bytes().to_vec()))
+    }
+}
+
+impl std::convert::From<Vec<u8>> for DNASeq {
+    fn from(seq: Vec<u8>) -> Self {
+        Self(seq)
+    }
+}
+
+impl std::convert::Into<Vec<u8>> for DNASeq {
+    fn into(self) -> Vec<u8> {
+        self.0
+    }
+}
+
 impl Unit {
-    pub fn new(id: u64, seq: String, copy_num: usize) -> Self {
+    pub fn new(id: u64, seq: Vec<u8>, copy_num: usize) -> Self {
         Self {
             id,
-            seq,
+            seq: seq.into(),
             copy_num,
             cluster_num: 1,
             score: 0f64,
         }
     }
     pub fn seq(&self) -> &[u8] {
-        self.seq.as_bytes()
+        &self.seq.0
     }
 }
 
@@ -270,8 +324,8 @@ impl Unit {
 pub struct EncodedRead {
     pub id: u64,
     pub original_length: usize,
-    pub leading_gap: Vec<u8>,
-    pub trailing_gap: Vec<u8>,
+    pub leading_gap: DNASeq,
+    pub trailing_gap: DNASeq,
     pub edges: Vec<Edge>,
     pub nodes: Vec<Node>,
 }
@@ -318,8 +372,7 @@ impl EncodedRead {
         let removed_node = self.nodes.remove(i);
         if self.nodes.is_empty() {
             assert!(self.edges.is_empty());
-            self.leading_gap
-                .extend(removed_node.original_seq().as_bytes());
+            self.leading_gap.extend(removed_node.original_seq());
             return;
         }
         if i + 1 == len {
@@ -332,17 +385,17 @@ impl EncodedRead {
             let trailing_seq: Vec<_> = removed_edge
                 .label()
                 .iter()
-                .chain(node_seq.as_bytes())
+                .chain(node_seq.iter())
                 .chain(self.trailing_gap.iter())
                 .skip(skip)
                 .copied()
                 .collect();
-            self.trailing_gap = trailing_seq;
+            self.trailing_gap = trailing_seq.into();
         } else if i == 0 {
             let removed_edge = self.edges.remove(i);
+            self.leading_gap.extend(removed_node.original_seq());
             self.leading_gap
-                .extend(removed_node.original_seq().as_bytes());
-            self.leading_gap.extend(removed_edge.label());
+                .extend(removed_edge.label().iter().copied());
             for _ in 0..(-removed_edge.offset) {
                 self.leading_gap.pop();
             }
@@ -351,9 +404,10 @@ impl EncodedRead {
             // First add the removed sequence and edges into the current edges.
             let mut edge: Vec<_> = self.edges[i - 1]
                 .label
-                .bytes()
-                .chain(removed_node.original_seq().bytes())
-                .chain(removed_edge.label.bytes())
+                .iter()
+                .chain(removed_node.original_seq().iter())
+                .chain(removed_edge.label.iter())
+                .copied()
                 .collect();
             // Then, fix the offset by the offset.
             if self.edges[i - 1].offset < 0 {
@@ -369,23 +423,24 @@ impl EncodedRead {
                 }
             }
             self.edges[i - 1].to = removed_edge.to;
-            self.edges[i - 1].label = edge.iter().map(|&x| x as char).collect();
+            //self.edges[i - 1].label = edge.iter().map(|&x| x as char).collect();
+            self.edges[i - 1].label = edge.to_vec().into();
             self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
         }
         assert_eq!(self.nodes.len(), self.edges.len() + 1);
     }
     pub fn recover_raw_read(&self) -> Vec<u8> {
-        let mut original_seq = self.leading_gap.to_vec();
+        let mut original_seq: Vec<_> = self.leading_gap.clone().into();
         for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
             assert_eq!(n.unit, e.from);
-            original_seq.extend(n.original_seq().as_bytes());
+            original_seq.extend(n.original_seq());
             for _ in 0..(-e.offset).max(0) {
                 original_seq.pop();
             }
             original_seq.extend(e.label());
         }
         if let Some(n) = self.nodes.last() {
-            original_seq.extend(n.original_seq().as_bytes());
+            original_seq.extend(n.original_seq());
         }
         original_seq.extend(self.trailing_gap.iter());
         original_seq
@@ -407,7 +462,7 @@ pub struct Edge {
     pub to: u64,
     pub offset: i64,
     /// This is a string on an alphabet of A,C,G,T. There should not be any lowercase character.
-    pub label: String,
+    pub label: DNASeq,
 }
 
 impl std::fmt::Display for Edge {
@@ -418,7 +473,7 @@ impl std::fmt::Display for Edge {
 
 impl Edge {
     pub fn label(&self) -> &[u8] {
-        self.label.as_bytes()
+        &self.label.0
     }
     pub fn from_nodes(ns: &[Node], seq: &[u8]) -> Self {
         let (from, to) = match *ns {
@@ -428,20 +483,19 @@ impl Edge {
         let end = from.position_from_start + from.query_length();
         let start = to.position_from_start;
         let label = if start <= end {
-            String::new()
+            Vec::new()
         } else {
             seq.iter()
                 .take(start)
                 .skip(end)
                 .map(u8::to_ascii_uppercase)
-                .map(|x| x as char)
                 .collect()
         };
         Edge {
             from: from.unit,
             to: to.unit,
             offset: start as i64 - end as i64,
-            label,
+            label: label.into(),
         }
     }
 }
@@ -452,10 +506,10 @@ pub struct Node {
     pub position_from_start: usize,
     pub unit: u64,
     pub cluster: u64,
-    /// Sequence. A string on an alphabet of A,C,G,T. No lowercase included. Already rev-comped.
-    pub seq: String,
+    /// Sequence. No lowercase included. Already rev-comped.
+    pub seq: DNASeq,
     pub is_forward: bool,
-    pub cigar: Vec<Op>,
+    pub cigar: Ops,
     // TODO: This member should have a different name, such as
     // `likelihood gain` or something.
     pub posterior: Vec<f64>,
@@ -468,7 +522,7 @@ impl std::fmt::Display for Node {
             "{}-{}({}bp,{},{})",
             self.unit,
             self.cluster,
-            self.seq.as_bytes().len(),
+            self.seq.len(),
             self.is_forward as u8,
             self.position_from_start,
         )
@@ -494,27 +548,27 @@ impl Node {
             position_from_start,
             unit,
             cluster: 0,
-            seq: String::from_utf8_lossy(seq).to_string(),
+            seq: seq.to_vec().into(),
             is_forward,
-            cigar,
+            cigar: cigar.into(),
             posterior: vec![post_prob; cluster_num],
         }
     }
     pub fn seq(&self) -> &[u8] {
-        self.seq.as_bytes()
+        &self.seq.0
     }
-    pub fn original_seq(&self) -> String {
+    pub fn original_seq(&self) -> Vec<u8> {
         if self.is_forward {
-            self.seq.clone()
+            self.seq.clone().into()
         } else {
             self.seq
-                .chars()
+                .iter()
                 .rev()
                 .map(|x| match x.to_ascii_uppercase() {
-                    'A' => 'T',
-                    'C' => 'G',
-                    'G' => 'C',
-                    'T' => 'A',
+                    b'A' => b'T',
+                    b'C' => b'G',
+                    b'G' => b'C',
+                    b'T' => b'A',
                     _ => panic!(),
                 })
                 .collect()
@@ -580,6 +634,59 @@ pub enum Op {
     Del(usize),
     /// Insertion with respect to the reference.
     Ins(usize),
+}
+
+#[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, Default)]
+pub struct Ops(Vec<Op>);
+impl std::fmt::Display for Ops {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for &x in self.0.iter() {
+            match x {
+                Op::Match(x) => write!(f, "{x}M")?,
+                Op::Del(x) => write!(f, "{x}D")?,
+                Op::Ins(x) => write!(f, "{x}I")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Ops {
+    pub fn iter(&self) -> std::slice::Iter<'_, Op> {
+        self.0.iter()
+    }
+}
+impl std::convert::From<Vec<Op>> for Ops {
+    fn from(xs: Vec<Op>) -> Self {
+        Ops(xs)
+    }
+}
+impl std::convert::Into<Vec<Op>> for Ops {
+    fn into(self) -> Vec<Op> {
+        self.0
+    }
+}
+
+impl std::str::FromStr for Ops {
+    type Err = u64;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut ops = vec![];
+        let mut num = 0;
+        for x in s.bytes() {
+            if x.is_ascii_digit() {
+                num = 10 * num + (x - b'0') as usize;
+            } else {
+                match x {
+                    b'M' => ops.push(Op::Match(num)),
+                    b'D' => ops.push(Op::Del(num)),
+                    b'I' => ops.push(Op::Ins(num)),
+                    _ => panic!("{}", x),
+                }
+                num = 0;
+            }
+        }
+        Ok(Ops(ops))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

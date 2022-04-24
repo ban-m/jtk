@@ -66,15 +66,14 @@ impl PolishUnit for DataSet {
                 pileup
                     .iter_mut()
                     .zip(ops)
-                    .for_each(|(n, ops)| n.cigar = crate::encode::compress_kiley_ops(&ops));
+                    .for_each(|(n, ops)| n.cigar = crate::encode::compress_kiley_ops(&ops).into());
                 (id, cons)
             })
             .collect();
         self.selected_chunks
             .retain(|n| polished_nodes.contains_key(&n.id));
         self.selected_chunks.iter_mut().for_each(|n| {
-            let seq = polished_nodes.remove(&n.id).unwrap();
-            n.seq = String::from_utf8(seq).unwrap();
+            n.seq = polished_nodes.remove(&n.id).unwrap().into();
         });
         use std::collections::HashSet;
         let is_in: HashSet<_> = self.selected_chunks.iter().map(|c| c.id).collect();
@@ -132,15 +131,16 @@ impl PolishUnit for DataSet {
                     let aln = edlib_sys::edlib_align(node.seq(), &draft, mode, task);
                     let aln = aln.operations.unwrap();
                     let k_ops: Vec<_> = aln.iter().map(|&op| ed_ops[op as usize]).collect();
-                    node.cigar = crate::encode::compress_kiley_ops(&k_ops);
+                    node.cigar = crate::encode::compress_kiley_ops(&k_ops).into();
                 });
-                (id, String::from_utf8(draft).unwrap())
+                //(id, String::from_utf8(draft).unwrap())
+                (id, draft)
             })
             .collect();
         self.selected_chunks
             .retain(|unit| result.contains_key(&unit.id));
         self.selected_chunks.iter_mut().for_each(|unit| {
-            unit.seq = result[&unit.id].clone();
+            unit.seq = result[&unit.id].clone().into();
         });
         self.polish_unit(c);
     }

@@ -44,7 +44,7 @@ impl Entry for definitions::DataSet {
                 let name = record.id().to_string();
                 let desc = record.desc().unwrap_or(&String::new()).clone();
                 let seq = record.seq();
-                let seq = String::from_utf8(compress_homopolymer(seq, compress_thr)).unwrap();
+                let seq: definitions::DNASeq = compress_homopolymer(seq, compress_thr).into();
                 let id = idx as u64;
                 definitions::RawRead {
                     name,

@@ -57,7 +57,7 @@ impl ReClustering for DataSet {
                 }
             }
         }
-        let coverage = self.coverage.unwrap_or(30f64);
+        let coverage = self.coverage.unwrap();
         // Do clustering, change the clustering information.
         // TODO: Is it OK to define another units for each re-clustered units?
         // Or, is it better to retain the original units,

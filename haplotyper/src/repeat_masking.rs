@@ -28,22 +28,12 @@ impl RepeatMask for definitions::DataSet {
         debug!("Constructed {}-mer filter. Size:{}", config.k, mask.len());
         self.raw_reads
             .par_iter_mut()
-            .for_each(|read| unsafe { mask_repeats(read.seq.as_bytes_mut(), &mask, config.k) });
-        let num_bases = self
-            .raw_reads
-            .iter()
-            .map(|r| r.seq.as_bytes().len())
-            .sum::<usize>();
+            .for_each(|read| mask_repeats(read.seq.as_mut(), &mask, config.k));
+        let num_bases = self.raw_reads.iter().map(|r| r.seq.len()).sum::<usize>();
         let num_lower_base = self
             .raw_reads
             .iter()
-            .map(|r| {
-                r.seq
-                    .as_bytes()
-                    .iter()
-                    .filter(|x| x.is_ascii_lowercase())
-                    .count()
-            })
+            .map(|r| r.seq.iter().filter(|x| x.is_ascii_lowercase()).count())
             .sum::<usize>();
         debug!(
             "Masked {} bases out of {} bases.",

@@ -1,6 +1,6 @@
 use super::copy_number::CoverageCalibrator;
 use super::AssembleConfig;
-use definitions::ReadType;
+use definitions::{DNASeq, ReadType};
 use definitions::{EncodedRead, Unit};
 use rayon::prelude::*;
 mod sequence_generation;
@@ -332,9 +332,9 @@ pub struct DitchTip<'a> {
 }
 
 impl<'a> DitchTip<'a> {
-    fn new(seq: &'a [u8], position: Position, in_direction: bool) -> Self {
+    fn new(seq: &'a DNASeq, position: Position, in_direction: bool) -> Self {
         Self {
-            seq,
+            seq: &seq.as_slice(),
             position,
             in_direction,
         }

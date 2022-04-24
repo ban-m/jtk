@@ -372,6 +372,15 @@ fn subcommand_estimate_multiplicity() -> Command<'static> {
                 .help("If given, remove all the chunks with copy number >= COPY_NUM")
                 .takes_value(true),
         )
+        .arg(
+            Arg::new("coverage")
+                .short('c')
+                .long("coverage")
+                .required(false)
+                .value_name("HAP COV")
+                .help("If given, use this value as a haploid coverage estimate")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_correct_multiplicity() -> Command<'static> {
@@ -976,6 +985,7 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("seed")
         .and_then(|e| e.parse().ok())
         .unwrap();
+    let cov: Option<f64> = matches.value_of("coverage").and_then(|e| e.parse().ok());
     let path = matches.value_of("draft_assembly");
     if let Err(why) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -983,8 +993,9 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
+
     use haplotyper::multiplicity_estimation::*;
-    let config = MultiplicityEstimationConfig::new(threads, seed, path);
+    let config = MultiplicityEstimationConfig::new(threads, seed, cov, path);
     dataset.estimate_multiplicity(&config);
     let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
     if let Some(upper_copy_num) = purge {
@@ -1079,7 +1090,7 @@ fn correct_multiplicity(matches: &clap::ArgMatches, dataset: &mut DataSet) {
             use haplotyper::multiplicity_estimation::*;
             let config = ClusteringConfig::new(5, 10, 5);
             ds.correct_clustering(&config);
-            let config = MultiplicityEstimationConfig::new(threads, seed, path);
+            let config = MultiplicityEstimationConfig::new(threads, seed, ds.coverage, path);
             ds.estimate_multiplicity(&config);
             ds.selected_chunks
                 .iter()

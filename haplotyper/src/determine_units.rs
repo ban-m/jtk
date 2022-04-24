@@ -237,7 +237,7 @@ fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> V
         .map(|(idx, seq)| {
             let mut seq = seq.to_vec();
             seq.iter_mut().for_each(u8::make_ascii_uppercase);
-            let seq = String::from_utf8(seq).unwrap();
+            // let seq = String::from_utf8(seq).unwrap();
             Unit::new(idx as u64, seq, config.min_cluster)
         })
         .collect()
@@ -465,8 +465,8 @@ fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> FilledEdges {
             let radius = ds.read_type.band_width(config.chunk_len);
             let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
             let consensus = kiley::bialignment::guided::polish_until_converge(&cons, &seqs, radius);
-            let seq = String::from_utf8(consensus).unwrap();
-            let unit = Unit::new(0, seq, 2);
+            // let seq = String::from_utf8(consensus).unwrap();
+            let unit = Unit::new(0, consensus, 2);
             (key, unit)
         })
         .collect();
@@ -639,8 +639,8 @@ fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
     ds.selected_chunks
         .extend(picked_units.iter().enumerate().map(|(i, seq)| {
             let id = i as u64 + last_unit + 1;
-            let seq = String::from_utf8_lossy(seq).to_string();
-            Unit::new(id, seq, config.min_cluster)
+            // let seq = String::from_utf8_lossy(seq).to_string();
+            Unit::new(id, seq.to_vec(), config.min_cluster)
         }));
 }
 
@@ -691,11 +691,11 @@ fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> FilledTips {
             let mut seqs: Vec<_> = labels
                 .iter()
                 .map(|(tip, is_forward)| match is_forward {
-                    true => tip[SKIP_OFFSET..take_len].to_vec(),
+                    true => tip.as_slice()[SKIP_OFFSET..take_len].to_vec(),
                     false => {
                         let start = tip.len() - take_len;
                         let end = tip.len() - SKIP_OFFSET;
-                        bio_utils::revcmp(&tip[start..end])
+                        bio_utils::revcmp(&tip.as_slice()[start..end])
                     }
                 })
                 .collect();
@@ -704,8 +704,8 @@ fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> FilledTips {
             let radius = ds.read_type.band_width(config.chunk_len);
             let cons = kiley::ternary_consensus_by_chunk(&seqs, radius);
             let consensus = kiley::bialignment::guided::polish_until_converge(&cons, &seqs, radius);
-            let seq = String::from_utf8(consensus).unwrap();
-            (*key, Unit::new(0, seq, 2))
+            // let seq = String::from_utf8(consensus).unwrap();
+            (*key, Unit::new(0, consensus, 2))
         })
         .collect();
     let max_idx = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
@@ -800,6 +800,7 @@ fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
         let seq = labels.iter().max_by_key(|xs| xs.len()).unwrap();
         trace!("FillSparse\t{}\t{}\t{}", unit, direction, labels.len());
         let new_units = seq
+            .as_slice()
             .chunks_exact(config.chunk_len)
             .filter(|u| !is_repetitive(u, config));
         picked_units.extend(new_units);
@@ -809,8 +810,8 @@ fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
     ds.selected_chunks
         .extend(picked_units.iter().enumerate().map(|(i, seq)| {
             let id = i as u64 + last_unit + 1;
-            let seq = String::from_utf8_lossy(seq).to_string();
-            Unit::new(id, seq, config.min_cluster)
+            // let seq = String::from_utf8_lossy(seq).to_string();
+            Unit::new(id, seq.to_vec(), config.min_cluster)
         }));
 }
 
@@ -852,7 +853,7 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     for read in ds.encoded_reads.iter() {
         for (i, node) in read.nodes.iter().enumerate() {
             for mode in read.nodes.iter().skip(i + 1) {
-                let node_end = node.position_from_start + node.seq.as_bytes().len();
+                let node_end = node.position_from_start + node.seq.as_slice().len();
                 let mode_start = mode.position_from_start;
                 let ovlp_len = node_end.max(mode_start) - mode_start;
                 if overlap_thr < ovlp_len {

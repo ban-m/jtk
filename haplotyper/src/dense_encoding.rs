@@ -328,9 +328,9 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         let units: Vec<_> = consensus
             .chunks(chunk_len)
             .map(|seq| {
-                let seq = String::from_utf8_lossy(seq).to_string();
+                // let seq = String::from_utf8_lossy(seq).to_string();
                 max_unit_id += 1;
-                Unit::new(max_unit_id, seq, copy_num)
+                Unit::new(max_unit_id, seq.to_vec(), copy_num)
             })
             .collect();
         let edge = format!("({},{})-({},{})", key.0 .0, key.0 .2, key.1 .0, key.1 .2);
