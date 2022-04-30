@@ -63,6 +63,10 @@ impl PolishUnit for DataSet {
                     .unzip();
                 use kiley::bialignment::guided::polish_until_converge_with;
                 let cons = polish_until_converge_with(unit.seq(), &seqs, &mut ops, radius);
+                // use kiley::bialignment::guided::polish_until_converge_with_take;
+                // let cons_size = c.consensus_size;
+                // let cons =
+                //     polish_until_converge_with_take(unit.seq(), &seqs, &mut ops, radius, cons_size);
                 pileup
                     .iter_mut()
                     .zip(ops)
@@ -89,12 +93,6 @@ impl PolishUnit for DataSet {
         });
     }
     fn consensus_unit(&mut self, c: &PolishUnitConfig) {
-        let ed_ops = [
-            kiley::Op::Match,
-            kiley::Op::Ins,
-            kiley::Op::Del,
-            kiley::Op::Mismatch,
-        ];
         // First, take consensus.
         let mut pileups: HashMap<_, Vec<_>> = self
             .selected_chunks
@@ -130,10 +128,9 @@ impl PolishUnit for DataSet {
                     let task = edlib_sys::AlignTask::Alignment;
                     let aln = edlib_sys::edlib_align(node.seq(), &draft, mode, task);
                     let aln = aln.operations.unwrap();
-                    let k_ops: Vec<_> = aln.iter().map(|&op| ed_ops[op as usize]).collect();
+                    let k_ops: Vec<_> = aln.iter().map(|&op| ED_OPS[op as usize]).collect();
                     node.cigar = crate::encode::compress_kiley_ops(&k_ops).into();
                 });
-                //(id, String::from_utf8(draft).unwrap())
                 (id, draft)
             })
             .collect();
@@ -145,3 +142,10 @@ impl PolishUnit for DataSet {
         self.polish_unit(c);
     }
 }
+
+const ED_OPS: [kiley::Op; 4] = [
+    kiley::Op::Match,
+    kiley::Op::Ins,
+    kiley::Op::Del,
+    kiley::Op::Mismatch,
+];

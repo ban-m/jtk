@@ -274,7 +274,7 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
         }
         for (resid, counts) in unit_error_rate.iter_mut().zip(unit_counts.iter()) {
             for (err, count) in resid.iter_mut().zip(counts) {
-                // *err = *err / (*count as f64 + 1f64);
+                //*err = *err / (*count as f64 + 1f64);
                 *err = err.max(0f64) / (*count as f64 + 1f64);
             }
         }
@@ -312,10 +312,10 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
         .1
         .sqrt();
     // Fix read error rate
-    for (&readid, len) in errors.iter().map(|(id, es)| (id, es.len() as f64)) {
-        let error = read_error_rate[readid as usize];
-        read_error_rate[readid as usize] = (error * len + fallback) / (len + 1f64);
-    }
+    // for (&readid, len) in errors.iter().map(|(id, es)| (id, es.len() as f64)) {
+    //     let error = read_error_rate[readid as usize];
+    //     read_error_rate[readid as usize] = (error * len + fallback) / (len + 1f64);
+    // }
     (read_error_rate, unit_error_rate, median)
 }
 
@@ -539,6 +539,7 @@ pub fn correct_deletion_error(
     let mut inserts = vec![];
     let ins_thr = INS_THR.min(nodes.len());
     for (idx, pileup) in pileups.iter().enumerate() {
+        //.take(nodes.len()).skip(1) {
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
         head_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
         let head_best =
@@ -589,15 +590,24 @@ fn remove_highly_erroneous(
         let (_, aln, _) = node.recover(units[&node.unit]);
         let diff = aln.iter().filter(|&&x| x != b'|').count();
         let error_rate = diff as f64 / aln.len() as f64;
-        //let expected = read_error + unit_error_rate[node.unit as usize];
         let expected = read_error + unit_error_rate[node.unit as usize][node.cluster as usize];
         let threshold = (expected + THR * deviation).max(0f64);
+        // if threshold < error_rate {
+        //     let unit_error = unit_error_rate[node.unit as usize][node.cluster as usize];
+        //     let (unit,cluster) = (node.unit,node.cluster);
+        //     let (xr,ar,yr) = node.recover(&units[&node.unit]);
+        //     for ((xr,ar),yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)){
+        //         eprintln!("{}",std::str::from_utf8(xr).unwrap());
+        //         eprintln!("{}",std::str::from_utf8(ar).unwrap());
+        //         eprintln!("{}\n",std::str::from_utf8(yr).unwrap());
+        //     }
+        // }
         error_rate < threshold
     });
     read.nodes.len() != orig_len
 }
 
-const THR: f64 = 7f64;
+const THR: f64 = 9f64;
 fn try_encoding_head(
     nodes: &[Node],
     head_cand: &HashMap<LightNode, usize>,
@@ -716,7 +726,7 @@ fn encode_node(
 // Sequence, trimed base from the head, trimed base from the tail, ops, score.
 type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
 fn fine_mapping<'a>(
-    query: &'a [u8],
+    orig_query: &'a [u8],
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<FineMapping<'a>> {
@@ -727,20 +737,36 @@ fn fine_mapping<'a>(
             .map(|&op| [Match, Ins, Del, Mismatch][op as usize])
             .collect()
     }
-    let origlen = query.len();
     let (query, trim_head, trim_tail, ops, band) = {
-        let mode = edlib_sys::AlignMode::Infix;
-        let task = edlib_sys::AlignTask::Alignment;
+        // let mode = edlib_sys::AlignMode::Infix;
+        // let task = edlib_sys::AlignTask::Alignment;
         // Note that unit.seq would be smaller than query! So the operations should be reversed.
-        let alignment = edlib_sys::edlib_align(unitseq, query, mode, task);
-        let (aln_start, aln_end) = alignment.locations.unwrap()[0];
-        let aln_end = aln_end + 1;
-        let band = (((aln_end - aln_start + 1) as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-        let mut ops = Vec::with_capacity(3 * query.len() / 2);
-        ops.extend(std::iter::repeat(kiley::Op::Del).take(aln_start));
-        ops.extend(edlib_op_to_kiley_op(&alignment.operations.unwrap()));
-        ops.extend(std::iter::repeat(kiley::Op::Del).take(query.len() - aln_end));
-        let (_, mut ops) = infix_guided(query, unitseq, &ops, band, ALN_PARAMETER);
+        // let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
+        // let (aln_start, aln_end) = alignment.locations.unwrap()[0];
+        // let aln_end = aln_end + 1;
+        // let band = (((aln_end - aln_start + 1) as f64 * sim_thr * 0.3).ceil() as usize).max(10);
+        // let mut ops = Vec::with_capacity(3 * orig_query.len() / 2);
+        // ops.extend(std::iter::repeat(kiley::Op::Del).take(aln_start));
+        // ops.extend(edlib_op_to_kiley_op(&alignment.operations.unwrap()));
+        // ops.extend(std::iter::repeat(kiley::Op::Del).take(orig_query.len() - aln_end));
+        // let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
+        // // Reverse ops
+        // for op in ops.iter_mut() {
+        //     *op = match *op {
+        //         kiley::Op::Ins => kiley::Op::Del,
+        //         kiley::Op::Del => kiley::Op::Ins,
+        //         x => x,
+        //     }
+        // }
+        // let (trim_head, trim_tail) = trim_head_tail_insertion(&mut ops);
+        // let query = &orig_query[trim_head..orig_query.len() - trim_tail];
+        // TODO:Is this correct?
+        let mode = edlib_sys::AlignMode::Global;
+        let task = edlib_sys::AlignTask::Alignment;
+        let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
+        let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
+        let ops = edlib_op_to_kiley_op(&alignment.operations.unwrap());
+        let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
         // Reverse ops
         for op in ops.iter_mut() {
             *op = match *op {
@@ -750,7 +776,7 @@ fn fine_mapping<'a>(
             }
         }
         let (trim_head, trim_tail) = trim_head_tail_insertion(&mut ops);
-        let query = &query[trim_head..query.len() - trim_tail];
+        let query = &orig_query[trim_head..orig_query.len() - trim_tail];
         (query, trim_head, trim_tail, ops, band)
     };
     let (below_dissim, info) = {
@@ -759,17 +785,11 @@ fn fine_mapping<'a>(
         let (head_identity, tail_identity) = edge_identity(unitseq, query, &ops, EDGE_LEN);
         let (rlen, qlen) = (unitseq.len(), query.len());
         let id = unit.id;
-        let info = format!(
-            "{}\t{}\t{:.2}\t{}\t{}\t{}",
-            id, cluster, identity, rlen, qlen, origlen,
-        );
+        let orig_len = orig_query.len();
+        let info = format!("{id}\t{cluster}\t{identity:.2}\t{rlen}\t{qlen}\t{orig_len}");
         let iden_bound = 1f64 - sim_thr;
         let is_ok = iden_bound < identity && EDGE_BOUND < head_identity.min(tail_identity);
         (is_ok, info)
-        // let identity = identity
-        //     .min(head_identity + EDGE_BONUS)
-        //     .min(tail_identity + EDGE_BONUS);
-        //(iden_bound < identity, info)
     };
     if log_enabled!(log::Level::Trace) {
         if below_dissim {
@@ -777,6 +797,12 @@ fn fine_mapping<'a>(
         } else {
             trace!("FILLDEL\t{}\tNG", info);
             if log_enabled!(log::Level::Trace) {
+                if unit.id == 326 {
+                    eprintln!("F326\t>unit");
+                    eprintln!("F326\t{}", std::str::from_utf8(unitseq).unwrap());
+                    eprintln!("F326\t>read");
+                    eprintln!("F326\t{}", std::str::from_utf8(orig_query).unwrap());
+                }
                 let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
                 for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                     eprintln!("ALN\t{}", String::from_utf8_lossy(xr));

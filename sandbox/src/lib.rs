@@ -1,4 +1,4 @@
-pub const IS_MOCK: bool = false;
+pub const IS_MOCK: bool = true;
 use rand::Rng;
 pub fn test() {
     let xs: Vec<_> = (0..1000).collect();
@@ -17,7 +17,7 @@ pub fn generate_test_data<T: Rng>(
     rng: &mut T,
     probs: &[f64],
     profile: &kiley::gen_seq::Profile,
-) -> (Vec<Vec<u8>>, Vec<u8>) {
+) -> (Vec<Vec<u8>>, Vec<usize>) {
     let choices: Vec<_> = (0..templates.len()).collect();
     use rand::seq::SliceRandom;
     let mut answer: Vec<_> = (0..test_num)
@@ -30,6 +30,6 @@ pub fn generate_test_data<T: Rng>(
         .collect();
     assert_eq!(dataset.len(), answer.len());
     // debug!("Index1\tIndex2\tDist");
-    let answer: Vec<u8> = answer.iter().map(|&x| x as u8).collect();
+    // let answer: Vec<u8> = answer.iter().map(|&x| x ).collect();
     (dataset, answer)
 }

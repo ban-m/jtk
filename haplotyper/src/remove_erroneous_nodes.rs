@@ -9,6 +9,7 @@ use definitions::*;
 use std::collections::{HashMap, HashSet};
 impl RemoveErroneousNodes for DataSet {
     #[allow(clippy::needless_collect)]
+    // TODO: Polsih this.
     fn remove_erroneous_nodes(&mut self) {
         let mut counts: HashMap<_, (usize, i64)> = HashMap::new();
         let normalize = |from: &Node, to: &Node| -> (u64, u64) {
@@ -18,13 +19,19 @@ impl RemoveErroneousNodes for DataSet {
             }
         };
         for read in self.encoded_reads.iter() {
-            for (i, from) in read.nodes.iter().enumerate().take(read.nodes.len() - 1) {
-                let to = &read.nodes[i + 1];
-                let entry = counts.entry(normalize(from, to)).or_default();
+            for edge in read.edges.iter() {
+                let key = (edge.from.min(edge.to), edge.from.max(edge.to));
+                let entry = counts.entry(key).or_default();
                 entry.0 += 1;
-                entry.1 += to.position_from_start as i64
-                    - (from.position_from_start - from.query_length()) as i64;
+                entry.1 += edge.offset;
             }
+            // for (i, from) in read.nodes.iter().enumerate().take(read.nodes.len() - 1) {
+            //     let to = &read.nodes[i + 1];
+            //     let entry = counts.entry(normalize(from, to)).or_default();
+            //     entry.0 += 1;
+            // entry.1 += to.position_from_start as i64
+            //     - (from.position_from_start - from.query_length()) as i64;
+            // }
         }
         // Convert to the "calibrated occurance".
         let lens: Vec<_> = self
@@ -35,10 +42,10 @@ impl RemoveErroneousNodes for DataSet {
         let calib = CoverageCalibrator::new(&lens);
         let calib_coverage: HashMap<_, f64> = counts
             .iter()
-            .map(|(&(f, t), &(obs, totlen))| {
+            .map(|(&key, &(obs, totlen))| {
                 let len = (totlen / obs as i64).max(0) as usize;
                 let calibed = calib.calib(obs, len);
-                ((f, t), calibed)
+                (key, calibed)
             })
             .collect();
         let median = {

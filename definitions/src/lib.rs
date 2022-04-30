@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct DataSet {
     /// The path to the input file.
     pub input_file: String,
+    /// Masking information
+    pub masked_kmers: MaskInfo,
     /// If Some(x), it is the estimated coverage per haplotype.
     /// Note that this value is a estimation, so please do not relay heavily on this value.
     pub coverage: Option<f64>,
@@ -32,6 +34,13 @@ pub struct DataSet {
     // pub model_params: Option<ModelParameters>,
     /// Estimated error rate.
     pub error_rate: ErrorRate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MaskInfo {
+    pub k: usize,
+    /// Occurent threshold(k-mers occurring more than this value would be masked)
+    pub thr: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
@@ -103,6 +112,7 @@ impl std::default::Default for DataSet {
             hic_edges: vec![],
             assignments: vec![],
             read_type: ReadType::None,
+            masked_kmers: MaskInfo::default(),
             // model_params: None,
             error_rate: ErrorRate::default(),
         }
@@ -136,6 +146,7 @@ impl DataSet {
             hic_edges: vec![],
             assignments,
             read_type,
+            masked_kmers: MaskInfo::default(),
             // model_params: None,
             error_rate: ErrorRate::guess(read_type),
         }
@@ -453,15 +464,12 @@ impl EncodedRead {
     }
 }
 
-// TODO: We do not need `from` and `to`, actually.
-// TODO: Or, we do need additional information, such as the cluster id of the `from` node and `to` node, and their direction.
-// Anyway, we can do the same thing by `nodes.window(2).zip(edges)`, so we can leave it as-is. Never fix something not broken. Period.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Edge {
     pub from: u64,
     pub to: u64,
     pub offset: i64,
-    /// This is a string on an alphabet of A,C,G,T. There should not be any lowercase character.
+    /// This is a string on an alphabet of A,C,G,T. There might be some lowercase characters.
     pub label: DNASeq,
 }
 

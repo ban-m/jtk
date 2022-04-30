@@ -29,13 +29,11 @@ pub trait DenseEncoding {
 impl DenseEncoding for DataSet {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
         let original_assignments = log_original_assignments(self);
-        // use crate::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-        // let correction_config = ClusteringConfig::new(5, 10, 5);
-        // self.correct_clustering(&correction_config);
-        let (min_span_reads, lk_ratio) = weak_resolve(self.read_type);
-        use crate::assemble::*;
-        let asm_config = AssembleConfig::new(1, 1000, false, true, min_span_reads, lk_ratio);
-        self.squish_small_contig(&asm_config, 3);
+        // let msr = self.read_type.min_span_reads();
+        // let min_lk = self.read_type.min_llr_value();
+        // use crate::assemble::*;
+        // let asm_config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
+        // self.squish_small_contig(&asm_config, 3);
         let new_units = encode_polyploid_edges(self, config);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
@@ -229,25 +227,27 @@ pub fn fill_edges_by_new_units(
     inserts
 }
 
-fn weak_resolve(read_type: definitions::ReadType) -> (usize, f64) {
-    match read_type {
-        ReadType::CCS => (3, 2f64),
-        ReadType::CLR => (4, 5f64),
-        ReadType::ONT => (4, 4f64),
-        ReadType::None => (4, 4f64),
-    }
-}
+// fn weak_resolve(read_type: definitions::ReadType) -> (usize, f64) {
+//     match read_type {
+//         ReadType::CCS => (3, 2f64),
+//         ReadType::CLR => (4, 5f64),
+//         ReadType::ONT => (4, 4f64),
+//         ReadType::None => (4, 4f64),
+//     }
+// }
 
 type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
 fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> EdgeAndUnit {
     use crate::assemble::*;
-    let (min_span_reads, lk_ratio) = weak_resolve(ds.read_type);
-    let config = AssembleConfig::new(1, 1000, false, true, min_span_reads, lk_ratio);
+    let msr = ds.read_type.min_span_reads();
+    let min_lk = ds.read_type.min_llr_value();
+    // let (min_span_reads, lk_ratio) = weak_resolve(ds.read_type);
+    let config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
     let (records, summaries) = assemble(ds, &config);
     if let Some(file) = de_config.file.as_ref() {
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![]);
-        let records = std::iter::once(header).chain(records).collect();
+        let records = std::iter::once(header).chain(records.clone()).collect();
         let gfa = gfa::GFA::from_records(records);
         if let Ok(mut wtr) = std::fs::File::create(file).map(std::io::BufWriter::new) {
             use std::io::Write;
@@ -259,6 +259,20 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
     let edges: HashMap<_, _> = summaries
         .iter()
         .filter(|summary| !summary.summary.is_empty())
+        .filter(|summary| {
+            let mut has_edges = [false, false];
+            for rec in records.iter() {
+                if let &gfa::Content::Edge(ref edge) = &rec.content {
+                    if edge.sid1.id == summary.id {
+                        has_edges[edge.end1.is_last as usize] |= true;
+                    }
+                    if edge.sid2.id == summary.id {
+                        has_edges[edge.end2.is_last as usize] |= true;
+                    }
+                }
+            }
+            has_edges[0] && has_edges[1]
+        })
         .flat_map(|summary| {
             let (total_cp, num) = summary
                 .summary

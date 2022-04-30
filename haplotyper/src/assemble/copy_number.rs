@@ -346,15 +346,36 @@ pub fn estimate_copy_number_mcmc(
     let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
     debug!("COPYNUM\tGraph\t{}", graph);
     use rayon::prelude::*;
-    (0..CHAIN_NUM)
+    let (argmin, min) = (0..CHAIN_NUM)
         .into_par_iter()
         .map(|i| {
             let config = crate::copy_number_estimation_mrf::Config::new(cov, SEED + i);
             graph.map_estimate_copy_numbers(&config)
         })
         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-        .unwrap()
-        .0
+        .unwrap();
+    trace!("MCMCRES\t{min}");
+    argmin
+}
+
+pub fn get_potential(
+    nodes: &[(f64, usize)],
+    node_cp: &[usize],
+    edges: &[Edge],
+    edge_cp: &[usize],
+    cov: f64,
+) -> f64 {
+    let edges: Vec<_> = edges
+        .iter()
+        .map(|&(u, u_is_head, v, v_is_head, _)| (u, u_is_head, v, v_is_head))
+        .collect();
+    let coverages: Vec<_> = nodes
+        .iter()
+        .map(|&(x, len)| (x.round() as u64, len))
+        .collect();
+    let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
+    let config = crate::copy_number_estimation_mrf::MCMCConfig::new(1f64, 20f64, cov);
+    graph.total_energy(node_cp, edge_cp, &config)
 }
 
 pub fn estimate_copy_number_gbs(

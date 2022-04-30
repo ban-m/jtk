@@ -50,7 +50,7 @@ fn main() -> std::io::Result<()> {
         *counts.entry(ans).or_default() += 1;
     }
     for k in 0..clusters {
-        debug!("CL\t{}\t{}", k, counts[&(k as u8)]);
+        debug!("CL\t{}\t{}", k, counts[&k]);
     }
     {
         let start = std::time::Instant::now();

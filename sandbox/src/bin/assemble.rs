@@ -11,7 +11,7 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet = std::fs::File::open(&args[1])
+    let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
     // ds.encoded_reads
@@ -32,8 +32,9 @@ fn main() -> std::io::Result<()> {
 pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
-    let graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
-    // graph.remove_lightweight_edges(2, true);
+    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
+    eprintln!("{graph}");
+    graph.remove_lightweight_edges(2, true);
     let (segments, edge, group, summaries) = graph.spell(c);
     let nodes = segments.into_iter().map(|node| {
         let tags = match summaries.iter().find(|x| x.id == node.sid) {

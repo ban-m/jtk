@@ -1056,7 +1056,6 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::determine_units::calc_sim_thr;
     use haplotyper::determine_units::TAKE_THR;
     let sim_thr = calc_sim_thr(&dataset, TAKE_THR);
-    // let sim_thr = dataset.read_type.sim_thr();
     use haplotyper::encode::deletion_fill::*;
     let config = CorrectDeletionConfig::new(to_recal, sim_thr);
     debug!("SIMTHR\t{sim_thr}");

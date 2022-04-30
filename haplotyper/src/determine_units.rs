@@ -8,6 +8,7 @@ use rand::prelude::*;
 use rand_xoshiro::Xoroshiro128Plus;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::hash::Hash;
 #[derive(Debug, Clone)]
 pub struct UnitConfig {
     pub chunk_len: usize,
@@ -100,10 +101,12 @@ pub trait DetermineUnit {
     fn select_chunks(&mut self, config: &UnitConfig);
 }
 
+const FIRST_CONS_COV: usize = 20;
+const CONS_COV: usize = 30;
+
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
-    // TODO: Parametrize the number of reads used in consensus generation.
-    // TOOD: Maybe we can remove some low-quality reads by
+    // TOOD: Maybe we can remove some low-quality reads?
     fn select_chunks(&mut self, config: &UnitConfig) {
         self.selected_chunks.clear();
         self.encoded_reads.clear();
@@ -127,27 +130,31 @@ impl DetermineUnit for definitions::DataSet {
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);
-            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 20);
+            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, FIRST_CONS_COV);
             self.consensus_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t1", self.selected_chunks.len());
         }
         // 2nd polishing.
         {
+            use crate::repeat_masking::RepeatMask;
+            let repetitive_kmer = self.get_repetitive_kmer();
             self.encode(config.threads, sim_thr);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
-            for _ in 0..4 {
-                fill_sparse_region_dev(self, config);
-                fill_tips_dev(self, config);
+            for _ in 0..10 {
+                let new_unit = fill_sparse_region_dev(self, &repetitive_kmer, config)
+                    + fill_tips_dev(self, &repetitive_kmer, config);
                 crate::encode::deletion_fill::correct_unit_deletion(self, sim_thr);
+                if new_unit == 0 {
+                    break;
+                }
             }
             compaction_units(self);
             remove_overlapping_units_dev(self, config).unwrap();
             remove_frequent_units(self, config.upper_count);
-            // Added!
             filter_unit_by_ovlp(self, config);
             debug!("UNITNUM\t{}\tFILTERED\t1", self.selected_chunks.len());
-            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, 30);
+            let polish_config = PolishUnitConfig::new(self.read_type, filter_size, CONS_COV);
             dump_histogram(self);
             self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t2", self.selected_chunks.len());
@@ -155,12 +162,10 @@ impl DetermineUnit for definitions::DataSet {
         // Final polish
         {
             debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
-            //Added!
             use crate::encode::encode_by_mm2;
             encode_by_mm2(self, config.threads, sim_thr).unwrap();
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
-
             self.encode(config.threads, sim_thr);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
@@ -171,7 +176,7 @@ impl DetermineUnit for definitions::DataSet {
             remove_frequent_units(self, config.upper_count);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
-            let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, 100);
+            let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, CONS_COV);
             dump_histogram(self);
             self.polish_unit(&polish_config);
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
@@ -180,6 +185,12 @@ impl DetermineUnit for definitions::DataSet {
             self.encode(config.threads, sim_thr);
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
+            // use crate::repeat_masking::RepeatMask;
+            // let repetitive_kmer = self.get_repetitive_kmer();
+            // let mut config = config.clone();
+            // config.chunk_len = config.chunk_len / 2;
+            // let _ = fill_sparse_region_dev(self, &repetitive_kmer, &config);
+            // crate::encode::deletion_fill::correct_unit_deletion(self, sim_thr);
             dump_histogram(self);
         }
         compaction_units(self);
@@ -237,7 +248,6 @@ fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> V
         .map(|(idx, seq)| {
             let mut seq = seq.to_vec();
             seq.iter_mut().for_each(u8::make_ascii_uppercase);
-            // let seq = String::from_utf8(seq).unwrap();
             Unit::new(idx as u64, seq, config.min_cluster)
         })
         .collect()
@@ -430,7 +440,7 @@ type FilledEdge = ((u64, bool), (u64, bool));
 // Offset from the `from` position.
 const SKIP_OFFSET: usize = 5;
 type FilledEdges = HashMap<FilledEdge, Unit>;
-fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> FilledEdges {
+fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> HashMap<FilledEdge, Vec<u8>> {
     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
     for read in ds.encoded_reads.iter().filter(|r| !r.nodes.is_empty()) {
         assert_eq!(read.nodes.len(), read.edges.len() + 1);
@@ -457,24 +467,25 @@ fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> FilledEdges {
     }
     // We fill units for each sparsed region.
     let count_thr = get_count_thr(ds, config);
-    debug!("FillSparse\tThreshold\t{}", count_thr);
-    let mut edge_units: HashMap<_, _> = edge_count
-        .into_par_iter()
-        .filter(|x| count_thr < x.1.len())
-        .map(|(key, ref seqs)| {
-            let radius = ds.read_type.band_width(config.chunk_len);
+    debug!("FillSparse\tEdge\tThreshold\t{}", count_thr);
+    edge_count.retain(|_, seq| count_thr < seq.len());
+    take_consensus(&edge_count, &ds.read_type, &config)
+}
+
+fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
+    chunks: &HashMap<K, Vec<Vec<u8>>>,
+    read_type: &ReadType,
+    config: &UnitConfig,
+) -> HashMap<K, Vec<u8>> {
+    chunks
+        .par_iter()
+        .map(|(key, seqs)| {
+            let radius = read_type.band_width(config.chunk_len);
             let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
             let consensus = kiley::bialignment::guided::polish_until_converge(&cons, &seqs, radius);
-            // let seq = String::from_utf8(consensus).unwrap();
-            let unit = Unit::new(0, consensus, 2);
-            (key, unit)
+            (key.clone(), consensus)
         })
-        .collect();
-    let max_idx: u64 = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
-    edge_units.values_mut().enumerate().for_each(|(idx, unit)| {
-        unit.id = max_idx + 1 + idx as u64;
-    });
-    edge_units
+        .collect()
 }
 
 fn get_count_thr(ds: &DataSet, _config: &UnitConfig) -> usize {
@@ -532,7 +543,6 @@ fn fill_gap(
     unit: &Unit,
     readtype: ReadType,
 ) -> Option<Node> {
-    // let (old_start, old_end) = (start, end);
     let unit_len = unit.seq().len();
     let (start, end) = match direction {
         true => (start, (start + unit_len + SKIP_OFFSET).min(end)),
@@ -583,82 +593,109 @@ fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
     }
 }
 
-fn fill_sparse_region_dev(ds: &mut DataSet, config: &UnitConfig) {
-    let edge_units = enumerate_filled_edges(ds, config);
-    debug!("FillSparse\tConsed");
+fn fill_sparse_region_dev(
+    ds: &mut DataSet,
+    repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
+    config: &UnitConfig,
+) -> usize {
+    let max_idx: u64 = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
+    let edge_units: HashMap<_, _> = enumerate_filled_edges(ds, config)
+        .into_iter()
+        .filter(|(_, seq)| repetitive_kmers.repetitiveness(seq) < config.exclude_repeats)
+        .enumerate()
+        .map(|(idx, (key, seq))| {
+            let unit = Unit::new(max_idx + 1 + idx as u64, seq, 2);
+            (key, unit)
+        })
+        .collect();
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
     ds.encoded_reads.par_iter_mut().for_each(|read| {
         let rawseq = &rawseq[&read.id];
         fill_edge(read, rawseq, &edge_units, readtype, config);
     });
-    debug!("FillSparse\t{}", edge_units.len());
+    let len = edge_units.len();
+    debug!("FillSparse\tEdge\t{len}");
     ds.selected_chunks.extend(edge_units.into_values());
+    len
 }
 
-#[allow(dead_code)]
-fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
-    let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
-    for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
-        let key = (edge.from.min(edge.to), edge.from.max(edge.to));
-        edge_count.entry(key).or_default().push(edge);
-    }
-    // We fill units for each sparsed region.
-    let count_thr = {
-        let mut count: HashMap<_, usize> = HashMap::new();
-        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            *count.entry(node.unit).or_default() += 1;
-        }
-        let mut count: Vec<_> = count.into_values().collect();
-        let median = count.len() / 2;
-        *count.select_nth_unstable(median).1 / 4
-    };
-    let mut picked_units = vec![];
-    for (_, edges) in edge_count {
-        let total_len: i64 = edges
-            .iter()
-            .map(|edge| match edge.label.is_empty() {
-                true => edge.offset,
-                false => edge.label().len() as i64,
-            })
-            .sum();
-        let mean_len = total_len / edges.len() as i64;
-        if (config.chunk_len as i64) < mean_len && count_thr < edges.len() {
-            let edge = edges.iter().max_by_key(|e| e.label().len()).unwrap();
-            let seq = edge.label();
-            let new_units = (0..)
-                .map(|i| (config.chunk_len * i, (i + 1) * config.chunk_len))
-                .take_while(|&(_, y)| y < seq.len())
-                .map(|(s, t)| &seq[s..t])
-                .filter(|u| !is_repetitive(u, config));
-            picked_units.extend(new_units);
-        }
-    }
-    debug!("FillSparse\t{}", picked_units.len());
-    let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
-    ds.selected_chunks
-        .extend(picked_units.iter().enumerate().map(|(i, seq)| {
-            let id = i as u64 + last_unit + 1;
-            // let seq = String::from_utf8_lossy(seq).to_string();
-            Unit::new(id, seq.to_vec(), config.min_cluster)
-        }));
-}
+// fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
+//     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
+//     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
+//         let key = (edge.from.min(edge.to), edge.from.max(edge.to));
+//         edge_count.entry(key).or_default().push(edge);
+//     }
+//     // We fill units for each sparsed region.
+//     let count_thr = {
+//         let mut count: HashMap<_, usize> = HashMap::new();
+//         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+//             *count.entry(node.unit).or_default() += 1;
+//         }
+//         let mut count: Vec<_> = count.into_values().collect();
+//         let median = count.len() / 2;
+//         *count.select_nth_unstable(median).1 / 4
+//     };
+//     let mut picked_units = vec![];
+//     for (_, edges) in edge_count {
+//         let total_len: i64 = edges
+//             .iter()
+//             .map(|edge| match edge.label.is_empty() {
+//                 true => edge.offset,
+//                 false => edge.label().len() as i64,
+//             })
+//             .sum();
+//         let mean_len = total_len / edges.len() as i64;
+//         if (config.chunk_len as i64) < mean_len && count_thr < edges.len() {
+//             let edge = edges.iter().max_by_key(|e| e.label().len()).unwrap();
+//             let seq = edge.label();
+//             let new_units = (0..)
+//                 .map(|i| (config.chunk_len * i, (i + 1) * config.chunk_len))
+//                 .take_while(|&(_, y)| y < seq.len())
+//                 .map(|(s, t)| &seq[s..t])
+//                 .filter(|u| !is_repetitive(u, config));
+//             picked_units.extend(new_units);
+//         }
+//     }
+//     debug!("FillSparse\t{}", picked_units.len());
+//     let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
+//     ds.selected_chunks
+//         .extend(picked_units.iter().enumerate().map(|(i, seq)| {
+//             let id = i as u64 + last_unit + 1;
+//             // let seq = String::from_utf8_lossy(seq).to_string();
+//             Unit::new(id, seq.to_vec(), config.min_cluster)
+//         }));
+// }
 
 type FilledTips = HashMap<(u64, bool), Unit>;
-fn fill_tips_dev(ds: &mut DataSet, config: &UnitConfig) {
-    let tip_units = enumerate_filled_tips(ds, config);
-    debug!("FillTip\tConsed");
+fn fill_tips_dev(
+    ds: &mut DataSet,
+    repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
+    config: &UnitConfig,
+) -> usize {
+    let max_idx = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
+    let tip_units: HashMap<_, _> = enumerate_filled_tips(ds, config)
+        .into_iter()
+        .filter(|(_, seq)| repetitive_kmers.repetitiveness(seq) < config.exclude_repeats)
+        .enumerate()
+        .map(|(idx, (key, seq))| {
+            let unit = Unit::new(max_idx + 1 + idx as u64, seq, 2);
+            (key, unit)
+        })
+        .collect();
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
     ds.encoded_reads.par_iter_mut().for_each(|read| {
         let rawseq = &rawseq[&read.id];
         fill_tip(read, rawseq, &tip_units, readtype, config);
     });
-    debug!("FillTip\t{}", tip_units.len());
+    let len = tip_units.len();
+    debug!("FillSparse\tTip\t{len}");
     ds.selected_chunks.extend(tip_units.into_values());
+    len
 }
 
-fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> FilledTips {
+fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> HashMap<(u64, bool), Vec<u8>> {
     let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
     let take_len = config.chunk_len + SKIP_OFFSET;
     for read in ds.encoded_reads.iter() {
@@ -683,10 +720,10 @@ fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> FilledTips {
     }
     // We fill units for each sparsed region.
     let count_thr = get_count_thr(&ds, config);
-    debug!("FillTip\tThreshold\t{}", count_thr);
-    let mut tip_units: HashMap<_, _> = tail_counts
-        .par_iter()
-        .filter(|(_, labels)| count_thr.max(1) < labels.len())
+    tail_counts.retain(|_, labels| count_thr.max(1) < labels.len());
+    debug!("FillSparse\tTip\tThreshold\t{}", count_thr);
+    let tail_counts: HashMap<_, _> = tail_counts
+        .into_par_iter()
         .map(|(key, labels)| {
             let mut seqs: Vec<_> = labels
                 .iter()
@@ -701,18 +738,10 @@ fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> FilledTips {
                 .collect();
             seqs.iter_mut()
                 .for_each(|r| r.iter_mut().for_each(u8::make_ascii_uppercase));
-            let radius = ds.read_type.band_width(config.chunk_len);
-            let cons = kiley::ternary_consensus_by_chunk(&seqs, radius);
-            let consensus = kiley::bialignment::guided::polish_until_converge(&cons, &seqs, radius);
-            // let seq = String::from_utf8(consensus).unwrap();
-            (*key, Unit::new(0, consensus, 2))
+            (key, seqs)
         })
         .collect();
-    let max_idx = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
-    tip_units.values_mut().enumerate().for_each(|(idx, unit)| {
-        unit.id = max_idx + 1 + idx as u64;
-    });
-    tip_units
+    take_consensus(&tail_counts, &ds.read_type, config)
 }
 
 fn fill_tip(
@@ -821,19 +850,27 @@ fn is_repetitive(unit: &[u8], config: &UnitConfig) -> bool {
     lowercase as f64 / tot as f64 > config.exclude_repeats
 }
 
+// TODO: I opt-out the stride parameter, is it OK?
+// Or, something went wrong? Please check it out.
 fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
     let seq = r.seq();
     if seq.len() < c.margin * 2 {
         vec![]
     } else {
-        let end = seq.len() - c.margin;
-        let stride = c.chunk_len + c.skip_len;
+        let bound = seq.len() - c.margin;
         (0..)
-            .map(|i| (stride * i, stride * i + c.chunk_len))
-            .map(|(x, y)| (x + c.margin, y + c.margin))
-            .take_while(|&(_, y)| y < end)
-            .map(|(s, t)| &seq[s..t])
+            .map(|i| (c.margin + i * c.chunk_len, c.margin + (i + 1) * c.chunk_len))
+            .take_while(|&(_, end)| end <= bound)
+            .map(|(s, e)| &seq[s..e])
             .collect()
+        // let end = seq.len() - c.margin;
+        // let stride = c.chunk_len + c.skip_len;
+        // (0..)
+        //     .map(|i| (stride * i, stride * i + c.chunk_len))
+        //     .map(|(x, y)| (x + c.margin, y + c.margin))
+        //     .take_while(|&(_, y)| y < end)
+        //     .map(|(s, t)| &seq[s..t])
+        //     .collect()
     }
 }
 

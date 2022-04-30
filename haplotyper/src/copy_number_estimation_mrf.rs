@@ -26,9 +26,8 @@ impl Config {
         }
     }
 }
-const ERROR_FRAC: f64 = 0.25;
+const ERROR_FRAC: f64 = 0.05;
 const BURN_IN: usize = 20_000;
-// target of consistency factor.
 const TARGET: f64 = 20f64;
 const CHOICES: [usize; 3] = [0, 1, 2];
 
@@ -82,14 +81,13 @@ impl std::fmt::Display for Graph {
 }
 
 #[derive(Debug, Clone)]
-struct MCMCConfig {
+pub struct MCMCConfig {
     temprature: f64,
     consist_factor: f64,
     coverage: f64,
 }
-
 impl MCMCConfig {
-    fn new(temprature: f64, consist_factor: f64, coverage: f64) -> Self {
+    pub fn new(temprature: f64, consist_factor: f64, coverage: f64) -> Self {
         Self {
             temprature,
             consist_factor,
@@ -97,7 +95,14 @@ impl MCMCConfig {
         }
     }
     // Smaller is better.
-    fn node_potential(&self, w: u64, copy: usize) -> f64 {
+    pub fn node_potential(&self, w: u64, copy: usize) -> f64 {
+        // const SIG_FACTOR: f64 = 2f64;
+        // let cov = self.coverage;
+        // let mean = (copy as f64 * cov).max(cov * ERROR_FRAC);
+        // let sd = SIG_FACTOR * mean;
+        // let denom = 2f64 * sd * sd;
+        // let diff = w as f64 - mean;
+        // diff * diff / denom + sd.ln()
         let cov = self.coverage;
         let lambda = (copy as f64 * cov).max(cov * ERROR_FRAC);
         -(w as f64) * lambda.ln() + lambda
@@ -239,12 +244,27 @@ impl Graph {
         // the consistency factor would be TARGET.
         let total_step = 2 * (node_cp.len() + edge_cp.len()) * BURN_IN;
         let grad = (TARGET.ln() / total_step as f64).exp();
-        for _ in 0..total_step {
+        mcmc_config.temprature = 100f64;
+        let chill = (100f64.ln() / total_step as f64).exp();
+        for _t in 1..total_step {
             let _ = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
             mcmc_config.consist_factor *= grad;
+            mcmc_config.temprature /= chill;
         }
-        let potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
-        ((node_cp, edge_cp), potential)
+        let mut minpot = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
+        let mut argmin = (node_cp.clone(), edge_cp.clone());
+        for _t in 0..1000 {
+            let (accept, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
+            if accept {
+                let pot = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
+                // trace!("DUMP\t{}\t{}\t{}", config.seed, _t, pot);
+                if pot < minpot {
+                    minpot = pot;
+                    argmin = (node_cp.clone(), edge_cp.clone());
+                }
+            }
+        }
+        (argmin, minpot)
         // mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
         // let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
         // let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
@@ -300,17 +320,16 @@ impl Graph {
         if node_cp[flip] == 0 && to_decrease {
             Some((true, 0f64))
         } else {
-            // This is new potential minux old one.
             let potential_diff = self.energy_diff_node(node_cp, edge_cp, config, flip, to_decrease);
-            let prob = (-potential_diff / config.temprature).exp().min(1f64);
-            let accept = rng.gen_bool(prob);
+            let accept_prob_ln = -potential_diff / config.temprature;
+            let accept = 0f64 <= accept_prob_ln || rng.gen_bool(accept_prob_ln.exp());
             if accept {
                 if to_decrease {
                     node_cp[flip] -= 1;
                 } else {
                     node_cp[flip] += 1;
                 }
-            }
+            };
             Some((accept, potential_diff))
         }
     }
@@ -330,8 +349,10 @@ impl Graph {
             Some((true, 0f64))
         } else {
             let potential_diff = self.energy_diff_edge(node_cp, edge_cp, config, flip, to_decrease);
-            let prob = (-potential_diff / config.temprature).exp().min(1f64);
-            let accept = rng.gen_bool(prob);
+            let prob_ln = -potential_diff / config.temprature;
+            // let prob = ().exp().min(1f64);
+            // let accept = rng.gen_bool(prob);
+            let accept = 0f64 <= prob_ln || rng.gen_bool(prob_ln.exp());
             if accept {
                 if to_decrease {
                     edge_cp[flip] -= 1;
@@ -376,8 +397,8 @@ impl Graph {
         };
         let potential_diff =
             self.energy_diff_neighbor(node_cp, edge_cp, config, targets, to_decrease);
-        let prob = (-potential_diff / config.temprature).exp().min(1f64);
-        let accept = rng.gen_bool(prob);
+        let prob_ln = -potential_diff / config.temprature;
+        let accept = 0f64 < prob_ln || rng.gen_bool(prob_ln.exp());
         if accept {
             match to_decrease {
                 true => node_cp[flip] -= 1,
@@ -548,7 +569,7 @@ impl Graph {
 
     // Loged version of the total energy.
     // SMALLER IS BETTER
-    fn total_energy(&self, node_cp: &[usize], edge_cp: &[usize], config: &MCMCConfig) -> f64 {
+    pub fn total_energy(&self, node_cp: &[usize], edge_cp: &[usize], config: &MCMCConfig) -> f64 {
         let node_potential: f64 = self
             .coverages
             .iter()
@@ -575,13 +596,9 @@ impl Graph {
                 head_potential + tail_potential
             })
             .sum();
+        // let edpen = edge_consistency as f64 * config.consist_factor;
+        // trace!("{node_potential}\t{edpen}");
         node_potential + edge_consistency as f64 * config.consist_factor
-        // let potential = node_potential + edge_consistency as f64 * config.consist_factor;
-        // debug!(
-        //     "POTENTIAL\t{:.1}\t{:.1}\t{:.1}\t{:.1}",
-        //     node_potential, edge_consistency, config.consist_factor, potential
-        // );
-        // potential
     }
 }
 

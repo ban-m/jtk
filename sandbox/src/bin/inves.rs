@@ -5,56 +5,62 @@ use haplotyper::assemble::*;
 use haplotyper::determine_units::DetermineUnit;
 use sandbox::IS_MOCK;
 use std::collections::HashMap;
-use std::io::BufReader;
+use std::io::{BufRead, BufReader};
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet =
-        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
-            .unwrap();
-    let read_ids: Vec<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
-    for read in ds.encoded_reads.iter().filter(|r| read_ids.contains(&r.id)) {
-        println!("{read}");
+    let mut nodes = vec![];
+    let mut naive_cov = 0f64;
+    let mut edges = vec![];
+    for (i, line) in std::fs::File::open(&args[1])
+        .map(BufReader::new)?
+        .lines()
+        .filter_map(|l| l.ok())
+        .enumerate()
+    {
+        let fields: Vec<_> = line.split('\t').skip(1).collect();
+        if i == 0 {
+            naive_cov = fields[0].parse().unwrap();
+        } else if fields[0] == "NODE" {
+            let cov = fields[1].parse::<f64>().unwrap();
+            let len = fields[2].parse::<usize>().unwrap();
+            nodes.push((cov, len));
+        } else if fields[0] == "EDGE" {
+            let from = fields[1].parse::<usize>().unwrap();
+            let fp = fields[2] == "true";
+            let to = fields[3].parse::<usize>().unwrap();
+            let tp = fields[4] == "true";
+            let cov = fields[5].parse::<f64>().unwrap();
+            edges.push((from, fp, to, tp, cov));
+        }
     }
+    use haplotyper::assemble::copy_number;
+    let (node_cp, edge_cp) = copy_number::estimate_copy_number_mcmc(&nodes, &edges, naive_cov);
+    eprintln!("======================");
+    let pot = copy_number::get_potential(&nodes, &node_cp, &edges, &edge_cp, naive_cov);
+    println!("COVCP\t{naive_cov}");
+    for ((cov, len), cp) in nodes.iter().zip(node_cp.iter()) {
+        println!("COVCP\tNODE\t{}\t{}\t{}", cov, len, cp);
+    }
+    for ((f, fp, t, tp, cov), cp) in edges.iter().zip(edge_cp.iter()) {
+        println!("COVCP\tEDGE\t{f}\t{fp}\t{t}\t{tp}\t{cov}\t{cp}");
+    }
+    println!("GET\t{pot}");
+    let node_cp = vec![2, 1, 2, 1, 2, 1, 1, 1, 1];
+    assert_eq!(node_cp.len(), nodes.len());
+    let edge_cp = vec![1; edges.len()];
+    let pot = copy_number::get_potential(&nodes, &node_cp, &edges, &edge_cp, naive_cov);
+    println!("OPTIM\t{pot}");
+    // let ds: DataSet =
+    //     serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
+    //         .unwrap();
+    // let read_ids: Vec<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
+    // for read in ds.encoded_reads.iter().filter(|r| read_ids.contains(&r.id)) {
+    //     println!("{read}");
+    // }
     // let min_span_read = ds.read_type.min_span_reads();
     // let llr = ds.read_type.min_llr_value();
     // let config = AssembleConfig::new(1, 1000, false, true, min_span_read, llr);
     // check_foci(&ds, &config);
     Ok(())
 }
-
-// pub fn check_foci(ds: &DataSet, c: &AssembleConfig) {
-//     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-//     use haplotyper::assemble::ditch_graph::DitchGraph;
-//     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
-//     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-//     let cov = ds.coverage.unwrap();
-//     graph.remove_zero_copy_elements(&lens, 0.2);
-//     graph.assign_copy_number(cov, &lens);
-//     graph.remove_zero_copy_elements(&lens, 0.5);
-//     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-//     let foci = graph.get_foci_dev(&reads, c);
-//     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-//     let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
-//     for read in ds.encoded_reads.iter() {
-//         let ans = match IS_MOCK {
-//             true => id2desc[&read.id].contains("hapA") as usize,
-//             false => id2desc[&read.id].contains("000251v2") as usize,
-//         };
-//         for node in read.nodes.iter() {
-//             counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
-//         }
-//     }
-//     // for focus in foci.iter().filter(|f| not_good(f, &counts)) {
-//     for focus in foci {
-//         let fcount = counts[&focus.from];
-//         let tcount = counts[&focus.to];
-//         println!("{focus}\t{:?}\t{:?}", fcount, tcount);
-//     }
-// }
-
-// fn not_good(focus: &Focus, counts: &HashMap<(u64, u64), [u32; 2]>) -> bool {
-//     let fcount = counts[&focus.from];
-//     let tcount = counts[&focus.to];
-//     (fcount[0] < fcount[1]) != (tcount[0] <= tcount[1])
-// }

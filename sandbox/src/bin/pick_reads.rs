@@ -1,5 +1,5 @@
-const IS_MOCK: bool = false;
 use definitions::*;
+use sandbox::IS_MOCK;
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
@@ -26,7 +26,7 @@ fn main() -> std::io::Result<()> {
     //     println!("{}\t{}\t{:?}", read.id, is_hap1, dump);
     // }
     let units: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
-    let range = 10;
+    let range = 14;
     for read in ds.encoded_reads.iter() {
         let len = read.original_length;
         for (idx, node) in read

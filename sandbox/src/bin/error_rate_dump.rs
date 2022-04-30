@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use definitions::*;
+
 use haplotyper::determine_units::DetermineUnit;
 use haplotyper::encode::Encode;
 // use haplotyper::DetermineUnit;
@@ -10,13 +11,15 @@ use rand::SeedableRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
 use std::collections::{HashMap, HashSet};
 use std::io::*;
-fn error(node: &definitions::Node, ref_unit: &Unit) -> (f64, f64, f64) {
-    let (query, aln, refr) = node.recover(ref_unit);
-    let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
-    let del = query.iter().filter(|&&x| x == b' ').count() as f64;
-    let ins = refr.iter().filter(|&&x| x == b' ').count() as f64;
-    let aln_len = aln.len() as f64;
-    (mismat / aln_len, del / aln_len, ins / aln_len)
+fn error(node: &definitions::Node, ref_unit: &Unit) -> f64 {
+    let (_, aln, _) = node.recover(ref_unit);
+    let dist = aln.iter().filter(|&&x| x != b'|').count();
+    dist as f64 / aln.len() as f64
+    // let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
+    // let del = query.iter().filter(|&&x| x == b' ').count() as f64;
+    // let ins = refr.iter().filter(|&&x| x == b' ').count() as f64;
+    // let aln_len = aln.len() as f64;
+    // (mismat / aln_len, del / aln_len, ins / aln_len)
 }
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -36,9 +39,28 @@ fn main() -> std::io::Result<()> {
                 .collect::<Vec<_>>()
         })
         .collect();
-    println!("readid\tunit\tcluster\tmism\tins\tdel");
-    for (rid, unit, cluster, (mism, ins, del)) in error_rates {
-        println!("{}\t{}\t{}\t{}\t{}\t{}", rid, unit, cluster, mism, ins, del);
+    use haplotyper::determine_units::TAKE_THR;
+    let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, TAKE_THR);
+    eprintln!("{sim_thr}");
+    let (read_error_rate, unit_error_rate, _) =
+        haplotyper::encode::deletion_fill::estimate_error_rate_dev(&ds, sim_thr);
+    use std::io::BufWriter;
+    if let Ok(mut wtr) = std::fs::File::create("dump.log").map(BufWriter::new) {
+        for read in ds.encoded_reads.iter() {
+            let error = read_error_rate[read.id as usize];
+            writeln!(&mut wtr, "READ\t{}\t{}", read.id, error)?;
+        }
+        for unit in ds.selected_chunks.iter() {
+            for (cl, error) in unit_error_rate[unit.id as usize].iter().enumerate() {
+                writeln!(&mut wtr, "UNIT\t{}\t{cl}\t{error}", unit.id)?;
+            }
+        }
+    }
+
+    for (id, unit, cluster, error) in error_rates {
+        let expected =
+            read_error_rate[id as usize] + unit_error_rate[unit as usize][cluster as usize];
+        println!("{id}\t{unit}\t{cluster}\t{error}\t{expected}");
     }
     Ok(())
 }

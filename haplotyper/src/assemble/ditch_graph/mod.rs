@@ -1,9 +1,10 @@
 use super::copy_number::CoverageCalibrator;
 use super::AssembleConfig;
-use definitions::{DNASeq, ReadType};
+use definitions::DNASeq;
 use definitions::{EncodedRead, Unit};
 use rayon::prelude::*;
 mod sequence_generation;
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 pub mod dg_test;
@@ -551,6 +552,8 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
     (node_consensus, edge_consensus)
 }
 
+type TempNode = (usize, [Vec<(usize, usize)>; 2]);
+
 impl<'a> DitchGraph<'a> {
     pub fn sanity_check(&self) -> bool {
         self.nodes.values().all(|node| {
@@ -611,40 +614,199 @@ impl<'a> DitchGraph<'a> {
         lens: &[usize],
         reads: &[&EncodedRead],
         c: &super::AssembleConfig,
-        read_type: definitions::ReadType,
+        _read_type: definitions::ReadType,
     ) {
         self.assign_copy_number(cov, lens);
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
         }
-        self.remove_zero_copy_elements(lens, 0.2);
-        self.assign_copy_number(cov, lens);
-        self.remove_zero_copy_elements(lens, 0.5);
-        if read_type == ReadType::CLR {
-            self.zip_up_overclustering();
-        }
+        self.remove_zero_copy_elements(lens, 0.3);
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
         let llr_stream = (0..10)
             .rev()
-            .map(|x| x as f64 + 0.1)
-            .take_while(|&x| min_llr < x);
-        for (i, llr) in llr_stream.enumerate() {
-            debug!("REPEATRESOLVE\t{}", i);
+            .map(|i| i as f64 + 0.01)
+            .take_while(|&x| min_llr < x)
+            .enumerate();
+        for (i, llr) in llr_stream {
             self.assign_copy_number_mcmc(cov, lens);
+            debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
+            self.zip_up_overclustering(2);
+            self.remove_zero_copy_elements(lens, 0.8);
+            if i == 5 {
+                self.remove_zero_copy_elements(lens, 0.9);
+                self.remove_zero_copy_path(0.3);
+                self.remove_lightweight_edges(0, true);
+                self.remove_tips(0.8, 4);
+                self.assign_copy_number_mcmc(cov, lens);
+                self.squish_small_net(3);
+                self.zip_up_overclustering_dev();
+            }
             if log_enabled!(log::Level::Trace) {
                 dump(self, i + 1, c);
             }
         }
-        self.remove_lightweight_edges(0, true);
-        // if read_type == ReadType::CLR {
-        // self.zip_up_overclustering();
-        // }
-        self.assign_copy_number_mcmc(cov, lens);
-        self.remove_zero_copy_elements(lens, 0.8);
+        self.remove_zero_copy_elements(lens, 0.9);
         self.remove_zero_copy_path(0.3);
+        self.remove_lightweight_edges(0, true);
+        self.remove_tips(0.8, 4);
+        self.assign_copy_number_mcmc(cov, lens);
+        // self.squish_small_net(3);
+        // self.zip_up_overclustering_dev();
+        // self.resolve_repeats(reads, c, min_llr);
     }
+    /// Squish small net-like-structure like below:
+    /// [Long contig]---[Small contig]---[Long contig]
+    ///               X                X
+    /// [Long contig]---[Small contig]---[Long contig]
+    /// By squishing, only one side of the [small contig] would be retained.
+    pub fn squish_small_net(&mut self, len: usize) {
+        let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
+        let nodes = Self::temp_graph(&node_to_pathid, &connecting_edges);
+        // for (idx, (len, edges)) in nodes.iter().enumerate() {
+        //     debug!("NODE\t{idx}\t{len}");
+        //     for (to, to_pos) in edges[0].iter() {
+        //         debug!("{idx}\t0\t{to}\t{to_pos}");
+        //     }
+        //     for (to, to_pos) in edges[1].iter() {
+        //         debug!("{idx}\t1\t{to}\t{to_pos}");
+        //     }
+        // }
+        // vector of found gruops
+        let mut suspicious_nodes: Vec<Vec<usize>> = nodes
+            .par_iter()
+            .enumerate()
+            .filter(|(_, n)| len < n.0)
+            .flat_map(|(i, _)| {
+                let mut suspic = Vec::new();
+                if let Some(simple_paths) = Self::is_net(&nodes, i, 0, len) {
+                    suspic.push(simple_paths);
+                }
+                if let Some(simple_paths) = Self::is_net(&nodes, i, 1, len) {
+                    suspic.push(simple_paths);
+                }
+                suspic
+            })
+            .collect();
+        // Dedup.
+        suspicious_nodes.sort();
+        suspicious_nodes.dedup();
+        // for paths in suspicious_nodes.iter() {
+        //     debug!("===============");
+        //     for path in paths.iter() {
+        //         let path: Vec<_> = node_to_pathid
+        //             .iter()
+        //             .filter_map(|(node, key)| (key == path).then(|| node))
+        //             .map(|(n, u)| format!("{n}-{u}"))
+        //             .collect();
+        //         debug!("SQUISHNET\t{}", path.join("\t"));
+        //     }
+        // }
+        let to_remove: HashSet<_> = suspicious_nodes
+            .iter()
+            .flat_map(|nodes| nodes[1..].iter())
+            .collect();
+        let to_remove: HashSet<_> = self
+            .nodes
+            .keys()
+            .filter(|node| to_remove.contains(&node_to_pathid[node]))
+            .copied()
+            .collect();
+        // Removing this nodes...
+        self.remove_nodes(&to_remove);
+    }
+    fn is_net(nodes: &[TempNode], from: usize, from_slot: usize, len: usize) -> Option<Vec<usize>> {
+        // check if this is branching...
+        if nodes[from].1[from_slot].len() <= 1 {
+            return None;
+        }
+        // Check if connedted nodes are all short.
+        if nodes[from].1[from_slot]
+            .iter()
+            .any(|&(to, _)| len < nodes[to].0)
+        {
+            return None;
+        }
+        let (first_child_node, first_child_pos) = nodes[from].1[from_slot][0];
+        let sibs = &nodes[first_child_node].1[first_child_pos];
+        // At least there are one additional sibling.
+        assert!(sibs.contains(&(from, from_slot)));
+        if sibs.len() <= 1 {
+            return None;
+        }
+        // Check if all the children reflects the same siblings.
+        if nodes[from].1[from_slot]
+            .iter()
+            .any(|&(node, pos)| &nodes[node].1[pos] != sibs)
+        {
+            return None;
+        }
+        let rev_pos = (first_child_pos == 0) as usize;
+        assert_ne!(rev_pos, first_child_pos);
+        let destination_after_path = &nodes[first_child_node].1[rev_pos];
+        // Check if all the destinations are long.
+        if destination_after_path
+            .iter()
+            .any(|&(dst, _)| nodes[dst].0 <= len)
+        {
+            return None;
+        }
+        // Check if all the children converged into the same destination.
+        if nodes[from].1[from_slot].iter().any(|&(node, pos)| {
+            let rev_pos = (pos == 0) as usize;
+            &nodes[node].1[rev_pos] != destination_after_path
+        }) {
+            return None;
+        }
+        let nodes: Vec<_> = nodes[from].1[from_slot].iter().map(|x| x.0).collect();
+        Some(nodes)
+    }
+    fn temp_graph(nodes_to_pathid: &HashMap<Node, usize>, edges: &[&DitchEdge]) -> Vec<TempNode> {
+        let path_num = *nodes_to_pathid.values().max().unwrap() + 1;
+        let mut nodes = vec![(0, [Vec::new(), Vec::new()]); path_num];
+        for &path_id in nodes_to_pathid.values() {
+            nodes[path_id].0 += 1;
+        }
+        let mut terminals = vec![Vec::with_capacity(2); path_num];
+        for edge in edges.iter() {
+            let from = nodes_to_pathid[&edge.from];
+            let from_slot = terminals[from]
+                .iter()
+                .position(|&e| e == (edge.from, edge.from_position));
+            let from_slot = match from_slot {
+                Some(idx) => idx,
+                None => {
+                    assert!(terminals[from].len() < 2);
+                    terminals[from].push((edge.from, edge.from_position));
+                    terminals[from].len() - 1
+                }
+            };
+            let to = nodes_to_pathid[&edge.to];
+            let to_slot = terminals[to]
+                .iter()
+                .position(|&e| e == (edge.to, edge.to_position));
+            let to_slot = match to_slot {
+                Some(idx) => idx,
+                None => {
+                    assert!(terminals[to].len() < 2);
+                    terminals[to].push((edge.to, edge.to_position));
+                    terminals[to].len() - 1
+                }
+            };
+            nodes[from].1[from_slot].push((to, to_slot));
+            nodes[to].1[to_slot].push((from, from_slot));
+        }
+        nodes.iter_mut().for_each(|x| {
+            x.1[0].sort_unstable();
+            x.1[1].sort_unstable();
+        });
+        nodes
+    }
+    // fn squish_small_net_from(&mut self, len: usize, node: (u64, u64), pos: Position) {
+    //     let branch_num = self.get_edges(node, pos).count();
+    //     if 1 < branch_num {}
+    // }
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(
         reads: &'a [R],
         units: Option<&[Unit]>,
@@ -741,13 +903,19 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
                 let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
                 let coverage =
                     gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                let (cp, cpnum) = contigsummary
+                    .summary
+                    .iter()
+                    .filter_map(|elm| elm.copy_number)
+                    .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
                 log::debug!(
-                    "CONUNIT\t{}\t{}\t{}",
+                    "ASMDUMP\t{i}\t{}\t{}\t{}",
                     contigsummary.id,
                     total / contigsummary.summary.len(),
                     ids.join("\t")
                 );
-                vec![coverage]
+                let cp = gfa::SamTag::new(format!("cp:i:{}", cp / cpnum.max(1)));
+                vec![coverage, cp]
             }
             None => Vec::new(),
         };
@@ -1121,10 +1289,10 @@ impl<'a> DitchGraph<'a> {
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
             for (n, cp) in nodes.iter().zip(node_cp.iter()) {
-                trace!("COVCP\tNODE\t{:.2}\t{}", n, cp,);
+                trace!("COVCP\tNODE\t{n:.2}\t{cp}");
             }
             for (e, cp) in edges.iter().zip(edge_cp.iter()) {
-                trace!("COVCP\tEDGE\t{:.2}\t{}", e.4, cp);
+                trace!("COVCP\tEDGE\t{:.2}\t{cp}", e.4);
             }
         }
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
@@ -1158,9 +1326,10 @@ impl<'a> DitchGraph<'a> {
         let (node_cp, edge_cp) =
             super::copy_number::estimate_copy_number_mcmc(&nodes, &edges, naive_cov);
         if log_enabled!(log::Level::Trace) {
+            trace!("COVCP\t{naive_cov}");
             trace!("COVCP\tType\tCov\tCp");
-            for ((n, len), cp) in nodes.iter().zip(node_cp.iter()) {
-                trace!("COVCP\tNODE\t{}\t{}\t{}", n, len, cp,);
+            for ((cov, len), cp) in nodes.iter().zip(node_cp.iter()) {
+                trace!("COVCP\tNODE\t{}\t{}\t{}", cov, len, cp,);
             }
             for ((f, fp, t, tp, cov), cp) in edges.iter().zip(edge_cp.iter()) {
                 trace!("COVCP\tEDGE\t{f}\t{fp}\t{t}\t{tp}\t{cov}\t{cp}");
@@ -1283,7 +1452,7 @@ impl<'a> DitchGraph<'a> {
         let mut parents_of_zc = vec![];
         for (&key, node) in self.nodes.iter() {
             // Parents should have non-zero-copy.
-            if !matches!(node.copy_number,Some(x) if 0 < x ) {
+            if matches!(node.copy_number, Some(0) | None) {
                 continue;
             }
             for pos in [Position::Head, Position::Tail] {
@@ -1447,7 +1616,7 @@ impl<'a> DitchGraph<'a> {
     }
     /// Zip up overclustered regions.
     /// The graph should have estimeted repeat numbers on each node.
-    pub fn zip_up_overclustering(&mut self) {
+    pub fn zip_up_overclustering(&mut self, len: usize) {
         let mut to_remove = HashSet::new();
         for node in self.nodes.values() {
             if node.copy_number.map(|cp| cp != 1).unwrap_or(true) {
@@ -1466,13 +1635,176 @@ impl<'a> DitchGraph<'a> {
                 let first_dest = dests.next().unwrap();
                 let second_dest = dests.next().unwrap();
                 if first_dest == second_dest {
-                    debug!("ZIPPINGUP\t{:?}\t{}", node.node, pos);
-                    let simple_path = self.simple_path_from(edges.clone().next().unwrap());
-                    to_remove.extend(simple_path);
+                    let from_edge = edges.clone().max_by_key(|e| e.occ).unwrap();
+                    // TODO:Should we increase the coverage(occ) of the nodes?
+                    let path = self.simple_path_from(from_edge);
+                    debug!("ZIPPINGUP\t{:?}\t{}\t{}", node.node, pos, path.len());
+                    if path.len() <= len {
+                        to_remove.extend(path);
+                    }
                 }
             }
         }
         self.remove_nodes(&to_remove);
+    }
+    pub fn zip_up_overclustering_dev(&mut self) {
+        let mut keys: Vec<_> = self.nodes.keys().copied().collect();
+        keys.sort_unstable();
+        for node in keys {
+            if !self.nodes.contains_key(&node) {
+                continue;
+            }
+            // Check if both side of this node is either
+            // 1. Branching
+            // 2. Connected to branching node.
+            // let is_short = [Position::Tail, Position::Head].iter().all(|&pos| {
+            //     let deg = self.get_edges(node, pos).count();
+            //     match deg {
+            //         0 => false,
+            //         1 => {
+            //             let edge = self.get_edges(node, pos).next().unwrap();
+            //             // Check the degree of the child.
+            //             1 < self.get_edges(edge.to, edge.to_position).count()
+            //         }
+            //         _ => true,
+            //     }
+            // });
+            // if !is_short {
+            //     continue;
+            // }
+            // Reflexitive siblings, parents.
+            let (tail_side_par, tail_side_sibs) = self.get_reflex_nodes(node, Position::Tail, 6);
+            let (head_side_par, head_side_sibs) = self.get_reflex_nodes(node, Position::Head, 6);
+            // Check if this is branching.
+            // Check if this is proper fork.
+            if tail_side_sibs.len().max(head_side_sibs.len()) <= 1 {
+                continue;
+            }
+            if head_side_par.is_empty() || tail_side_par.is_empty() {
+                continue;
+            }
+            // Check if, on each side, there are exactly one type of unit.
+            let key = tail_side_par.get(0).map(|&((u, _), p)| (u, p)).unwrap();
+            let is_tail_side_par_unique = tail_side_par.iter().all(|&((u, _), p)| (u, p) == key);
+            let key = head_side_par.get(0).map(|&((u, _), p)| (u, p)).unwrap();
+            let is_head_side_par_unique = head_side_par.iter().all(|&((u, _), p)| (u, p) == key);
+            if !is_tail_side_par_unique || !is_head_side_par_unique {
+                continue;
+            }
+            // Check if the siblings meets on both side.
+            if tail_side_sibs.len() != head_side_sibs.len() {
+                continue;
+            }
+            let tail_iter = tail_side_sibs.iter().map(|&((n, _), _)| n);
+            let head_iter = head_side_sibs.iter().map(|&((n, _), _)| n);
+            if tail_iter.zip(head_iter).any(|(x, y)| x != y) {
+                continue;
+            }
+            // First determine the one to be retained.
+            let (retain, sibs): (_, Vec<_>) = {
+                let mut sibs: Vec<_> = tail_side_sibs.iter().map(|(node, _)| *node).collect();
+                sibs.sort_by_cached_key(|node| self.nodes[node].occ);
+                let retain = sibs.pop().unwrap();
+                assert!(!sibs.is_empty());
+                (retain, sibs)
+            };
+            // debug!("ZIPDEV\t{node:?}\t{retain:?}\t{head_side_par:?}\t{head_side_sibs:?}\t{tail_side_par:?}");
+            // Make all the edges into sibs to retain.
+            let (edges, increase_occ, increase_copy_num) = {
+                let (mut edges, mut occ, mut cp) = (vec![], 0, 0);
+                for node in sibs.iter() {
+                    let mut removed = self.nodes.remove(node).unwrap();
+                    edges.append(&mut removed.edges);
+                    occ += removed.occ;
+                    cp += removed.copy_number.unwrap_or(0);
+                }
+                (edges, occ, cp)
+            };
+            for edge in edges.iter() {
+                fn is_match(e1: &DitchEdge, e2: &DitchEdge) -> bool {
+                    e1.from_position == e2.to_position
+                        && e1.to_position == e2.from_position
+                        && e1.from == e2.to
+                }
+                let to_node = self.nodes.get_mut(&edge.to).unwrap();
+                let idx = to_node.edges.iter_mut().position(|e| is_match(edge, e));
+                let mut removed = to_node.edges.remove(idx.unwrap());
+                removed.to = retain;
+                let already = to_node.edges.iter_mut().find(|e| {
+                    e.to == retain
+                        && e.from_position == edge.to_position
+                        && e.to_position == edge.from_position
+                });
+                match already {
+                    Some(edge) => {
+                        edge.occ += removed.occ;
+                        if let Some(cp) = edge.copy_number.as_mut() {
+                            *cp += removed.copy_number.unwrap_or(0);
+                        }
+                    }
+                    None => to_node.edges.push(removed),
+                }
+            }
+            {
+                let retain = self.nodes.get_mut(&retain).unwrap();
+                retain.occ += increase_occ;
+                if let Some(cp) = retain.copy_number.as_mut() {
+                    *cp += increase_copy_num;
+                }
+                for mut edge in edges {
+                    edge.from = retain.node;
+                    let key = (edge.to, edge.to_position);
+                    let mut probe = retain.edges.iter_mut();
+                    match probe.find(|e| (e.to, e.to_position) == key) {
+                        Some(res) => {
+                            res.occ += edge.occ;
+                            if let Some(cp) = res.copy_number.as_mut() {
+                                *cp += edge.copy_number.unwrap_or(0);
+                            }
+                        }
+                        None => retain.edges.push(edge),
+                    }
+                }
+            }
+        }
+    }
+    // Get (node,position), return the reflexitive parents and reflex siblings.
+    // In other words, we define the k-th siblings S(k) and the k-th parents P(k) as
+    // S(0) = {(node,position)}
+    // P(k) = {(n,p) connected to S(k)}
+    // S(k) = {(n,p) connected to P(k-1)}
+    // And the reflex parent is define as P(\infty) and S(\infty).
+    // In practice, for efficiency issue, we use P(cut) and S(cut).
+    pub fn get_reflex_nodes(
+        &self,
+        node: Node,
+        position: Position,
+        cut: usize,
+    ) -> (Vec<(Node, Position)>, Vec<(Node, Position)>) {
+        let mut sibs = vec![(node, position)];
+        let mut parents: Vec<_> = vec![];
+        for _ in 0..cut {
+            let par_len = parents.len();
+            parents = sibs
+                .iter()
+                .flat_map(|&(n, p)| self.get_edges(n, p).map(|e| (e.to, e.to_position)))
+                .collect();
+            parents.sort();
+            parents.dedup();
+            let sib_size = sibs.len();
+            sibs = parents
+                .iter()
+                .flat_map(|&(n, p)| self.get_edges(n, p).map(|e| (e.to, e.to_position)))
+                .collect();
+            sibs.sort();
+            sibs.dedup();
+            if sib_size == sibs.len() || par_len == parents.len() {
+                break;
+            }
+        }
+        parents.sort_unstable_by_key(|x| x.0);
+        sibs.sort_unstable_by_key(|x| x.0);
+        (parents, sibs)
     }
     /// Return the position where a simple path from given edge ends.
     pub fn destination(&self, edge: &DitchEdge) -> (Node, Position) {
@@ -1583,12 +1915,14 @@ impl<'a> DitchGraph<'a> {
 
     /// Remove small tips.
     /// In this function, for all node with the degree of zero,
+    /// and its the copy number zero,
     /// we speculate the *local* coverage by traversing DIAG distance.
     /// If the coverage is less than `cov * thr`, the node would be removed.
     pub fn remove_tips(&mut self, thr: f64, diag: usize) {
         let to_remove: HashSet<_> = self
             .nodes
             .iter()
+            .filter(|node| matches!(node.1.copy_number, Some(0)))
             .filter_map(|(key, node)| {
                 for &pos in &[Position::Head, Position::Tail] {
                     if node.edges.iter().filter(|e| e.from_position == pos).count() == 0 {
@@ -1613,7 +1947,7 @@ impl<'a> DitchGraph<'a> {
             for &(node, pos) in current.iter() {
                 if let Some(node) = self.nodes.get(node) {
                     total_cov += node.occ;
-                    total_node += 1;
+                    total_node += node.copy_number.unwrap_or(1);
                     for edge in node.edges.iter().filter(|e| e.from_position == !pos) {
                         next_nodes.push((&edge.to, edge.to_position));
                     }
@@ -1647,6 +1981,7 @@ impl<'a> DitchGraph<'a> {
                 if self.get_edges(key, pos).count() != 1 {
                     return false;
                 }
+                // Check this branch has two-in-degree.
                 let edge = self.get_edges(key, pos).next().unwrap();
                 let sibs = self.get_edges(edge.to, edge.to_position).count();
                 if sibs <= 1 {
@@ -1736,29 +2071,61 @@ impl<'a> DitchGraph<'a> {
         for (node, pos) in remove_to {
             self.remove_edge_and_pruning(to, to_pos, node, pos);
         }
+        // Zip up traversed paths, if nessesarry.
+        // let mut to_remove = HashSet::new();
+        // for (node, pos) in path_spaning
+        //     .iter()
+        //     .filter(|(node, _)| self.nodes.contains_key(&node))
+        //     .flat_map(|&(node, pos)| self.get_edges(node, pos))
+        //     .map(|edge| (edge.to, edge.to_position))
+        //     .filter(|(node, _)| matches!(self.nodes[node].copy_number, Some(1)))
+        // {
+        //     let mut dests = self
+        //         .get_edges(node, pos)
+        //         .filter(|e| !to_remove.contains(&e.to))
+        //         .map(|edge| self.destination(edge));
+        //     // This is a "fork" branch.
+        //     let (first_dest, second_dest) = match (dests.next(), dests.next()) {
+        //         (Some(fst), Some(snd)) => (fst, snd),
+        //         _ => continue,
+        //     };
+        //     if dests.next().is_some() {
+        //         continue;
+        //     }
+        //     if first_dest == second_dest {
+        //         debug!("ZIPPINGUP\t{node:?}\t{pos}");
+        //         let start_edge = self
+        //             .get_edges(node, pos)
+        //             .filter(|e| !to_remove.contains(&e.to))
+        //             .max_by_key(|e| e.occ)
+        //             .unwrap();
+        //         to_remove.extend(self.simple_path_from(start_edge));
+        //     }
+        // }
+        // self.remove_nodes(&to_remove);
         // Removing nodes along path, if nessesarry.
-        for &(node, pos) in path_spaning {
-            // Sometimes, this node is already removed from the graph.
-            if !self.nodes.contains_key(&node) {
-                continue;
-            }
-            // If it is not zero-copy node, do not anything.
-            if !matches!(self.nodes[&node].copy_number, Some(0)) {
-                continue;
-            }
-            let parents: Vec<_> = self
-                .get_edges(node, pos)
-                .map(|e| (e.to, e.to_position))
-                .collect();
-            for (parent, par_pos) in parents {
-                if self
-                    .get_edges(parent, par_pos)
-                    .any(|e| !(e.to == node && e.to_position == pos))
-                {
-                    self.remove_edge_and_pruning(parent, par_pos, node, pos);
-                }
-            }
-        }
+        // for &(node, pos) in path_spaning {
+        //     // Sometimes, this node is already removed from the graph.
+        //     if !self.nodes.contains_key(&node) {
+        //         continue;
+        //     }
+        //     // If it is not zero-copy node, do not anything.
+        //     if !matches!(self.nodes[&node].copy_number, Some(0)) {
+        //         continue;
+        //     }
+        //     let parents: Vec<_> = self
+        //         .get_edges(node, pos)
+        //         .map(|e| (e.to, e.to_position))
+        //         .collect();
+        //     for (parent, par_pos) in parents {
+        //         if self
+        //             .get_edges(parent, par_pos)
+        //             .any(|e| !(e.to == node && e.to_position == pos))
+        //         {
+        //             self.remove_edge_and_pruning(parent, par_pos, node, pos);
+        //         }
+        //     }
+        // }
     }
     // Fron (start,pos) position to the node with the same phase block.
     // Note that, the path would contain the (target,target pos) at the end of the path and
@@ -1951,8 +2318,6 @@ impl<'a> DitchGraph<'a> {
             .find(|e| (e.to, e.to_position) == first_elm)
             .map(|edge| (edge.seq.clone(), edge.proxying.clone()))
             .unwrap();
-        // let first_label = first_edge.map(|edge| edge.seq.clone()).unwrap();
-        // let mut processed_nodes = vec![];
         let mut path_label = vec![];
         for window in path.windows(2) {
             // !!!Here, each position is the start position of each node!!!!
@@ -2087,12 +2452,12 @@ impl<'a> DitchGraph<'a> {
     /// and remove all other edges from u and to v. By doing this, u and v would be in the same simple path(repeat resolved).
     /// 3. Recursively remove nodes and their edges, whose in-degree are zero.
     /// TODO: This code has bug when the graph contains loops?
+    /// TODO: This code has bug, which breaks up a continuous graph ...?
     pub fn resolve_repeats(&mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         let mut count = 1;
         while count != 0 {
             let mut foci = self.get_foci(reads, config);
-            //let mut foci = self.get_foci_dev(reads, config);
             let prev = foci.len();
             foci.retain(|val| thr < val.llr());
             foci.retain(|val| val.llr() != std::f64::INFINITY);
@@ -2287,6 +2652,11 @@ impl<'a> DitchGraph<'a> {
             .values()
             .filter(|n| matches!(n.copy_number, Some(1)))
         {
+            // Find
+            // --Node--|
+            //         |--Node(Copy>1)--
+            // --Node--|
+            // Type branch
             for pos in [Position::Head, Position::Tail] {
                 let edge_num = node
                     .edges
@@ -2300,7 +2670,14 @@ impl<'a> DitchGraph<'a> {
                 let siblings = self.get_edges(edge.to, edge.to_position).count();
                 assert!(1 <= siblings);
                 if siblings <= 1 {
+                    // This edge does not flow into branch.
                     continue;
+                }
+                // If this edge does not flow into multi-copy contig, continue.
+                match self.nodes[&edge.to].copy_number {
+                    None => continue,
+                    Some(cp) if cp <= 1 => continue,
+                    _ => {}
                 }
                 if let Some(focus) = self.examine_focus(node, pos, reads, config) {
                     foci.push(focus);
@@ -2475,6 +2852,7 @@ impl<'a> DitchGraph<'a> {
     /// To retain that edge if the edge is the only edge from its terminal,
     /// set `retain_single_edge` to `true`.
     pub fn remove_lightweight_edges(&mut self, thr: usize, retain_single_edge: bool) {
+        debug!("RM\t{thr}");
         let mut removed_edges: HashMap<_, Vec<_>> =
             self.nodes.keys().map(|&k| (k, vec![])).collect();
         for (from, node) in self.nodes.iter() {

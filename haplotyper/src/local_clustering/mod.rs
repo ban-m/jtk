@@ -8,7 +8,7 @@ pub use config::*;
 pub mod kmeans;
 pub mod normalize;
 /// Return rand index.
-pub fn rand_index(label: &[u8], pred: &[u8]) -> f64 {
+pub fn rand_index(label: &[usize], pred: &[usize]) -> f64 {
     assert_eq!(label.len(), pred.len());
     let mut both_same_pair = 0;
     let mut both_diff_pair = 0;
@@ -104,7 +104,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 use kmeans::*;
-                // let cls = clustering_inner(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
                 let cls = clustering_dev(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
                 cls.unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
             } else {

@@ -315,25 +315,33 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
     let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
+    debug!("GRAPH\t{graph}");
     match ds.read_type {
         ReadType::CCS => graph.remove_lightweight_edges(1, true),
         ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
     };
     graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, ds.read_type);
-    let (segments, edge, group, summaries) = graph.spell(c);
+    let (mut segments, mut edges, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
-    let segments = if c.to_polish {
-        segments
+    if c.to_polish {
+        let hmm = crate::local_clustering::get_tuned_model(ds);
+        polish_segments(&mut segments, ds, &summaries, c, &ds.read_type, &hmm);
+        let lengths: HashMap<_, _> = segments
             .iter()
-            .map(|segment| {
-                let summary = summaries.iter().find(|s| s.id == segment.sid).unwrap();
-                polish_segment(ds, segment, summary, c, &ds.read_type)
-            })
-            .collect()
-    } else {
-        segments
-    };
+            .map(|seg| (seg.sid.clone(), seg.slen))
+            .collect();
+        for edge in edges.iter_mut() {
+            if edge.0.beg1.pos != 0 {
+                edge.0.beg1.pos = lengths[&edge.0.sid1.id] as usize;
+                edge.0.end1.pos = lengths[&edge.0.sid1.id] as usize;
+            }
+            if edge.0.beg2.pos != 0 {
+                edge.0.beg2.pos = lengths[&edge.0.sid2.id] as usize;
+                edge.0.end2.pos = lengths[&edge.0.sid2.id] as usize;
+            }
+        }
+    }
     // TODO: maybe just zip up segments and summaries would be OK?
     let nodes = segments.into_iter().map(|node| {
         let tags = summaries
@@ -357,7 +365,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
             .unwrap_or_else(Vec::new);
         gfa::Record::from_contents(gfa::Content::Seg(node), tags)
     });
-    let edges = edge
+    let edges = edges
         .into_iter()
         .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
     let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
@@ -391,49 +399,170 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Ve
     (records, summaries)
 }
 
-fn polish_segment(
+fn polish_segments(
+    segments: &mut [gfa::Segment],
     ds: &DataSet,
-    segment: &gfa::Segment,
-    summary: &ContigSummary,
+    summaries: &[ContigSummary],
     c: &AssembleConfig,
     read_type: &definitions::ReadType,
-) -> gfa::Segment {
-    let reads = get_reads_in_cluster(ds, summary);
-    debug!("Aligning {} reads", reads.len());
-    let alignments = match align_reads(segment, &reads, read_type, c) {
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+) {
+    // Record/Associate reads to each segments.
+    let mut fragments: Vec<Vec<&[u8]>> = vec![vec![]; summaries.len()];
+    let nodes: Vec<HashSet<_>> = summaries
+        .iter()
+        .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
+        .collect();
+    let raw_reads: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    for read in ds.encoded_reads.iter() {
+        let seq = raw_reads[&read.id];
+        let mut lightread: Vec<_> = read
+            .nodes
+            .iter()
+            .map(|n| (n.unit, n.cluster, n.position_from_start, n.query_length()))
+            .collect();
+        while let Some((tid, start, end)) =
+            search_aligned_region(&mut lightread, &nodes, &summaries)
+        {
+            fragments[tid].push(&seq[start..end]);
+        }
+    }
+    segments
+        .iter_mut()
+        .zip(fragments.iter())
+        .for_each(|(seg, frag)| polish_segment(seg, frag, c, read_type, hmm));
+}
+
+fn search_aligned_region(
+    read: &mut Vec<(u64, u64, usize, usize)>,
+    nodes: &[HashSet<(u64, u64)>],
+    summaries: &[ContigSummary],
+) -> Option<(usize, usize, usize)> {
+    if read.is_empty() {
+        return None;
+    }
+    let (idx, _) = nodes
+        .iter()
+        .map(|ns| {
+            read.iter()
+                .filter(|&&(u, c, _, _)| ns.contains(&(u, c)))
+                .count()
+        })
+        .enumerate()
+        .max_by_key(|x| x.1)
+        .unwrap();
+    let (start_idx, end_idx) = align(read, &summaries[idx], &nodes[idx])?;
+    let start_pos = read[start_idx].2;
+    let end_pos = read[end_idx].2 + read[end_idx].3;
+    if read.len() - end_idx < start_idx {
+        *read = read.iter().take(start_idx).copied().collect();
+    } else {
+        *read = read.iter().skip(end_idx).copied().collect();
+    };
+    Some((idx, start_pos, end_pos))
+}
+
+fn align(
+    read: &[(u64, u64, usize, usize)],
+    summary: &ContigSummary,
+    scan: &HashSet<(u64, u64)>,
+) -> Option<(usize, usize)> {
+    const OFFSET: usize = 4;
+    let ref_start = read
+        .iter()
+        .find(|&&(u, c, _, _)| scan.contains(&(u, c)))
+        .and_then(|&(u, c, _, _)| {
+            summary
+                .summary
+                .iter()
+                .position(|sm| sm.unit == u && sm.cluster == c)
+        })
+        .unwrap();
+    let ref_end = read
+        .iter()
+        .rev()
+        .find(|&&(u, c, _, _)| scan.contains(&(u, c)))
+        .and_then(|&(u, c, _, _)| {
+            summary
+                .summary
+                .iter()
+                .position(|sm| sm.unit == u && sm.cluster == c)
+        })
+        .unwrap();
+    let refr: Vec<_> = if ref_start < ref_end {
+        let ref_start = ref_start.saturating_sub(OFFSET);
+        let ref_end = (ref_end + OFFSET).max(summary.summary.len());
+        summary.summary[ref_start..ref_end]
+            .iter()
+            .map(|x| (x.unit, x.cluster))
+            .collect()
+    } else {
+        let ref_start = ref_end.saturating_sub(OFFSET);
+        let ref_end = (ref_start + OFFSET).max(summary.summary.len());
+        summary.summary[ref_start..ref_end]
+            .iter()
+            .map(|x| (x.unit, x.cluster))
+            .collect()
+    };
+    // Alignment.
+    // It is "infix-overlapping" alignment
+    let mut dp = vec![vec![0; refr.len() + 1]; read.len() + 1];
+    let (mut max, mut argmax) = (-1, (0, 0));
+    for (i, &(u, c, _, _)) in read.iter().enumerate() {
+        let q = (u, c);
+        let i = i + 1;
+        for (j, &r) in refr.iter().enumerate() {
+            let j = j + 1;
+            let mat_score = 2 * (r == q) as i32 - 1;
+            dp[i][j] = (dp[i - 1][j - 1] + mat_score)
+                .max(dp[i - 1][j] - 1)
+                .max(dp[i][j - 1] - 1)
+                .max(0);
+            if max < dp[i][j] {
+                (max, argmax) = (dp[i][j], (i, j));
+            }
+        }
+    }
+    // Traceback.
+    if max <= 1 {
+        return None;
+    }
+    let (mut qpos, mut rpos) = argmax;
+    let qend = qpos;
+    while dp[qpos][rpos] > 0 {
+        let r = refr[rpos];
+        let q = read[qpos];
+        let mat_score = 2 * (r == (q.0, q.1)) as i32 - 1;
+        let current = dp[qpos][rpos];
+        if current == dp[qpos - 1][rpos - 1] + mat_score {
+            qpos -= 1;
+            rpos -= 1;
+        } else if current == dp[qpos][rpos - 1] - 1 {
+            rpos -= 1;
+        } else if current == dp[qpos - 1][rpos - 1] - 1 {
+            qpos -= 1;
+        } else {
+            panic!();
+        }
+    }
+    Some((qpos, qend))
+}
+
+fn polish_segment(
+    segment: &mut gfa::Segment,
+    seqs: &[&[u8]],
+    c: &AssembleConfig,
+    rt: &definitions::ReadType,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+) {
+    debug!("Aligning {} reads", seqs.len());
+    let alns = match align_reads(segment, &seqs, rt, c) {
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
     };
-    let rt = &ds.read_type;
-    let seq = String::from_utf8(polish_by_chunking(&alignments, segment, &reads, c, rt)).unwrap();
-    gfa::Segment::from(segment.sid.clone(), seq.len(), Some(seq))
-}
-
-fn get_reads_in_cluster<'a>(ds: &'a DataSet, summary: &ContigSummary) -> Vec<&'a [u8]> {
-    let contained_unit: HashSet<(u64, u64)> = summary
-        .summary
-        .iter()
-        .map(|elm| (elm.unit, elm.cluster))
-        .collect();
-    let ranges: HashMap<_, _> = ds
-        .encoded_reads
-        .iter()
-        .filter_map(|r| {
-            let mut nodes = r
-                .nodes
-                .iter()
-                .filter(|n| contained_unit.contains(&(n.unit, n.cluster)));
-            let start = nodes.next()?;
-            let end = nodes.last()?;
-            let start = start.position_from_start;
-            let end = end.position_from_start + end.query_length();
-            Some((r.id, (start, end)))
-        })
-        .collect();
-    ds.raw_reads
-        .iter()
-        .filter_map(|r| ranges.get(&r.id).map(|&(s, e)| &r.seq()[s..e]))
-        .collect()
+    let seq = String::from_utf8(polish_by_chunking(&alns, segment, &seqs, c, rt, hmm)).unwrap();
+    segment.slen = seq.len() as u64;
+    segment.sequence = Some(seq);
 }
 
 fn align_reads(
@@ -442,11 +571,9 @@ fn align_reads(
     read_type: &definitions::ReadType,
     c: &AssembleConfig,
 ) -> std::io::Result<kiley::sam::Sam> {
-    use rand::{thread_rng, Rng};
-    let mut rng = thread_rng();
-    let id: u64 = rng.gen::<u64>() % 100_000_000;
+    let id = &segment.sid;
     let mut c_dir = std::env::current_dir()?;
-    c_dir.push(format!("{}", id));
+    c_dir.push(format!("{}_polish", id));
     debug!("Creating {:?}.", c_dir);
     std::fs::create_dir(&c_dir)?;
     // Create reference and reads.
@@ -455,14 +582,12 @@ fn align_reads(
         reference.push("segment.fa");
         use std::io::{BufWriter, Write};
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
-        let seq = segment.sequence.as_ref().unwrap().as_bytes().to_vec();
-        let seq = String::from_utf8_lossy(&seq);
-        writeln!(&mut wtr, ">{}\n{}", &segment.sid, seq)?;
+        writeln!(&mut wtr, ">{id}\n{}", segment.sequence.as_ref().unwrap())?;
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
         let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
         for (i, seq) in reads.iter().enumerate() {
-            writeln!(&mut wtr, ">{}\n{}", i, String::from_utf8_lossy(seq))?;
+            writeln!(&mut wtr, ">{}\n{}", i, std::str::from_utf8(seq).unwrap())?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();
@@ -478,26 +603,50 @@ fn align_reads(
     }
     let alignment = crate::minimap2::minimap2_args(&reference, &reads, &args);
     let alignment = kiley::sam::Sam::from_reader(std::io::BufReader::new(alignment.as_slice()));
-    debug!("Removing {:?}", c_dir);
-    std::fs::remove_dir_all(c_dir)?;
-    debug!("Alignment done");
+    debug!("Retain alignment folder.");
+    // debug!("Removing {:?}", c_dir);
+    // std::fs::remove_dir_all(c_dir)?;
     Ok(alignment)
 }
 
 pub fn polish_by_chunking(
     alignments: &kiley::sam::Sam,
     segment: &gfa::Segment,
-    _reads: &[&[u8]],
-    _c: &AssembleConfig,
-    _read_type: &definitions::ReadType,
+    reads: &[&[u8]],
+    c: &AssembleConfig,
+    read_type: &definitions::ReadType,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
 ) -> Vec<u8> {
-    let template_seq = match segment.sequence.as_ref() {
-        Some(res) => res.as_bytes().to_vec(),
+    let template = match segment.sequence.as_ref() {
+        Some(res) => kiley::SeqRecord::new(segment.sid.as_str(), res.as_bytes()),
         None => panic!(),
     };
-    let _segment = (segment.sid.clone(), template_seq);
-    debug!("Recording {} alignments...", alignments.records.len());
-    todo!()
+    let reads: HashMap<_, _> = reads
+        .iter()
+        .enumerate()
+        .map(|(i, seq)| {
+            let id = format!("{i}");
+            let seq = kiley::SeqRecord::new(id, *seq);
+            (format!("{i}"), seq)
+        })
+        .collect();
+    let alignments: Vec<_> = alignments
+        .records
+        .iter()
+        .filter_map(|aln| {
+            let seq = reads.get(aln.q_name())?;
+            Some((aln, seq))
+        })
+        .collect();
+    // TODO:Add model dependency here.
+    let chunk_size = c.window_size;
+    let radius = read_type.band_width(chunk_size);
+    let max_cov = 50;
+    let overlap = chunk_size / 5;
+    let seed = 1071 * reads.len() as u64; // Arbitrary seed.
+    let config =
+        kiley::PolishConfig::with_model(radius, chunk_size, max_cov, overlap, seed, hmm.clone());
+    kiley::polish_single(&template, &alignments, &config).seq
 }
 
 pub fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {
@@ -534,11 +683,11 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
                 .push(i);
         }
     }
-    for ((u, c), xs) in contig_terminals.iter() {
-        for &i in xs.iter() {
-            trace!("TERMINALS\t{}\t{}\t{}", summaries[i].id, u, c);
-        }
-    }
+    // for ((u, c), xs) in contig_terminals.iter() {
+    //     for &i in xs.iter() {
+    //         trace!("TERMINALS\t{}\t{}\t{}", summaries[i].id, u, c);
+    //     }
+    // }
     let mut shared_reads = vec![vec![0; summaries.len()]; summaries.len()];
     for read in ds.encoded_reads.iter() {
         let mut read_through = vec![];

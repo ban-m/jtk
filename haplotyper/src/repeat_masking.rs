@@ -15,16 +15,52 @@ impl RepeatMaskConfig {
 
 pub trait RepeatMask {
     fn mask_repeat(&mut self, config: &RepeatMaskConfig);
+    fn get_repetitive_kmer(&self) -> RepeatAnnot;
+}
+
+#[derive(Debug, Clone)]
+pub struct RepeatAnnot {
+    k: usize,
+    kmers: HashSet<u64>,
+}
+
+impl RepeatAnnot {
+    pub fn repetitiveness(&self, seq: &[u8]) -> f64 {
+        let kmers = seq.len().saturating_sub(self.k) + 1;
+        let rep_kmers = seq
+            .windows(self.k)
+            .map(to_idx)
+            .filter(|x| self.kmers.contains(x))
+            .count();
+        rep_kmers as f64 / kmers as f64
+    }
 }
 
 impl RepeatMask for definitions::DataSet {
+    fn get_repetitive_kmer(&self) -> RepeatAnnot {
+        let k = self.masked_kmers.k;
+        let kmers: HashSet<_> = self
+            .raw_reads
+            .par_iter()
+            .flat_map(|r| {
+                r.seq()
+                    .windows(k)
+                    .filter(|kmer| kmer.iter().all(u8::is_ascii_lowercase))
+                    .map(to_idx)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        RepeatAnnot { k, kmers }
+    }
     fn mask_repeat(&mut self, config: &RepeatMaskConfig) {
-        let mask = {
+        let (mask, thr) = {
             debug!("Counting {}-mers", config.k);
             let kmer_count = kmer_counting(&self.raw_reads, config);
             debug!("Counted");
             create_mask(&kmer_count, config)
         };
+        self.masked_kmers.k = config.k;
+        self.masked_kmers.thr = thr;
         debug!("Constructed {}-mer filter. Size:{}", config.k, mask.len());
         self.raw_reads
             .par_iter_mut()
@@ -43,59 +79,74 @@ impl RepeatMask for definitions::DataSet {
     }
 }
 
-pub fn mask_repeat_in_seq(seq: &mut [u8], config: &RepeatMaskConfig) {
-    let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
-    assert!(config.k <= 32);
-    for w in seq.windows(config.k) {
-        let idx = to_idx(w);
-        *count.entry(idx).or_default() += 1;
-    }
-    let mask = create_mask(&count, config);
-    mask_repeats(seq, &mask, config.k);
-}
+// pub fn mask_repeat_in_seq(seq: &mut [u8], config: &RepeatMaskConfig) {
+//     let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
+//     assert!(config.k <= 32);
+//     for w in seq.windows(config.k) {
+//         let idx = to_idx(w);
+//         *count.entry(idx).or_default() += 1;
+//     }
+//     let (mask, _) = create_mask(&count, config);
+//     mask_repeats(seq, &mask, config.k);
+// }
 
-pub fn mask_repeats_in_reads(seqs: &mut [Vec<u8>], config: &RepeatMaskConfig) {
-    let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
-    assert!(config.k <= 32);
-    let kmers = seqs
-        .into_par_iter()
-        .map(|seq| seq.windows(config.k).map(to_idx))
-        .fold(Vec::new, |mut x, y| {
-            x.extend(y);
-            x
-        })
-        .reduce(Vec::new, |mut x, mut y| {
-            x.append(&mut y);
-            x
-        });
-    for idx in kmers {
-        *count.entry(idx).or_default() += 1;
-    }
-    let mask = create_mask(&count, config);
-    seqs.par_iter_mut()
-        .for_each(|read| mask_repeats(read, &mask, config.k));
-}
+// pub fn mask_repeats_in_reads(seqs: &mut [Vec<u8>], config: &RepeatMaskConfig) {
+//     let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
+//     assert!(config.k <= 32);
+//     let kmers = seqs
+//         .into_par_iter()
+//         .map(|seq| seq.windows(config.k).map(to_idx))
+//         .fold(Vec::new, |mut x, y| {
+//             x.extend(y);
+//             x
+//         })
+//         .reduce(Vec::new, |mut x, mut y| {
+//             x.append(&mut y);
+//             x
+//         });
+//     for idx in kmers {
+//         *count.entry(idx).or_default() += 1;
+//     }
+//     let mask = create_mask(&count, config);
+//     seqs.par_iter_mut()
+//         .for_each(|read| mask_repeats(read, &mask, config.k));
+// }
 
 use definitions::*;
 fn kmer_counting(reads: &[RawRead], config: &RepeatMaskConfig) -> HashMap<u64, u32> {
     let k = config.k;
     assert!(k <= 32);
-    let mut result = HashMap::with_capacity(1_000_000_000);
-    let kmers = reads
+    reads
         .into_par_iter()
         .map(|read| read.seq().windows(k).map(to_idx))
-        .fold(Vec::new, |mut x, y| {
-            x.extend(y);
+        .fold(HashMap::new, |mut x, kmers| {
+            for kmer in kmers {
+                *x.entry(kmer).or_default() += 1;
+            }
             x
         })
-        .reduce(Vec::new, |mut x, mut y| {
-            x.append(&mut y);
+        .reduce(HashMap::new, |mut x, kmercounts| {
+            for (kmer, count) in kmercounts {
+                *x.entry(kmer).or_default() += count;
+            }
             x
-        });
-    for idx in kmers {
-        *result.entry(idx).or_default() += 1;
-    }
-    result
+        })
+    // let mut result = HashMap::with_capacity(1_000_000_000);
+    // let kmers = reads
+    //     .into_par_iter()
+    //     .map(|read| read.seq().windows(k).map(to_idx))
+    //     .fold(Vec::new, |mut x, y| {
+    //         x.extend(y);
+    //         x
+    //     })
+    //     .reduce(Vec::new, |mut x, mut y| {
+    //         x.append(&mut y);
+    //         x
+    //     });
+    // for idx in kmers {
+    //     *result.entry(idx).or_default() += 1;
+    // }
+    // result
 }
 
 fn to_idx(w: &[u8]) -> u64 {
@@ -109,28 +160,61 @@ fn to_idx(w: &[u8]) -> u64 {
         }
         w[idx] <= w[w.len() - idx - 1]
     };
-    let adder = |sum, &c| match c {
-        b'A' | b'a' => sum << 2,
-        b'C' | b'c' => (sum << 2) | 1u64,
-        b'G' | b'g' => (sum << 2) | 2u64,
-        b'T' | b't' => (sum << 2) | 3u64,
-        _ => (sum << 2),
-    };
-    let adder_rev = |sum, &c| match c {
-        b'A' | b'a' => (sum << 2) | 3u64,
-        b'C' | b'c' => (sum << 2) | 2u64,
-        b'G' | b'g' => (sum << 2) | 1u64,
-        b'T' | b't' => sum << 2,
-        _ => (sum << 2),
-    };
     if is_canonical {
-        w.iter().fold(0, adder)
+        w.iter()
+            .fold(0, |cum, &x| (cum << 2) | BASE2BIT[x as usize])
     } else {
-        w.iter().rev().fold(0, adder_rev)
+        w.iter()
+            .rev()
+            .fold(0, |cum, &x| (cum << 2) | BASE2BITCMP[x as usize])
     }
+    // let adder = |sum, &c| match c {
+    //     b'A' | b'a' => sum << 2,
+    //     b'C' | b'c' => (sum << 2) | 1u64,
+    //     b'G' | b'g' => (sum << 2) | 2u64,
+    //     b'T' | b't' => (sum << 2) | 3u64,
+    //     _ => (sum << 2),
+    // };
+    // let adder_rev = |sum, &c| match c {
+    //     b'A' | b'a' => (sum << 2) | 3u64,
+    //     b'C' | b'c' => (sum << 2) | 2u64,
+    //     b'G' | b'g' => (sum << 2) | 1u64,
+    //     b'T' | b't' => sum << 2,
+    //     _ => (sum << 2),
+    // };
+    // if is_canonical {
+    //     w.iter().fold(0, adder)
+    // } else {
+    //     w.iter().rev().fold(0, adder_rev)
+    // }
 }
 
-fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> HashSet<u64> {
+const BASE2BITCMP: [u64; 256] = base2bitcmp();
+const BASE2BIT: [u64; 256] = base2bit();
+
+const fn base2bitcmp() -> [u64; 256] {
+    let mut slots = [0; 256];
+    slots[b'A' as usize] = 3;
+    slots[b'a' as usize] = 3;
+    slots[b'C' as usize] = 2;
+    slots[b'c' as usize] = 2;
+    slots[b'G' as usize] = 1;
+    slots[b'g' as usize] = 1;
+    slots
+}
+
+const fn base2bit() -> [u64; 256] {
+    let mut slots = [0; 256];
+    slots[b'C' as usize] = 1;
+    slots[b'c' as usize] = 1;
+    slots[b'G' as usize] = 2;
+    slots[b'g' as usize] = 2;
+    slots[b'T' as usize] = 3;
+    slots[b't' as usize] = 3;
+    slots
+}
+
+fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> (HashSet<u64>, u32) {
     // if the size of the hashmap is too large, scale /100.
     let mut counts: Vec<_> = if kmercount.len() > 1_000_000 {
         kmercount
@@ -147,10 +231,11 @@ fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> Hash
     let thr = counts[((counts.len() as f64) * config.freq).floor() as usize];
     let thr = thr.max(config.min);
     debug!("Masking {}-mer occuring more than {} times", config.k, thr);
-    kmercount
+    let kmers: HashSet<_> = kmercount
         .iter()
         .filter_map(|(&key, &val)| if val > thr { Some(key) } else { None })
-        .collect()
+        .collect();
+    (kmers, thr)
 }
 
 fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) {
