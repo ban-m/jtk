@@ -17,12 +17,12 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    let cov: f64 = args[2].parse().unwrap();
-    ds.coverage = Some(cov);
-    println!("{}", serde_json::ser::to_string(&ds).unwrap());
-    // let selections: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
-    // use haplotyper::local_clustering::*;
-    // local_clustering_selected(&mut ds, &selections);
+    // let cov: f64 = args[2].parse().unwrap();
+    // ds.coverage = Some(cov);
+    // println!("{}", serde_json::ser::to_string(&ds).unwrap());
+    let selections: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    use haplotyper::local_clustering::*;
+    local_clustering_selected(&mut ds, &selections);
     // ds.encoded_reads
     //     .iter_mut()
     //     .flat_map(|r| r.nodes.iter_mut())

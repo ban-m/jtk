@@ -324,7 +324,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let (mut segments, mut edges, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
-    if c.to_polish {
+    if c.to_polish && false {
         let hmm = crate::local_clustering::get_tuned_model(ds);
         polish_segments(&mut segments, ds, &summaries, c, &ds.read_type, &hmm);
         let lengths: HashMap<_, _> = segments
@@ -491,14 +491,14 @@ fn align(
         .unwrap();
     let refr: Vec<_> = if ref_start < ref_end {
         let ref_start = ref_start.saturating_sub(OFFSET);
-        let ref_end = (ref_end + OFFSET).max(summary.summary.len());
+        let ref_end = (ref_end + OFFSET).min(summary.summary.len());
         summary.summary[ref_start..ref_end]
             .iter()
             .map(|x| (x.unit, x.cluster))
             .collect()
     } else {
         let ref_start = ref_end.saturating_sub(OFFSET);
-        let ref_end = (ref_start + OFFSET).max(summary.summary.len());
+        let ref_end = (ref_start + OFFSET).min(summary.summary.len());
         summary.summary[ref_start..ref_end]
             .iter()
             .map(|x| (x.unit, x.cluster))
@@ -530,8 +530,8 @@ fn align(
     let (mut qpos, mut rpos) = argmax;
     let qend = qpos;
     while dp[qpos][rpos] > 0 {
-        let r = refr[rpos];
-        let q = read[qpos];
+        let r = refr[rpos - 1];
+        let q = read[qpos - 1];
         let mat_score = 2 * (r == (q.0, q.1)) as i32 - 1;
         let current = dp[qpos][rpos];
         if current == dp[qpos - 1][rpos - 1] + mat_score {
@@ -545,7 +545,7 @@ fn align(
             panic!();
         }
     }
-    Some((qpos, qend))
+    Some((qpos, qend - 1))
 }
 
 fn polish_segment(
@@ -575,7 +575,7 @@ fn align_reads(
     let mut c_dir = std::env::current_dir()?;
     c_dir.push(format!("{}_polish", id));
     debug!("Creating {:?}.", c_dir);
-    std::fs::create_dir(&c_dir)?;
+    std::fs::create_dir_all(&c_dir)?;
     // Create reference and reads.
     let (reference, reads) = {
         let mut reference = c_dir.clone();
@@ -638,7 +638,6 @@ pub fn polish_by_chunking(
             Some((aln, seq))
         })
         .collect();
-    // TODO:Add model dependency here.
     let chunk_size = c.window_size;
     let radius = read_type.band_width(chunk_size);
     let max_cov = 50;

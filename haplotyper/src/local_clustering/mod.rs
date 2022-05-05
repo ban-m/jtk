@@ -131,11 +131,10 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         .collect();
     debug!("LC\t{}", consensus_and_clusternum.len());
     for unit in ds.selected_chunks.iter_mut() {
-        if let Some((consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-            // unit.seq = String::from_utf8(consensus.to_vec()).unwrap();
+        if let Some(&(ref consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
             unit.seq = consensus.to_vec().into();
-            unit.score = *score;
-            unit.cluster_num = *cluster_num as usize;
+            unit.score = score;
+            unit.cluster_num = cluster_num;
         }
     }
     // re_encode_reads(ds, &consensus_and_clusternum);

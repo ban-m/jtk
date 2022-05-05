@@ -1399,7 +1399,10 @@ mod tests {
         let reads = gen_reads(&hap1s, &hap2s, &cl_num, &is_uninformative, &mut rng, num);
         let (result, _) = clustering_inner(&reads, 2, 20, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
@@ -1423,7 +1426,10 @@ mod tests {
         let reads = gen_reads(&hap1s, &hap2s, &cl_num, &is_uninformative, &mut rng, num);
         let (result, _) = clustering_inner(&reads, 2, 20, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
@@ -1450,7 +1456,10 @@ mod tests {
         let reads = gen_reads_drop(&haps, &cl_num, &is_uninformative, &mut rng, drop, num);
         let (result, _) = clustering_inner(&reads, 2, 20, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
@@ -1477,7 +1486,10 @@ mod tests {
         let reads = gen_reads_drop(&haps, &cl_num, &is_uninformative, &mut rng, drop, num);
         let (result, _) = clustering_inner(&reads, 2, 20, &mut rng);
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
@@ -1509,7 +1521,10 @@ mod tests {
             println!("{}", vec2str(res));
         }
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
@@ -1541,7 +1556,10 @@ mod tests {
             println!("{}", vec2str(res));
         }
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
@@ -1573,12 +1591,15 @@ mod tests {
             println!("{}", vec2str(res));
         }
         let answer = vec![vec![0; num], vec![1; num]].concat();
-        let pred: Vec<_> = result.iter().map(|(_, _, x)| (x[0] < x[1]) as u8).collect();
+        let pred: Vec<_> = result
+            .iter()
+            .map(|(_, _, x)| (x[0] < x[1]) as usize)
+            .collect();
         let idx = crate::local_clustering::rand_index(&answer, &pred);
         assert!(idx > 0.8);
     }
     #[test]
-    fn aln_test() {
+    fn aln_toest() {
         let upstream = vec![];
         let query = vec![];
         let cont = (0.9f64).ln();

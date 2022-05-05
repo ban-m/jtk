@@ -172,8 +172,7 @@ impl<'a> super::DitchGraph<'a> {
             seq += &cons;
             position = !position;
             // Check.
-            let num_edges = self.get_edges(node, position).count();
-            if num_edges == 0 || num_edges > 1 {
+            if self.get_edges(node, position).count() != 1 {
                 break;
             }
             // There is only one child.
@@ -181,10 +180,9 @@ impl<'a> super::DitchGraph<'a> {
             assert_eq!(selected_edge.from, node);
             assert_eq!(selected_edge.from_position, position);
             // Succeed along with the edge.
-            // TODO: The Ovlp branch might be wrong...?
             match &selected_edge.seq {
                 EdgeLabel::Ovlp(l) => {
-                    (0..(-l)).filter(|_| seq.pop().is_some()).count();
+                    let _ = (0..(-l)).filter_map(|_| seq.pop()).count();
                 }
                 EdgeLabel::Seq(label) => seq.extend(label.iter().map(|&x| x as char)),
             };
@@ -206,6 +204,7 @@ impl<'a> super::DitchGraph<'a> {
                 .iter()
                 .filter(|e| e.from_position == next_position)
                 .count();
+            // Or looping...
             if num_children >= 2 || arrived.contains(&next) {
                 break;
             }
@@ -227,9 +226,8 @@ impl<'a> super::DitchGraph<'a> {
             let tag = ContigTag::End(seqname.clone(), position, seq.len());
             sids.insert(node, tag);
         }
-        let seg = gfa::Segment::from(seqname.clone(), seq.len(), Some(seq.clone()));
-        // Add gfa edges.
         let gfa_pos = gfa::Position::from(seq.len(), true);
+        let seg = gfa::Segment::from(seqname.clone(), seq.len(), Some(seq));
         let tail_edges = self.enumerate_adjacent_tag(&seqname, node, position, sids, gfa_pos);
         let mut edges = edges;
         edges.extend(tail_edges);

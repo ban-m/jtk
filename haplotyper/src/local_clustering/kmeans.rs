@@ -58,7 +58,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     result.map(|(asn, gains, lk, _)| (asn, gains, lk, template))
 }
 
-type ClusteringDevResult = (Vec<usize>, Vec<Vec<f64>>, f64, u8);
+type ClusteringDevResult = (Vec<usize>, Vec<Vec<f64>>, f64, usize);
 pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
@@ -118,7 +118,7 @@ pub fn clustering_inner<R: Rng, T: std::borrow::Borrow<[u8]>>(
             trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
         }
     }
-    Some((assignments, posterior, score, k as u8))
+    Some((assignments, posterior, score, k))
 }
 
 fn calc_expected_gain_per_read(k: usize, lk: f64) -> f64 {
@@ -281,35 +281,61 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
             .collect()
     };
     let init_copy_num = copy_num.max(4) - 3;
-    // TODO: Do we need offset to represent the partition likelihood?
     let (assignments, _score, _k) = (init_copy_num..=copy_num)
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
-            trace!("LK\t{k}\t{score:.3}\t{expected_gain_per_read:.3}\t1");
-            let expected_gain = expected_gain_per_read * reads.len() as f64;
+            // let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
+            // trace!("LK\t{k}\t{score:.3}\t{expected_gain_per_read:.3}\t1");
+            // let expected_gain = expected_gain_per_read * reads.len() as f64;
+            let expected_gain =
+                average_lk * number_of_improved_read(&selected_variants, &asn, k) as f64;
+            trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t1");
             (asn, score - expected_gain, k)
         })
         .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+    if log_enabled!(log::Level::Trace) {
+        trace!("VARS\tCOPYNUM\tID\tASN\tPOS\tLKDiff\tFilter");
+        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+            for (pos, x) in prf.iter().enumerate() {
+                trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tBefore");
+            }
+        }
+    }
     let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
     let (assignments, score, k) = (init_copy_num..=copy_num)
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
-            trace!("LK\t{k}\t{score:.3}\t{expected_gain_per_read:.3}\t1");
-            let expected_gain = expected_gain_per_read * reads.len() as f64;
+            // let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
+            // trace!("LK\t{k}\t{score:.3}\t{expected_gain_per_read:.3}\t1");
+            // let expected_gain = expected_gain_per_read * reads.len() as f64;
+            let expected_gain =
+                average_lk * number_of_improved_read(&selected_variants, &asn, k) as f64;
+            trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t1");
             (asn, score - expected_gain, k)
         })
-        .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
+        .fold((vec![0; reads.len()], 0f64, 1), |x, y| {
+            match x.1.partial_cmp(&y.1).unwrap() {
+                std::cmp::Ordering::Less => y,
+                _ => x,
+            }
+        });
+    // .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-            let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
-            trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+            for (pos, x) in prf.iter().enumerate() {
+                trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tAfter");
+            }
         }
+        // for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+        //     let prf: Vec<_> = prf.iter().map(|x| format!("{:.2}", x)).collect();
+        //     trace!("ASN\t{}\t{}\t{}\t{}", copy_num, id, i, prf.join("\t"));
+        // }
     }
-    Some((assignments, likelihood_gains, score, k as u8))
+    trace!("DUMP\t{score}\t{k}");
+    likelihood_gains.iter().for_each(|x| assert_eq!(x.len(), k));
+    Some((assignments, likelihood_gains, score, k))
 }
 
 // LK->LK-logsumexp(LK).
@@ -318,6 +344,24 @@ fn to_posterior_probability(lks: &mut [Vec<f64>]) {
         let total = logsumexp(xs);
         xs.iter_mut().for_each(|x| *x -= total);
     }
+}
+
+fn number_of_improved_read(variants: &[Vec<f64>], assignments: &[usize], k: usize) -> usize {
+    let dim = variants[0].len();
+    let mut counts = vec![0; k];
+    let mut lks: Vec<_> = vec![vec![0f64; dim]; k];
+    for (&asn, xs) in assignments.iter().zip(variants.iter()) {
+        counts[asn] += 1;
+        lks[asn]
+            .iter_mut()
+            .zip(xs.iter())
+            .for_each(|(x, y)| *x += y);
+    }
+    counts
+        .iter()
+        .zip(lks)
+        .filter_map(|(count, sums)| sums.iter().any(|x| x.is_sign_positive()).then(|| count))
+        .sum()
 }
 
 // i->k->the likelihood gain of the i-th read when clustered in the k-th cluster.
@@ -357,7 +401,6 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize]) -> Vec<Vec<
                 .iter()
                 .zip(fractions.iter())
                 .map(|(ps, f)| f.ln() + pick_vars(ps, vars))
-                // .chain(pad.clone())
                 .collect()
         })
         .collect()
@@ -397,10 +440,6 @@ fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[usize]) -> V
                     false => (pos, neg + numpos),
                 },
             );
-            // trace!(
-            //     "FILTER\t{in_pos}\t{in_neg}\t{}",
-            //     IN_POS_RATIO < (in_pos as f64 / in_neg as f64)
-            // );
             IN_POS_RATIO < (in_pos as f64 / in_neg as f64)
         })
         .collect();
@@ -412,6 +451,12 @@ fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[usize]) -> V
             }
             used_pos
         });
+    let now = used_pos
+        .iter()
+        .zip(scattered_vars.iter())
+        .filter(|&(&u, &s)| u & s)
+        .count();
+    trace!("FILTER\t{}\t{}", dim, now);
     variants
         .iter()
         .map(|xs| {
@@ -1269,6 +1314,7 @@ fn mcmc_clustering<R: Rng>(
 }
 
 fn kmeans<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
+    assert!(1 < k);
     fn update_assignments(data: &[Vec<f64>], centers: &[Vec<f64>], assignments: &mut [usize]) {
         data.iter().zip(assignments.iter_mut()).for_each(|(xs, c)| {
             let (new_center, _) = centers
@@ -1276,7 +1322,7 @@ fn kmeans<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
                 .map(|cs| -> f64 { cs.iter().zip(xs).map(|(x, y)| (x - y).powi(2)).sum() })
                 .enumerate()
                 .min_by(|x, y| (x.1.partial_cmp(&(y.1)).unwrap()))
-                .unwrap();
+                .unwrap_or_else(|| panic!("{:?}\t{:?}", centers, xs));
             *c = new_center;
         });
     }
@@ -1297,6 +1343,7 @@ fn kmeans<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
         centers
             .iter_mut()
             .zip(counts.iter())
+            .filter(|&(_, &cou)| 0 < cou)
             .for_each(|(cen, &cou)| cen.iter_mut().for_each(|x| *x /= cou as f64));
     }
     fn get_dist(data: &[Vec<f64>], centers: &[Vec<f64>], assignments: &[usize]) -> f64 {

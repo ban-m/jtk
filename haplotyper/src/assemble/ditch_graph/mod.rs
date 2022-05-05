@@ -209,7 +209,7 @@ impl<'a> DitchNode<'a> {
             copy_number: None,
         }
     }
-    fn seq(&self) -> &[u8] {
+    pub fn seq(&self) -> &[u8] {
         &self.seq
     }
     fn seq_as_string(&self) -> String {
@@ -219,8 +219,8 @@ impl<'a> DitchNode<'a> {
 
 #[derive(Debug, Clone)]
 pub struct DitchEdge {
-    from: Node,
-    to: Node,
+    pub from: Node,
+    pub to: Node,
     from_position: Position,
     to_position: Position,
     seq: EdgeLabel,
@@ -272,6 +272,12 @@ impl DitchEdge {
             proxying: Vec::new(),
         }
     }
+    pub fn label(&self) -> Option<&[u8]> {
+        match &self.seq {
+            EdgeLabel::Ovlp(_) => None,
+            EdgeLabel::Seq(seq) => Some(seq.as_slice()),
+        }
+    }
     fn with_proxy(
         from: Node,
         from_position: Position,
@@ -291,7 +297,6 @@ impl DitchEdge {
             proxying,
         }
     }
-
     // Reverse this edge.
     fn reverse(&self) -> Self {
         let proxying: Vec<_> = self
@@ -512,46 +517,63 @@ fn take_consensus<R: std::borrow::Borrow<EncodedRead>>(
             (key, cons)
         })
         .collect();
-    debug!("Consed nodes");
+    let len = node_consensus.values().map(|x| x.len()).sum::<usize>();
+    debug!("Consed nodes\t{len}");
     let edge_consensus: HashMap<_, _> = edges
         .into_par_iter()
         .map(|(key, value)| {
-            let offsets: i64 = value.iter().map(|x| x.0.offset).sum();
-            let offset = offsets / value.len() as i64;
-            let cons = match (c.to_polish, 0 < offset) {
-                (_, false) => EdgeLabel::Ovlp(offset),
-                (true, _) => {
-                    let mut seqs: Vec<_> = value
-                        .iter()
-                        .map(|(ed, is_forward)| match is_forward {
-                            true => ed.label().to_vec(),
-                            false => bio_utils::revcmp(ed.label()),
-                        })
-                        .filter(|e| !e.is_empty())
-                        .collect();
-                    let consensus = if seqs.len() > 3 {
-                        let draft = seqs.pop().unwrap();
-                        let band = read_type.band_width(draft.len());
-                        hmm.polish_until_converge(&draft, &seqs, band)
-                    } else {
-                        seqs.iter().max_by_key(|x| x.len()).unwrap().to_vec()
-                    };
-                    EdgeLabel::Seq(consensus)
-                }
-                (false, _) => {
-                    let (edge, is_forward) = value.iter().max_by_key(|x| x.0.label.len()).unwrap();
-                    match *is_forward {
-                        true => EdgeLabel::Seq(edge.label().to_vec()),
-                        false => EdgeLabel::Seq(bio_utils::revcmp(edge.label())),
-                    }
-                }
+            let seqs: Vec<_> = value
+                .iter()
+                .map(|(ed, is_forward)| match is_forward {
+                    true => ed.label().to_vec(),
+                    false => bio_utils::revcmp(ed.label()),
+                })
+                .filter(|e| 20 < e.len()) // Filtering out small sequences.
+                .collect();
+            let cons = if seqs.is_empty() {
+                let offsets: i64 = value.iter().map(|x| x.0.offset).sum();
+                let offset = (offsets / value.len() as i64).min(0);
+                EdgeLabel::Ovlp(offset)
+            } else if seqs.len() <= 3 || !c.to_polish {
+                let seq = seqs.into_iter().max_by_key(|x| x.len()).unwrap();
+                EdgeLabel::Seq(seq)
+            } else {
+                let len = seqs.iter().map(|x| x.len()).sum::<usize>();
+                let len = len / seqs.len();
+                let band = read_type.band_width(len);
+                EdgeLabel::Seq(consensus(&seqs, band, &hmm))
             };
             (key, cons)
         })
         .collect();
+    let len = edge_consensus.values().map(|x| x.len().max(0)).sum::<i64>();
+    debug!("Consed Edges\t{}", len);
     (node_consensus, edge_consensus)
 }
 
+const CHUNK_SIZE: usize = 100;
+fn consensus(
+    seqs: &[Vec<u8>],
+    band: usize,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+) -> Vec<u8> {
+    use kiley::Op;
+    let ops = [Op::Match, Op::Ins, Op::Del, Op::Mismatch];
+    // for seq in seqs.iter() {
+    //     trace!("EDGECONS\t{}", std::str::from_utf8(seq).unwrap());
+    // }
+    let draft = kiley::ternary_consensus_by_chunk(seqs, CHUNK_SIZE);
+    let mut ops: Vec<Vec<_>> = seqs
+        .iter()
+        .map(|seq| {
+            edlib_sys::global(&draft, seq)
+                .into_iter()
+                .map(|op| ops[op as usize])
+                .collect()
+        })
+        .collect();
+    hmm.polish_until_converge_with(&draft, seqs, &mut ops, band)
+}
 type TempNode = (usize, [Vec<(usize, usize)>; 2]);
 
 impl<'a> DitchGraph<'a> {
@@ -641,7 +663,6 @@ impl<'a> DitchGraph<'a> {
                 self.remove_tips(0.8, 4);
                 self.assign_copy_number_mcmc(cov, lens);
                 self.squish_small_net(3);
-                self.zip_up_overclustering_dev();
             }
             if log_enabled!(log::Level::Trace) {
                 dump(self, i + 1, c);
@@ -651,10 +672,27 @@ impl<'a> DitchGraph<'a> {
         self.remove_zero_copy_path(0.3);
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
-        self.assign_copy_number_mcmc(cov, lens);
-        // self.squish_small_net(3);
         // self.zip_up_overclustering_dev();
-        // self.resolve_repeats(reads, c, min_llr);
+        self.assign_copy_number_mcmc(cov, lens);
+        self.squish_small_net(3);
+        self.zip_up_overclustering_dev();
+        self.resolve_repeats(reads, c, min_llr);
+        self.z_edge_selection();
+        for node in self.nodes() {
+            let (unit, cl) = node.node;
+            let seq = std::str::from_utf8(node.seq()).unwrap();
+            debug!("CONS\t>N{unit}-{cl}\nCONS\t{seq}");
+            for edge in node.edges.iter().filter(|e| e.from <= e.to) {
+                let seq = match edge.label() {
+                    Some(res) => std::str::from_utf8(res).unwrap(),
+                    None => continue,
+                };
+                let (funit, fcl) = edge.from;
+                let (tunit, tcl) = edge.to;
+                let id = format!("{funit}-{fcl}-{tunit}-{tcl}");
+                debug!("CONS\t>E{id}\nCONS\t{seq}");
+            }
+        }
     }
     /// Squish small net-like-structure like below:
     /// [Long contig]---[Small contig]---[Long contig]
@@ -815,6 +853,20 @@ impl<'a> DitchGraph<'a> {
     ) -> Self {
         // Take a consensus of nodes and edges.
         let (nodes_seq, edge_seq) = take_consensus(reads, units, &read_type, c);
+        // for (node, cons) in nodes_seq.iter() {
+        //     let seq = std::str::from_utf8(cons).unwrap();
+        //     debug!("CONS\t>N-{}-{}\nCONS\t{}", node.1, node.0, seq);
+        // }
+        // for (edge, cons) in edge_seq.iter() {
+        //     let seq = match cons {
+        //         EdgeLabel::Ovlp(_) => continue,
+        //         EdgeLabel::Seq(cons) => std::str::from_utf8(cons).unwrap(),
+        //     };
+        //     let (funit, fcl) = (edge.0).0;
+        //     let (tunit, tcl) = (edge.1).0;
+        //     let name = format!("{funit}-{fcl}-{tunit}-{tcl}");
+        //     debug!("CONS\t>E-{}\nCONS\t{}", name, seq);
+        // }
         // Allocate all nodes.
         let mut nodes: HashMap<_, _> = nodes_seq
             .into_iter()
@@ -1657,21 +1709,6 @@ impl<'a> DitchGraph<'a> {
             // Check if both side of this node is either
             // 1. Branching
             // 2. Connected to branching node.
-            // let is_short = [Position::Tail, Position::Head].iter().all(|&pos| {
-            //     let deg = self.get_edges(node, pos).count();
-            //     match deg {
-            //         0 => false,
-            //         1 => {
-            //             let edge = self.get_edges(node, pos).next().unwrap();
-            //             // Check the degree of the child.
-            //             1 < self.get_edges(edge.to, edge.to_position).count()
-            //         }
-            //         _ => true,
-            //     }
-            // });
-            // if !is_short {
-            //     continue;
-            // }
             // Reflexitive siblings, parents.
             let (tail_side_par, tail_side_sibs) = self.get_reflex_nodes(node, Position::Tail, 6);
             let (head_side_par, head_side_sibs) = self.get_reflex_nodes(node, Position::Head, 6);
@@ -2192,15 +2229,15 @@ impl<'a> DitchGraph<'a> {
     // because of the removed nodes.
     // If it happened, eigther this focus or previous
     // branching is false. Maybe just dropping this focus would be better?
-    // TODO: Faster.
-    #[allow(dead_code)]
+    // Note that this function does not include any proxying nodes.
     fn dfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(Node, Position)>> {
         // Breadth first search until get to the target.
         // Just !pos to make code tidy.
         let mut nodes_at = vec![vec![]; focus.dist + 1];
         let mut parents = vec![vec![]; focus.dist + 1];
         nodes_at[0].push((focus.from, !focus.from_position));
-        parents[0].push((0, 0));
+        // (distance, index, copy number of edge)
+        parents[0].push((0, 0, 0));
         for dist in 0..focus.dist + 1 {
             // To avoid the borrow checker.
             let mut nodes_at_temp = vec![];
@@ -2208,8 +2245,9 @@ impl<'a> DitchGraph<'a> {
                 let edges = self.get_edges(node, !pos);
                 let edges = edges.map(|e| (e, dist + 1 + e.proxying.len()));
                 for (edge, d) in edges.filter(|&(_, d)| d <= focus.dist) {
+                    let cp = edge.copy_number.unwrap_or(0);
                     nodes_at_temp.push((d, (edge.to, edge.to_position)));
-                    parents[d].push((dist, idx));
+                    parents[d].push((dist, idx, cp));
                 }
             }
             for (d, elm) in nodes_at_temp {
@@ -2222,88 +2260,109 @@ impl<'a> DitchGraph<'a> {
             .zip(parents.iter())
             .for_each(|(n, p)| assert_eq!(n.len(), p.len()));
         // Back-track.
+        let mut target = (focus.to, focus.to_position);
         let mut dist = focus.dist;
-        let target = (focus.to, focus.to_position);
-        let hit_at = nodes_at[dist].iter().position(|&x| x == target);
-        let mut idx = match hit_at {
-            Some(idx) => idx,
-            None => {
-                debug!("FROM\t{}", self.nodes[&focus.from]);
-                debug!("TO\t{}", self.nodes[&focus.to]);
-                for (i, nodes) in nodes_at.iter().enumerate() {
-                    debug!("DUMP\t{}\t{:?}", i, nodes);
-                }
-                debug!("FOCUS\tFailedToFindTarget\t{}", focus);
-                return None;
-            }
-        };
         let mut back_track = vec![];
         while 0 < dist {
-            back_track.push(nodes_at[dist][idx]);
-            let (prev_dist, prev_idx) = parents[dist][idx];
-            idx = prev_idx;
-            dist = prev_dist;
+            back_track.push(target);
+            let hit_at = nodes_at[dist]
+                .iter()
+                .zip(parents[dist].iter())
+                .filter(|(&x, _)| x == target)
+                .max_by_key(|(_, (_, _, cp))| cp);
+            (target, dist) = match hit_at {
+                Some((_, &(pdist, pidx, _))) => (nodes_at[pdist][pidx], pdist),
+                None => {
+                    // debug!("FROM\t{}", self.nodes[&focus.from]);
+                    // debug!("TO\t{}", self.nodes[&focus.to]);
+                    // for (i, nodes) in nodes_at.iter().enumerate() {
+                    //     debug!("DUMP\t{}\t{:?}", i, nodes);
+                    // }
+                    debug!("FOCUS\tFailedToFindTarget\t{}", focus);
+                    return None;
+                }
+            };
         }
+        // let target = (focus.to, focus.to_position);
+        // let hit_at = nodes_at[dist].iter().position(|&x| x == target);
+        // let mut idx = match hit_at {
+        //     Some(idx) => idx,
+        //     None => {
+        //         debug!("FROM\t{}", self.nodes[&focus.from]);
+        //         debug!("TO\t{}", self.nodes[&focus.to]);
+        //         for (i, nodes) in nodes_at.iter().enumerate() {
+        //             debug!("DUMP\t{}\t{:?}", i, nodes);
+        //         }
+        //         debug!("FOCUS\tFailedToFindTarget\t{}", focus);
+        //         return None;
+        //     }
+        // };
+        // let mut back_track = vec![];
+        // while 0 < dist {
+        //     back_track.push(nodes_at[dist][idx]);
+        //     let (prev_dist, prev_idx) = parents[dist][idx];
+        //     idx = prev_idx;
+        //     dist = prev_dist;
+        // }
         back_track.reverse();
         for (i, (node, pos)) in back_track.iter().enumerate() {
             debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
         }
         Some(back_track)
     }
-    #[allow(dead_code)]
-    fn bfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(Node, Position)>> {
-        // Breadth first search until get to the target.
-        // Just !pos to make code tidy.
-        let (start, pos) = (focus.from, focus.from_position);
-        let mut nodes_at = vec![vec![]; focus.dist + 1];
-        nodes_at[0].push((start, !pos));
-        let mut parents = vec![vec![]; focus.dist + 1];
-        // let mut nodes_at = vec![vec![(start, !pos)]];
-        // let mut parents = vec![vec![]];
-        'outer: for dist in 0..focus.dist + 1 {
-            let mut next_nodes = vec![];
-            let mut parent = vec![];
-            assert_eq!(dist + 1, nodes_at.len());
-            for (idx, &(node, pos)) in nodes_at[dist].iter().enumerate() {
-                if node == focus.to && pos == focus.to_position && focus.dist == dist {
-                    break 'outer;
-                }
-                // Move to the end of the node.
-                let pos = !pos;
-                for edge in self.get_edges(node, pos) {
-                    next_nodes.push((edge.to, edge.to_position));
-                    parent.push(idx);
-                }
-            }
-            assert_eq!(next_nodes.len(), parent.len());
-            nodes_at.push(next_nodes);
-            parents.push(parent);
-        }
-        // Back-track.
-        assert_eq!(nodes_at.len(), parents.len());
-        let mut dist = nodes_at.len() - 1;
-        let mut idx = match nodes_at[focus.dist]
-            .iter()
-            .position(|&(n, p)| n == focus.to && p == focus.to_position)
-        {
-            Some(idx) => idx,
-            None => {
-                debug!("FOCUS\tFailedToFindTarget\t{}", focus);
-                return None;
-            }
-        };
-        let mut back_track = vec![];
-        while 0 < dist {
-            back_track.push(nodes_at[dist][idx]);
-            idx = parents[dist][idx];
-            dist -= 1;
-        }
-        back_track.reverse();
-        // for (i, (node, pos)) in back_track.iter().enumerate() {
-        //     debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
-        // }
-        Some(back_track)
-    }
+    // fn bfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(Node, Position)>> {
+    //     // Breadth first search until get to the target.
+    //     // Just !pos to make code tidy.
+    //     let (start, pos) = (focus.from, focus.from_position);
+    //     let mut nodes_at = vec![vec![]; focus.dist + 1];
+    //     nodes_at[0].push((start, !pos));
+    //     let mut parents = vec![vec![]; focus.dist + 1];
+    //     // let mut nodes_at = vec![vec![(start, !pos)]];
+    //     // let mut parents = vec![vec![]];
+    //     'outer: for dist in 0..focus.dist + 1 {
+    //         let mut next_nodes = vec![];
+    //         let mut parent = vec![];
+    //         assert_eq!(dist + 1, nodes_at.len());
+    //         for (idx, &(node, pos)) in nodes_at[dist].iter().enumerate() {
+    //             if node == focus.to && pos == focus.to_position && focus.dist == dist {
+    //                 break 'outer;
+    //             }
+    //             // Move to the end of the node.
+    //             let pos = !pos;
+    //             for edge in self.get_edges(node, pos) {
+    //                 next_nodes.push((edge.to, edge.to_position));
+    //                 parent.push(idx);
+    //             }
+    //         }
+    //         assert_eq!(next_nodes.len(), parent.len());
+    //         nodes_at.push(next_nodes);
+    //         parents.push(parent);
+    //     }
+    //     // Back-track.
+    //     assert_eq!(nodes_at.len(), parents.len());
+    //     let mut dist = nodes_at.len() - 1;
+    //     let mut idx = match nodes_at[focus.dist]
+    //         .iter()
+    //         .position(|&(n, p)| n == focus.to && p == focus.to_position)
+    //     {
+    //         Some(idx) => idx,
+    //         None => {
+    //             debug!("FOCUS\tFailedToFindTarget\t{}", focus);
+    //             return None;
+    //         }
+    //     };
+    //     let mut back_track = vec![];
+    //     while 0 < dist {
+    //         back_track.push(nodes_at[dist][idx]);
+    //         idx = parents[dist][idx];
+    //         dist -= 1;
+    //     }
+    //     back_track.reverse();
+    //     // for (i, (node, pos)) in back_track.iter().enumerate() {
+    //     //     debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
+    //     // }
+    //     Some(back_track)
+    // }
     // Spell along the given path,
     // reducing the copy number of the nodes, the occs of the nodes, and the
     // occs of the edges.
@@ -2318,15 +2377,14 @@ impl<'a> DitchGraph<'a> {
             .find(|e| (e.to, e.to_position) == first_elm)
             .map(|edge| (edge.seq.clone(), edge.proxying.clone()))
             .unwrap();
-        let mut path_label = vec![];
+        let mut path_label: Vec<u8> = vec![];
         for window in path.windows(2) {
             // !!!Here, each position is the start position of each node!!!!
             let (from, from_pos) = window[0];
             let (to, to_pos) = window[1];
-            let mut node_seq = match from_pos {
-                Position::Head => self.nodes[&from].seq().to_vec(),
-                Position::Tail => bio_utils::revcmp(self.nodes[&to].seq()),
-            };
+            let nodeseq =
+                crate::seq::DNAIter::new(self.nodes[&from].seq(), from_pos == Position::Head);
+            path_label.extend(nodeseq);
             // Reduce the occ and copy number of the node, and occ of the edge.
             let occ = {
                 // Reduce te occ of the edge.
@@ -2364,14 +2422,10 @@ impl<'a> DitchGraph<'a> {
             processed_nodes.extend(passed_edge.proxying.iter());
             match &passed_edge.seq {
                 EdgeLabel::Ovlp(l) => {
-                    node_seq.reverse();
-                    let truncate = (node_seq.len() as i64 + l).max(0);
-                    node_seq.truncate(truncate as usize);
-                    node_seq.reverse();
+                    let _ = (0..-l).filter_map(|_| path_label.pop()).count();
                 }
-                EdgeLabel::Seq(seq) => node_seq.extend(seq),
+                EdgeLabel::Seq(seq) => path_label.extend(seq),
             }
-            path_label.extend(node_seq);
         }
         // Finalize the label of the edge.
         let label = match first_label {
@@ -2380,13 +2434,14 @@ impl<'a> DitchGraph<'a> {
             }
             EdgeLabel::Ovlp(l) => {
                 path_label.reverse();
-                for _ in 0..(-l) as usize {
-                    path_label.pop();
-                }
+                let _ = (0..-l).filter_map(|_| path_label.pop()).count();
                 path_label.reverse();
                 EdgeLabel::Seq(path_label)
             }
-            EdgeLabel::Seq(seq) => EdgeLabel::Seq(seq.iter().copied().chain(path_label).collect()),
+            EdgeLabel::Seq(mut seq) => {
+                seq.append(&mut path_label);
+                EdgeLabel::Seq(seq)
+            }
         };
         (label, processed_nodes)
     }
@@ -3231,6 +3286,7 @@ fn get_bridge(nodes: usize, edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
 mod tests {
     use super::*;
     use definitions::EncodedRead;
+    use definitions::ReadType;
     use rand::Rng;
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128StarStar;
@@ -3260,12 +3316,12 @@ mod tests {
                 };
                 let end = from.position_from_start + from.query_length();
                 let start = to.position_from_start;
-                let label = String::new();
+                let label = Vec::new();
                 definitions::Edge {
                     from: from.unit,
                     to: to.unit,
                     offset: start as i64 - end as i64,
-                    label,
+                    label: label.into(),
                 }
             })
             .collect();
@@ -3273,8 +3329,8 @@ mod tests {
         EncodedRead {
             id,
             original_length,
-            leading_gap: vec![],
-            trailing_gap: vec![b'A'; rem],
+            leading_gap: vec![].into(),
+            trailing_gap: vec![b'A'; rem].into(),
             edges,
             nodes,
         }

@@ -311,13 +311,11 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         }
     }
     let cov_thr = ds.coverage.unwrap().ceil() as usize / 4;
-    let mut max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
     debug!("DE\tCand\t{}", consensi_materials.len());
     let mean_chunk_len = {
         let sum: usize = ds.selected_chunks.iter().map(|x| x.seq().len()).sum();
         sum / ds.selected_chunks.len()
     };
-    let mut newly_defined_unit = HashMap::new();
     let mut consensi: Vec<_> = consensi_materials
         .into_par_iter()
         .filter_map(|(key, mut seqs)| {
@@ -335,6 +333,8 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         })
         .collect();
     consensi.sort_unstable_by_key(|x| x.0);
+    let mut newly_defined_unit = HashMap::new();
+    let mut max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
     for (key, consensus) in consensi {
         let copy_num = edges[&key];
         let chunk_num = (consensus.len() as f64 / mean_chunk_len as f64).ceil();
@@ -342,7 +342,6 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         let units: Vec<_> = consensus
             .chunks(chunk_len)
             .map(|seq| {
-                // let seq = String::from_utf8_lossy(seq).to_string();
                 max_unit_id += 1;
                 Unit::new(max_unit_id, seq.to_vec(), copy_num)
             })

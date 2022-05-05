@@ -806,12 +806,12 @@ mod test {
                 };
                 let end = from.position_from_start + from.query_length();
                 let start = to.position_from_start;
-                let label = String::new();
+                let label = vec![];
                 definitions::Edge {
                     from: from.unit,
                     to: to.unit,
                     offset: start as i64 - end as i64,
-                    label,
+                    label: label.into(),
                 }
             })
             .collect();
@@ -819,8 +819,8 @@ mod test {
         EncodedRead {
             id,
             original_length,
-            leading_gap: vec![],
-            trailing_gap: vec![b'A'; rem],
+            leading_gap: vec![].into(),
+            trailing_gap: vec![b'A'; rem].into(),
             edges,
             nodes,
         }

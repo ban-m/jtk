@@ -1,4 +1,4 @@
-pub const IS_MOCK: bool = true;
+pub const IS_MOCK: bool = false;
 use rand::Rng;
 pub fn test() {
     let xs: Vec<_> = (0..1000).collect();
