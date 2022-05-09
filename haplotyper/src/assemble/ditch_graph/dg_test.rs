@@ -483,8 +483,8 @@ mod tests {
         eprintln!("{:?}", answer);
         assert_eq!(segment.len(), 1);
         let seq = segment[0].sequence.as_ref().unwrap().as_bytes();
-        let revcmp = revcmp_str(segment[0].sequence.as_ref().unwrap()).as_bytes();
-        let is_the_same = seq == answer[0] || answer[0] == revcmp;
+        let revcmp = revcmp_str(segment[0].sequence.as_ref().unwrap());
+        let is_the_same = seq == answer[0] || answer[0] == revcmp.as_bytes();
         assert!(is_the_same);
     }
     #[test]

@@ -886,7 +886,7 @@ mod test {
                 };
                 let end = from.position_from_start + from.query_length();
                 let start = to.position_from_start;
-                let label = String::new();
+                let label = vec![];
                 definitions::Edge {
                     from: from.unit,
                     to: to.unit,

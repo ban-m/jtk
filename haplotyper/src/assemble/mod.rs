@@ -308,6 +308,95 @@ impl Assemble for DataSet {
     }
 }
 
+fn align_encoded_reads(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<usize>> {
+    for (i, summary) in summaries.iter().enumerate() {
+        let line: Vec<_> = summary
+            .summary
+            .iter()
+            .map(|n| format!("{}-{}", n.unit, n.cluster))
+            .collect();
+        debug!("ALN\tCTG\t{i}\t{}", line.join("\t"));
+    }
+    // let nodes: Vec<HashSet<_>> = summaries
+    //     .iter()
+    //     .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
+    //     .collect();
+    // for read in ds.encoded_reads.iter() {
+    //     let line: Vec<_> = read
+    //         .nodes
+    //         .iter()
+    //         .map(|n| format!("{}-{}", n.unit, n.cluster))
+    //         .collect();
+    //     debug!("ALN\tREAD\t{}\t{}", read.id, line.join("\t"));
+    //     let mut lightread: Vec<_> = read
+    //         .nodes
+    //         .iter()
+    //         .map(|n| (n.unit, n.cluster, n.position_from_start, n.query_length()))
+    //         .collect();
+    //     while let Some((tid, start, end)) =
+    //         search_aligned_region(&mut lightread, &nodes, &summaries)
+    //     {
+    //         debug!("ALN\tSEP\t{tid}\t{start}-{end}");
+    //     }
+    // }
+    let nodes: Vec<HashSet<_>> = summaries
+        .iter()
+        .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
+        .collect();
+    ds.encoded_reads
+        .iter()
+        .map(|read| {
+            let id = read.id;
+            let read: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+            let dist = distribute(&read, &nodes);
+            let line: Vec<_> = read.iter().map(|(n, c)| format!("{n}-{c}")).collect();
+            debug!("ALN\t{id}\t{}", line.join("\t"));
+            let line: Vec<_> = dist.iter().map(|d| format!("{d}")).collect();
+            debug!("ALN\t{id}\t{}", line.join("\t"));
+            dist
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn distribute(read: &[(u64, u64)], contigs: &[HashSet<(u64, u64)>]) -> Vec<usize> {
+    let upperbound = read.len() as u64 + 10;
+    // i -> j -> minimum number of switches from [0..i] position, ending with j-th contig.
+    let mut dp = vec![vec![upperbound; contigs.len()]; read.len() + 1];
+    dp[0].iter_mut().for_each(|x| *x = 0);
+    // Traceback
+    let mut tb = vec![vec![0; contigs.len()]; read.len() + 1];
+    for (i, node) in read.iter().enumerate().map(|(i, x)| (i + 1, x)) {
+        for (j, contig) in contigs.iter().enumerate() {
+            let (argmin, min) = dp[i - 1]
+                .iter()
+                .enumerate()
+                .map(|(idx, pen)| (idx, pen + (idx != j) as u64 + !contig.contains(node) as u64))
+                .min_by_key(|x| x.1)
+                .unwrap();
+            dp[i][j] = min;
+            tb[i][j] = argmin;
+        }
+    }
+    let (mut argmin, _) = dp
+        .last()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .min_by_key(|x| x.1)
+        .unwrap();
+    let mut read_pos = read.len();
+    let mut dists = vec![];
+    while 0 < read_pos {
+        dists.push(argmin);
+        argmin = tb[read_pos][argmin];
+        read_pos -= 1;
+    }
+    dists.reverse();
+    assert_eq!(dists.len(), read.len());
+    dists
+}
+
 /// ASSEMBLEIMPL
 pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     assert!(c.to_resolve);
@@ -324,7 +413,8 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let (mut segments, mut edges, group, summaries) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
-    if c.to_polish && false {
+    align_encoded_reads(ds, &summaries);
+    if c.to_polish {
         let hmm = crate::local_clustering::get_tuned_model(ds);
         polish_segments(&mut segments, ds, &summaries, c, &ds.read_type, &hmm);
         let lengths: HashMap<_, _> = segments
@@ -408,29 +498,32 @@ fn polish_segments(
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
 ) {
     // Record/Associate reads to each segments.
-    let mut fragments: Vec<Vec<&[u8]>> = vec![vec![]; summaries.len()];
-    let nodes: Vec<HashSet<_>> = summaries
-        .iter()
-        .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
-        .collect();
     let raw_reads: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
-    for read in ds.encoded_reads.iter() {
+    let mut fragments: Vec<Vec<&[u8]>> = vec![vec![]; summaries.len()];
+    let dists = align_encoded_reads(ds, summaries);
+    for (read, dist) in ds.encoded_reads.iter().zip(dists.iter()) {
         let seq = raw_reads[&read.id];
-        let mut lightread: Vec<_> = read
-            .nodes
-            .iter()
-            .map(|n| (n.unit, n.cluster, n.position_from_start, n.query_length()))
-            .collect();
-        while let Some((tid, start, end)) =
-            search_aligned_region(&mut lightread, &nodes, &summaries)
-        {
-            fragments[tid].push(&seq[start..end]);
+        if dist.len() == 0 {
+            continue;
         }
+        let mut pos = 0;
+        let mut contig = dist[0];
+        for (&d, n) in dist[1..].iter().zip(read.nodes[1..].iter()) {
+            if d != contig {
+                fragments[contig].push(&seq[pos..n.position_from_start]);
+                pos = n.position_from_start + n.query_length();
+                contig = d;
+            }
+        }
+        fragments[contig].push(&seq[pos..]);
     }
     segments
         .iter_mut()
         .zip(fragments.iter())
-        .for_each(|(seg, frag)| polish_segment(seg, frag, c, read_type, hmm));
+        .for_each(|(seg, frag)| {
+            polish_segment(seg, frag, c, read_type, hmm);
+            polish_segment(seg, frag, c, read_type, hmm);
+        });
 }
 
 fn search_aligned_region(
@@ -603,9 +696,8 @@ fn align_reads(
     }
     let alignment = crate::minimap2::minimap2_args(&reference, &reads, &args);
     let alignment = kiley::sam::Sam::from_reader(std::io::BufReader::new(alignment.as_slice()));
-    debug!("Retain alignment folder.");
-    // debug!("Removing {:?}", c_dir);
-    // std::fs::remove_dir_all(c_dir)?;
+    debug!("Removing {:?}", c_dir);
+    std::fs::remove_dir_all(c_dir)?;
     Ok(alignment)
 }
 
@@ -721,4 +813,27 @@ pub fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec
         }
     }
     shared_reads
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    #[test]
+    fn distribute_test() {
+        let read = vec![(0, 0), (1, 0), (2, 1), (3, 0)];
+        let contig: HashSet<_> = vec![(0, 0), (1, 0), (2, 0), (3, 0)].into_iter().collect();
+        let mut contigs = vec![contig];
+        let dist = distribute(&read, &contigs);
+        assert_eq!(dist, vec![0; 4]);
+        let read = vec![(0, 0), (1, 1), (2, 1), (3, 1)];
+        let contig: HashSet<_> = vec![(0, 1), (1, 1), (2, 1), (3, 1)].into_iter().collect();
+        contigs.push(contig);
+        let dist = distribute(&read, &contigs);
+        assert_eq!(&dist[1..], &vec![1; 3]);
+        let read = vec![(2, 1), (3, 1), (4, 1), (5, 1)];
+        let contig: HashSet<_> = vec![(4, 1), (5, 1)].into_iter().collect();
+        contigs.push(contig);
+        let dist = distribute(&read, &contigs);
+        assert_eq!(dist, vec![vec![1; 2], vec![2; 2]].concat());
+    }
 }
