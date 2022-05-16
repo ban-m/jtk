@@ -309,14 +309,14 @@ impl Assemble for DataSet {
 }
 
 fn align_encoded_reads(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<usize>> {
-    for (i, summary) in summaries.iter().enumerate() {
-        let line: Vec<_> = summary
-            .summary
-            .iter()
-            .map(|n| format!("{}-{}", n.unit, n.cluster))
-            .collect();
-        debug!("ALN\tCTG\t{i}\t{}", line.join("\t"));
-    }
+    // for (i, summary) in summaries.iter().enumerate() {
+    //     let line: Vec<_> = summary
+    //         .summary
+    //         .iter()
+    //         .map(|n| format!("{}-{}", n.unit, n.cluster))
+    //         .collect();
+    //     debug!("ALN\tCTG\t{i}\t{}", line.join("\t"));
+    // }
     // let nodes: Vec<HashSet<_>> = summaries
     //     .iter()
     //     .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
@@ -346,13 +346,13 @@ fn align_encoded_reads(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<usi
     ds.encoded_reads
         .iter()
         .map(|read| {
-            let id = read.id;
+            // let id = read.id;
             let read: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
             let dist = distribute(&read, &nodes);
-            let line: Vec<_> = read.iter().map(|(n, c)| format!("{n}-{c}")).collect();
-            debug!("ALN\t{id}\t{}", line.join("\t"));
-            let line: Vec<_> = dist.iter().map(|d| format!("{d}")).collect();
-            debug!("ALN\t{id}\t{}", line.join("\t"));
+            // let line: Vec<_> = read.iter().map(|(n, c)| format!("{n}-{c}")).collect();
+            // debug!("ALN\t{id}\t{}", line.join("\t"));
+            // let line: Vec<_> = dist.iter().map(|d| format!("{d}")).collect();
+            // debug!("ALN\t{id}\t{}", line.join("\t"));
             dist
         })
         .collect()
@@ -526,120 +526,120 @@ fn polish_segments(
         });
 }
 
-fn search_aligned_region(
-    read: &mut Vec<(u64, u64, usize, usize)>,
-    nodes: &[HashSet<(u64, u64)>],
-    summaries: &[ContigSummary],
-) -> Option<(usize, usize, usize)> {
-    if read.is_empty() {
-        return None;
-    }
-    let (idx, _) = nodes
-        .iter()
-        .map(|ns| {
-            read.iter()
-                .filter(|&&(u, c, _, _)| ns.contains(&(u, c)))
-                .count()
-        })
-        .enumerate()
-        .max_by_key(|x| x.1)
-        .unwrap();
-    let (start_idx, end_idx) = align(read, &summaries[idx], &nodes[idx])?;
-    let start_pos = read[start_idx].2;
-    let end_pos = read[end_idx].2 + read[end_idx].3;
-    if read.len() - end_idx < start_idx {
-        *read = read.iter().take(start_idx).copied().collect();
-    } else {
-        *read = read.iter().skip(end_idx).copied().collect();
-    };
-    Some((idx, start_pos, end_pos))
-}
+// fn search_aligned_region(
+//     read: &mut Vec<(u64, u64, usize, usize)>,
+//     nodes: &[HashSet<(u64, u64)>],
+//     summaries: &[ContigSummary],
+// ) -> Option<(usize, usize, usize)> {
+//     if read.is_empty() {
+//         return None;
+//     }
+//     let (idx, _) = nodes
+//         .iter()
+//         .map(|ns| {
+//             read.iter()
+//                 .filter(|&&(u, c, _, _)| ns.contains(&(u, c)))
+//                 .count()
+//         })
+//         .enumerate()
+//         .max_by_key(|x| x.1)
+//         .unwrap();
+//     let (start_idx, end_idx) = align(read, &summaries[idx], &nodes[idx])?;
+//     let start_pos = read[start_idx].2;
+//     let end_pos = read[end_idx].2 + read[end_idx].3;
+//     if read.len() - end_idx < start_idx {
+//         *read = read.iter().take(start_idx).copied().collect();
+//     } else {
+//         *read = read.iter().skip(end_idx).copied().collect();
+//     };
+//     Some((idx, start_pos, end_pos))
+// }
 
-fn align(
-    read: &[(u64, u64, usize, usize)],
-    summary: &ContigSummary,
-    scan: &HashSet<(u64, u64)>,
-) -> Option<(usize, usize)> {
-    const OFFSET: usize = 4;
-    let ref_start = read
-        .iter()
-        .find(|&&(u, c, _, _)| scan.contains(&(u, c)))
-        .and_then(|&(u, c, _, _)| {
-            summary
-                .summary
-                .iter()
-                .position(|sm| sm.unit == u && sm.cluster == c)
-        })
-        .unwrap();
-    let ref_end = read
-        .iter()
-        .rev()
-        .find(|&&(u, c, _, _)| scan.contains(&(u, c)))
-        .and_then(|&(u, c, _, _)| {
-            summary
-                .summary
-                .iter()
-                .position(|sm| sm.unit == u && sm.cluster == c)
-        })
-        .unwrap();
-    let refr: Vec<_> = if ref_start < ref_end {
-        let ref_start = ref_start.saturating_sub(OFFSET);
-        let ref_end = (ref_end + OFFSET).min(summary.summary.len());
-        summary.summary[ref_start..ref_end]
-            .iter()
-            .map(|x| (x.unit, x.cluster))
-            .collect()
-    } else {
-        let ref_start = ref_end.saturating_sub(OFFSET);
-        let ref_end = (ref_start + OFFSET).min(summary.summary.len());
-        summary.summary[ref_start..ref_end]
-            .iter()
-            .map(|x| (x.unit, x.cluster))
-            .collect()
-    };
-    // Alignment.
-    // It is "infix-overlapping" alignment
-    let mut dp = vec![vec![0; refr.len() + 1]; read.len() + 1];
-    let (mut max, mut argmax) = (-1, (0, 0));
-    for (i, &(u, c, _, _)) in read.iter().enumerate() {
-        let q = (u, c);
-        let i = i + 1;
-        for (j, &r) in refr.iter().enumerate() {
-            let j = j + 1;
-            let mat_score = 2 * (r == q) as i32 - 1;
-            dp[i][j] = (dp[i - 1][j - 1] + mat_score)
-                .max(dp[i - 1][j] - 1)
-                .max(dp[i][j - 1] - 1)
-                .max(0);
-            if max < dp[i][j] {
-                (max, argmax) = (dp[i][j], (i, j));
-            }
-        }
-    }
-    // Traceback.
-    if max <= 1 {
-        return None;
-    }
-    let (mut qpos, mut rpos) = argmax;
-    let qend = qpos;
-    while dp[qpos][rpos] > 0 {
-        let r = refr[rpos - 1];
-        let q = read[qpos - 1];
-        let mat_score = 2 * (r == (q.0, q.1)) as i32 - 1;
-        let current = dp[qpos][rpos];
-        if current == dp[qpos - 1][rpos - 1] + mat_score {
-            qpos -= 1;
-            rpos -= 1;
-        } else if current == dp[qpos][rpos - 1] - 1 {
-            rpos -= 1;
-        } else if current == dp[qpos - 1][rpos - 1] - 1 {
-            qpos -= 1;
-        } else {
-            panic!();
-        }
-    }
-    Some((qpos, qend - 1))
-}
+// fn align(
+//     read: &[(u64, u64, usize, usize)],
+//     summary: &ContigSummary,
+//     scan: &HashSet<(u64, u64)>,
+// ) -> Option<(usize, usize)> {
+//     const OFFSET: usize = 4;
+//     let ref_start = read
+//         .iter()
+//         .find(|&&(u, c, _, _)| scan.contains(&(u, c)))
+//         .and_then(|&(u, c, _, _)| {
+//             summary
+//                 .summary
+//                 .iter()
+//                 .position(|sm| sm.unit == u && sm.cluster == c)
+//         })
+//         .unwrap();
+//     let ref_end = read
+//         .iter()
+//         .rev()
+//         .find(|&&(u, c, _, _)| scan.contains(&(u, c)))
+//         .and_then(|&(u, c, _, _)| {
+//             summary
+//                 .summary
+//                 .iter()
+//                 .position(|sm| sm.unit == u && sm.cluster == c)
+//         })
+//         .unwrap();
+//     let refr: Vec<_> = if ref_start < ref_end {
+//         let ref_start = ref_start.saturating_sub(OFFSET);
+//         let ref_end = (ref_end + OFFSET).min(summary.summary.len());
+//         summary.summary[ref_start..ref_end]
+//             .iter()
+//             .map(|x| (x.unit, x.cluster))
+//             .collect()
+//     } else {
+//         let ref_start = ref_end.saturating_sub(OFFSET);
+//         let ref_end = (ref_start + OFFSET).min(summary.summary.len());
+//         summary.summary[ref_start..ref_end]
+//             .iter()
+//             .map(|x| (x.unit, x.cluster))
+//             .collect()
+//     };
+//     // Alignment.
+//     // It is "infix-overlapping" alignment
+//     let mut dp = vec![vec![0; refr.len() + 1]; read.len() + 1];
+//     let (mut max, mut argmax) = (-1, (0, 0));
+//     for (i, &(u, c, _, _)) in read.iter().enumerate() {
+//         let q = (u, c);
+//         let i = i + 1;
+//         for (j, &r) in refr.iter().enumerate() {
+//             let j = j + 1;
+//             let mat_score = 2 * (r == q) as i32 - 1;
+//             dp[i][j] = (dp[i - 1][j - 1] + mat_score)
+//                 .max(dp[i - 1][j] - 1)
+//                 .max(dp[i][j - 1] - 1)
+//                 .max(0);
+//             if max < dp[i][j] {
+//                 (max, argmax) = (dp[i][j], (i, j));
+//             }
+//         }
+//     }
+//     // Traceback.
+//     if max <= 1 {
+//         return None;
+//     }
+//     let (mut qpos, mut rpos) = argmax;
+//     let qend = qpos;
+//     while dp[qpos][rpos] > 0 {
+//         let r = refr[rpos - 1];
+//         let q = read[qpos - 1];
+//         let mat_score = 2 * (r == (q.0, q.1)) as i32 - 1;
+//         let current = dp[qpos][rpos];
+//         if current == dp[qpos - 1][rpos - 1] + mat_score {
+//             qpos -= 1;
+//             rpos -= 1;
+//         } else if current == dp[qpos][rpos - 1] - 1 {
+//             rpos -= 1;
+//         } else if current == dp[qpos - 1][rpos - 1] - 1 {
+//             qpos -= 1;
+//         } else {
+//             panic!();
+//         }
+//     }
+//     Some((qpos, qend - 1))
+// }
 
 fn polish_segment(
     segment: &mut gfa::Segment,

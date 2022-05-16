@@ -40,7 +40,8 @@ impl Extract for definitions::DataSet {
                     } else {
                         Some(r.desc.clone())
                     };
-                    fasta::Record::with_data(&r.name, &desc, r.seq())
+                    let id = format!("{}_{}", r.name, r.id);
+                    fasta::Record::with_data(&id, &desc, r.seq())
                 })
                 .collect(),
             ExtractTarget::HiCReads => self

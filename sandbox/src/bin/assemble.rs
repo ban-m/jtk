@@ -14,11 +14,14 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet = std::fs::File::open(&args[1])
         .map(BufReader::new)
         .map(|r| serde_json::de::from_reader(r).unwrap())?;
-    // ds.encoded_reads
-    //     .iter_mut()
-    //     .flat_map(|n| n.nodes.iter_mut())
-    //     .for_each(|n| n.cluster = 0);
-    let config = AssembleConfig::new(1, 100, true, true, 3, 4f64);
+    let to_erase: bool = args.get(2).map(|x| x == "true").unwrap_or(false);
+    if to_erase {
+        ds.encoded_reads
+            .iter_mut()
+            .flat_map(|n| n.nodes.iter_mut())
+            .for_each(|n| n.cluster = 0);
+    }
+    let config = AssembleConfig::new(1, 100, false, false, 3, 4f64);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![]);
@@ -39,22 +42,22 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     }
     eprintln!("{graph}");
     graph.remove_lightweight_edges(2, true);
-    use log::*;
-    for node in graph.nodes() {
-        let (unit, cl) = node.node;
-        let seq = std::str::from_utf8(node.seq()).unwrap();
-        debug!("CONS\t>N{unit}-{cl}\nCONS\t{seq}");
-        for edge in node.edges.iter().filter(|e| e.from <= e.to) {
-            let seq = match edge.label() {
-                Some(res) => std::str::from_utf8(res).unwrap(),
-                None => continue,
-            };
-            let (funit, fcl) = edge.from;
-            let (tunit, tcl) = edge.to;
-            let id = format!("{funit}-{fcl}-{tunit}-{tcl}");
-            debug!("CONS\t>E{id}\nCONS\t{seq}");
-        }
-    }
+    // use log::*;
+    // for node in graph.nodes() {
+    //     let (unit, cl) = node.node;
+    //     let seq = std::str::from_utf8(node.seq()).unwrap();
+    //     debug!("CONS\t>N{unit}-{cl}\nCONS\t{seq}");
+    //     for edge in node.edges.iter().filter(|e| e.from <= e.to) {
+    //         let seq = match edge.label() {
+    //             Some(res) => std::str::from_utf8(res).unwrap(),
+    //             None => continue,
+    //         };
+    //         let (funit, fcl) = edge.from;
+    //         let (tunit, tcl) = edge.to;
+    //         let id = format!("{funit}-{fcl}-{tunit}-{tcl}");
+    //         debug!("CONS\t>E{id}\nCONS\t{seq}");
+    //     }
+    // }
     let (segments, edge, group, summaries) = graph.spell(c);
     let nodes = segments.into_iter().map(|node| {
         let tags = match summaries.iter().find(|x| x.id == node.sid) {

@@ -78,9 +78,9 @@ then
     echo "Global clustering seems to be done. Just assemble these files."
 else
     cat ${RESOLVED} |\
-        # jtk correct_clustering -vv  --threads ${THREADS} |\
+        jtk correct_clustering -vv  --threads ${THREADS} |\
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
 
 cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} --no_polish > /dev/null
-cat ${GFA} | awk '($1 ~ /S/)' | awk 'BEGIN{OFS="\n"}{print ">" $2, $4}' > ${GFA%.gfa}.fa
+cat ${GFA} | awk '($1 ~ /S/)' | awk '{print ">" $2 "\n" $4}' > ${GFA%.gfa}.fa

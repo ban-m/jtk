@@ -12,3 +12,5 @@ To see the detail, run `cargo build --release` and then `./target/release/jtk --
 
 
 The name, Jittoku, is taken from [a person in Zen literature](https://en.wikipedia.org/wiki/Hanshan_and_Shide).
+
+hg38's MHC region:chr6:28510120-33480577 corresponds to T2Tversion2's chr6:28381548-33301940.

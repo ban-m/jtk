@@ -131,22 +131,6 @@ fn kmer_counting(reads: &[RawRead], config: &RepeatMaskConfig) -> HashMap<u64, u
             }
             x
         })
-    // let mut result = HashMap::with_capacity(1_000_000_000);
-    // let kmers = reads
-    //     .into_par_iter()
-    //     .map(|read| read.seq().windows(k).map(to_idx))
-    //     .fold(Vec::new, |mut x, y| {
-    //         x.extend(y);
-    //         x
-    //     })
-    //     .reduce(Vec::new, |mut x, mut y| {
-    //         x.append(&mut y);
-    //         x
-    //     });
-    // for idx in kmers {
-    //     *result.entry(idx).or_default() += 1;
-    // }
-    // result
 }
 
 fn to_idx(w: &[u8]) -> u64 {

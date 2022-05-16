@@ -284,9 +284,6 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let (assignments, _score, _k) = (init_copy_num..=copy_num)
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            // let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
-            // trace!("LK\t{k}\t{score:.3}\t{expected_gain_per_read:.3}\t1");
-            // let expected_gain = expected_gain_per_read * reads.len() as f64;
             let expected_gain =
                 average_lk * number_of_improved_read(&selected_variants, &asn, k) as f64;
             trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t1");
@@ -305,7 +302,6 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let (assignments, score, k) = (init_copy_num..=copy_num)
         .map(|k| {
             let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-            // let expected_gain_per_read = calc_expected_gain_per_read(k, average_lk);
             // trace!("LK\t{k}\t{score:.3}\t{expected_gain_per_read:.3}\t1");
             // let expected_gain = expected_gain_per_read * reads.len() as f64;
             let expected_gain =

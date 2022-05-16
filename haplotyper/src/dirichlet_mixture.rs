@@ -132,51 +132,23 @@ pub fn correct_unit(
     if reads.is_empty() {
         return vec![];
     }
-    // let start = std::time::Instant::now();
     let (contexts, _up_units, _down_units) = convert_to_contexts(&reads, unit_id, config);
-    // let tot = {
-    //     let (mut up_clnum, mut down_clnum) = (HashMap::new(), HashMap::new());
-    //     for ctx in contexts.iter() {
-    //         for up in ctx.upstream.iter() {
-    //             up_clnum.entry(up.0).or_insert(up.1.len());
-    //         }
-    //         for down in ctx.downstream.iter() {
-    //             down_clnum.entry(down.0).or_insert(down.1.len());
-    //         }
-    //     }
-    //     up_clnum.values().sum::<usize>()
-    //         + down_clnum.values().sum::<usize>()
-    //         + contexts[0].center.len()
-    // };
-    // debug!(
-    //     "ReadClustering\t{}\tBEGIN\t{}\t{}\t{}\t{}",
-    //     unit_id,
-    //     contexts.len(),
-    //     up_units.len(),
-    //     down_units.len(),
-    //     tot,
-    // );
-    // let init = match k {
-    //     0..=3 => 1,
-    //     _ => k - 3,
-    // };
-    // let (mut new_clustering, _lk, new_k) = (init..=k)
-    //     .map(|k| clustering(&contexts, unit_id, k, config))
-    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())
-    //     .unwrap();
-    // let pad_len = k.saturating_sub(new_k);
-    // for (_, _, prob) in new_clustering.iter_mut() {
-    // trace!("DUMP\t{}", vec2str(prob));
-    //     prob.extend(std::iter::repeat(0f64).take(pad_len));
-    // }
-    // debug!(
-    //     "ReadClustering\tDir2\tFinal\t{}\t{}\t{:.4}",
-    //     unit_id, new_k, lk
-    // );
+    if log_enabled!(log::Level::Trace) {
+        for (i, ctx) in contexts.iter().enumerate() {
+            trace!("CTX\t{i}\n{ctx}");
+        }
+    }
     let (new_clustering, _lk, _k) = clustering(&contexts, unit_id, k, config);
-    // let end = std::time::Instant::now();
-    // let duration = (end - start).as_secs();
-    // debug!("ReadClustering\t{}\tEND\t{}", unit_id, duration,);
+    if log_enabled!(log::Level::Trace) {
+        for (id, pos, posterior) in new_clustering.iter() {
+            let cl = argmax(posterior);
+            let read = reads.iter().find(|r| r.id == *id).unwrap();
+            let prev = &read.nodes[*pos];
+            let prev_cl = prev.cluster;
+            let dump: Vec<_> = posterior.iter().map(|x| format!("{x:.3}")).collect();
+            trace!("DUMP\t{id}\t{pos}\t{prev_cl}\t{cl}\t{}", dump.join("\t"));
+        }
+    }
     new_clustering
 }
 
@@ -277,13 +249,7 @@ fn clustering(
     }
     let end = std::time::Instant::now();
     let duration = (end - start).as_secs();
-    trace!(
-        "CORRECTION\tMAX\t{}\t{}\t{}\t{}",
-        unit,
-        last_upd,
-        cluster_num,
-        duration
-    );
+    trace!("CORRECTION\tMAX\t{unit}\t{last_upd}\t{cluster_num}\t{duration}\t{likelihood:.4}");
     (asn, likelihood, cluster_num)
 }
 
