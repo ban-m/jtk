@@ -19,36 +19,37 @@ pub trait PurgeDivergent {
 }
 
 use rayon::prelude::*;
-const THR: f64 = 0.15;
-const SD_SIGMA: f64 = 8f64;
-use crate::stats::Stats;
+const THR: f64 = 0.1;
+// const SD_SIGMA: f64 = 8f64;
+// use crate::stats::Stats;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
         let prev = self.encoded_reads.len();
-        let to_be_removed = purge_diverged_nodes(self, THR, config);
-        let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
-        debug!("PD\tREMOVED\t{}\t{THR}", removed_nodes);
-        let seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
-        self.encoded_reads
-            .par_iter_mut()
-            .zip(to_be_removed)
-            .for_each(|(read, (id, indices))| {
-                assert_eq!(read.id, id);
-                assert!(indices.is_sorted());
-                for &index in indices.iter().rev() {
-                    read.remove(index);
-                }
-            });
-        self.encoded_reads.retain(|read| !read.nodes.is_empty());
-        self.encoded_reads.par_iter_mut().for_each(|read| {
-            let mut nodes = vec![];
-            nodes.append(&mut read.nodes);
-            let seq = seqs[&read.id];
-            *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-        });
+        let selection = purge_diverged_nodes(self, THR, config);
+        // let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
+        // debug!("PD\tREMOVED\t{}\t{THR}", removed_nodes);
+        // let seqs: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+        // self.encoded_reads
+        //     .par_iter_mut()
+        //     .zip(to_be_removed)
+        //     .for_each(|(read, (id, indices))| {
+        //         assert_eq!(read.id, id);
+        //         assert!(indices.is_sorted());
+        //         for &index in indices.iter().rev() {
+        //             read.remove(index);
+        //         }
+        //     });
+        // self.encoded_reads.retain(|read| !read.nodes.is_empty());
+        // self.encoded_reads.par_iter_mut().for_each(|read| {
+        //     let mut nodes = vec![];
+        //     nodes.append(&mut read.nodes);
+        //     let seq = seqs[&read.id];
+        //     *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+        // });
         debug!("PD\tEncodedRead\t{}\t{}", prev, self.encoded_reads.len());
         // Reclustering...
-        let selection = HashSet::new();
+        // let selection = HashSet::new();
+        // let selection: HashSet<_> = to_be_removed.iter().map(|x| x.0).collect();
         re_cluster(self, config.threads, &selection);
     }
     // fn purge_dev(&mut self, config: &PurgeDivConfig) {
@@ -212,11 +213,8 @@ fn re_cluster(ds: &mut DataSet, threads: usize, selection: &HashSet<u64>) {
     crate::local_clustering::local_clustering_selected(ds, &changed_units);
 }
 
-fn purge_diverged_nodes(
-    ds: &mut DataSet,
-    thr: f64,
-    config: &PurgeDivConfig,
-) -> Vec<(u64, Vec<usize>)> {
+fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> HashSet<u64> {
+    //Vec<(u64, Vec<usize>)> {
     let diverged_clusters = get_diverged_clusters_dev(ds, thr, config);
     // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
     let diverged_clusters: Vec<_> = diverged_clusters
@@ -228,10 +226,10 @@ fn purge_diverged_nodes(
             xs
         })
         .collect();
-    let has_diverged_cluster: Vec<bool> = diverged_clusters
-        .iter()
-        .map(|xs| xs.iter().any(|&x| x))
-        .collect();
+    // let has_diverged_cluster: Vec<bool> = diverged_clusters
+    //     .iter()
+    //     .map(|xs| xs.iter().any(|&x| x))
+    //     .collect();
     let removed_clusters: usize = diverged_clusters
         .iter()
         .map(|cls| cls.iter().filter(|&&x| x).count())
@@ -243,46 +241,102 @@ fn purge_diverged_nodes(
         }
     }
     // Modify cluster number.
-    for unit in ds
-        .selected_chunks
-        .iter_mut()
-        .filter(|u| has_diverged_cluster[u.id as usize])
-    {
-        let squished = diverged_clusters[unit.id as usize]
-            .iter()
-            .filter(|&&x| x)
-            .count();
+    for unit in ds.selected_chunks.iter_mut() {
+        let id = unit.id as usize;
+        let squished = diverged_clusters[id].iter().filter(|&&x| x).count();
         unit.cluster_num -= squished;
     }
-    // Maybe we need to modify the copy number, thoguth....
-    ds.encoded_reads
+    // for unit in ds
+    //     .selected_chunks
+    //     .iter_mut()
+    //     .filter(|u| has_diverged_cluster[u.id as usize])
+    // {
+    //     let squished = diverged_clusters[unit.id as usize]
+    //         .iter()
+    //         .filter(|&&x| x)
+    //         .count();
+    //     unit.cluster_num -= squished;
+    // }
+    let removed_nodes: usize = ds
+        .encoded_reads
         .iter_mut()
-        .map(|r| {
-            let indices: Vec<_> = r
-                .nodes
-                .iter_mut()
-                .enumerate()
-                .filter(|(_, node)| has_diverged_cluster[node.unit as usize])
-                .filter_map(|(idx, node)| {
-                    let cluster_info = &diverged_clusters[node.unit as usize];
-                    if cluster_info[node.cluster as usize] {
-                        Some(idx)
-                    } else {
-                        remove_diverged(node, cluster_info);
-                        None
-                    }
-                })
-                .collect();
-            (r.id, indices)
+        .map(|read| {
+            let orig = read.nodes.len();
+            read.nodes
+                .retain(|node| !diverged_clusters[node.unit as usize][node.cluster as usize]);
+            for node in read.nodes.iter_mut() {
+                let cluster_info = &diverged_clusters[node.unit as usize];
+                if cluster_info.iter().any(|&b| b) {
+                    remove_diverged(node, cluster_info);
+                }
+            }
+            orig - read.nodes.len()
         })
+        .sum();
+    debug!("PD\tREMOVED\t{}\t{THR}", removed_nodes);
+    ds.encoded_reads.retain(|read| !read.nodes.is_empty());
+    let seqs: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    ds.encoded_reads.par_iter_mut().for_each(|read| {
+        let mut nodes = vec![];
+        nodes.append(&mut read.nodes);
+        let seq = seqs[&read.id];
+        *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+    });
+    diverged_clusters
+        .iter()
+        .enumerate()
+        .filter_map(|(id, is_div)| is_div.iter().any(|&x| x).then(|| id as u64))
         .collect()
+    // let to_be_removed: Vec<_> = ds
+    //     .encoded_reads
+    //     .iter_mut()
+    //     .map(|r| {
+    //         let indices: Vec<_> = r
+    //             .nodes
+    //             .iter_mut()
+    //             .enumerate()
+    //             .filter(|(_, node)| has_diverged_cluster[node.unit as usize])
+    //             .filter_map(|(idx, node)| {
+    //                 let cluster_info = &diverged_clusters[node.unit as usize];
+    //                 if cluster_info[node.cluster as usize] {
+    //                     Some(idx)
+    //                 } else {
+    //                     remove_diverged(node, cluster_info);
+    //                     None
+    //                 }
+    //             })
+    //             .collect();
+    //         (r.id, indices)
+    //     })
+    //     .collect();
+    // let removed_nodes: usize = to_be_removed.iter().map(|(_, xs)| xs.len()).sum();
+    // debug!("PD\tREMOVED\t{}\t{THR}", removed_nodes);
+    // let seqs: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
+    // ds.encoded_reads
+    //     .par_iter_mut()
+    //     .zip(to_be_removed)
+    //     .for_each(|(read, (id, indices))| {
+    //         assert_eq!(read.id, id);
+    //         assert!(indices.is_sorted());
+    //         for &index in indices.iter().rev() {
+    //             read.remove(index);
+    //         }
+    //     });
+    // ds.encoded_reads.retain(|read| !read.nodes.is_empty());
+    // ds.encoded_reads.par_iter_mut().for_each(|read| {
+    //     let mut nodes = vec![];
+    //     nodes.append(&mut read.nodes);
+    //     let seq = seqs[&read.id];
+    //     *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+    // });
 }
 
 // Unit -> Cluster -> If the cluster is very diverged.
 pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
     use crate::encode::deletion_fill::estimate_error_rate_dev;
-    let error_rate = ds.error_rate();
-    let fallback = error_rate.total + SD_SIGMA * error_rate.total_sd;
+    // let error_rate = ds.error_rate();
+    // let fallback = error_rate.total + SD_SIGMA * error_rate.total_sd;
+    let fallback = crate::determine_units::calc_sim_thr(&ds, 0.5);
     debug!("PD\tFallback\t{fallback}");
     let (_, unit_error_rate, _) = estimate_error_rate_dev(&ds, fallback);
     unit_error_rate

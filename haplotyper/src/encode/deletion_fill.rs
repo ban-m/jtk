@@ -125,6 +125,11 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     let mut find_new_node = HashSet::new();
     for t in 0..OUTER_LOOP {
         let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate_dev(ds, fallback);
+        //         for read in ds.encoded_reads.iter() {
+        //     let (readid, len) = (read.id as usize, read.nodes.len() as f64);
+        //     let error = read_error_rate[readid];
+        //     read_error_rate[readid] = (error * len + fallback) / (len + 1f64);
+        // }
         debug!("Variance\t{}\t{}", t, deviation);
         let (new_nodes, is_updated) =
             filling_until_stable(ds, (&read_error_rate, &unit_error_rate, deviation));
@@ -209,12 +214,12 @@ fn filling_until_stable(
 
 // Error Rate of the reads, error rate of the units, deviation of the error rate
 pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Vec<f64>>, f64) {
-    type Read = (u64, Vec<(usize, usize, f64)>);
+    type Read = (usize, Vec<(usize, usize, f64)>);
     fn residual(errors: &[Read], reads: &[f64], units: &[Vec<f64>]) -> f64 {
         let residual: f64 = errors
             .iter()
-            .map(|(readid, errors)| -> f64 {
-                let read = reads[*readid as usize];
+            .map(|&(readid, ref errors)| -> f64 {
+                let read = reads[readid];
                 let data_error: f64 = errors
                     .iter()
                     .map(|&(unit, cluster, error)| (error - read - units[unit][cluster]).powi(2))
@@ -234,9 +239,11 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
         }
         let unit_errors: Vec<_> = cluster_num.iter().map(|&x| vec![0f64; x]).collect();
         let mut counts: Vec<_> = cluster_num.iter().map(|&x| vec![0; x]).collect();
-        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            let (unit, cluster) = (node.unit as usize, node.cluster as usize);
-            counts[unit][cluster] += 1;
+        for read in ds.encoded_reads.iter() {
+            for node in read.nodes.iter() {
+                let (unit, cluster) = (node.unit as usize, node.cluster as usize);
+                counts[unit][cluster] += 1;
+            }
         }
         (unit_errors, counts)
     };
@@ -259,38 +266,39 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
                     (node.unit as usize, node.cluster as usize, error)
                 })
                 .collect::<Vec<_>>();
-            (read.id, errors)
+            (read.id as usize, errors)
         })
         .collect();
     let mut current_resid = residual(&errors, &read_error_rate, &unit_error_rate);
     loop {
         // Re-estimation of unit error rate
         unit_error_rate.iter_mut().flatten().for_each(|x| *x = 0f64);
-        for (readid, errors) in errors.iter() {
-            let read_error = read_error_rate[*readid as usize];
+        for &(readid, ref errors) in errors.iter() {
+            let read_error = read_error_rate[readid];
             for &(unit, cluster, error) in errors.iter() {
                 unit_error_rate[unit][cluster] += error - read_error;
             }
         }
         for (resid, counts) in unit_error_rate.iter_mut().zip(unit_counts.iter()) {
             for (err, count) in resid.iter_mut().zip(counts) {
-                //*err = *err / (*count as f64 + 1f64);
-                *err = err.max(0f64) / (*count as f64 + 1f64);
+                *err = err.max(0f64) / (*count as f64 + 0.1f64);
             }
         }
         // Re-estimate read error rate
-        for (readid, errors) in errors.iter() {
+        for &(readid, ref errors) in errors.iter() {
             let residual: f64 = errors
                 .iter()
                 .map(|&(unit, cluster, error)| error - unit_error_rate[unit][cluster])
                 .sum();
-            read_error_rate[*readid as usize] = residual / errors.len() as f64;
+            let len = errors.len() as f64 + 1f64;
+            read_error_rate[readid] = (residual + fallback) / len;
         }
         let resid = residual(&errors, &read_error_rate, &unit_error_rate);
         if (current_resid - resid).abs() < 0.001 {
             break;
         }
         current_resid = resid;
+        // debug!("ERROR\t{current_resid:.4}");
     }
     let mut residuals: Vec<f64> = errors
         .iter()
@@ -311,11 +319,6 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
         .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
         .1
         .sqrt();
-    // Fix read error rate
-    // for (&readid, len) in errors.iter().map(|(id, es)| (id, es.len() as f64)) {
-    //     let error = read_error_rate[readid as usize];
-    //     read_error_rate[readid as usize] = (error * len + fallback) / (len + 1f64);
-    // }
     (read_error_rate, unit_error_rate, median)
 }
 

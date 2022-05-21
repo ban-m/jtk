@@ -41,6 +41,8 @@ impl DirichletMixtureCorrection for DataSet {
             .collect();
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             assert_eq!(node.posterior.len(), cl_num[&node.unit], "{}", node.unit);
+            let sum: f64 = node.posterior.iter().map(|x| x.exp()).sum();
+            assert!((sum - 1f64).abs() < 0.1, "{:?}", node.posterior);
         }
         // It is OK to use c.cluster_num here, not c.copy_num.
         // This is because c.cluster_num is a more correct guess of the

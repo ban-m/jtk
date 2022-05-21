@@ -39,8 +39,9 @@ fn main() -> std::io::Result<()> {
                 .collect::<Vec<_>>()
         })
         .collect();
-    use haplotyper::determine_units::TAKE_THR;
-    let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, TAKE_THR);
+    // use haplotyper::determine_units::TAKE_THR;
+    // let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, TAKE_THR);
+    let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, 0.5);
     eprintln!("{sim_thr}");
     let (read_error_rate, unit_error_rate, _) =
         haplotyper::encode::deletion_fill::estimate_error_rate_dev(&ds, sim_thr);

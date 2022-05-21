@@ -55,12 +55,12 @@ else
         jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi
 
-
 if [ -f ${PURGED} ]
 then
     echo "Suspicious encodings are already purged."
 else
-    cat ${CLUSTERED} | jtk purge_diverged --threads ${THREADS} -vv > ${PURGED}
+    cat ${CLUSTERED} | jtk purge_diverged --threads ${THREADS} -vv |\
+        jtk purge_diverged --threads ${THREADS} -vv > ${PURGED}
 fi
 
 if [ -f ${RESOLVED} ]

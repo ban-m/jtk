@@ -1164,11 +1164,11 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("threads")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let repeat_num: usize = matches
+    let _repeat_num: usize = matches
         .value_of("repeat_num")
         .and_then(|num| num.parse::<usize>().ok())
         .unwrap();
-    let threshold: usize = matches
+    let _threshold: usize = matches
         .value_of("coverage_threshold")
         .and_then(|num| num.parse().ok())
         .unwrap();
@@ -1178,9 +1178,12 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     {
         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
     }
-    use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-    let config = ClusteringConfig::new(repeat_num, 10, threshold);
+    use haplotyper::phmm_likelihood_correction::*;
+    let config = CorrectionConfig::default();
     dataset.correct_clustering(&config);
+    // use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+    // let config = ClusteringConfig::new(repeat_num, 10, threshold);
+    // dataset.correct_clustering(&config);
 }
 
 fn resolve_tangle(matches: &clap::ArgMatches, _dataset: &mut DataSet) {

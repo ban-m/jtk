@@ -12,19 +12,22 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    use haplotyper::dirichlet_mixture::{
-        correct_unit, ClusteringConfig, DirichletMixtureCorrection,
-    };
-    let config = ClusteringConfig::default();
-    for unit in args[2..].iter() {
-        let unit: u64 = unit.parse().unwrap();
-        let k = ds
-            .selected_chunks
-            .iter()
-            .find(|u| u.id == unit)
-            .unwrap()
-            .cluster_num;
-        correct_unit(&ds, unit, k, &config);
+    let nodes: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .flat_map(|r| r.nodes.iter().filter(|n| n.unit == 659))
+        .collect();
+    let cps = &[2f64, 1f64, 1f64];
+    for (i, u) in nodes.iter().enumerate() {
+        for v in nodes.iter().skip(i + 1) {
+            let u_post = &u.posterior;
+            let v_post = &v.posterior;
+            let center = haplotyper::phmm_likelihood_correction::sim(u_post, v_post, cps);
+            let line1: Vec<_> = u_post.iter().map(|x| format!("{x:.2}")).collect();
+            let line2: Vec<_> = v_post.iter().map(|x| format!("{x:.2}")).collect();
+            println!("[{}]\t[{}]\t{center:.3}", line1.join(","), line2.join(","));
+        }
     }
+
     Ok(())
 }

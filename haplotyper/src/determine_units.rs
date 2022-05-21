@@ -977,6 +977,6 @@ pub fn calc_sim_thr(ds: &DataSet, quantile: f64) -> f64 {
         .collect();
     error_rates.sort_by(|x, y| x.partial_cmp(y).unwrap());
     assert!(quantile <= 1f64);
-    let idx = ((error_rates.len() as f64 * quantile).floor() as usize).max(error_rates.len() - 1);
+    let idx = ((error_rates.len() as f64 * quantile).floor() as usize).min(error_rates.len() - 1);
     error_rates[idx]
 }

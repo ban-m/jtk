@@ -1,5 +1,6 @@
 use definitions::*;
 use sandbox::IS_MOCK;
+use std::collections::HashMap;
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -7,10 +8,15 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        assert!(node.posterior.iter().all(|x| !x.is_nan()));
-    }
     println!("UNIT\tid\tunit\tcluster\thap1\thap2\tpurity\tscore");
+    {
+        let mut ds = ds.clone();
+        use haplotyper::phmm_likelihood_correction::*;
+        let config = CorrectionConfig::default();
+        ds.correct_clustering(&config);
+        // println!("{}", serde_json::ser::to_string(&ds).unwrap());
+        dump(&ds, "align_spectral");
+    }
     {
         let mut ds = ds.clone();
         use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
@@ -28,8 +34,8 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn dump(ds: &DataSet, id: &str) {
-    use std::collections::HashMap;
     let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     let mut counts: HashMap<(u64, u64), [u32; 2]> = HashMap::new();
     for read in ds.encoded_reads.iter() {

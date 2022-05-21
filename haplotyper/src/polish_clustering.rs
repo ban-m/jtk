@@ -4,13 +4,8 @@
 // use definitions::*;
 // use rayon::prelude::*;
 // use std::collections::HashMap;
-// #[derive(Debug, Clone, Copy)]
-// pub struct PolishClusteringConfig {
-//     pub mat_score: i32,
-//     pub mismat_score: i32,
-//     pub gap_score: i32,
-//     pub score_thr: i32,
-// }
+// #[derive(Debug, Clone, Copy, Default)]
+// pub struct PolishClusteringConfig {}
 
 // impl PolishClusteringConfig {
 //     pub fn new(mat_score: i32, mismat_score: i32, gap_score: i32, score_thr: i32) -> Self {
