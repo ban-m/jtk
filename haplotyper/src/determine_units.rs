@@ -119,7 +119,13 @@ impl DetermineUnit for definitions::DataSet {
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
         self.selected_chunks = pick_random(&self.raw_reads, &config, &mut rng);
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
-        remove_overlapping_units_dev(self, config).unwrap();
+        let overlap_identity_thr = match self.read_type {
+            ReadType::CCS => 0.95,
+            ReadType::CLR => 0.75,
+            ReadType::ONT => 0.85,
+            ReadType::None => 0.85,
+        };
+        remove_overlapping_units_dev(self, overlap_identity_thr, config).unwrap();
         compaction_units(self);
         // 1st polishing.
         use crate::stats::Stats;
@@ -150,7 +156,10 @@ impl DetermineUnit for definitions::DataSet {
                 }
             }
             compaction_units(self);
-            remove_overlapping_units_dev(self, config).unwrap();
+            // Here we usually see almost no errors in the reference chunk,
+            // thus using very conservative and threshold for removing reference chunks.
+            let ovlp_thr = 0.95;
+            remove_overlapping_units_dev(self, ovlp_thr, config).unwrap();
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
             debug!("UNITNUM\t{}\tFILTERED\t1", self.selected_chunks.len());
@@ -307,17 +316,21 @@ pub fn is_proper_overlap(paf: &bio_utils::paf::PAF) -> bool {
     q_to_t_forward || q_to_t_rev || t_to_q_forward || t_to_q_rev
 }
 
-fn remove_overlapping_units_dev(ds: &mut DataSet, config: &UnitConfig) -> std::io::Result<()> {
+fn remove_overlapping_units_dev(
+    ds: &mut DataSet,
+    overlap_thr: f64,
+    config: &UnitConfig,
+) -> std::io::Result<()> {
     let unit_len = ds.selected_chunks.len();
     // How long one overlap should be at least.
     let overlap_len = config.chunk_len / 2;
     // This is the percent identy.
-    let overlap_thr: f64 = match ds.read_type {
-        ReadType::CCS => 0.95,
-        ReadType::CLR => 0.75,
-        ReadType::ONT => 0.85,
-        ReadType::None => 0.85,
-    };
+    // let overlap_thr: f64 = match ds.read_type {
+    //     ReadType::CCS => 0.95,
+    //     ReadType::CLR => 0.75,
+    //     ReadType::ONT => 0.85,
+    //     ReadType::None => 0.85,
+    // };
     let mm2 = mm2_unit_overlap(ds, config)?;
     let alignments = String::from_utf8_lossy(&mm2);
     let alignments = alignments

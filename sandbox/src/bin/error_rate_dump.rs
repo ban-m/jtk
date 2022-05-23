@@ -39,12 +39,13 @@ fn main() -> std::io::Result<()> {
                 .collect::<Vec<_>>()
         })
         .collect();
-    // use haplotyper::determine_units::TAKE_THR;
-    // let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, TAKE_THR);
-    let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, 0.5);
+    use haplotyper::determine_units::TAKE_THR;
+    let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, TAKE_THR);
+    // let sim_thr = haplotyper::determine_units::calc_sim_thr(&ds, 0.5);
     eprintln!("{sim_thr}");
-    let (read_error_rate, unit_error_rate, _) =
+    let (read_error_rate, unit_error_rate, median_of_var) =
         haplotyper::encode::deletion_fill::estimate_error_rate_dev(&ds, sim_thr);
+    eprintln!("SD\t{median_of_var}");
     use std::io::BufWriter;
     if let Ok(mut wtr) = std::fs::File::create("dump.log").map(BufWriter::new) {
         for read in ds.encoded_reads.iter() {
@@ -57,7 +58,7 @@ fn main() -> std::io::Result<()> {
             }
         }
     }
-
+    println!("ID\tUNIT\tCLUSTER\tERROR\tEXPECTED");
     for (id, unit, cluster, error) in error_rates {
         let expected =
             read_error_rate[id as usize] + unit_error_rate[unit as usize][cluster as usize];

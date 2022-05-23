@@ -429,7 +429,15 @@ fn align<'a>(
     arm2: &[(u64, &'a [f64])],
     copy_numbers: &[Vec<f64>],
 ) -> f64 {
-    const GAP: f64 = -1f64;
+    // const GAP: f64 = -1f64;
+    // Allow gap without any penalty.
+    // It might seem very peculer, but it is OK,
+    // because if this deletion is indeed true one,
+    // other (unit,cluster) pair would be informative.
+    // Otherwise, or the deletion is just random error,
+    // we should ignore them from the score calulation,
+    // as we do usual seuqnecing errors.
+    const GAP: f64 = 0f64;
     const MISM: f64 = -10000f64;
     let mut dp = vec![vec![0f64; arm2.len() + 1]; arm1.len() + 1];
     for (i, _) in arm1.iter().enumerate() {

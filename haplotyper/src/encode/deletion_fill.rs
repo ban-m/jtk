@@ -124,15 +124,11 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
     for t in 0..OUTER_LOOP {
-        let (read_error_rate, unit_error_rate, deviation) = estimate_error_rate_dev(ds, fallback);
-        //         for read in ds.encoded_reads.iter() {
-        //     let (readid, len) = (read.id as usize, read.nodes.len() as f64);
-        //     let error = read_error_rate[readid];
-        //     read_error_rate[readid] = (error * len + fallback) / (len + 1f64);
-        // }
-        debug!("Variance\t{}\t{}", t, deviation);
+        let (read_error_rate, unit_error_rate, standard_dev) =
+            estimate_error_rate_dev(ds, fallback);
+        debug!("ErrorRateSTDDev\t{}\t{}", t, standard_dev);
         let (new_nodes, is_updated) =
-            filling_until_stable(ds, (&read_error_rate, &unit_error_rate, deviation));
+            filling_until_stable(ds, (&read_error_rate, &unit_error_rate, standard_dev));
         find_new_node.extend(new_nodes);
         if !is_updated {
             break;
@@ -143,7 +139,7 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
 
 fn filling_until_stable(
     ds: &mut DataSet,
-    (read_error_rate, unit_error_rate, deviation): (&[f64], &[Vec<f64>], f64),
+    (read_error_rate, unit_error_rate, stddev): (&[f64], &[Vec<f64>], f64),
 ) -> (HashSet<u64>, bool) {
     let raw_seq: HashMap<_, _> = ds
         .raw_reads
@@ -176,7 +172,7 @@ fn filling_until_stable(
                     let seq = raw_seq[&read.id];
                     let read = (read, seq, error_rate, is_updated);
                     let units = (&units, unit_error_rate, &representative);
-                    correct_deletion_error(read, fails, units, deviation, &read_skeltons)
+                    correct_deletion_error(read, fails, units, stddev, &read_skeltons)
                 })
                 .collect()
         } else {
@@ -192,7 +188,7 @@ fn filling_until_stable(
                     let seq = raw_seq[&read.id];
                     let read = (read, seq, error_rate, is_updated);
                     let units = (&units, unit_error_rate, &representative);
-                    correct_deletion_error(read, fails, units, deviation, &read_skeltons)
+                    correct_deletion_error(read, fails, units, stddev, &read_skeltons)
                 })
                 .collect()
         };
@@ -212,7 +208,7 @@ fn filling_until_stable(
     (find_new_node, true)
 }
 
-// Error Rate of the reads, error rate of the units, deviation of the error rate
+// Error Rate of the reads, error rate of the units, and the sqrt of the median of the squared error.
 pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Vec<f64>>, f64) {
     type Read = (usize, Vec<(usize, usize, f64)>);
     fn residual(errors: &[Read], reads: &[f64], units: &[Vec<f64>]) -> f64 {
@@ -290,15 +286,15 @@ pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Ve
                 .iter()
                 .map(|&(unit, cluster, error)| error - unit_error_rate[unit][cluster])
                 .sum();
-            let len = errors.len() as f64 + 1f64;
-            read_error_rate[readid] = (residual + fallback) / len;
+            read_error_rate[readid] = residual / errors.len() as f64;
+            // let len = errors.len() as f64 + 1f64;
+            // read_error_rate[readid] = (residual + fallback) / len;
         }
         let resid = residual(&errors, &read_error_rate, &unit_error_rate);
         if (current_resid - resid).abs() < 0.001 {
             break;
         }
         current_resid = resid;
-        // debug!("ERROR\t{current_resid:.4}");
     }
     let mut residuals: Vec<f64> = errors
         .iter()
@@ -522,7 +518,7 @@ fn abs(x: usize, y: usize) -> usize {
 }
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
-const OFFSET: usize = 300;
+const OFFSET: usize = 150;
 // returns the ids of the units newly encoded.
 // Maybe each (unit,cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
@@ -534,7 +530,7 @@ pub fn correct_deletion_error(
     (read, seq, read_error, is_changed): (&mut EncodedRead, &[u8], f64, &mut bool),
     failed_trials: &mut Vec<(usize, LightNode)>,
     unitinfo: UnitInfo,
-    deviation: f64,
+    stddev: f64,
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
     let pileups = get_pileup(read, reads);
@@ -542,11 +538,11 @@ pub fn correct_deletion_error(
     let mut inserts = vec![];
     let ins_thr = INS_THR.min(nodes.len());
     for (idx, pileup) in pileups.iter().enumerate() {
-        //.take(nodes.len()).skip(1) {
+        //for (idx, pileup) in pileups.iter().enumerate().take(nodes.len()).skip(1) {
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
         head_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
         let head_best =
-            try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, deviation);
+            try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, stddev);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
             None => failed_trials.extend(head_cand.into_iter().map(|(n, _)| (idx, n))),
@@ -554,7 +550,7 @@ pub fn correct_deletion_error(
         let mut tail_cand = pileup.check_insertion_tail(nodes, ins_thr, idx);
         tail_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
         let tail_best =
-            try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, deviation);
+            try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, stddev);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
             None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
@@ -568,7 +564,7 @@ pub fn correct_deletion_error(
             read.nodes.insert(idx + accum_inserts, node);
         }
     }
-    *is_changed |= remove_highly_erroneous(read, read_error, unitinfo, deviation);
+    *is_changed |= remove_highly_erroneous(read, read_error, unitinfo, stddev);
     if *is_changed && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
@@ -586,7 +582,7 @@ fn remove_highly_erroneous(
     read: &mut EncodedRead,
     read_error: f64,
     (units, unit_error_rate, _): UnitInfo,
-    deviation: f64,
+    stddev: f64,
 ) -> bool {
     let orig_len = read.nodes.len();
     read.nodes.retain(|node| {
@@ -594,7 +590,7 @@ fn remove_highly_erroneous(
         let diff = aln.iter().filter(|&&x| x != b'|').count();
         let error_rate = diff as f64 / aln.len() as f64;
         let expected = read_error + unit_error_rate[node.unit as usize][node.cluster as usize];
-        let threshold = (expected + THR * deviation).max(0f64);
+        let threshold = (expected + THR * stddev).max(0f64);
         // if threshold < error_rate {
         //     let unit_error = unit_error_rate[node.unit as usize][node.cluster as usize];
         //     let (unit,cluster) = (node.unit,node.cluster);
@@ -618,7 +614,7 @@ fn try_encoding_head(
     (units, unit_error_rate, consensi): UnitInfo,
     seq: &[u8],
     read_error: f64,
-    deviation: f64,
+    stddev: f64,
 ) -> Option<(Node, i32)> {
     head_cand
         .iter()
@@ -639,7 +635,7 @@ fn try_encoding_head(
                 return None;
             }
             let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
-            let error_rate_bound = expected + THR * deviation;
+            let error_rate_bound = expected + THR * stddev;
             let position = (start_position, end_position, node.is_forward);
             let unit_info = (unit, cluster, cons.as_slice());
             encode_node(seq, position, unit_info, error_rate_bound)
@@ -654,7 +650,7 @@ fn try_encoding_tail(
     (units, unit_error_rate, consensi): UnitInfo,
     seq: &[u8],
     read_error: f64,
-    deviation: f64,
+    stddev: f64,
 ) -> Option<(Node, i32)> {
     tail_cand
         .iter()
@@ -678,7 +674,7 @@ fn try_encoding_tail(
             let positions = (start_position, end_position, node.is_forward);
             let unit_info = (unit, cluster, cons.as_slice());
             let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
-            let error_rate_bound = expected + THR * deviation;
+            let error_rate_bound = expected + THR * stddev;
             encode_node(seq, positions, unit_info, error_rate_bound)
         })
         .max_by_key(|x| x.1)
@@ -741,28 +737,6 @@ fn fine_mapping<'a>(
             .collect()
     }
     let (query, trim_head, trim_tail, ops, band) = {
-        // let mode = edlib_sys::AlignMode::Infix;
-        // let task = edlib_sys::AlignTask::Alignment;
-        // Note that unit.seq would be smaller than query! So the operations should be reversed.
-        // let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
-        // let (aln_start, aln_end) = alignment.locations.unwrap()[0];
-        // let aln_end = aln_end + 1;
-        // let band = (((aln_end - aln_start + 1) as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-        // let mut ops = Vec::with_capacity(3 * orig_query.len() / 2);
-        // ops.extend(std::iter::repeat(kiley::Op::Del).take(aln_start));
-        // ops.extend(edlib_op_to_kiley_op(&alignment.operations.unwrap()));
-        // ops.extend(std::iter::repeat(kiley::Op::Del).take(orig_query.len() - aln_end));
-        // let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
-        // // Reverse ops
-        // for op in ops.iter_mut() {
-        //     *op = match *op {
-        //         kiley::Op::Ins => kiley::Op::Del,
-        //         kiley::Op::Del => kiley::Op::Ins,
-        //         x => x,
-        //     }
-        // }
-        // let (trim_head, trim_tail) = trim_head_tail_insertion(&mut ops);
-        // let query = &orig_query[trim_head..orig_query.len() - trim_tail];
         // TODO:Is this correct?
         let mode = edlib_sys::AlignMode::Global;
         let task = edlib_sys::AlignTask::Alignment;
@@ -800,17 +774,11 @@ fn fine_mapping<'a>(
         } else {
             trace!("FILLDEL\t{}\tNG", info);
             if log_enabled!(log::Level::Trace) {
-                if unit.id == 326 {
-                    eprintln!("F326\t>unit");
-                    eprintln!("F326\t{}", std::str::from_utf8(unitseq).unwrap());
-                    eprintln!("F326\t>read");
-                    eprintln!("F326\t{}", std::str::from_utf8(orig_query).unwrap());
-                }
                 let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
                 for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
                     eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
                     eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
-                    eprintln!("ALN\t{}\n", String::from_utf8_lossy(yr));
+                    eprintln!("ALN\t{}", String::from_utf8_lossy(yr));
                 }
             }
         }
@@ -866,7 +834,6 @@ fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>) -> (usize, usize) {
 }
 
 fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton) -> Option<bool> {
-    // fn check_alignment_by_unitmatch(units: &HashSet<LightNode>, query: &ReadSkelton) -> Option<bool> {
     fn count_match(units: &[(u64, u64, bool)], query: &[(u64, u64, bool)]) -> usize {
         let mut r_ptr = units.iter().peekable();
         let mut q_ptr = query.iter().peekable();
@@ -890,12 +857,6 @@ fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton)
     keys.iter_mut().for_each(|x| x.2 = !x.2);
     keys.sort_unstable();
     let reverse_match = count_match(units, &keys);
-    // let forward_match = query.nodes.iter().filter(|n| units.contains(n)).count();
-    // let reverse_match = query
-    //     .nodes
-    //     .iter()
-    //     .filter(|n| units.contains(&LightNode::rev(n)))
-    //     .count();
     let min_match = MIN_MATCH.min(units.len());
     (min_match <= forward_match.max(reverse_match)).then(|| reverse_match <= forward_match)
 }
@@ -903,13 +864,12 @@ fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton)
 // Align read skeltons to read, return the pileup sumamries.
 // i-> insertions before the i-th nodes.
 // The coverage of the last slot is always zero.
-fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
+pub fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
     assert!(!read.nodes.is_empty());
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     let skelton = ReadSkelton::new(read);
     let mut units_in_read: Vec<_> = skelton.nodes.iter().map(|n| n.key()).collect();
     units_in_read.sort_unstable();
-    // let units_in_read: HashSet<_> = skelton.nodes.iter().copied().collect();
     for query in reads.iter() {
         let is_forward = match check_alignment_by_unitmatch(&units_in_read, query) {
             Some(is_forward) => is_forward,
@@ -970,6 +930,7 @@ const MIN_MATCH: usize = 2;
 // Minimum required alignment score.
 const SCORE_THR: i32 = 1;
 fn alignment(_: u64, read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Option<Vec<Op>> {
+    // let mut query = query.clone();
     let (score, ops) = match dir {
         true => pairwise_alignment_gotoh(read, query),
         false => {
@@ -979,6 +940,16 @@ fn alignment(_: u64, read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Opti
     };
     let match_num = get_match_units(&ops);
     let min_match = MIN_MATCH.min(read.nodes.len()).min(query.nodes.len());
+    // let que: Vec<_> = query
+    //     .nodes
+    //     .iter()
+    //     .map(|x| format!("{}-{}", x.unit, x.cluster))
+    //     .collect();
+    // println!(
+    //     "QUE\t{match_num}\t{score}\t{dir}\t{}\t{}",
+    //     query.id,
+    //     que.join("\t")
+    // );
     (min_match <= match_num && SCORE_THR <= score && is_proper(&ops)).then(|| ops)
 }
 
@@ -1193,7 +1164,7 @@ impl Pileup {
     fn add_tail(&mut self, node: LightNode) {
         self.tail_inserted.push(node);
     }
-    fn check_insertion_head(
+    pub fn check_insertion_head(
         &self,
         nodes: &[Node],
         threshold: usize,
@@ -1215,7 +1186,7 @@ impl Pileup {
         });
         inserts
     }
-    fn check_insertion_tail(
+    pub fn check_insertion_tail(
         &self,
         nodes: &[Node],
         threshold: usize,
@@ -1244,6 +1215,7 @@ impl Pileup {
 
 #[derive(Clone)]
 pub struct ReadSkelton {
+    id: u64,
     nodes: Vec<LightNode>,
 }
 
@@ -1258,9 +1230,9 @@ impl std::fmt::Debug for ReadSkelton {
 
 impl ReadSkelton {
     pub fn new(read: &EncodedRead) -> Self {
-        Self::from_rich_nodes(&read.nodes)
+        Self::from_rich_nodes(read.id, &read.nodes)
     }
-    pub fn from_rich_nodes(nodes: &[Node]) -> Self {
+    pub fn from_rich_nodes(id: u64, nodes: &[Node]) -> Self {
         // Convert the nodes into (start_position, end_position)s
         let summaries: Vec<_> = nodes
             .iter()
@@ -1287,11 +1259,11 @@ impl ReadSkelton {
             })
             .collect();
         // let sets: HashSet<_> = nodes.iter().map(|n| n.unit).collect();
-        ReadSkelton { nodes }
+        ReadSkelton { id, nodes }
     }
     fn rev(&self) -> Self {
         let nodes: Vec<_> = self.nodes.iter().rev().map(LightNode::rev).collect();
-        Self { nodes }
+        Self { id: self.id, nodes }
     }
 }
 
