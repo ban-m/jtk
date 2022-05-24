@@ -519,6 +519,7 @@ fn abs(x: usize, y: usize) -> usize {
 
 // Aligment offset. We align [s-offset..e+offset] region to the unit.
 const OFFSET: usize = 150;
+// const OFFSET_FACTOR: usize = 0.1;
 // returns the ids of the units newly encoded.
 // Maybe each (unit,cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
@@ -623,6 +624,8 @@ fn try_encoding_head(
             let (uid, cluster) = (node.unit, node.cluster);
             let unit = *units.get(&uid)?;
             let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
+            // let offset = (OFFSET_FACTOR * cons.len() as f64).ceil() as usize;
+            // let end_position = (start_position + cons.len() + 2 * offset).min(seq.len());
             let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
             let is_the_same_encode = match nodes.get(idx) {
                 Some(node) => {
@@ -659,6 +662,8 @@ fn try_encoding_tail(
             let unit = *units.get(&uid)?;
             let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
             let end_position = end_position.min(seq.len());
+            // let offset = (OFFSET_FACTOR * cons.len() as f64).ceil() as usize;
+            // let start_position = end_position.saturating_sub(cons.len() + 2 * offset);
             let start_position = end_position.saturating_sub(cons.len() + 2 * OFFSET);
             assert!(start_position < end_position);
             let is_the_same_encode = match nodes.get(idx) {
@@ -743,6 +748,8 @@ fn fine_mapping<'a>(
         let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
         let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
         let ops = edlib_op_to_kiley_op(&alignment.operations.unwrap());
+        // Align twice, to get an accurate alignment.
+        let (_, ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
         let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
         // Reverse ops
         for op in ops.iter_mut() {

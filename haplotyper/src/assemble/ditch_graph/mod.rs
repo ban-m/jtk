@@ -1122,7 +1122,7 @@ impl<'a> DitchGraph<'a> {
     }
     // Return Node->serialized simple-path id hashmapping and
     // edges between simple paths.
-    fn reduce_simple_path(&self) -> (HashMap<Node, usize>, Vec<&DitchEdge>) {
+    pub fn reduce_simple_path(&self) -> (HashMap<Node, usize>, Vec<&DitchEdge>) {
         let node_index: HashMap<Node, usize> = self
             .nodes
             .keys()
@@ -1308,6 +1308,7 @@ impl<'a> DitchGraph<'a> {
         let (node_cp, edge_cp) = super::copy_number::estimate_copy_number(&nodes, &edges);
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
+
     /// (Re-)estimate copy number on each node and edge.
     pub fn assign_copy_number(&mut self, naive_cov: f64, lens: &[usize]) {
         let (node_copy_number, edge_copy_number) = self.copy_number_estimation(naive_cov, lens);

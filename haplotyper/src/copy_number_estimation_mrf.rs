@@ -31,37 +31,37 @@ const BURN_IN: usize = 20_000;
 const TARGET: f64 = 20f64;
 const CHOICES: [usize; 3] = [0, 1, 2];
 
-impl CopyNumberEstimation for DataSet {
-    fn update_copy_numbers(&mut self, config: &Config) {
-        let (node_cp, _) = self.estimate_copy_numbers(config);
-        // Reset copy numbers.
-        self.selected_chunks.iter_mut().for_each(|c| c.copy_num = 0);
-        // Update copy numbers.
-        let mut chunks: HashMap<u64, &mut definitions::Unit> =
-            self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
-        for ((unit, _), cp) in node_cp {
-            if let Some(chunk) = chunks.get_mut(&unit) {
-                chunk.copy_num += cp;
-            }
-        }
-    }
-    fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
-        let (graph, node_to_idx, edge_to_idx) = Graph::new(&self.encoded_reads);
-        let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(config);
-        // let hap_cov = config.haploid_coverage.unwrap();
-        let mut node_cp: Vec<_> = node_to_idx
-            .iter()
-            .map(|(&node, &i)| (node, node_cp[i]))
-            .collect();
-        node_cp.sort_unstable_by_key(|x| x.0);
-        let mut edge_cp: Vec<_> = edge_to_idx
-            .iter()
-            .map(|(&edge, &i)| (edge, edge_cp[i]))
-            .collect();
-        edge_cp.sort_unstable_by_key(|x| x.0);
-        (node_cp, edge_cp)
-    }
-}
+// impl CopyNumberEstimation for DataSet {
+//     fn update_copy_numbers(&mut self, config: &Config) {
+//         let (node_cp, _) = self.estimate_copy_numbers(config);
+//         // Reset copy numbers.
+//         self.selected_chunks.iter_mut().for_each(|c| c.copy_num = 0);
+//         // Update copy numbers.
+//         let mut chunks: HashMap<u64, &mut definitions::Unit> =
+//             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
+//         for ((unit, _), cp) in node_cp {
+//             if let Some(chunk) = chunks.get_mut(&unit) {
+//                 chunk.copy_num += cp;
+//             }
+//         }
+//     }
+//     fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
+//         let (graph, node_to_idx, edge_to_idx) = Graph::new(&self.encoded_reads);
+//         let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(config);
+//         // let hap_cov = config.haploid_coverage.unwrap();
+//         let mut node_cp: Vec<_> = node_to_idx
+//             .iter()
+//             .map(|(&node, &i)| (node, node_cp[i]))
+//             .collect();
+//         node_cp.sort_unstable_by_key(|x| x.0);
+//         let mut edge_cp: Vec<_> = edge_to_idx
+//             .iter()
+//             .map(|(&edge, &i)| (edge, edge_cp[i]))
+//             .collect();
+//         edge_cp.sort_unstable_by_key(|x| x.0);
+//         (node_cp, edge_cp)
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct Graph {
@@ -110,6 +110,12 @@ impl MCMCConfig {
 }
 
 impl Graph {
+    pub fn edges(&self) -> &[(usize, bool, usize, bool)] {
+        self.edges.as_slice()
+    }
+    pub fn nodes(&self) -> &[(u64, usize)] {
+        self.coverages.as_slice()
+    }
     pub fn with(edges: &[(usize, bool, usize, bool)], coverages: &[(u64, usize)]) -> Self {
         let mut edge_lists = vec![[vec![], vec![]]; coverages.len()];
         for (idx, &(u, u_is_head, v, v_is_head)) in edges.iter().enumerate() {
@@ -152,7 +158,7 @@ impl Graph {
         let v = ((v.unit, v.cluster), v_is_head);
         (u.min(v), u.max(v))
     }
-    fn new<T: std::borrow::Borrow<EncodedRead>>(
+    pub fn new<T: std::borrow::Borrow<EncodedRead>>(
         reads: &[T],
     ) -> (Self, HashMap<Node, usize>, HashMap<Edge, usize>) {
         let node_to_idx = Self::serialize_node(reads);
