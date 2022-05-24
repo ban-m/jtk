@@ -17,10 +17,9 @@ impl AlignmentCorrection for DataSet {
             .iter()
             .map(|c| (c.id, c.cluster_num))
             .filter(|&(_, k)| 1 < k)
-            // .filter(|&(id, _)| id == 659)
+            // .filter(|&(id, _)| id == 624)
             .collect();
         let copy_numbers = estimate_copy_number_of_cluster(self);
-        // let posterior_distributions: Vec<_> = selections
         let corrected_clusterings: Vec<_> = selections
             .par_iter()
             .map(|&(id, cluster_num)| correct_unit(self, id, cluster_num, &copy_numbers, &config))
@@ -128,19 +127,20 @@ fn correct_unit(
             }
         }
     }
+    reads.sort_by_cached_key(|&(idx, ref read)| read.nodes[idx].cluster);
     // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
     // reads.sort_by_cached_key(|&(idx, ref read)| {
-    //     let answer = id2desc[&read.id].contains("000251v2") as usize;
-    //     let cluster = read.nodes[idx].cluster;
-    //     (answer, cluster)
+    // let answer = id2desc[&read.id].contains("000251v2") as usize;
+    // let cluster = read.nodes[idx].cluster;
+    // (answer, cluster)
     // });
     // for (i, &(idx, ref read)) in reads.iter().enumerate() {
     //     let ans = id2desc[&read.id].contains("000251v2") as usize;
     //     let cls = read.nodes[idx].cluster;
     //     debug!("ANSWER\t{i}\t{cls}\t{ans}");
     // }
-    // debug!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
-    // debug!("Correction\t{unit_id}\t{k}\t{}", reads.len());
+    trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
+    trace!("Correction\t{unit_id}\t{k}\t{}", reads.len());
     let assignments = clustering(&reads, k, copy_numbers, config);
     assert_eq!(assignments.len(), reads.len());
     reads
@@ -231,19 +231,20 @@ fn clustering(
             (up, center, tail)
         })
         .collect();
-    //let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
+    let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
         .enumerate()
-        .map(|(_i, ctx)| {
-            // let id = ids[i];
+        .map(|(i, ctx)| {
+            let id = ids[i];
             contexts
                 .iter()
                 .enumerate()
-                .map(|(_j, dtx)| {
-                    // debug!("-------------");
-                    // debug!("ALN\t{id}\t{i}\t{j}");
-                    alignment(ctx, dtx, copy_numbers) + 0.00000001
+                .map(|(j, dtx)| {
+                    trace!("-------------");
+                    let aln = alignment(ctx, dtx, copy_numbers) + 0.00000001;
+                    trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
+                    aln
                 })
                 .collect()
         })
@@ -398,10 +399,6 @@ fn alignment<'a>(
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let up_aln = align(up1, up2, &copy_numbers);
     let down_aln = align(down1, down2, &copy_numbers);
-    // let (up_aln, _up_len) = align(up1, up2, &copy_numbers);
-    // let (down_aln, _down_len) = align(down1, down2, &copy_numbers);
-    // let similarity = ((up_aln + down_aln + center) / (up_len + down_len + 1) as f64).exp();
-    //let similarity = (up_aln + down_aln + center).exp();
     let similarity = (up_aln + down_aln + center).max(0f64);
     assert!(0f64 <= similarity);
     // let line1: Vec<_> = up1

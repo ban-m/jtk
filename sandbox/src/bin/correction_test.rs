@@ -17,20 +17,20 @@ fn main() -> std::io::Result<()> {
         // println!("{}", serde_json::ser::to_string(&ds).unwrap());
         dump(&ds, "align_spectral");
     }
-    {
-        let mut ds = ds.clone();
-        use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-        let config = ClusteringConfig::new(5, 10, 5);
-        ds.correct_clustering(&config);
-        dump(&ds, "dir_mixture");
-    }
-    {
-        let mut ds = ds.clone();
-        use haplotyper::em_correction::*;
-        ds.correct_clustering_em(20, 5, false);
-        dump(&ds, "bag_of_words");
-    }
-    dump(&ds, "before");
+    // {
+    //     let mut ds = ds.clone();
+    //     use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
+    //     let config = ClusteringConfig::new(5, 10, 5);
+    //     ds.correct_clustering(&config);
+    //     dump(&ds, "dir_mixture");
+    // }
+    // {
+    //     let mut ds = ds.clone();
+    //     use haplotyper::em_correction::*;
+    //     ds.correct_clustering_em(20, 5, false);
+    //     dump(&ds, "bag_of_words");
+    // }
+    // dump(&ds, "before");
     Ok(())
 }
 

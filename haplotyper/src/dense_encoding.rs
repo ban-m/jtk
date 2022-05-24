@@ -29,11 +29,9 @@ pub trait DenseEncoding {
 impl DenseEncoding for DataSet {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
         let original_assignments = log_original_assignments(self);
-        // let msr = self.read_type.min_span_reads();
-        // let min_lk = self.read_type.min_llr_value();
-        // use crate::assemble::*;
-        // let asm_config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
-        // self.squish_small_contig(&asm_config, 3);
+        use crate::phmm_likelihood_correction::*;
+        let cor_config = CorrectionConfig::default();
+        self.correct_clustering(&cor_config);
         let new_units = encode_polyploid_edges(self, config);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
@@ -241,7 +239,6 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
     use crate::assemble::*;
     let msr = ds.read_type.min_span_reads();
     let min_lk = ds.read_type.min_llr_value();
-    // let (min_span_reads, lk_ratio) = weak_resolve(ds.read_type);
     let config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
     let (records, summaries) = assemble(ds, &config);
     if let Some(file) = de_config.file.as_ref() {

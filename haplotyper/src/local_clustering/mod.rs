@@ -33,6 +33,10 @@ impl LocalClustering for DataSet {
     fn local_clustering(&mut self) {
         let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
         local_clustering_selected(self, &selection);
+        // Squishing...
+        use crate::squish_erroneous_clusters::*;
+        let config = SquishConfig::new(0.5, 5);
+        self.squish_erroneous_clusters(&config);
     }
 }
 

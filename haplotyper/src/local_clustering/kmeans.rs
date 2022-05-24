@@ -314,10 +314,6 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
             }
         });
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
-    // likelihood_gains
-    //     .iter_mut()
-    //     .zip(cons_lk)
-    //     .for_each(|(lkdiffs, lk)| lkdiffs.iter_mut().for_each(|d| *d += lk));
     to_posterior_probability(&mut likelihood_gains);
     if log_enabled!(log::Level::Trace) {
         for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {

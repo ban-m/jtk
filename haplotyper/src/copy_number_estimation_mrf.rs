@@ -1,4 +1,3 @@
-use definitions::DataSet;
 use definitions::EncodedRead;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoroshiro128StarStar;
