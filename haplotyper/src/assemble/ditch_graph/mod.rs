@@ -971,14 +971,14 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
             }
             None => Vec::new(),
         };
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
     });
     let edges = edge
         .into_iter()
-        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let header = gfa::Content::Header(gfa::Header::default());
-    let header = gfa::Record::from_contents(header, vec![]);
+    let header = gfa::Record::from_contents(header, vec![].into());
     let records = std::iter::once(header)
         .chain(std::iter::once(group))
         .chain(nodes)

@@ -186,7 +186,7 @@ fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
                 tags
             })
             .unwrap_or_else(Vec::new);
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
     });
     {
         for summary in summaries.iter() {
@@ -214,11 +214,11 @@ fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
     }
     let edges = edge
         .into_iter()
-        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let group = std::iter::once(group);
     let header = gfa::Content::Header(gfa::Header::default());
-    let header = std::iter::once(gfa::Record::from_contents(header, vec![]));
+    let header = std::iter::once(gfa::Record::from_contents(header, vec![].into()));
     let records: Vec<_> = header.chain(group).chain(nodes).chain(edges).collect();
     gfa::GFA::from_records(records)
 }

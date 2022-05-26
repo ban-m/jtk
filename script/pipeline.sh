@@ -52,7 +52,8 @@ else
         jtk estimate_multiplicity -vv --threads ${THREADS} ${HAP_COV} \
             --draft_assembly ${DRAFT_GFA} --purge_copy_num ${UPPER_COPY_NUM} |\
         tee ${2}.entry.units.encode.json |\
-        jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
+        jtk partition_local -vv --threads ${THREADS} | \
+        jtk squish -t56 -vv ${THREADS} >  ${CLUSTERED}
 fi
 
 if [ -f ${PURGED} ]

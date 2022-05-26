@@ -1,9 +1,6 @@
 use definitions::*;
-use haplotyper::misc::cramers_v;
-use std::{
-    collections::{HashMap, HashSet},
-    io::BufReader,
-};
+// use haplotyper::misc::cramers_v;
+use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();

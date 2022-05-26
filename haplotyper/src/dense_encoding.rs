@@ -243,7 +243,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
     let (records, summaries) = assemble(ds, &config);
     if let Some(file) = de_config.file.as_ref() {
         let header = gfa::Content::Header(gfa::Header::default());
-        let header = gfa::Record::from_contents(header, vec![]);
+        let header = gfa::Record::from_contents(header, vec![].into());
         let records = std::iter::once(header).chain(records.clone()).collect();
         let gfa = gfa::GFA::from_records(records);
         if let Ok(mut wtr) = std::fs::File::create(file).map(std::io::BufWriter::new) {

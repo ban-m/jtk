@@ -1,48 +1,21 @@
 use definitions::*;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Default)]
 pub struct CorrectionConfig {}
 pub trait AlignmentCorrection {
     fn correct_clustering(&mut self, config: &CorrectionConfig);
-    // fn correct_clustering_selected(&mut self, selection: &HashSet<u64>, config: &CorrectionConfig);
+    fn correct_clustering_selected(&mut self, selection: &HashSet<u64>, config: &CorrectionConfig);
 }
 impl AlignmentCorrection for DataSet {
-    // TODO: After calling this function, correspondance between
-    // the posterior distributions and the assignments would be broken.
-    // shoule we fix
     fn correct_clustering(&mut self, config: &CorrectionConfig) {
-        let selections: Vec<_> = self
+        let selections: HashSet<_> = self
             .selected_chunks
             .iter()
-            .map(|c| (c.id, c.cluster_num))
-            .filter(|&(_, k)| 1 < k)
-            // .filter(|&(id, _)| id == 624)
+            .filter(|c| 1 < c.cluster_num)
+            .map(|c| c.id)
             .collect();
-        let copy_numbers = estimate_copy_number_of_cluster(self);
-        let corrected_clusterings: Vec<_> = selections
-            .par_iter()
-            .map(|&(id, cluster_num)| correct_unit(self, id, cluster_num, &copy_numbers, &config))
-            .collect();
-        let corrected_clustering_on_read = {
-            let mut corrected_clustering_on_read: HashMap<_, Vec<_>> = HashMap::new();
-            for correcteds in corrected_clusterings {
-                for (id, idx, asn) in correcteds {
-                    corrected_clustering_on_read
-                        .entry(id)
-                        .or_default()
-                        .push((idx, asn));
-                }
-            }
-            corrected_clustering_on_read
-        };
-        for read in self.encoded_reads.iter_mut() {
-            if let Some(corrected) = corrected_clustering_on_read.get(&read.id) {
-                for &(pos, asn) in corrected.iter() {
-                    read.nodes[pos].cluster = asn;
-                }
-            }
-        }
+        self.correct_clustering_selected(&selections, &config);
         // let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
         //     let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = HashMap::new();
         //     for post_dist_on_chunk in posterior_distributions {
@@ -59,6 +32,45 @@ impl AlignmentCorrection for DataSet {
         // }
         //     }
         // }
+        self.sanity_check();
+    }
+    fn correct_clustering_selected(
+        &mut self,
+        selections: &HashSet<u64>,
+        config: &CorrectionConfig,
+    ) {
+        let copy_numbers = estimate_copy_number_of_cluster(self);
+        let corrected_clusterings: Vec<_> = self
+            .selected_chunks
+            .par_iter()
+            .filter(|c| 1 < c.cluster_num && selections.contains(&c.id))
+            .map(|c| (c.id, (c.cluster_num, c.copy_num)))
+            .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, &config))
+            .collect();
+        let corrected_clustering_on_read = {
+            let mut chunks_mut_ref: HashMap<_, _> =
+                self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
+            let mut corrected_clustering_on_read: HashMap<_, Vec<_>> = HashMap::new();
+            for (correcteds, (uid, cluster_num)) in corrected_clusterings {
+                let chunk = chunks_mut_ref.get_mut(&uid).unwrap();
+                assert!(cluster_num <= chunk.copy_num);
+                chunk.cluster_num = cluster_num;
+                for (id, idx, asn) in correcteds {
+                    corrected_clustering_on_read
+                        .entry(id)
+                        .or_default()
+                        .push((idx, asn));
+                }
+            }
+            corrected_clustering_on_read
+        };
+        for read in self.encoded_reads.iter_mut() {
+            if let Some(corrected) = corrected_clustering_on_read.get(&read.id) {
+                for &(pos, asn) in corrected.iter() {
+                    read.nodes[pos].cluster = asn;
+                }
+            }
+        }
     }
 }
 
@@ -114,10 +126,10 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
 fn correct_unit(
     ds: &DataSet,
     unit_id: u64,
-    k: usize,
+    cluster_and_copynum: (usize, usize),
     copy_numbers: &[Vec<f64>],
     config: &CorrectionConfig,
-) -> Vec<(u64, usize, u64)> {
+) -> (Vec<(u64, usize, u64)>, (u64, usize)) {
     //) -> Vec<(u64, usize, Vec<f64>)> {
     let mut reads = vec![];
     for read in ds.encoded_reads.iter() {
@@ -128,57 +140,17 @@ fn correct_unit(
         }
     }
     reads.sort_by_cached_key(|&(idx, ref read)| read.nodes[idx].cluster);
-    // let id2desc: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    // reads.sort_by_cached_key(|&(idx, ref read)| {
-    // let answer = id2desc[&read.id].contains("000251v2") as usize;
-    // let cluster = read.nodes[idx].cluster;
-    // (answer, cluster)
-    // });
-    // for (i, &(idx, ref read)) in reads.iter().enumerate() {
-    //     let ans = id2desc[&read.id].contains("000251v2") as usize;
-    //     let cls = read.nodes[idx].cluster;
-    //     debug!("ANSWER\t{i}\t{cls}\t{ans}");
-    // }
     trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
-    trace!("Correction\t{unit_id}\t{k}\t{}", reads.len());
-    let assignments = clustering(&reads, k, copy_numbers, config);
+    let len = reads.len();
+    trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
+    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit_id, config);
     assert_eq!(assignments.len(), reads.len());
-    reads
+    let assignments: Vec<_> = reads
         .into_iter()
         .zip(assignments)
         .map(|((idx, read), asn)| (read.id, idx, asn as u64))
-        .collect()
-    // let mut clusters: Vec<Vec<_>> = vec![vec![]; k];
-    // for (&asn, elm) in assignments.iter().zip(reads) {
-    //     clusters[asn].push(elm);
-    // }
-    // clusters
-    //     .into_iter()
-    //     .enumerate()
-    //     .flat_map(|(i, cluster)| {
-    //         // Here I want to compute p1p2...pn for each cluster,
-    //         // then normalize them.ln(p1p2...pn/norm) -> (lnp1 + lnp2 ... ) - ln(sum(exp(lnp1+...)))
-    //         let mut summed: Vec<_> =
-    //             cluster
-    //                 .iter()
-    //                 .fold(vec![0f64; k], |mut sums, &(idx, read)| {
-    //                     let node = &read.nodes[idx];
-    //                     assert_eq!(node.posterior.len(), sums.len());
-    //                     sums.iter_mut()
-    //                         .zip(node.posterior.iter())
-    //                         .for_each(|(x, y)| *x += y);
-    //                     sums
-    //                 });
-    //         let total = logsumexp(&summed);
-    //         summed.iter_mut().for_each(|x| *x = *x - total);
-    //         let line: Vec<_> = summed.iter().map(|x| format!("{x:.2}")).collect();
-    //         debug!("CLU\t{i}\t{}", line.join("\t"));
-    //         cluster
-    //             .iter()
-    //             .map(|&(idx, read)| (read.id, idx, summed.clone()))
-    //             .collect::<Vec<_>>()
-    //     })
-    //     .collect()
+        .collect();
+    (assignments, (unit_id, k))
 }
 
 fn logsumexp(xs: &[f64]) -> f64 {
@@ -194,10 +166,11 @@ fn logsumexp(xs: &[f64]) -> f64 {
 
 fn clustering(
     reads: &[(usize, &EncodedRead)],
-    k: usize,
+    (k, _upper_k): (usize, usize),
     copy_numbers: &[Vec<f64>],
+    id: u64,
     _: &CorrectionConfig,
-) -> Vec<usize> {
+) -> (Vec<usize>, usize) {
     let contexts: Vec<_> = reads
         .iter()
         .map(|&(idx, read)| {
@@ -242,37 +215,64 @@ fn clustering(
                 .enumerate()
                 .map(|(j, dtx)| {
                     trace!("-------------");
-                    let aln = alignment(ctx, dtx, copy_numbers) + 0.00000001;
+                    let aln = alignment(ctx, dtx, copy_numbers);
                     trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
                     aln
                 })
                 .collect()
         })
         .collect();
-    // for (i, sm) in sims.iter().enumerate() {
-    //     let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-    //     debug!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
-    // }
+    if log_enabled!(log::Level::Trace) {
+        for (i, sm) in sims.iter().enumerate() {
+            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+            trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
+        }
+    }
     let laplacian = get_graph_laplacian(&sims);
-    // for (i, sm) in laplacian.iter().enumerate() {
-    //     let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-    //     debug!("LAP\t{i}\t{}\t{}", ids[i], line.join("\t"));
-    // }
-    let eigens = get_eigenvalues(&laplacian, k);
+    let (mut eigens, pick_k) = get_eigenvalues(&laplacian, k, id);
+    for (eigen, (idx, read)) in eigens.iter_mut().zip(reads.iter()) {
+        assert_eq!(eigen.len(), pick_k);
+        let post = &read.nodes[*idx].posterior;
+        let total = logsumexp(post);
+        eigen.extend(post.iter().map(|x| (x - total).exp()));
+    }
+    {
+        let mut sums: Vec<_> = eigens[0][pick_k..].iter().map(|x| x * x).collect();
+        for eig in eigens.iter().skip(1) {
+            sums.iter_mut()
+                .zip(eig[pick_k..].iter())
+                .for_each(|(s, e)| *s += e * e);
+        }
+        sums.iter_mut().for_each(|x| *x = x.sqrt());
+        for eigen in eigens.iter_mut() {
+            let posts = eigen.iter_mut().skip(pick_k).zip(sums.iter());
+            posts.for_each(|(e, s)| *e /= s);
+        }
+    }
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128PlusPlus;
-    let mut rng = Xoroshiro128PlusPlus::seed_from_u64(394203);
+    let mut rng = Xoroshiro128PlusPlus::seed_from_u64(id * k as u64);
+    // TODO:Maybe we can tune the number of the cluster here, again?
     let asn = (0..10)
         .map(|_| kmeans(&eigens, k, &mut rng))
         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .map(|x| x.0)
         .unwrap();
-    // for (i, sm) in eigens.iter().enumerate() {
-    //     let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-    //     let cls = contexts[i].1.cluster;
-    //     debug!("EIG\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
+    // for k in k..=_upper_k {
+    //     let (_, dist) = (0..10)
+    //         .map(|_| kmeans(&eigens, k, &mut rng))
+    //         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+    //         .unwrap();
+    //     debug!("KMEANS\t{id}\t{k}\t{dist}");
     // }
-    asn
+    if log_enabled!(log::Level::Trace) {
+        for (i, sm) in eigens.iter().enumerate() {
+            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+            let cls = contexts[i].1.cluster;
+            trace!("EIG\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
+        }
+    }
+    (asn, k)
 }
 
 // Return the *normalized* graph lap.
@@ -291,7 +291,8 @@ fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
         .collect()
 }
 
-fn get_eigenvalues(matrix: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
+const EIGEN_THR: f64 = 0.1;
+fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, usize) {
     let datalen = matrix.len();
     let rows: Vec<_> = matrix
         .iter()
@@ -305,20 +306,30 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize) -> Vec<Vec<f64>> {
         .zip(eigens.eigenvalues.iter())
         .collect();
     eigen_and_eigenvec.sort_by(|x, y| x.1.abs().partial_cmp(&y.1.abs()).unwrap());
-    // eigen_and_eigenvec.reverse();
-    let top_k_eigenvec = eigen_and_eigenvec[..k]
+    let opt_k = eigen_and_eigenvec
+        .iter()
+        .take_while(|&(_, &lam)| lam < EIGEN_THR)
+        .count();
+    let pick_k = k.max(opt_k);
+    let top_k_eigenvec = eigen_and_eigenvec[..pick_k]
         .iter()
         .flat_map(|(v, _)| v.iter().copied());
-    let top_k_eigenvec = nalgebra::DMatrix::from_iterator(datalen, k, top_k_eigenvec);
-    top_k_eigenvec
+    if log_enabled!(log::Level::Trace) {
+        for (i, lam) in eigen_and_eigenvec
+            .iter()
+            .map(|(_, lam)| lam)
+            .take(8)
+            .enumerate()
+        {
+            trace!("LAMBDA\t{id}\t{i}\t{lam}\t{k}");
+        }
+    }
+    let top_k_eigenvec = nalgebra::DMatrix::from_iterator(datalen, pick_k, top_k_eigenvec);
+    let features: Vec<Vec<_>> = top_k_eigenvec
         .row_iter()
         .map(|row| row.iter().map(|&x| x).collect())
-        .collect()
-    // let pca_vectors = &eigen_and_eigenvec[..k];
-    // matrix
-    //     .column_iter()
-    //     .map(|x| pca_vectors.iter().map(|(v, _)| x.dot(v)).collect())
-    //     .collect()
+        .collect();
+    (features, pick_k)
 }
 
 use rand::Rng;
@@ -389,6 +400,7 @@ fn kmeans<R: Rng>(xs: &[Vec<f64>], k: usize, rng: &mut R) -> (Vec<usize>, f64) {
 }
 
 type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
+const LK_CAP: f64 = 5f64;
 fn alignment<'a>(
     (up1, center1, down1): &Context<'a>,
     (up2, center2, down2): &Context<'a>,
@@ -399,25 +411,28 @@ fn alignment<'a>(
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let up_aln = align(up1, up2, &copy_numbers);
     let down_aln = align(down1, down2, &copy_numbers);
-    let similarity = (up_aln + down_aln + center).max(0f64);
+    // let similarity = (up_aln + down_aln + center).max(0f64);
+    let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
     assert!(0f64 <= similarity);
-    // let line1: Vec<_> = up1
-    //     .iter()
-    //     .map(|(u, p)| (*u, argmax(p)))
-    //     .chain(std::iter::once((center1.unit, center1.cluster as usize)))
-    //     .chain(down1.iter().map(|(u, p)| (*u, argmax(p))))
-    //     .map(|(u, c)| format!("{u}-{c}"))
-    //     .collect();
-    // let line2: Vec<_> = up2
-    //     .iter()
-    //     .map(|(u, p)| (*u, argmax(p)))
-    //     .chain(std::iter::once((center2.unit, center2.cluster as usize)))
-    //     .chain(down2.iter().map(|(u, p)| (*u, argmax(p))))
-    //     .map(|(u, c)| format!("{u}-{c}"))
-    //     .collect();
-    // debug!("ALN\t{}", line1.join("\t"));
-    // debug!("ALN\t{}", line2.join("\t"));
-    // debug!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}");
+    if log_enabled!(log::Level::Trace) {
+        let line1: Vec<_> = up1
+            .iter()
+            .map(|(u, p)| (*u, argmax(p)))
+            .chain(std::iter::once((center1.unit, center1.cluster as usize)))
+            .chain(down1.iter().map(|(u, p)| (*u, argmax(p))))
+            .map(|(u, c)| format!("{u}-{c}"))
+            .collect();
+        let line2: Vec<_> = up2
+            .iter()
+            .map(|(u, p)| (*u, argmax(p)))
+            .chain(std::iter::once((center2.unit, center2.cluster as usize)))
+            .chain(down2.iter().map(|(u, p)| (*u, argmax(p))))
+            .map(|(u, c)| format!("{u}-{c}"))
+            .collect();
+        trace!("ALN\t{}", line1.join("\t"));
+        trace!("ALN\t{}", line2.join("\t"));
+        trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}");
+    }
     similarity
 }
 
@@ -506,10 +521,9 @@ const MOCK_CP: f64 = 1.5;
 pub fn sim(xs: &[f64], ys: &[f64], cps: &[f64]) -> f64 {
     assert_eq!(xs.len(), cps.len());
     assert_eq!(xs.len(), ys.len());
-    // TODO: .ln before call this function!
     if cps.len() == 1 {
         let total: f64 = cps.iter().sum();
-        return (total.max(MOCK_CP) - 1f64).recip().ln();
+        return -(total.max(MOCK_CP) - 1f64).ln();
     }
     let iter = xs
         .iter()

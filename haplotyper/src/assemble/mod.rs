@@ -259,7 +259,7 @@ impl Assemble for DataSet {
             debug!("CONUNIT\t{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
         }
         let header = gfa::Content::Header(gfa::Header::default());
-        let header = gfa::Record::from_contents(header, vec![]);
+        let header = gfa::Record::from_contents(header, vec![].into());
         let mut header = vec![header];
         header.extend(records);
         GFA::from_records(header)
@@ -453,12 +453,12 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
                 tags
             })
             .unwrap_or_else(Vec::new);
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
     });
     let edges = edges
         .into_iter()
-        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
     (records, summaries)
 }
@@ -479,12 +479,12 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Ve
             }
             None => Vec::new(),
         };
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
     });
     let edges = edge
         .into_iter()
-        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
     (records, summaries)
 }

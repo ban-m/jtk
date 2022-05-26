@@ -164,13 +164,25 @@ impl DataSet {
             .iter()
             .flat_map(|r| r.nodes.iter())
             .for_each(|n| assert!(units.contains(&n.unit)));
-        assert!(std::path::Path::new(&self.input_file).exists());
+        // assert!(std::path::Path::new(&self.input_file).exists());
         self.encoded_reads_can_be_recovered();
         use std::collections::HashSet;
         let mut units = HashSet::new();
         for unit in self.selected_chunks.iter() {
             assert!(!units.contains(&unit.id));
             units.insert(unit.id);
+        }
+        for chunk in self.selected_chunks.iter() {
+            assert!(chunk.cluster_num <= chunk.copy_num);
+        }
+        use std::collections::HashMap;
+        let max_cl_num: HashMap<_, _> = self
+            .selected_chunks
+            .iter()
+            .map(|c| (c.id, c.cluster_num))
+            .collect();
+        for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            assert!(node.cluster <= max_cl_num[&node.unit] as u64);
         }
     }
     fn encoded_reads_can_be_recovered(&self) {

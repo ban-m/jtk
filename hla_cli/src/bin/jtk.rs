@@ -443,6 +443,29 @@ fn subcommand_partition_local() -> Command<'static> {
         )
 }
 
+fn subcommand_squish() -> Command<'static> {
+    Command::new("squish")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Squish unreliable clusterings (Local).")
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value("1")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_purge_diverged() -> Command<'static> {
     Command::new("purge_diverged")
         .version("0.1")
@@ -1018,8 +1041,24 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     }
     // Clustering.
     use haplotyper::local_clustering::*;
-    // let config = ClusteringConfig::with_default(dataset, 2, length);
     dataset.local_clustering();
+}
+
+fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+    let threads: usize = matches
+        .value_of("threads")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    // let length = 100;
+    if let Err(why) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
+    }
+    use haplotyper::squish_erroneous_clusters::*;
+    let config = SquishConfig::new(0.5, 5);
+    dataset.squish_erroneous_clusters(&config);
 }
 
 fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -1305,6 +1344,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_estimate_multiplicity())
         .subcommand(subcommand_resolve_tangle())
         .subcommand(subcommand_partition_local())
+        .subcommand(subcommand_squish())
         .subcommand(subcommand_purge_diverged())
         .subcommand(subcommand_correct_deletion())
         .subcommand(subcommand_correct_multiplicity())
@@ -1337,6 +1377,7 @@ fn main() -> std::io::Result<()> {
         Some(("pick_components", sub_m)) => pick_components(sub_m, ds),
         Some(("polish_encoding", sub_m)) => polish_encode(sub_m, ds),
         Some(("partition_local", sub_m)) => local_clustering(sub_m, ds),
+        Some(("squish", sub_m)) => squish(sub_m, ds),
         Some(("purge_diverged", sub_m)) => purge_diverged(sub_m, ds),
         Some(("correct_deletion", sub_m)) => correct_deletion(sub_m, ds),
         Some(("correct_multiplicity", sub_m)) => correct_multiplicity(sub_m, ds),

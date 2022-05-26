@@ -1,6 +1,6 @@
 use definitions::*;
 use sandbox::IS_MOCK;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -13,8 +13,9 @@ fn main() -> std::io::Result<()> {
         let mut ds = ds.clone();
         use haplotyper::phmm_likelihood_correction::*;
         let config = CorrectionConfig::default();
-        ds.correct_clustering(&config);
-        // println!("{}", serde_json::ser::to_string(&ds).unwrap());
+        let selection: HashSet<u64> = vec![49].into_iter().collect();
+        ds.correct_clustering_selected(&selection, &config);
+        // ds.correct_clustering_selected(&config);
         dump(&ds, "align_spectral");
     }
     // {

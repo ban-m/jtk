@@ -33,10 +33,6 @@ impl LocalClustering for DataSet {
     fn local_clustering(&mut self) {
         let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
         local_clustering_selected(self, &selection);
-        // Squishing...
-        use crate::squish_erroneous_clusters::*;
-        let config = SquishConfig::new(0.5, 5);
-        self.squish_erroneous_clusters(&config);
     }
 }
 
@@ -50,7 +46,7 @@ fn set_coverage(ds: &mut DataSet) {
         counts.sort_unstable();
         counts[counts.len() / 2] as f64 / 2f64
     };
-    debug!("LOCALCLUSTERING\tSetCoverage{cov}");
+    debug!("LOCALCLUSTERING\tSetCoverage\t{cov}");
     ds.coverage = Some(cov);
 }
 
@@ -102,9 +98,11 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
             let refseq = ref_unit.seq();
-            let take = (coverage * 2f64).floor() as usize;
-            let consensus =
-                hmm.polish_until_converge_with_take(refseq, &seqs, &mut ops, band_width, take);
+            // let take = (coverage * 2f64).floor() as usize;
+            // let consensus =
+            //     hmm.polish_until_converge_with_take(refseq, &seqs, &mut ops, band_width, take);
+            // TOO Slow?
+            let consensus = hmm.polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
                 use kmeans::*;

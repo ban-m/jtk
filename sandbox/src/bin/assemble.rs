@@ -24,7 +24,7 @@ fn main() -> std::io::Result<()> {
     let config = AssembleConfig::new(1, 100, false, false, 3, 4f64);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());
-    let header = gfa::Record::from_contents(header, vec![]);
+    let header = gfa::Record::from_contents(header, vec![].into());
     let mut header = vec![header];
     header.extend(records);
     let gfa = gfa::GFA::from_records(header);
@@ -80,11 +80,11 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
             }
             None => Vec::new(),
         };
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags)
+        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
     });
     let edges = edge
         .into_iter()
-        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![]);
+        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
+    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     std::iter::once(group).chain(nodes).chain(edges).collect()
 }

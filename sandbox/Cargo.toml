@@ -26,3 +26,5 @@ bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 kiley = {path = "../../kiley"}
 nalgebra = "*"
+min_flow = {path = "../min_flow"}
+petgraph = "0.6.0"
