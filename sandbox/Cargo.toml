@@ -9,22 +9,22 @@ edition = "2018"
 [dependencies]
 # dirichlet_fit = {version = "0.1.0", git = "https://github.com/ban-m/dirichlet_fit.git"}
 dirichlet_fit = {path = "../../dirichlet_fit"}
-rand = "*"
-rand_xoshiro = "*"
-rand_distr = "*"
+rand = "0.8.5"
+rand_xoshiro = "0.6.0"
+rand_distr = "0.4.3"
 serde = {version = "1.0", features = ["derive"]}
-serde_json = "*"
+serde_json = "1.0"
 definitions = {path = "../definitions"}
 histgram_viz = {git = "https://github.com/ban-m/histgram_viz", branch = "master"}
 haplotyper = {path = "../haplotyper"}
 de_bruijn_graph = {git = "https://github.com/ban-m/de_bruijn_graph.git", branch = "hla_module"}
-env_logger = "*"
-log = "*"
+env_logger = "0.9.0"
+log = "0.4.17"
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
-rayon = "*"
+rayon = "1.5.3"
 bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 kiley = {path = "../../kiley"}
-nalgebra = "*"
+nalgebra = "0.31.0"
 min_flow = {path = "../min_flow"}
 petgraph = "0.6.0"
