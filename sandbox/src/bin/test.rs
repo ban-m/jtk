@@ -14,24 +14,30 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet =
+    let mut ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    let reads: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
-    let read = ds.encoded_reads.iter().find(|r| r.id == 4434).unwrap();
-    use haplotyper::encode::deletion_fill::{get_pileup, ReadSkelton};
-    let seq: Vec<_> = read
-        .nodes
-        .iter()
-        .map(|n| format!("{}-{}", n.unit, n.cluster))
-        .collect();
-    println!("REF\t{}", seq.join("\t"));
-    let pileup = get_pileup(read, &reads);
-    let nodes = &read.nodes;
-    for (i, (n, p)) in read.nodes.iter().zip(pileup.iter()).enumerate() {
-        println!("{i}\t{}\t{}\t{p:?}", n.unit, n.cluster);
-        let head_cand = p.check_insertion_head(nodes, 2, i);
-        println!("{head_cand:?}");
-    }
+    // haplotyper::encode::deletion_fill::remove_weak_edges(&mut ds);
+    // let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(203);
+    // use haplotyper::local_clustering::kmeans::ClusteringConfig;
+    // let config = ClusteringConfig::new(100, 2, ds.coverage.unwrap(), 2.5, ds.read_type);
+    // for unit in [1203, 705] {
+    //     for cluster in 0..2 {
+    //         let nodes: Vec<_> = ds
+    //             .encoded_reads
+    //             .iter()
+    //             .flat_map(|r| r.nodes.iter())
+    //             .filter(|n| (n.unit, n.cluster) == (unit, cluster))
+    //             .map(|n| n.seq())
+    //             .collect();
+    //         haplotyper::local_clustering::kmeans::clustering(&nodes, &mut rng, &config);
+    //     }
+    // }
+    let selection: HashSet<_> = vec![646, 1695, 1258, 760, 1818].into_iter().collect();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();
+    haplotyper::local_clustering::local_clustering_selected(&mut ds, &selection);
     Ok(())
 }

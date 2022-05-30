@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "bio_utils"
 version = "0.2.0"
-source = "git+https://github.com/ban-m/bio_utils.git?branch=master#d4ee0d46bc7b44d1172e44fcff818a07b66959ba"
+source = "git+https://github.com/ban-m/bio_utils.git?branch=master#d7d319ba93e2f29ac09435264d6e24f8eb1ed4c9"
 dependencies = [
  "bytecount",
  "serde",

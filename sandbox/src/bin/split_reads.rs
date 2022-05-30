@@ -1,5 +1,5 @@
 /// Synopsis: [fasta file] [into N chunks] [with prefix]
-use bio_utils::fasta::*;
+use bio_utils::fastq::*;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -12,7 +12,7 @@ fn main() -> std::io::Result<()> {
     let mut files: Vec<_> = (0..split_into)
         .map(|i| {
             let mut pathbuf = std::env::current_dir().unwrap();
-            pathbuf.push(format!("{prefix}.{}.fa", i));
+            pathbuf.push(format!("{prefix}.{}.fq", i));
             std::fs::File::create(pathbuf).unwrap()
         })
         .collect();

@@ -175,65 +175,65 @@ pub fn total_cost<N, E: EdgeCost>(graph: &DiGraph<N, E>, flow: &Flow) -> Cost {
 //
 // tests
 //
-#[cfg(test)]
-mod tests {
-    use super::super::mocks::mock_flow_network1;
-    use super::super::utils::draw;
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::super::mocks::mock_flow_network1;
+//     use super::super::utils::draw;
+//     use super::*;
 
-    #[test]
-    fn flow_valid_tests() {
-        let (g, _) = mock_flow_network1();
-        draw(&g);
+//     #[test]
+//     fn flow_valid_tests() {
+//         let (g, _) = mock_flow_network1();
+//         draw(&g);
 
-        // this is valid flow
-        let f1 = Flow::from_vec(
-            3,
-            0,
-            &[
-                (EdgeIndex::new(0), 5),
-                (EdgeIndex::new(1), 5),
-                (EdgeIndex::new(2), 5),
-            ],
-        );
-        assert!(is_defined_for_all_edges(&f1, &g));
-        assert!(is_in_demand_and_capacity(&f1, &g));
-        assert!(is_satisfying_flow_constraint(&f1, &g));
-        assert!(is_valid_flow(&f1, &g));
+//         // this is valid flow
+//         let f1 = Flow::from_vec(
+//             3,
+//             0,
+//             &[
+//                 (EdgeIndex::new(0), 5),
+//                 (EdgeIndex::new(1), 5),
+//                 (EdgeIndex::new(2), 5),
+//             ],
+//         );
+//         assert!(is_defined_for_all_edges(&f1, &g));
+//         assert!(is_in_demand_and_capacity(&f1, &g));
+//         assert!(is_satisfying_flow_constraint(&f1, &g));
+//         assert!(is_valid_flow(&f1, &g));
 
-        // this flow overs the capacity
-        let f2 = Flow::from_vec(
-            3,
-            0,
-            &[
-                (EdgeIndex::new(0), 100),
-                (EdgeIndex::new(1), 100),
-                (EdgeIndex::new(2), 100),
-            ],
-        );
-        assert!(is_defined_for_all_edges(&f2, &g));
-        assert!(!is_in_demand_and_capacity(&f2, &g));
-        assert!(is_satisfying_flow_constraint(&f2, &g));
-        assert!(!is_valid_flow(&f2, &g));
+//         // this flow overs the capacity
+//         let f2 = Flow::from_vec(
+//             3,
+//             0,
+//             &[
+//                 (EdgeIndex::new(0), 100),
+//                 (EdgeIndex::new(1), 100),
+//                 (EdgeIndex::new(2), 100),
+//             ],
+//         );
+//         assert!(is_defined_for_all_edges(&f2, &g));
+//         assert!(!is_in_demand_and_capacity(&f2, &g));
+//         assert!(is_satisfying_flow_constraint(&f2, &g));
+//         assert!(!is_valid_flow(&f2, &g));
 
-        // this is a flow which not satisfies the flow constraint
-        let f3 = Flow::from_vec(
-            3,
-            0,
-            &[
-                (EdgeIndex::new(0), 1),
-                (EdgeIndex::new(1), 5),
-                (EdgeIndex::new(2), 1),
-            ],
-        );
-        assert!(is_defined_for_all_edges(&f3, &g));
-        assert!(is_in_demand_and_capacity(&f3, &g));
-        assert!(!is_satisfying_flow_constraint(&f3, &g));
-        assert!(!is_valid_flow(&f3, &g));
+//         // this is a flow which not satisfies the flow constraint
+//         let f3 = Flow::from_vec(
+//             3,
+//             0,
+//             &[
+//                 (EdgeIndex::new(0), 1),
+//                 (EdgeIndex::new(1), 5),
+//                 (EdgeIndex::new(2), 1),
+//             ],
+//         );
+//         assert!(is_defined_for_all_edges(&f3, &g));
+//         assert!(is_in_demand_and_capacity(&f3, &g));
+//         assert!(!is_satisfying_flow_constraint(&f3, &g));
+//         assert!(!is_valid_flow(&f3, &g));
 
-        // this is a partial flow
-        let f4 = Flow::from_vec(1, 0, &[(EdgeIndex::new(0), 1)]);
-        assert!(!is_defined_for_all_edges(&f4, &g));
-        assert!(!is_valid_flow(&f4, &g));
-    }
-}
+//         // this is a partial flow
+//         let f4 = Flow::from_vec(1, 0, &[(EdgeIndex::new(0), 1)]);
+//         assert!(!is_defined_for_all_edges(&f4, &g));
+//         assert!(!is_valid_flow(&f4, &g));
+//     }
+// }

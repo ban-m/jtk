@@ -25,13 +25,6 @@ impl RemoveErroneousNodes for DataSet {
                 entry.0 += 1;
                 entry.1 += edge.offset;
             }
-            // for (i, from) in read.nodes.iter().enumerate().take(read.nodes.len() - 1) {
-            //     let to = &read.nodes[i + 1];
-            //     let entry = counts.entry(normalize(from, to)).or_default();
-            //     entry.0 += 1;
-            // entry.1 += to.position_from_start as i64
-            //     - (from.position_from_start - from.query_length()) as i64;
-            // }
         }
         // Convert to the "calibrated occurance".
         let lens: Vec<_> = self

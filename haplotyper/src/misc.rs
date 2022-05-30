@@ -20,13 +20,10 @@ pub fn rand_index(label: &[usize], pred: &[usize]) -> f64 {
 
 /// Input: observation of each occurence,
 /// return Cramer's V statistics.
-pub fn cramers_v(labels: &[(u32, u32)]) -> f64 {
-    let (first_slot_len, second_slot_len) = labels
-        .iter()
-        .fold((0, 0), |(fst, snd), &(x, y)| (fst.max(x), snd.max(y)));
-    let mut first_occs = vec![0; first_slot_len as usize + 1];
-    let mut second_occs = vec![0; second_slot_len as usize + 1];
-    let mut occs = vec![vec![0; second_slot_len as usize + 1]; first_slot_len as usize + 1];
+pub fn cramers_v(labels: &[(u32, u32)], (cl1, cl2): (usize, usize)) -> f64 {
+    let mut first_occs = vec![0; cl1];
+    let mut second_occs = vec![0; cl2];
+    let mut occs = vec![vec![0; cl2]; cl1];
     for &(f, s) in labels.iter() {
         first_occs[f as usize] += 1;
         second_occs[s as usize] += 1;
@@ -52,7 +49,7 @@ pub fn cramers_v(labels: &[(u32, u32)]) -> f64 {
                 .sum()
         })
         .sum();
-    let denom = labels.len() * first_slot_len.min(second_slot_len) as usize;
+    let denom = labels.len() * (cl1.min(cl2) - 1);
     assert!(0 < denom, "{:?}", labels);
     (chi_sq / denom as f64).sqrt()
 }

@@ -267,13 +267,17 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         .unzip();
     let copy_num = copy_num as usize;
     let selected_variants: Vec<_> = {
-        let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len());
-        for (pos, lk) in probes.iter() {
+        let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len(), average_lk);
+        for &(pos, lk) in probes.iter() {
+            let counts = profiles
+                .iter()
+                .filter(|xs| xs[pos].is_sign_positive())
+                .count();
             let (pos, var) = (
                 pos / kiley::hmm::guided::NUM_ROW,
                 pos % kiley::hmm::guided::NUM_ROW,
             );
-            trace!("DUMP\t{}\t{}\t{}", pos, var, lk);
+            trace!("DUMP\t{}\t{}\t{}\t{}", pos, var, lk, counts);
         }
         profiles
             .iter()
@@ -313,23 +317,19 @@ fn clustering_selected_variants<R: Rng>(
             break;
         }
     }
-    // let (assignments, _score, _k) = (init_copy_num..=copy_num)
-    //     .map(|k| {
-    //         let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-    //         let expected_gain =
-    //             average_lk * number_of_improved_read(&selected_variants, &asn, k) as f64;
-    //         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t1");
-    //         (asn, score - expected_gain, k)
-    //     })
-    //     .max_by(|x, y| (x.1).partial_cmp(&(y.1)).unwrap())?;
-    // if log_enabled!(log::Level::Trace) {
-    //     trace!("VARS\tCOPYNUM\tID\tASN\tPOS\tLKDiff\tFilter");
-    //     for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-    //         for (pos, x) in prf.iter().enumerate() {
-    //             trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tBefore");
-    //         }
-    //     }
-    // }
+    if log_enabled!(log::Level::Trace) {
+        trace!("VARS\tCOPYNUM\tID\tASN\tPOS\tLKDiff\tFilter");
+        let asn_iter = assignments.iter().zip(selected_variants.iter());
+        let mut id = 0;
+        for c in 0..copy_num {
+            for (i, prf) in asn_iter.clone().filter(|x| *x.0 == c) {
+                for (pos, x) in prf.iter().enumerate() {
+                    trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tBefore");
+                }
+                id += 1;
+            }
+        }
+    }
     let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
     let (mut assignments, mut max, mut max_k) = (vec![0; datasize], 0f64, 1);
     let mut read_lk_gains = vec![0f64; datasize];
@@ -352,29 +352,15 @@ fn clustering_selected_variants<R: Rng>(
             break;
         }
     }
-    // let (assignments, score, max_k) = (init_copy_num..=copy_num)
-    //     .map(|k| {
-    //         let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-    //         let expected_gain =
-    //             average_lk * number_of_improved_read(&selected_variants, &asn, k) as f64;
-    //         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t1");
-    //         (asn, score - expected_gain, k)
-    //     })
-    //     .fold((vec![0; datasize], 0f64, 1), |x, y| {
-    //         match x.1.partial_cmp(&y.1).unwrap() {
-    //             std::cmp::Ordering::Less => y,
-    //             _ => x,
-    //         }
-    //     });
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
-    if log_enabled!(log::Level::Trace) {
-        for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-            for (pos, x) in prf.iter().enumerate() {
-                trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tAfter");
-            }
-        }
-    }
+    // if log_enabled!(log::Level::Trace) {
+    //     for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
+    //         for (pos, x) in prf.iter().enumerate() {
+    //             trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tAfter");
+    //         }
+    //     }
+    // }
     trace!("DUMP\t{max}\t{max_k}");
     likelihood_gains
         .iter()
@@ -828,6 +814,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     round: usize,
     coverage: f64,
     template_len: usize,
+    average_lk: f64,
 ) -> Vec<(usize, f64)> {
     // (sum, maximum gain, number of positive element)
     let mut total_improvement = vec![(0f64, 0); profiles[0].borrow().len()];
@@ -846,6 +833,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
         .into_iter()
         .enumerate()
         .filter(|&(pos, _)| !in_mask(pos))
+        .filter(|&(_, (gain, count))| count as f64 * average_lk < gain) // Is this OK?
         .map(|(pos, (maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
                 .map(|k| poisson_lk(count, coverage * k as f64))
@@ -892,8 +880,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
                         pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
                     let sim = sokal_michener(profiles, picked_pos, pos);
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    // Note that, 1/40 = 0.975. So, if the 39 sign out of 40 pair is positive, then,
-                    // the sokal michener's similarity would be 0.975.
                     if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
                         *selected = 2;
                     }

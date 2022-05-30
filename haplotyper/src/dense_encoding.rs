@@ -3,8 +3,8 @@ use log::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use crate::ALN_PARAMETER;
-const CONS_MIN_LENGTH: usize = 200;
+use crate::{assemble::ditch_graph::ContigSummary, ALN_PARAMETER};
+const CONS_MIN_LENGTH: usize = 400;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 // (unit,cluster,direction, if it is `from` part)
@@ -28,6 +28,11 @@ pub trait DenseEncoding {
 
 impl DenseEncoding for DataSet {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
+        let original_cluster_num: HashMap<_, _> = self
+            .selected_chunks
+            .iter()
+            .map(|c| (c.id, c.cluster_num))
+            .collect();
         let original_assignments = log_original_assignments(self);
         use crate::phmm_likelihood_correction::*;
         let cor_config = CorrectionConfig::default();
@@ -37,6 +42,11 @@ impl DenseEncoding for DataSet {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
         }
+        self.selected_chunks
+            .iter_mut()
+            .filter(|c| original_cluster_num.contains_key(&c.id))
+            .for_each(|c| c.cluster_num = original_cluster_num[&c.id]);
+        self.sanity_check();
         crate::local_clustering::local_clustering_selected(self, &new_units);
     }
 }
@@ -73,13 +83,22 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             *counts.entry(node.unit).or_default() += 1;
         }
+        let mut unit_ids: Vec<_> = unit_ids.iter().collect();
+        unit_ids.sort();
         for id in unit_ids.iter() {
             let (count, len) = (counts[id], lens[id]);
             debug!("DE\tCount\t{}\t{}\t{}", id, count, len);
         }
     }
-    ds.selected_chunks
-        .extend(edge_units.into_values().flatten());
+    let mut current_units: HashSet<_> = ds.selected_chunks.iter().map(|c| c.id).collect();
+    for (_, units) in edge_units {
+        for unit in units {
+            if !current_units.contains(&unit.id) {
+                current_units.insert(unit.id);
+                ds.selected_chunks.push(unit);
+            }
+        }
+    }
     unit_ids
 }
 
@@ -193,7 +212,8 @@ pub fn fill_edges_by_new_units(
             let seqlen = window[0].seq().len();
             panic!("{}\t{}\t{}\t{}\t{}", read.id, start, end, seqlen, len);
         }
-        for node in encode_edge(seq, start, end, direction, unit_info, read_type) {
+        let encoded = encode_edge(seq, start, end, direction, unit_info, read_type);
+        for node in encoded {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
         }
@@ -234,17 +254,17 @@ pub fn fill_edges_by_new_units(
 //     }
 // }
 
-type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
-fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> EdgeAndUnit {
-    use crate::assemble::*;
-    let msr = ds.read_type.min_span_reads();
-    let min_lk = ds.read_type.min_llr_value();
-    let config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
-    let (records, summaries) = assemble(ds, &config);
+fn write_to_file(
+    records: &[gfa::Record],
+    summaries: &[ContigSummary],
+    de_config: &DenseEncodingConfig,
+) {
     if let Some(file) = de_config.file.as_ref() {
         let header = gfa::Content::Header(gfa::Header::default());
         let header = gfa::Record::from_contents(header, vec![].into());
-        let records = std::iter::once(header).chain(records.clone()).collect();
+        let records = std::iter::once(header)
+            .chain(records.iter().cloned())
+            .collect();
         let gfa = gfa::GFA::from_records(records);
         if let Ok(mut wtr) = std::fs::File::create(file).map(std::io::BufWriter::new) {
             use std::io::Write;
@@ -253,7 +273,34 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
             }
         }
     }
-    let edges: HashMap<_, _> = summaries
+    for summary in summaries {
+        let (copy_num, tig_num) = summary
+            .summary
+            .iter()
+            .filter_map(|s| s.copy_number)
+            .fold((0, 0), |(c, x), copynum| (c + copynum, x + 1));
+        let copy_num = match tig_num {
+            0 => 0,
+            _ => (copy_num as f64 / tig_num as f64).round() as usize,
+        };
+        let ids: Vec<_> = summary
+            .summary
+            .iter()
+            .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+            .collect();
+        debug!("DRAFT2\t{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
+    }
+}
+
+type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
+fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> EdgeAndUnit {
+    use crate::assemble::*;
+    let msr = ds.read_type.min_span_reads();
+    let min_lk = ds.read_type.min_llr_value();
+    let config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
+    let (records, summaries) = assemble(ds, &config);
+    write_to_file(&records, &summaries, de_config);
+    let multicopy_contigs: HashMap<_, _> = summaries
         .iter()
         .filter(|summary| !summary.summary.is_empty())
         .filter(|summary| {
@@ -270,70 +317,40 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
             }
             has_edges[0] && has_edges[1]
         })
-        .flat_map(|summary| {
+        .filter_map(|summary| {
             let (total_cp, num) = summary
                 .summary
                 .iter()
                 .filter_map(|x| x.copy_number)
                 .fold((0, 0), |(cp, n), x| (cp + x, n + 1));
-            match total_cp / num {
-                0 | 1 => Vec::new(),
-                copy_number => summary
-                    .summary
-                    .windows(2)
-                    .map(|w| {
-                        let from = (w[0].unit, w[0].cluster, w[0].strand);
-                        let to = (w[1].unit, w[1].cluster, w[1].strand);
-                        ((from, to), copy_number)
-                    })
-                    .collect(),
-            }
+            let copy_num = total_cp / num;
+            (1 < copy_num).then(|| (summary.id.clone(), copy_num))
+        })
+        .collect();
+    let edges: HashMap<_, _> = summaries
+        .iter()
+        .flat_map(|summary| match multicopy_contigs.get(&summary.id) {
+            Some(&copy_number) => summary
+                .summary
+                .windows(2)
+                .map(|w| {
+                    let from = (w[0].unit, w[0].cluster, w[0].strand);
+                    let to = (w[1].unit, w[1].cluster, w[1].strand);
+                    ((from, to), copy_number)
+                })
+                .collect(),
+            None => Vec::new(),
         })
         .collect();
     debug!("DE\t{}\tEDGES", edges.len());
-    let mut consensi_materials: HashMap<_, Vec<_>> = HashMap::new();
-    for read in ds.encoded_reads.iter() {
-        assert_eq!(read.nodes.len(), read.edges.len() + 1);
-        for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
-            assert_eq!((edge.from, edge.to), (w[0].unit, w[1].unit));
-            let forward = get_forward_d_edge_from_window(w);
-            let reverse = get_forward_d_edge_from_window(w);
-            if edges.contains_key(&forward) {
-                let label = edge.label().to_vec();
-                consensi_materials.entry(forward).or_default().push(label);
-            } else if edges.contains_key(&reverse) {
-                let label = bio_utils::revcmp(edge.label());
-                consensi_materials.entry(reverse).or_default().push(label);
-            }
-        }
-    }
     let cov_thr = ds.coverage.unwrap().ceil() as usize / 4;
-    debug!("DE\tCand\t{}", consensi_materials.len());
     let mean_chunk_len = {
         let sum: usize = ds.selected_chunks.iter().map(|x| x.seq().len()).sum();
         sum / ds.selected_chunks.len()
     };
-    let mut consensi: Vec<_> = consensi_materials
-        .into_par_iter()
-        .filter_map(|(key, mut seqs)| {
-            seqs.iter_mut()
-                .for_each(|xs| xs.iter_mut().for_each(u8::make_ascii_uppercase));
-            let mean = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
-            let len = seqs.len();
-            let cons = consensus(seqs, cov_thr).map(|s| (key, s));
-            if cons.is_none() {
-                debug!("DE\tEDGE\t{}\t{}\tNG", len, mean);
-            } else {
-                debug!("DE\tEDGE\t{}\t{}\tOK", len, mean);
-            }
-            cons
-        })
-        .collect();
-    consensi.sort_unstable_by_key(|x| x.0);
     let mut newly_defined_unit = HashMap::new();
     let mut max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
-    for (key, consensus) in consensi {
-        let copy_num = edges[&key];
+    for (key, consensus, copy_num) in take_consensus_on_multitig(ds, &edges, cov_thr) {
         let chunk_num = (consensus.len() as f64 / mean_chunk_len as f64).ceil();
         let chunk_len = (consensus.len() as f64 / chunk_num).ceil() as usize;
         let units: Vec<_> = consensus
@@ -344,17 +361,149 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
             })
             .collect();
         let edge = format!("({},{})-({},{})", key.0 .0, key.0 .2, key.1 .0, key.1 .2);
-        debug!(
-            "DE\tNewUnit\t{}\t{}\t{}\t{}",
-            consensus.len(),
-            max_unit_id - units.len() as u64,
-            max_unit_id,
-            edge
-        );
+        let len = consensus.len();
+        let (start, end) = (max_unit_id - units.len() as u64, max_unit_id);
+        debug!("DE\tInNode\t{len}\t{start}\t{end}\t{edge}",);
         newly_defined_unit.insert(key, units);
+    }
+    let consensi =
+        take_consensus_to_multitig(ds, &records, &summaries, &multicopy_contigs, cov_thr);
+    for (edges, consensus, copy_num) in consensi {
+        let chunk_num = (consensus.len() as f64 / mean_chunk_len as f64).ceil();
+        let chunk_len = (consensus.len() as f64 / chunk_num).ceil() as usize;
+        let units: Vec<_> = consensus
+            .chunks(chunk_len)
+            .map(|seq| {
+                max_unit_id += 1;
+                Unit::new(max_unit_id, seq.to_vec(), copy_num)
+            })
+            .collect();
+        let len = consensus.len();
+        let (start, end) = (max_unit_id - units.len() as u64, max_unit_id);
+        for key in edges.iter() {
+            let &((u1, c1, d1), (u2, c2, d2)) = key;
+            let edge = format!("({u1},{c1},{d1})-({u2},{c2},{d2})");
+            debug!("DE\tBetEdge\t{len}\t{start}\t{end}\t{edge}",);
+            newly_defined_unit.insert(*key, units.clone());
+        }
     }
     debug!("DE\tDefined\t{}", newly_defined_unit.len());
     newly_defined_unit
+}
+
+fn take_consensus_on_multitig(
+    ds: &DataSet,
+    edges: &HashMap<DEdge, usize>,
+    cov_thr: usize,
+) -> Vec<(DEdge, Vec<u8>, usize)> {
+    let mut consensi_materials: HashMap<_, Vec<_>> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        assert_eq!(read.nodes.len(), read.edges.len() + 1);
+        for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
+            assert_eq!((edge.from, edge.to), (w[0].unit, w[1].unit));
+            let forward = get_forward_d_edge_from_window(w);
+            let reverse = get_reverse_d_edge_from_window(w);
+            if edges.contains_key(&forward) {
+                let label = edge.label().to_vec();
+                consensi_materials.entry(forward).or_default().push(label);
+            } else if edges.contains_key(&reverse) {
+                let label = bio_utils::revcmp(edge.label());
+                consensi_materials.entry(reverse).or_default().push(label);
+            }
+        }
+    }
+    debug!("DE\tCand\t{}", consensi_materials.len());
+    let mut consensi: Vec<_> = consensi_materials
+        .into_par_iter()
+        .filter_map(|(key, mut seqs)| {
+            seqs.iter_mut()
+                .for_each(|xs| xs.iter_mut().for_each(u8::make_ascii_uppercase));
+            let mean = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
+            let len = seqs.len();
+            let cp = *edges.get(&key).unwrap();
+            let cons = consensus(seqs, cov_thr).map(|s| (key, s, cp));
+            if cons.is_none() {
+                debug!("DE\tEDGE\t{}\t{}\tNG", len, mean);
+            } else {
+                debug!("DE\tEDGE\t{}\t{}\tOK", len, mean);
+            }
+            cons
+        })
+        .collect();
+    consensi.sort_unstable_by_key(|x| x.0);
+    consensi
+}
+
+fn take_consensus_to_multitig(
+    ds: &DataSet,
+    records: &[gfa::Record],
+    summaries: &[ContigSummary],
+    multicopy_contigs: &HashMap<String, usize>,
+    cov_thr: usize,
+) -> Vec<(Vec<DEdge>, Vec<u8>, usize)> {
+    fn find(
+        summaries: &[ContigSummary],
+        refid: &String,
+        pos: gfa::Position,
+        is_from: bool,
+    ) -> (u64, u64, bool) {
+        let summary = summaries.iter().find(|s| &s.id == refid).unwrap();
+        let node = match pos.is_last {
+            true => summary.summary.last().unwrap(),
+            false => summary.summary.first().unwrap(),
+        };
+        match (pos.is_last, is_from) {
+            (true, true) => (node.unit, node.cluster, node.strand),
+            (false, true) => (node.unit, node.cluster, !node.strand),
+            (true, false) => (node.unit, node.cluster, !node.strand),
+            (false, false) => (node.unit, node.cluster, node.strand),
+        }
+    }
+    let mut into_multitig_edges: HashMap<_, Vec<_>> = HashMap::new();
+    for rec in records.iter() {
+        if let &gfa::Content::Edge(ref edge) = &rec.content {
+            if let Some(cp) = multicopy_contigs.get(&edge.sid1.id) {
+                let from = find(summaries, &edge.sid1.id, edge.end1, true);
+                let to = find(summaries, &edge.sid2.id, edge.end2, false);
+                into_multitig_edges.entry(from).or_default().push((to, *cp))
+            }
+            if let Some(cp) = multicopy_contigs.get(&edge.sid2.id) {
+                let from = find(summaries, &edge.sid2.id, edge.end2, true);
+                let to = find(summaries, &edge.sid1.id, edge.end1, false);
+                into_multitig_edges.entry(from).or_default().push((to, *cp));
+            }
+        }
+    }
+    into_multitig_edges.retain(|_, tos| {
+        let to = tos.get(0).map(|((u, _, s), cp)| (*u, *s, *cp)).unwrap();
+        tos.iter().all(|((u, _, s), cp)| (*u, *s, *cp) == to)
+    });
+    into_multitig_edges
+        .into_par_iter()
+        .filter_map(|(from, tos)| {
+            let cp = tos[0].1;
+            let edges: Vec<_> = tos.iter().map(|&(to, _)| (from, to)).collect();
+            let mut labels = vec![];
+            for read in ds.encoded_reads.iter() {
+                assert_eq!(read.nodes.len(), read.edges.len() + 1);
+                for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
+                    assert_eq!((edge.from, edge.to), (w[0].unit, w[1].unit));
+                    let forward = get_forward_d_edge_from_window(w);
+                    let reverse = get_reverse_d_edge_from_window(w);
+                    if edges.iter().any(|&e| e == forward) {
+                        let lab: Vec<_> = edge.label().iter().map(u8::to_ascii_uppercase).collect();
+                        labels.push(lab);
+                    }
+                    if edges.iter().any(|&e| e == reverse) {
+                        let mut lab = bio_utils::revcmp(edge.label());
+                        lab.iter_mut().for_each(u8::make_ascii_uppercase);
+                        labels.push(lab);
+                    }
+                }
+            }
+            consensus(labels, cov_thr).map(|cons| (edges, cons, cp))
+        })
+        .collect()
 }
 
 fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {

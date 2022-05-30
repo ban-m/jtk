@@ -118,53 +118,53 @@ pub fn mock_flow_network_parallel_edge2() -> (FlowGraph, Flow) {
     (graph, f)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::utils::{draw, draw_with_flow};
-    use super::*;
-    use crate::min_flow::min_cost_flow;
+// #[cfg(test)]
+// mod tests {
+//     use super::super::utils::{draw, draw_with_flow};
+//     use super::*;
+//     use crate::min_flow::min_cost_flow;
 
-    #[test]
-    fn test_mock_flow_network1() {
-        let (g, f_true) = mock_flow_network1();
-        let f = min_cost_flow(&g).unwrap();
-        assert!(f_true == f);
-    }
+//     #[test]
+//     fn test_mock_flow_network1() {
+//         let (g, f_true) = mock_flow_network1();
+//         let f = min_cost_flow(&g).unwrap();
+//         assert!(f_true == f);
+//     }
 
-    #[test]
-    fn test_mock_flow_network2() {
-        let (g, f_true) = mock_flow_network2();
-        let f = min_cost_flow(&g).unwrap();
-        draw_with_flow(&g, &f);
-        println!("{:?}", f);
-        assert!(f_true == f);
-    }
+//     #[test]
+//     fn test_mock_flow_network2() {
+//         let (g, f_true) = mock_flow_network2();
+//         let f = min_cost_flow(&g).unwrap();
+//         draw_with_flow(&g, &f);
+//         println!("{:?}", f);
+//         assert!(f_true == f);
+//     }
 
-    #[test]
-    fn test_mock_flow_network3() {
-        let (g, f_true) = mock_flow_network3();
-        let f = min_cost_flow(&g).unwrap();
-        draw_with_flow(&g, &f);
-        println!("{:?}", f);
-        assert!(f_true == f);
-    }
+//     #[test]
+//     fn test_mock_flow_network3() {
+//         let (g, f_true) = mock_flow_network3();
+//         let f = min_cost_flow(&g).unwrap();
+//         draw_with_flow(&g, &f);
+//         println!("{:?}", f);
+//         assert!(f_true == f);
+//     }
 
-    #[test]
-    fn test_mock_flow_network_parallel_edge1() {
-        let (g, f_true) = mock_flow_network_parallel_edge1();
-        let f = min_cost_flow(&g).unwrap();
-        assert!(f_true == f);
-    }
+//     #[test]
+//     fn test_mock_flow_network_parallel_edge1() {
+//         let (g, f_true) = mock_flow_network_parallel_edge1();
+//         let f = min_cost_flow(&g).unwrap();
+//         assert!(f_true == f);
+//     }
 
-    #[test]
-    fn test_mock_flow_network_parallel_edge2() {
-        let (g, f_true) = mock_flow_network_parallel_edge2();
-        draw(&g);
-        let f = min_cost_flow(&g).unwrap();
-        draw_with_flow(&g, &f);
+//     #[test]
+//     fn test_mock_flow_network_parallel_edge2() {
+//         let (g, f_true) = mock_flow_network_parallel_edge2();
+//         draw(&g);
+//         let f = min_cost_flow(&g).unwrap();
+//         draw_with_flow(&g, &f);
 
-        println!("{:?}", f);
-        println!("{:?}", f_true);
-        assert!(f_true == f);
-    }
-}
+//         println!("{:?}", f);
+//         println!("{:?}", f_true);
+//         assert!(f_true == f);
+//     }
+// }

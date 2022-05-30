@@ -1,4 +1,4 @@
-use bio_utils::fasta;
+use bio_utils::fastq;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
             Some((readid, hap))
         })
         .collect();
-    let reads = fasta::parse_into_vec(&args[2])?;
+    let reads = fastq::parse_into_vec(&args[2])?;
     let mut hap1_wtr = std::fs::File::create(&args[3]).map(BufWriter::new)?;
     let mut hap2_wtr = std::fs::File::create(&args[4]).map(BufWriter::new)?;
     for read in reads.iter() {

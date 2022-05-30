@@ -24,8 +24,39 @@ pub fn normalize_local_clustering(ds: &mut DataSet) {
         for (to, &(from, _)) in counts.iter().enumerate() {
             mapsto[from as usize] = to as u64;
         }
+        let mut indices = mapsto.clone();
         for node in pileup {
+            indices
+                .iter_mut()
+                .zip(mapsto.iter())
+                .for_each(|(x, &y)| *x = y);
             node.cluster = mapsto[node.cluster as usize];
+            reorder(&mut node.posterior, &mut indices);
+            assert!(indices.is_sorted());
         }
+    }
+}
+
+// Reorder xs according to the indices.
+fn reorder<T>(xs: &mut [T], indices: &mut [u64]) {
+    let len = xs.len();
+    for i in 0..len {
+        while indices[i] as usize != i {
+            let to = indices[i] as usize;
+            xs.swap(i, to);
+            indices.swap(i, to);
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    #[test]
+    fn reorder_test() {
+        let mut arr = vec![50, 40, 70, 60, 90];
+        let mut indices = vec![3, 0, 4, 1, 2];
+        super::reorder(&mut arr, &mut indices);
+        assert!(indices.is_sorted());
+        assert_eq!(arr, vec![40, 60, 90, 50, 70]);
     }
 }

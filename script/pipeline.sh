@@ -52,15 +52,15 @@ else
         jtk estimate_multiplicity -vv --threads ${THREADS} ${HAP_COV} \
             --draft_assembly ${DRAFT_GFA} --purge_copy_num ${UPPER_COPY_NUM} |\
         tee ${2}.entry.units.encode.json |\
-        jtk partition_local -vv --threads ${THREADS} | \
-        jtk squish -t56 -vv ${THREADS} >  ${CLUSTERED}
+        jtk partition_local -vv --threads ${THREADS} >  ${CLUSTERED}
 fi
 
 if [ -f ${PURGED} ]
 then
     echo "Suspicious encodings are already purged."
 else
-    cat ${CLUSTERED} | jtk purge_diverged --threads ${THREADS} -vv |\
+    cat ${CLUSTERED} |\
+        jtk purge_diverged --threads ${THREADS} -vv |\
         jtk purge_diverged --threads ${THREADS} -vv > ${PURGED}
 fi
 

@@ -13,9 +13,9 @@ fn main() -> std::io::Result<()> {
         let mut ds = ds.clone();
         use haplotyper::phmm_likelihood_correction::*;
         let config = CorrectionConfig::default();
-        let selection: HashSet<u64> = vec![49].into_iter().collect();
+        let selection: HashSet<_> = vec![646, 1695, 1258, 760, 1818].into_iter().collect();
         ds.correct_clustering_selected(&selection, &config);
-        // ds.correct_clustering_selected(&config);
+        // ds.correct_clustering(&config);
         dump(&ds, "align_spectral");
     }
     // {

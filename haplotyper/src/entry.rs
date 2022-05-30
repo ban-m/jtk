@@ -6,7 +6,7 @@ const LEN_THR: usize = 4_000;
 pub trait Entry {
     fn entry(
         input_file: &str,
-        raw_data: Vec<bio_utils::fasta::Record>,
+        raw_data: Vec<(String, Vec<u8>)>,
         rt: &str,
         slag: Option<&str>,
     ) -> Self;
@@ -15,7 +15,7 @@ pub trait Entry {
 impl Entry for definitions::DataSet {
     fn entry(
         input_file: &str,
-        raw_data: Vec<bio_utils::fasta::Record>,
+        raw_data: Vec<(String, Vec<u8>)>,
         rt: &str,
         _slag: Option<&str>,
     ) -> Self {
@@ -34,21 +34,18 @@ impl Entry for definitions::DataSet {
         };
         let (raw_data, slags): (Vec<_>, Vec<_>) = raw_data
             .into_par_iter()
-            .partition(|read| calc_entropy(read.seq(), K) > THR && read.seq().len() > LEN_THR);
-        let trimed: usize = slags.iter().map(|r| r.seq().len()).sum();
+            .partition(|(_, seq)| calc_entropy(&seq, K) > THR && seq.len() > LEN_THR);
+        let trimed: usize = slags.iter().map(|(_, seq)| seq.len()).sum();
         debug!("ENTRY\tTrimmed\t{}bp", trimed);
         let raw_reads: Vec<_> = raw_data
             .into_iter()
             .enumerate()
-            .map(|(idx, record)| {
-                let name = record.id().to_string();
-                let desc = record.desc().unwrap_or(&String::new()).clone();
-                let seq = record.seq();
-                let seq: definitions::DNASeq = compress_homopolymer(seq, compress_thr).into();
+            .map(|(idx, (name, seq))| {
+                let seq: definitions::DNASeq = compress_homopolymer(&seq, compress_thr).into();
                 let id = idx as u64;
                 definitions::RawRead {
                     name,
-                    desc,
+                    desc: String::new(),
                     seq,
                     id,
                 }

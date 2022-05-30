@@ -500,17 +500,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -541,17 +541,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -585,17 +585,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -618,17 +618,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -665,17 +665,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -712,17 +712,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -759,17 +759,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));
@@ -802,17 +802,17 @@ mod tests {
             .clone()
             .into_iter()
             .map(gfa::Content::Seg)
-            .map(|n| gfa::Record::from_contents(n, vec![]));
+            .map(|n| gfa::Record::from_contents(n, vec![].into()));
         records.extend(nodes);
         {
             let edges = edges
                 .clone()
                 .into_iter()
                 .map(|(e, _)| gfa::Content::Edge(e))
-                .map(|n| gfa::Record::from_contents(n, vec![]));
+                .map(|n| gfa::Record::from_contents(n, vec![].into()));
             records.extend(edges);
         }
-        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![]);
+        let group = gfa::Record::from_contents(gfa::Content::Group(group.clone()), vec![].into());
         records.push(group);
         eprintln!("=============Assembly================");
         eprintln!("{}", gfa::GFA::from_records(records));

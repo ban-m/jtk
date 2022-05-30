@@ -176,7 +176,7 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     let mut polishing_pairs: Vec<_> = seqs_and_ref_units
         .iter()
         .map(|(ref_unit, nodes)| {
-            let band_width = 2 * read_type.band_width(ref_unit.seq().len());
+            let band_width = read_type.band_width(ref_unit.seq().len());
             let ops: Vec<Vec<_>> = nodes
                 .iter()
                 .map(|n| ops_to_kiley_ops(&n.borrow().cigar))
@@ -200,10 +200,10 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     hmm
 }
 
-fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
+pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 23908;
-    const SAMPLE_NUM: usize = 300;
-    const TAKE_POS: usize = 5;
+    const SAMPLE_NUM: usize = 500;
+    const TAKE_POS: usize = 1;
     const LEN: usize = 100;
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED);
     let mut lks: Vec<_> = (0..SAMPLE_NUM)
@@ -220,24 +220,6 @@ fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64
         .collect();
     lks.sort_by(|x, y| x.partial_cmp(y).unwrap());
     lks[TAKE_POS]
-    // let lkdiff: Vec<_> = (0..SAMPLE_NUM)
-    //     .map(|i| {
-    //         let template = kiley::gen_seq::generate_seq(&mut rng, LEN);
-    //         let query = match i % 2 == 0 {
-    //             true => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 0, 1),
-    //             false => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 1, 0),
-    //         };
-    //         let lk_base = hmm.likelihood(&template, &template, 10);
-    //         let lk_diff = hmm.likelihood(&template, &query, 10);
-    //         lk_base - lk_diff
-    //     })
-    //     .collect();
-    // let template = kiley::gen_seq::generate_seq(&mut rng, 500);
-    // let query1 = kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 2, 2);
-    // let query2 = kiley::gen_seq::introduce_errors(&query1, &mut rng, 0, 1, 1);
-    // let lk1 = hmm.likelihood(&template, &query1, 20);
-    // let lk2 = hmm.likelihood(&template, &query2, 20);
-    // (lk1 - lk2) / 3f64
 }
 
 // use kiley::gphmm::Cond;

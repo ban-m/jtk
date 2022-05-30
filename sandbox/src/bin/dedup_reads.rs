@@ -1,4 +1,4 @@
-use bio_utils::fasta::*;
+use bio_utils::fastq::*;
 fn main() -> std::io::Result<()> {
     // First argument would be the name of the binary...
     let mut records: Vec<_> = std::env::args()

@@ -16,22 +16,6 @@ impl AlignmentCorrection for DataSet {
             .map(|c| c.id)
             .collect();
         self.correct_clustering_selected(&selections, &config);
-        // let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = {
-        //     let mut result: HashMap<u64, Vec<(usize, Vec<f64>)>> = HashMap::new();
-        //     for post_dist_on_chunk in posterior_distributions {
-        //         for (id, pos, posterior_dist) in post_dist_on_chunk {
-        //             result.entry(id).or_default().push((pos, posterior_dist));
-        //         }
-        //     }
-        //     result
-        // };
-        // for read in self.encoded_reads.iter_mut() {
-        //     if let Some(corrected) = result.remove(&read.id) {
-        // for (pos, post) in corrected {
-        //     read.nodes[pos].cluster = argmax(&post) as u64;
-        // }
-        //     }
-        // }
         self.sanity_check();
     }
     fn correct_clustering_selected(
@@ -47,12 +31,19 @@ impl AlignmentCorrection for DataSet {
             .map(|c| (c.id, (c.cluster_num, c.copy_num)))
             .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, &config))
             .collect();
+        let protected = get_protected_clusterings(&self);
         let corrected_clustering_on_read = {
             let mut chunks_mut_ref: HashMap<_, _> =
                 self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
             let mut corrected_clustering_on_read: HashMap<_, Vec<_>> = HashMap::new();
             for (correcteds, (uid, cluster_num)) in corrected_clusterings {
                 let chunk = chunks_mut_ref.get_mut(&uid).unwrap();
+                let (score, prev) = (chunk.score, chunk.cluster_num);
+                if cluster_num == 1 && protected.contains(&uid) {
+                    debug!("POLISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tP");
+                    continue;
+                }
+                debug!("POLISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tC");
                 assert!(cluster_num <= chunk.copy_num);
                 chunk.cluster_num = cluster_num;
                 for (id, idx, asn) in correcteds {
@@ -72,6 +63,20 @@ impl AlignmentCorrection for DataSet {
             }
         }
     }
+}
+
+fn get_protected_clusterings(ds: &DataSet) -> HashSet<u64> {
+    let mut coverage: HashMap<_, u32> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        *coverage.entry(node.unit).or_default() += 1;
+    }
+    let hmm = crate::local_clustering::get_tuned_model(ds);
+    let gain = crate::local_clustering::estimate_minimum_gain(&hmm);
+    debug!("POLISHED\tMinGain\t{gain:.3}");
+    ds.selected_chunks
+        .iter()
+        .filter_map(|c| (coverage[&c.id] as f64 * gain / 1.5 < c.score).then(|| c.id))
+        .collect()
 }
 
 fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
@@ -204,6 +209,10 @@ fn clustering(
             (up, center, tail)
         })
         .collect();
+    for (i, ctx) in contexts.iter().enumerate() {
+        let cl = argmax(&ctx.1.posterior);
+        trace!("DUMP\t{}\t{}\t{cl}", i, ctx.1.cluster);
+    }
     let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
@@ -253,8 +262,9 @@ fn clustering(
     use rand_xoshiro::Xoroshiro128PlusPlus;
     let mut rng = Xoroshiro128PlusPlus::seed_from_u64(id * k as u64);
     // TODO:Maybe we can tune the number of the cluster here, again?
+    let cluster_num = k.min(pick_k);
     let asn = (0..10)
-        .map(|_| kmeans(&eigens, k, &mut rng))
+        .map(|_| kmeans(&eigens, cluster_num, &mut rng))
         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .map(|x| x.0)
         .unwrap();
@@ -269,10 +279,11 @@ fn clustering(
         for (i, sm) in eigens.iter().enumerate() {
             let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
             let cls = contexts[i].1.cluster;
-            trace!("EIG\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
+            trace!("EIG\t{id}\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
         }
     }
-    (asn, k)
+    assert!(asn.iter().all(|&x| x <= cluster_num));
+    (asn, cluster_num)
 }
 
 // Return the *normalized* graph lap.
@@ -291,7 +302,7 @@ fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
         .collect()
 }
 
-const EIGEN_THR: f64 = 0.1;
+const EIGEN_THR: f64 = 0.25;
 fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, usize) {
     let datalen = matrix.len();
     let rows: Vec<_> = matrix
@@ -310,18 +321,18 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
         .iter()
         .take_while(|&(_, &lam)| lam < EIGEN_THR)
         .count();
-    let pick_k = k.max(opt_k);
+    let pick_k = opt_k;
     let top_k_eigenvec = eigen_and_eigenvec[..pick_k]
         .iter()
         .flat_map(|(v, _)| v.iter().copied());
-    if log_enabled!(log::Level::Trace) {
+    if log_enabled!(log::Level::Debug) {
         for (i, lam) in eigen_and_eigenvec
             .iter()
             .map(|(_, lam)| lam)
             .take(8)
             .enumerate()
         {
-            trace!("LAMBDA\t{id}\t{i}\t{lam}\t{k}");
+            debug!("LAMBDA\t{id}\t{i}\t{lam}\t{k}\t{pick_k}");
         }
     }
     let top_k_eigenvec = nalgebra::DMatrix::from_iterator(datalen, pick_k, top_k_eigenvec);
@@ -409,48 +420,94 @@ fn alignment<'a>(
     assert_eq!(center1.unit, center2.unit);
     let center_copy_num = &copy_numbers[center1.unit as usize];
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
-    let up_aln = align(up1, up2, &copy_numbers);
-    let down_aln = align(down1, down2, &copy_numbers);
+    let up_aln = align_swg(up1, up2, &copy_numbers);
+    let down_aln = align_swg(down1, down2, &copy_numbers);
     // let similarity = (up_aln + down_aln + center).max(0f64);
     let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
     assert!(0f64 <= similarity);
     if log_enabled!(log::Level::Trace) {
-        let line1: Vec<_> = up1
-            .iter()
-            .map(|(u, p)| (*u, argmax(p)))
-            .chain(std::iter::once((center1.unit, center1.cluster as usize)))
-            .chain(down1.iter().map(|(u, p)| (*u, argmax(p))))
-            .map(|(u, c)| format!("{u}-{c}"))
-            .collect();
-        let line2: Vec<_> = up2
-            .iter()
-            .map(|(u, p)| (*u, argmax(p)))
-            .chain(std::iter::once((center2.unit, center2.cluster as usize)))
-            .chain(down2.iter().map(|(u, p)| (*u, argmax(p))))
-            .map(|(u, c)| format!("{u}-{c}"))
-            .collect();
-        trace!("ALN\t{}", line1.join("\t"));
-        trace!("ALN\t{}", line2.join("\t"));
-        trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}");
+        fn to_line<'a>(vector: &[(u64, &'a [f64])]) -> Vec<String> {
+            vector
+                .iter()
+                .map(|(u, p)| format!("{u}-{}", argmax(p)))
+                .collect()
+        }
+        trace!("ALN\t\t{}", to_line(up1).join(" "));
+        trace!("ALN\t\t{}", to_line(up2).join(" "));
+        trace!("ALN\t\t{}", to_line(down1).join(" "));
+        trace!("ALN\t\t{}", to_line(down2).join(" "));
+        let (cl1, cl2) = (argmax(&center1.posterior), argmax(&center2.posterior));
+        trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}\t{cl1}\t{cl2}");
     }
     similarity
 }
 
+// Align by SWG.
+fn align_swg<'a>(
+    arm1: &[(u64, &'a [f64])],
+    arm2: &[(u64, &'a [f64])],
+    copy_numbers: &[Vec<f64>],
+) -> f64 {
+    const GAP_OPEN: f64 = -0.5f64;
+    const GAP_EXTEND: f64 = -100f64;
+    const MISM: f64 = -100f64;
+    let (len1, len2) = (arm1.len(), arm2.len());
+    let lower = (len1 + len2 + 2) as f64 * MISM;
+    // Match,Del on arm2, Del on arm1.
+    let mut dp = vec![vec![(lower, lower, lower); len2 + 1]; len1 + 1];
+    for i in 1..len1 + 1 {
+        dp[i][0].2 = GAP_OPEN + (i - 1) as f64 * GAP_EXTEND;
+    }
+    for j in 1..len2 + 1 {
+        dp[0][j].1 = GAP_OPEN + (j - 1) as f64 * GAP_EXTEND;
+    }
+    dp[0][0].0 = 0f64;
+    fn max((a, b, c): (f64, f64, f64)) -> f64 {
+        a.max(b).max(c)
+    }
+    for (i, (u1, p1)) in arm1.iter().enumerate() {
+        let i = i + 1;
+        for (j, (u2, p2)) in arm2.iter().enumerate() {
+            let j = j + 1;
+            let match_score = match u1 == u2 {
+                true => sim(p1, p2, &copy_numbers[*u1 as usize]),
+                false => MISM,
+            };
+            // Match
+            let mat = max(dp[i - 1][j - 1]) + match_score;
+            let del2 = match dp[i][j - 1] {
+                (mat, d2, d1) => (mat + GAP_OPEN).max(d2 + GAP_EXTEND).max(d1 + GAP_OPEN),
+            };
+            let del1 = match dp[i - 1][j] {
+                (mat, d2, d1) => (mat + GAP_OPEN).max(d2 + GAP_OPEN).max(d1 + GAP_EXTEND),
+            };
+            dp[i][j] = (mat, del2, del1);
+        }
+    }
+    let row_last = dp[len1].iter().map(|&x| max(x));
+    let column_last = dp.iter().filter_map(|l| l.last()).map(|&x| max(x));
+    row_last
+        .chain(column_last)
+        .max_by(|x, y| x.partial_cmp(&y).unwrap())
+        .unwrap()
+}
+
+#[allow(dead_code)]
 fn align<'a>(
     arm1: &[(u64, &'a [f64])],
     arm2: &[(u64, &'a [f64])],
     copy_numbers: &[Vec<f64>],
 ) -> f64 {
-    // const GAP: f64 = -1f64;
-    // Allow gap without any penalty.
-    // It might seem very peculer, but it is OK,
-    // because if this deletion is indeed true one,
-    // other (unit,cluster) pair would be informative.
-    // Otherwise, or the deletion is just random error,
-    // we should ignore them from the score calulation,
-    // as we do usual seuqnecing errors.
-    const GAP: f64 = 0f64;
+    // Allow gap with small penalty.
+    // To treat the deletion error, or "encoding error" due to the
+    // errors in the sequnece,
+    // we treat one-length deletion with small penalty,
+    // and deletion longer than one with high penalty.
+    // To do this, we, currently, evaluate the alignemnt in post-hoc.
+    // I know it is not optimal, nor correct algorithm, but it works (should we hoep more?)
+    // TODO: implement NWG algorithm
     const MISM: f64 = -10000f64;
+    const GAP: f64 = -0.5f64;
     let mut dp = vec![vec![0f64; arm2.len() + 1]; arm1.len() + 1];
     for (i, _) in arm1.iter().enumerate() {
         dp[i + 1][0] = dp[i][0] + GAP;
@@ -471,50 +528,51 @@ fn align<'a>(
                 .max(dp[i][j - 1] + GAP);
         }
     }
-    let last_row = dp.last().unwrap().iter();
-    let last_column = dp.iter().filter_map(|x| x.last());
-    *last_row
-        .chain(last_column)
-        .max_by(|x, y| x.partial_cmp(y).unwrap())
+    let last_row = dp
+        .last()
         .unwrap()
-    // let last_row = dp
-    //     .last()
-    //     .unwrap()
-    //     .iter()
-    //     .enumerate()
-    //     .map(|(j, s)| (arm1.len(), j, s));
-    // let last_column = dp
-    //     .iter()
-    //     .filter_map(|x| x.last())
-    //     .enumerate()
-    //     .map(|(i, s)| (i, arm2.len(), s));
-    // let (mut i, mut j, score) = last_row
-    //     .chain(last_column)
-    //     .max_by(|x, y| x.2.partial_cmp(&y.2).unwrap())
-    //     .unwrap();
-    // let mut alnlen = 0;
-    // while 0 < i && 0 < j {
-    //     alnlen += 1;
-    //     let current = dp[i][j];
-    //     let (u1, p1) = arm1[i - 1];
-    //     let (u2, p2) = arm2[j - 1];
-    //     let match_score = match u1 == u2 {
-    //         true => sim(p1, p2, &copy_numbers[u1 as usize]),
-    //         false => MISM,
-    //     };
-    //     assert!(!match_score.is_nan());
-    //     if (dp[i - 1][j - 1] + match_score - current).abs() < 0.00001 {
-    //         i -= 1;
-    //         j -= 1;
-    //     } else if (dp[i - 1][j] + GAP - current).abs() < 0.000001 {
-    //         i -= 1;
-    //     } else {
-    //         assert!((dp[i][j - 1] + GAP - current).abs() < 0.000001);
-    //         j -= 1;
-    //     }
-    // }
-    // alnlen += j + i;
-    // (*score, alnlen)
+        .iter()
+        .enumerate()
+        .map(|(j, s)| (arm1.len(), j, s));
+    let last_column = dp
+        .iter()
+        .filter_map(|x| x.last())
+        .enumerate()
+        .map(|(i, s)| (i, arm2.len(), s));
+    let (mut i, mut j, score) = last_row
+        .chain(last_column)
+        .max_by(|x, y| x.2.partial_cmp(&y.2).unwrap())
+        .unwrap();
+    // 0->Deletion or insertion,1->Match
+    let mut ops = vec![];
+    while 0 < i && 0 < j {
+        let current = dp[i][j];
+        let (u1, p1) = arm1[i - 1];
+        let (u2, p2) = arm2[j - 1];
+        let match_score = match u1 == u2 {
+            true => sim(p1, p2, &copy_numbers[u1 as usize]),
+            false => MISM,
+        };
+        assert!(!match_score.is_nan());
+        if (dp[i - 1][j - 1] + match_score - current).abs() < 0.00001 {
+            ops.push(1);
+            i -= 1;
+            j -= 1;
+        } else if (dp[i - 1][j] + GAP - current).abs() < 0.000001 {
+            ops.push(0);
+            i -= 1;
+        } else {
+            assert!((dp[i][j - 1] + GAP - current).abs() < 0.000001);
+            ops.push(0);
+            j -= 1;
+        }
+    }
+    const LONG_GAP: f64 = -80f64;
+    let gap_pens: f64 = ops
+        .split(|&x| x == 1)
+        .map(|gaps| (gaps.len().max(1) - 1) as f64 * LONG_GAP)
+        .sum();
+    *score + gap_pens
 }
 
 const MOCK_CP: f64 = 1.5;

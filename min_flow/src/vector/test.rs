@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::{DenseStorage, SparseStorage, Storage, Vector};
+    use approx::*;
     use petgraph::graph::NodeIndex;
-
     #[test]
     fn dense_vector() {
         let mut v: Vector<DenseStorage<u32>> = Vector::new(5, 0);

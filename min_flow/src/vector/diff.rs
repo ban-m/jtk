@@ -153,7 +153,7 @@ mod tests {
     use super::*;
     use crate::prob::p;
     use crate::vector::{DenseStorage, SparseStorage};
-
+    use approx::assert_abs_diff_eq;
     #[test]
     fn vector_diff() {
         let mut v1: Vector<DenseStorage<Prob>, usize> = Vector::new(5, p(0.0));

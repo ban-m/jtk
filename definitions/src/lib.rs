@@ -603,6 +603,15 @@ impl Node {
             })
             .sum::<usize>()
     }
+    /// Return (match length, alignment length). Match length does not include mismatches.
+    pub fn aln_info(&self, unit: &Unit) -> (usize, usize) {
+        let (_, ops, _) = self.recover(unit);
+        ops.iter().fold((0, 0), |(mat, aln), x| match x {
+            b' ' | b'X' => (mat, aln + 1),
+            b'|' => (mat + 1, aln),
+            _ => panic!("{}", x),
+        })
+    }
     /// Return (node path, alignment, unit path)
     pub fn recover(&self, unit: &Unit) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let (read, unit) = (self.seq(), unit.seq());
