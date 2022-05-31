@@ -75,6 +75,7 @@ fn get_protected_clusterings(ds: &DataSet) -> HashSet<u64> {
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
         .iter()
+        .filter(|c| coverage.contains_key(&c.id))
         .filter_map(|c| (coverage[&c.id] as f64 * gain / 1.5 < c.score).then(|| c.id))
         .collect()
 }

@@ -678,21 +678,6 @@ impl<'a> DitchGraph<'a> {
         self.zip_up_overclustering_dev();
         self.resolve_repeats(reads, c, min_llr);
         self.z_edge_selection();
-        // for node in self.nodes() {
-        //     let (unit, cl) = node.node;
-        //     let seq = std::str::from_utf8(node.seq()).unwrap();
-        //     debug!("CONS\t>N{unit}-{cl}\nCONS\t{seq}");
-        //     for edge in node.edges.iter().filter(|e| e.from <= e.to) {
-        //         let seq = match edge.label() {
-        //             Some(res) => std::str::from_utf8(res).unwrap(),
-        //             None => continue,
-        //         };
-        //         let (funit, fcl) = edge.from;
-        //         let (tunit, tcl) = edge.to;
-        //         let id = format!("{funit}-{fcl}-{tunit}-{tcl}");
-        //         debug!("CONS\t>E{id}\nCONS\t{seq}");
-        //     }
-        // }
     }
     /// Squish small net-like-structure like below:
     /// [Long contig]---[Small contig]---[Long contig]
