@@ -124,6 +124,7 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
     for t in 0..OUTER_LOOP {
+        ds.encoded_reads.retain(|r| !r.nodes.is_empty());
         remove_weak_edges(ds);
         let (read_error_rate, unit_error_rate, standard_dev) =
             estimate_error_rate_dev(ds, fallback);
@@ -142,6 +143,7 @@ pub fn remove_weak_edges(ds: &mut DataSet) {
     let edge_counts = {
         let mut counts: HashMap<_, u32> = HashMap::new();
         for read in ds.encoded_reads.iter() {
+            assert_eq!(read.nodes.len(), read.edges.len() + 1);
             for (e, w) in read.edges.iter().zip(read.nodes.windows(2)) {
                 assert_eq!(e.from, w[0].unit);
                 assert_eq!(e.to, w[1].unit);
@@ -158,8 +160,18 @@ pub fn remove_weak_edges(ds: &mut DataSet) {
         let index = counts.len() / 2;
         let median = *counts.select_nth_unstable(index).1;
         debug!("RMEDGE\tMedian\t{median}");
-        ((median / 8).max(2), (median / 3).max(1))
+        ((median / 8).max(2), (median / 2).max(1))
     };
+    for read in ds.encoded_reads.iter().filter(|r| r.nodes.len() > 2) {
+        for idx in 1..read.nodes.len() - 1 {
+            let (unit, forward) = (read.nodes[idx].unit, read.nodes[idx].is_forward);
+            let back = &read.nodes[idx - 1];
+            let back = edge_counts[&(back.unit, back.is_forward, unit, forward)];
+            let front = &read.nodes[idx + 1];
+            let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
+            assert!(0 < back + front);
+        }
+    }
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     let deleted_nodes: usize = ds
         .encoded_reads
@@ -188,14 +200,14 @@ pub fn remove_weak_edges(ds: &mut DataSet) {
                     let weak_nodes = check_weak_edges(read, penalty, &edge_counts);
                     for &idx in weak_nodes.iter() {
                         let (unit, forward) = (read.nodes[idx].unit, read.nodes[idx].is_forward);
-                        let count = {
-                            let back = &read.nodes[idx - 1];
-                            let back = edge_counts[&(unit, forward, back.unit, back.is_forward)];
-                            let front = &read.nodes[idx + 1];
-                            let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
-                            back + front
-                        };
+                        let back = &read.nodes[idx - 1];
+                        let back = edge_counts[&(back.unit, back.is_forward, unit, forward)];
+                        let front = &read.nodes[idx + 1];
+                        let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
+                        let count = back + front;
                         trace!("RMEDGE\tRemoved\t{unit}\t{len}\t{count}",);
+                    }
+                    for &idx in weak_nodes.iter() {
                         read.remove(idx);
                     }
                     let mut removed = weak_nodes.len();

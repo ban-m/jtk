@@ -98,20 +98,18 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
             let refseq = ref_unit.seq();
-            // let take = (coverage * 2f64).floor() as usize;
-            // let consensus =
-            //     hmm.polish_until_converge_with_take(refseq, &seqs, &mut ops, band_width, take);
-            // TOO Slow?
-            let consensus = hmm.polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
+            let cons = hmm.polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
+            use kmeans::*;
+            let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
-                use kmeans::*;
-                let cls = clustering_dev(&consensus, &seqs, &mut ops, &mut rng, &hmm, &config);
+                let cls = clustering_dev(&cons, &seqs, &mut ops, &strands, &mut rng, &hmm, &config);
                 cls.unwrap_or_else(|| panic!("RECORD\t{}\tMISS", unit_id))
             } else {
                 (vec![0; units.len()], vec![vec![0f64]; units.len()], 0f64, 1)
             };
             for (node, ps) in units.iter_mut().zip(pss) {
+                assert_eq!(ps.len(), k);
                 node.posterior = ps;
             }
             for (node, asn) in units.iter_mut().zip(asn) {
@@ -122,13 +120,10 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             }
             let end = std::time::Instant::now();
             let elapsed = (end - start).as_millis();
-            let len = consensus.len();
+            let len = cons.len();
             let cov = units.len();
-            debug!(
-                "RECORD\t{}\t{}\t{}\t{:.3}\t{}",
-                unit_id, elapsed, len, score, cov
-            );
-            (unit_id, (consensus, score, k))
+            debug!("RECORD\t{unit_id}\t{elapsed}\t{len}\t{score:.3}\t{cov}",);
+            (unit_id, (cons, score, k))
         })
         .collect();
     debug!("LC\t{}", consensus_and_clusternum.len());

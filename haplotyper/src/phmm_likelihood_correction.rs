@@ -40,10 +40,10 @@ impl AlignmentCorrection for DataSet {
                 let chunk = chunks_mut_ref.get_mut(&uid).unwrap();
                 let (score, prev) = (chunk.score, chunk.cluster_num);
                 if cluster_num == 1 && protected.contains(&uid) {
-                    debug!("POLISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tP");
+                    debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tP");
                     continue;
                 }
-                debug!("POLISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tC");
+                debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tC");
                 assert!(cluster_num <= chunk.copy_num);
                 chunk.cluster_num = cluster_num;
                 for (id, idx, asn) in correcteds {

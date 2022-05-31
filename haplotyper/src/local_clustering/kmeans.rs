@@ -37,7 +37,7 @@ impl ClusteringConfig {
 
 // Assignments, posterior, likelihood, consensus.
 type ClusteringResult = (Vec<usize>, Vec<Vec<f64>>, f64, Vec<u8>);
-/// Usual "flat(non-recursive)" clustering. Return assignments, template, and LK.
+/// Clustering given sequences. Return assignments, template, and LK.
 pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     rng: &mut R,
@@ -54,7 +54,8 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         hmm.fit_naive_with(&template, reads, &ops, band / t);
         template = hmm.polish_until_converge_with(&template, reads, &mut ops, band / t);
     }
-    let result = clustering_dev(&template, reads, &mut ops, rng, &hmm, config);
+    let strands = vec![true; reads.len()];
+    let result = clustering_dev(&template, reads, &mut ops, &strands, rng, &hmm, config);
     result.map(|(asn, gains, lk, _)| (asn, gains, lk, template))
 }
 
@@ -242,6 +243,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
     ops: &mut [Vec<kiley::Op>],
+    strands: &[bool],
     rng: &mut R,
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
     config: &ClusteringConfig,
@@ -266,25 +268,69 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         })
         .unzip();
     let copy_num = copy_num as usize;
-    let selected_variants: Vec<_> = {
-        let probes = filter_profiles(&profiles, copy_num, 3, coverage, template.len(), average_lk);
+    let selected_variants: Vec<Vec<_>> = {
+        let mut probes = filter_profiles(&profiles, copy_num, coverage, average_lk);
+        probes.retain(|&(pos, _)| {
+            let lks = profiles.iter().map(|p| p[pos]);
+            let paired = lks.zip(strands.iter().copied());
+            let (diff, thr) = is_explainable_by_strandedness(paired, rng, 0.01);
+            diff < thr
+        });
         for &(pos, lk) in probes.iter() {
-            let counts = profiles
-                .iter()
-                .filter(|xs| xs[pos].is_sign_positive())
-                .count();
-            let (pos, var) = (
-                pos / kiley::hmm::guided::NUM_ROW,
-                pos % kiley::hmm::guided::NUM_ROW,
-            );
-            trace!("DUMP\t{}\t{}\t{}\t{}", pos, var, lk, counts);
+            let counts = profiles.iter().filter(|xs| 0f64 < xs[pos]).count();
+            use kiley::hmm::guided::NUM_ROW;
+            let (pos, var) = (pos / NUM_ROW, pos % NUM_ROW);
+            trace!("DUMP\t{pos}\t{var}\t{lk}\t{counts}");
         }
         profiles
             .iter()
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
             .collect()
     };
+    // let mark: u64 = rng.gen_range(0..10000);
+    // for (i, (vars, strand)) in selected_variants.iter().zip(strands.iter()).enumerate() {
+    //     for (j, lkdiff) in vars.iter().enumerate() {
+    //         debug!("STRAND\t{mark}\t{i}\t{j}\t{lkdiff}\t{strand}");
+    //     }
+    // }
     clustering_selected_variants(&selected_variants, copy_num, coverage, average_lk, rng)
+}
+
+///
+fn is_explainable_by_strandedness<I, R: Rng>(profiles: I, rng: &mut R, fprate: f64) -> (f64, f64)
+where
+    I: std::iter::Iterator<Item = (f64, bool)>,
+{
+    let (mut fcount, mut fsum, mut bcount, mut bsum) = (0, 0f64, 0, 0f64);
+    let mut lks = Vec::with_capacity(50);
+    for (lkdiff, strand) in profiles {
+        lks.push(lkdiff);
+        if strand {
+            fsum += lkdiff;
+            fcount += 1;
+        } else {
+            bsum += lkdiff;
+            bcount += 1;
+        }
+    }
+    // If fdiv == 0 or bdiv == 0, then all the mean_diff would be the same,
+    // and diff < mean_diff[thr] + 0.01 is always hold.
+    let (fdiv, bdiv): (f64, f64) = (fcount as f64 + 0.0001, bcount as f64 + 0.0001);
+    use rand::seq::SliceRandom;
+    const SAMPLE_NUM: usize = 500;
+    let mut mean_diffs: Vec<_> = (0..SAMPLE_NUM)
+        .map(|_| {
+            lks.shuffle(rng);
+            let fsum: f64 = lks[..fcount].iter().sum();
+            let bsum: f64 = lks[fcount..].iter().sum();
+            (fsum / fdiv - bsum / bdiv).abs()
+        })
+        .collect();
+    mean_diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    mean_diffs.reverse();
+    let diff = (fsum / fdiv - bsum / bdiv).abs();
+    let thr = (SAMPLE_NUM as f64 * fprate).ceil() as usize;
+    (diff, mean_diffs[thr] + 0.01)
 }
 
 fn clustering_selected_variants<R: Rng>(
@@ -361,7 +407,6 @@ fn clustering_selected_variants<R: Rng>(
     //         }
     //     }
     // }
-    trace!("DUMP\t{max}\t{max_k}");
     likelihood_gains
         .iter()
         .for_each(|x| assert_eq!(x.len(), max_k));
@@ -808,12 +853,12 @@ fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[usize]) -> V
 //     selected_variants
 // }
 
+// ROUND * cluster num variants would be selected.
+const ROUND: usize = 3;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
     cluster_num: usize,
-    round: usize,
     coverage: f64,
-    template_len: usize,
     average_lk: f64,
 ) -> Vec<(usize, f64)> {
     // (sum, maximum gain, number of positive element)
@@ -824,6 +869,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
             *count += (0.00001 < *p) as usize;
         }
     }
+    let template_len = profiles[0].borrow().len() / kiley::hmm::guided::NUM_ROW;
     let base_position = |pos: usize| pos / kiley::hmm::guided::NUM_ROW;
     let in_mask = |pos: usize| {
         let pos = base_position(pos);
@@ -849,9 +895,10 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     // So, in total, O(ML) time to select M variants. It is OK I think, because
     // usually L is 2K, M is around 3-20.
     let mut is_selected = vec![0; probes.len()];
-    'outer: for _ in 0..round {
+    'outer: for _ in 0..ROUND {
         let mut weights: Vec<_> = vec![1f64; probes.len()];
-        for _ in 0..cluster_num.max(2) - 1 {
+        // for _ in 0..cluster_num.max(2) - 1 {
+        for _ in 0..cluster_num.max(2) {
             let next_var_idx = probes
                 .iter()
                 .map(|x| x.1)

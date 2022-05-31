@@ -3,8 +3,8 @@ use super::AssembleConfig;
 use definitions::DNASeq;
 use definitions::{EncodedRead, Unit};
 use rayon::prelude::*;
+mod digraph;
 mod sequence_generation;
-
 use std::collections::HashMap;
 use std::collections::HashSet;
 pub mod dg_test;
