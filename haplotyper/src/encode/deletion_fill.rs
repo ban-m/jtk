@@ -349,7 +349,6 @@ fn filling_until_stable(
                 .zip(is_updated.iter_mut())
                 .filter(|((r, _), is_updated)| 0 < r.nodes.len() && **is_updated);
             reads
-                .filter(|((r, _), _)| r.id == 11771)
                 .flat_map(|((read, fails), is_updated)| {
                     let error_rate = read_error_rate[read.id as usize];
                     let seq = raw_seq[&read.id];
@@ -722,7 +721,6 @@ pub fn correct_deletion_error(
     let mut inserts = vec![];
     let ins_thr = INS_THR.min(nodes.len());
     for (idx, pileup) in pileups.iter().enumerate() {
-        debug!("PILEUP\t{idx}\t{pileup:?}");
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
         head_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
         let head_best =
@@ -733,7 +731,6 @@ pub fn correct_deletion_error(
         }
         let mut tail_cand = pileup.check_insertion_tail(nodes, ins_thr, idx);
         tail_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
-        debug!("TAIL\t{tail_cand:?}");
         let tail_best =
             try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, stddev);
         match tail_best {
@@ -1352,9 +1349,6 @@ impl Pileup {
         }
         let prev_offset = (prev_count != 0).then(|| prev_total / prev_count);
         let after_offset = (after_count != 0).then(|| after_total / after_count);
-        if target.unit == 1948 {
-            debug!("TARGET\t{target:?}\t{after_offset:?}");
-        }
         (prev_offset, after_offset)
     }
     fn add_head(&mut self, node: LightNode) {

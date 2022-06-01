@@ -3,6 +3,7 @@ use super::AssembleConfig;
 use definitions::DNASeq;
 use definitions::{EncodedRead, Unit};
 use rayon::prelude::*;
+mod copy_num_by_mst;
 mod digraph;
 mod sequence_generation;
 use std::collections::HashMap;
@@ -254,6 +255,12 @@ impl std::cmp::PartialEq for DitchEdge {
 impl std::cmp::Eq for DitchEdge {}
 
 impl DitchEdge {
+    pub fn key(&self) -> DitEdge {
+        ((self.from, self.from_position), (self.to, self.to_position))
+    }
+    pub fn occ(&self) -> usize {
+        self.occ
+    }
     fn new(
         from: Node,
         from_position: Position,
@@ -577,6 +584,61 @@ fn consensus(
 type TempNode = (usize, [Vec<(usize, usize)>; 2]);
 
 impl<'a> DitchGraph<'a> {
+    /// Into edge grpah. Hap cov is haplotype coverage.
+    pub fn into_edge_graph(&self, hap_cov: f64) -> copy_num_by_mst::Graph {
+        let mut node_to_idx: HashMap<_, usize> = HashMap::new();
+        let mut edges = Vec::with_capacity(self.edges().count());
+        for (i, (&node, value)) in self.nodes.iter().enumerate() {
+            node_to_idx.insert((node, Position::Head), 2 * i);
+            node_to_idx.insert((node, Position::Tail), 2 * i + 1);
+            let target = value.occ as f64 / hap_cov;
+            edges.push(copy_num_by_mst::FatEdge::new(2 * i, 2 * i + 1, target));
+        }
+        for edge in self.edges().filter(|e| e.from <= e.to) {
+            assert_ne!(edge.from, edge.to);
+            let from_key = (edge.from, edge.from_position);
+            let from = node_to_idx[&from_key];
+            let to_key = (edge.to, edge.to_position);
+            let to = node_to_idx[&to_key];
+            let target = edge.occ as f64 / hap_cov;
+            edges.push(copy_num_by_mst::FatEdge::new(from, to, target));
+        }
+        copy_num_by_mst::Graph::new(node_to_idx, edges)
+    }
+    pub fn copy_number_estimation_mst<R: rand::Rng>(
+        &self,
+        hap_cov: f64,
+        rng: &mut R,
+    ) -> (HashMap<Node, usize>, HashMap<DitEdge, usize>) {
+        let config = copy_num_by_mst::MSTConfig::default();
+        let mut graph = self.into_edge_graph(hap_cov);
+        graph.update_copy_numbers(rng, &config);
+        let copy_numbers = graph.edge_copy_numbers();
+        let node_copy_numbers: HashMap<_, _> = copy_numbers
+            .iter()
+            .filter_map(|(((from, _), (to, _)), cp)| (from == to).then(|| (*from, *cp)))
+            .collect();
+        let edge_copy_numbers: HashMap<_, _> = {
+            let mut edge_copy = HashMap::new();
+            for &((from, to), cp) in copy_numbers.iter().filter(|((from, to), _)| from.0 != to.0) {
+                edge_copy.insert((from, to), cp);
+                edge_copy.insert((to, from), cp);
+            }
+            edge_copy
+        };
+        (node_copy_numbers, edge_copy_numbers)
+    }
+    /// Update copy number by Minimum spanning tree algorithm.
+    pub fn assign_copy_number_mst<R: rand::Rng>(&mut self, hap_cov: f64, rng: &mut R) {
+        let (node_copy_numbers, edge_copy_numbers) = self.copy_number_estimation_mst(hap_cov, rng);
+        self.nodes.values_mut().for_each(|node| {
+            node.copy_number = node_copy_numbers.get(&node.node).copied();
+            for edge in node.edges.iter_mut() {
+                let key = ((edge.from, edge.from_position), (edge.to, edge.to_position));
+                edge.copy_number = edge_copy_numbers.get(&key).copied();
+            }
+        });
+    }
     pub fn sanity_check(&self) -> bool {
         self.nodes.values().all(|node| {
             node.edges.iter().all(|edge| {
@@ -638,7 +700,12 @@ impl<'a> DitchGraph<'a> {
         c: &super::AssembleConfig,
         _read_type: definitions::ReadType,
     ) {
-        self.assign_copy_number(cov, lens);
+        use rand::SeedableRng;
+        use rand_xoshiro::Xoshiro256PlusPlus;
+        let seed = self.nodes.len() as u64 * 7329;
+        let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
+        self.assign_copy_number_mst(cov, &mut rng);
+        // self.assign_copy_number(cov, lens);
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
         }
@@ -651,7 +718,8 @@ impl<'a> DitchGraph<'a> {
             .take_while(|&x| min_llr < x)
             .enumerate();
         for (i, llr) in llr_stream {
-            self.assign_copy_number_mcmc(cov, lens);
+            self.assign_copy_number_mst(cov, &mut rng);
+            //self.assign_copy_number_mcmc(cov, lens);
             debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
             self.zip_up_overclustering(2);
@@ -661,7 +729,8 @@ impl<'a> DitchGraph<'a> {
                 self.remove_zero_copy_path(0.3);
                 self.remove_lightweight_edges(0, true);
                 self.remove_tips(0.8, 4);
-                self.assign_copy_number_mcmc(cov, lens);
+                // self.assign_copy_number_mcmc(cov, lens);
+                self.assign_copy_number_mst(cov, &mut rng);
                 self.squish_small_net(3);
             }
             if log_enabled!(log::Level::Trace) {
@@ -673,7 +742,8 @@ impl<'a> DitchGraph<'a> {
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
         // self.zip_up_overclustering_dev();
-        self.assign_copy_number_mcmc(cov, lens);
+        // self.assign_copy_number_mcmc(cov, lens);
+        self.assign_copy_number_mst(cov, &mut rng);
         self.squish_small_net(3);
         self.zip_up_overclustering_dev();
         self.resolve_repeats(reads, c, min_llr);
@@ -3389,6 +3459,58 @@ mod tests {
         let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
         for (i, &cp) in node_cp.iter().enumerate() {
             assert_eq!(cp, nodes[&(i as u64, 0)]);
+        }
+    }
+    #[test]
+    fn from_reads_2_mst() {
+        let node_cp: Vec<_> = vec![2, 3, 2, 3, 2, 3, 2, 2];
+        let hap1: Vec<_> = vec![0, 1, 3, 5, 6, 7];
+        let hap2: Vec<_> = vec![0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 7];
+        let prob_1 = (hap1.len() as f64) / ((hap1.len() + hap2.len()) as f64);
+        let read_num = 2_000 * 30 * (hap1.len() + hap2.len()) / 10_000;
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(82304);
+        let mut hap1c = 0;
+        let reads: Vec<_> = (0..read_num)
+            .map(|i| {
+                if rng.gen_bool(prob_1) {
+                    hap1c += 1;
+                    gen_read(i as u64, &mut rng, &hap1)
+                } else {
+                    gen_read(i as u64, &mut rng, &hap2)
+                }
+            })
+            .collect();
+        println!("{},{},{}", read_num, hap1c, read_num - hap1c);
+        let count: usize = reads
+            .iter()
+            .map(|r| {
+                r.nodes
+                    .windows(2)
+                    .filter(|w| w[0].unit == 1 && w[1].unit == 3)
+                    .count()
+            })
+            .sum();
+        println!("(1,3)\t{}", count);
+        let count: usize = reads
+            .iter()
+            .map(|r| {
+                r.nodes
+                    .windows(2)
+                    .filter(|w| w[0].unit == 1 && w[1].unit == 2)
+                    .count()
+            })
+            .sum();
+        println!("(1,2)\t{}", count);
+        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let cov = (total_units / (hap1.len() + hap2.len())) as f64;
+        let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
+        let mut graph = DitchGraph::new(&reads, None, ReadType::CCS, &assemble_config);
+        graph.assign_copy_number_mst(cov, &mut rng);
+        println!("{node_cp:?}");
+        let mut nodes: Vec<_> = graph.nodes().map(|n| (n.node.0, n.copy_number)).collect();
+        nodes.sort_unstable_by_key(|x| x.0);
+        for (node, cp) in nodes {
+            assert_eq!(cp.unwrap(), node_cp[node as usize]);
         }
     }
 }
