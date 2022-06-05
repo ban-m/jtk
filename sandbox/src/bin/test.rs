@@ -33,18 +33,15 @@ fn main() -> std::io::Result<()> {
     //         haplotyper::local_clustering::kmeans::clustering(&nodes, &mut rng, &config);
     //     }
     // }
-    // let selection: HashSet<_> = vec![514, 967, 1881, 1647, 398].into_iter().collect();
-    let selection: HashSet<u64> = std::fs::File::open(&args[2])
-        .map(BufReader::new)?
-        .lines()
-        .filter_map(|x| x.ok())
-        .filter_map(|x| x.split("\t").nth(0)?.parse().ok())
-        .collect();
-    eprintln!("{:?}", selection);
-    // rayon::ThreadPoolBuilder::new()
-    //     .num_threads(1)
-    //     .build_global()
-    //     .unwrap();
+    let selection: HashSet<u64> = args[2..].iter().filter_map(|r| r.parse().ok()).collect();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();
     haplotyper::local_clustering::local_clustering_selected(&mut ds, &selection);
+    // use haplotyper::phmm_likelihood_correction::*;
+    // let config = CorrectionConfig::default();
+    // ds.correct_clustering_selected(&selection, &config);
+
     Ok(())
 }

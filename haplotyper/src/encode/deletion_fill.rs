@@ -717,6 +717,9 @@ pub fn correct_deletion_error(
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
     let pileups = get_pileup(read, reads);
+    // for (i, p) in pileups.iter().enumerate() {
+    //     trace!("Pileup\t{i}\t{p:?}\t{:?}",b read.nodes.get(i));
+    // }
     let nodes = &read.nodes;
     let mut inserts = vec![];
     let ins_thr = INS_THR.min(nodes.len());

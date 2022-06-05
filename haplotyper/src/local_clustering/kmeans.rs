@@ -287,12 +287,6 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
             .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
             .collect()
     };
-    // let mark: u64 = rng.gen_range(0..10000);
-    // for (i, (vars, strand)) in selected_variants.iter().zip(strands.iter()).enumerate() {
-    //     for (j, lkdiff) in vars.iter().enumerate() {
-    //         debug!("STRAND\t{mark}\t{i}\t{j}\t{lkdiff}\t{strand}");
-    //     }
-    // }
     clustering_selected_variants(&selected_variants, copy_num, coverage, average_lk, rng)
 }
 
@@ -400,13 +394,18 @@ fn clustering_selected_variants<R: Rng>(
     }
     let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments);
     to_posterior_probability(&mut likelihood_gains);
-    // if log_enabled!(log::Level::Trace) {
-    //     for (id, (i, prf)) in assignments.iter().zip(selected_variants.iter()).enumerate() {
-    //         for (pos, x) in prf.iter().enumerate() {
-    //             trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tAfter");
-    //         }
-    //     }
-    // }
+    if log_enabled!(log::Level::Trace) {
+        let asn_iter = assignments.iter().zip(selected_variants.iter());
+        let mut id = 0;
+        for c in 0..copy_num {
+            for (i, prf) in asn_iter.clone().filter(|x| *x.0 == c) {
+                for (pos, x) in prf.iter().enumerate() {
+                    trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tAfter");
+                }
+                id += 1;
+            }
+        }
+    }
     likelihood_gains
         .iter()
         .for_each(|x| assert_eq!(x.len(), max_k));
@@ -1601,7 +1600,9 @@ fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [usize], k: usize, cov: f64, rng
     let (mut max, mut argmax) = (lk, assign.to_vec());
     // Temprature from 1 -> 0, Linear scale?
     let total = 2000 * data.len();
-    for (_t, temperature) in (1..total).map(|t| (t, (t as f64).recip())) {
+    // for (_t, temperature) in (1..total).map(|t| (t, (t as f64).recip())) {
+    for _ in 1..total {
+        let temperature = 1f64;
         let params = (partition_lks.as_slice(), temperature);
         let (is_success, diff) = update(data, assign, k, &mut lks, &mut clusters, params, rng);
         if is_success {
@@ -1668,8 +1669,7 @@ fn update<R: Rng>(
     let prop_lk = prop_data_lk + prop_part_lk;
     let diff = prop_lk - prev_lk;
     // Calc likelihoods.
-    let prob = (diff / temperature).exp();
-    if 0f64 < diff || rng.gen_bool(prob) {
+    if 0f64 < diff || rng.gen_bool((diff / temperature).exp()) {
         (true, diff)
     } else {
         assign[idx] = old;

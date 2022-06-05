@@ -146,9 +146,9 @@ fn correct_unit(
         }
     }
     reads.sort_by_cached_key(|&(idx, ref read)| read.nodes[idx].cluster);
-    trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
-    let len = reads.len();
-    trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
+    // trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
+    // let len = reads.len();
+    // trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
     let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit_id, config);
     assert_eq!(assignments.len(), reads.len());
     let assignments: Vec<_> = reads
@@ -210,34 +210,38 @@ fn clustering(
             (up, center, tail)
         })
         .collect();
-    for (i, ctx) in contexts.iter().enumerate() {
-        let cl = argmax(&ctx.1.posterior);
-        trace!("DUMP\t{}\t{}\t{cl}", i, ctx.1.cluster);
-    }
+    // for (i, ctx) in contexts.iter().enumerate() {
+    //     let cl = argmax(&ctx.1.posterior);
+    //     trace!("DUMP\t{}\t{}\t{cl}", i, ctx.1.cluster);
+    // }
     let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
         .enumerate()
         .map(|(i, ctx)| {
-            let id = ids[i];
+            // let id = ids[i];
             contexts
                 .iter()
                 .enumerate()
                 .map(|(j, dtx)| {
-                    trace!("-------------");
-                    let aln = alignment(ctx, dtx, copy_numbers);
-                    trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
-                    aln
+                    // Remove self loop/
+                    // trace!("-------------");
+                    let aln = match i == j {
+                        false => alignment(ctx, dtx, copy_numbers),
+                        true => 0f64,
+                    };
+                    // trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
+                    aln + 0.00001
                 })
                 .collect()
         })
         .collect();
-    if log_enabled!(log::Level::Trace) {
-        for (i, sm) in sims.iter().enumerate() {
-            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-            trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
-        }
-    }
+    // if log_enabled!(log::Level::Trace) {
+    //     for (i, sm) in sims.iter().enumerate() {
+    //         let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+    //         trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
+    //     }
+    // }
     let laplacian = get_graph_laplacian(&sims);
     let (mut eigens, pick_k) = get_eigenvalues(&laplacian, k, id);
     for (eigen, (idx, read)) in eigens.iter_mut().zip(reads.iter()) {
@@ -276,13 +280,13 @@ fn clustering(
     //         .unwrap();
     //     debug!("KMEANS\t{id}\t{k}\t{dist}");
     // }
-    if log_enabled!(log::Level::Trace) {
-        for (i, sm) in eigens.iter().enumerate() {
-            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-            let cls = contexts[i].1.cluster;
-            trace!("EIG\t{id}\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
-        }
-    }
+    // if log_enabled!(log::Level::Trace) {
+    //     for (i, sm) in eigens.iter().enumerate() {
+    //         let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+    //         let cls = contexts[i].1.cluster;
+    //         trace!("EIG\t{id}\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
+    //     }
+    // }
     assert!(asn.iter().all(|&x| x <= cluster_num));
     (asn, cluster_num)
 }
@@ -423,23 +427,22 @@ fn alignment<'a>(
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let up_aln = align_swg(up1, up2, &copy_numbers);
     let down_aln = align_swg(down1, down2, &copy_numbers);
-    // let similarity = (up_aln + down_aln + center).max(0f64);
     let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
     assert!(0f64 <= similarity);
-    if log_enabled!(log::Level::Trace) {
-        fn to_line<'a>(vector: &[(u64, &'a [f64])]) -> Vec<String> {
-            vector
-                .iter()
-                .map(|(u, p)| format!("{u}-{}", argmax(p)))
-                .collect()
-        }
-        trace!("ALN\t\t{}", to_line(up1).join(" "));
-        trace!("ALN\t\t{}", to_line(up2).join(" "));
-        trace!("ALN\t\t{}", to_line(down1).join(" "));
-        trace!("ALN\t\t{}", to_line(down2).join(" "));
-        let (cl1, cl2) = (argmax(&center1.posterior), argmax(&center2.posterior));
-        trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}\t{cl1}\t{cl2}");
-    }
+    // if log_enabled!(log::Level::Trace) {
+    //     fn to_line<'a>(vector: &[(u64, &'a [f64])]) -> Vec<String> {
+    //         vector
+    //             .iter()
+    //             .map(|(u, p)| format!("{u}-{}", argmax(p)))
+    //             .collect()
+    //     }
+    //     trace!("ALN\t\t{}", to_line(up1).join(" "));
+    //     trace!("ALN\t\t{}", to_line(up2).join(" "));
+    //     trace!("ALN\t\t{}", to_line(down1).join(" "));
+    //     trace!("ALN\t\t{}", to_line(down2).join(" "));
+    //     let (cl1, cl2) = (argmax(&center1.posterior), argmax(&center2.posterior));
+    //     trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}\t{cl1}\t{cl2}");
+    // }
     similarity
 }
 

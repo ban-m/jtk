@@ -591,19 +591,35 @@ impl<'a> DitchGraph<'a> {
         for (i, (&node, value)) in self.nodes.iter().enumerate() {
             node_to_idx.insert((node, Position::Head), 2 * i);
             node_to_idx.insert((node, Position::Tail), 2 * i + 1);
-            let target = value.occ as f64 / hap_cov;
-            edges.push(copy_num_by_mst::FatEdge::new(2 * i, 2 * i + 1, target));
+            edges.push(copy_num_by_mst::FatEdge::new(2 * i, 2 * i + 1, value.occ));
         }
-        for edge in self.edges().filter(|e| e.from <= e.to) {
-            assert_ne!(edge.from, edge.to);
+        for edge in self.edges().filter(|e| e.from < e.to) {
             let from_key = (edge.from, edge.from_position);
             let from = node_to_idx[&from_key];
             let to_key = (edge.to, edge.to_position);
             let to = node_to_idx[&to_key];
-            let target = edge.occ as f64 / hap_cov;
-            edges.push(copy_num_by_mst::FatEdge::new(from, to, target));
+            edges.push(copy_num_by_mst::FatEdge::new(from, to, edge.occ));
         }
-        copy_num_by_mst::Graph::new(node_to_idx, edges)
+        let self_loops: Vec<_> = self
+            .edges()
+            .filter(|e| e.from == e.to)
+            .map(|edge| {
+                let from_key = (edge.from, edge.from_position);
+                let from = node_to_idx[&from_key];
+                let to_key = (edge.to, edge.to_position);
+                let to = node_to_idx[&to_key];
+                assert!(from + 1 == to || to + 1 == from);
+                copy_num_by_mst::FatEdge::new(from, to, edge.occ)
+            })
+            .collect();
+        debug!(
+            "MST\t{}\t{}\t{}\t{}",
+            hap_cov,
+            node_to_idx.len(),
+            edges.len(),
+            self_loops.len()
+        );
+        copy_num_by_mst::Graph::new(hap_cov, node_to_idx, edges, self_loops)
     }
     pub fn copy_number_estimation_mst<R: rand::Rng>(
         &self,
@@ -613,19 +629,15 @@ impl<'a> DitchGraph<'a> {
         let config = copy_num_by_mst::MSTConfig::default();
         let mut graph = self.into_edge_graph(hap_cov);
         graph.update_copy_numbers(rng, &config);
-        let copy_numbers = graph.edge_copy_numbers();
-        let node_copy_numbers: HashMap<_, _> = copy_numbers
-            .iter()
-            .filter_map(|(((from, _), (to, _)), cp)| (from == to).then(|| (*from, *cp)))
-            .collect();
-        let edge_copy_numbers: HashMap<_, _> = {
-            let mut edge_copy = HashMap::new();
-            for &((from, to), cp) in copy_numbers.iter().filter(|((from, to), _)| from.0 != to.0) {
-                edge_copy.insert((from, to), cp);
-                edge_copy.insert((to, from), cp);
-            }
-            edge_copy
-        };
+        let node_copy_numbers = graph.node_copy_numbers();
+        let mut edge_copy_numbers = graph.edge_copy_numbers();
+        let self_loop_copy_numbers = graph.self_loop_copy_numbers();
+        for (node, cp) in self_loop_copy_numbers {
+            let from = (node, Position::Head);
+            let to = (node, Position::Tail);
+            edge_copy_numbers.insert((from, to), cp);
+            edge_copy_numbers.insert((to, from), cp);
+        }
         (node_copy_numbers, edge_copy_numbers)
     }
     /// Update copy number by Minimum spanning tree algorithm.
@@ -700,12 +712,12 @@ impl<'a> DitchGraph<'a> {
         c: &super::AssembleConfig,
         _read_type: definitions::ReadType,
     ) {
-        use rand::SeedableRng;
-        use rand_xoshiro::Xoshiro256PlusPlus;
-        let seed = self.nodes.len() as u64 * 7329;
-        let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
-        self.assign_copy_number_mst(cov, &mut rng);
-        // self.assign_copy_number(cov, lens);
+        // use rand::SeedableRng;
+        // use rand_xoshiro::Xoshiro256PlusPlus;
+        // let seed = self.nodes.len() as u64 * 7329;
+        // let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
+        // self.assign_copy_number_mst(cov, &mut rng);
+        self.assign_copy_number(cov, lens);
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
         }
@@ -718,36 +730,39 @@ impl<'a> DitchGraph<'a> {
             .take_while(|&x| min_llr < x)
             .enumerate();
         for (i, llr) in llr_stream {
-            self.assign_copy_number_mst(cov, &mut rng);
-            //self.assign_copy_number_mcmc(cov, lens);
+            //self.assign_copy_number_mst(cov, &mut rng);
+            self.assign_copy_number_mcmc(cov, lens);
+            self.remove_zero_copy_elements(lens, 0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
             self.zip_up_overclustering(2);
-            self.remove_zero_copy_elements(lens, 0.8);
             if i == 5 {
+                self.assign_copy_number_mcmc(cov, lens);
+                // self.assign_copy_number_mst(cov, &mut rng);
                 self.remove_zero_copy_elements(lens, 0.9);
                 self.remove_zero_copy_path(0.3);
                 self.remove_lightweight_edges(0, true);
                 self.remove_tips(0.8, 4);
-                // self.assign_copy_number_mcmc(cov, lens);
-                self.assign_copy_number_mst(cov, &mut rng);
                 self.squish_small_net(3);
             }
             if log_enabled!(log::Level::Trace) {
                 dump(self, i + 1, c);
             }
         }
+        // self.assign_copy_number_mst(cov, &mut rng);
+        self.assign_copy_number_mcmc(cov, lens);
         self.remove_zero_copy_elements(lens, 0.9);
         self.remove_zero_copy_path(0.3);
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
         // self.zip_up_overclustering_dev();
-        // self.assign_copy_number_mcmc(cov, lens);
-        self.assign_copy_number_mst(cov, &mut rng);
+        self.assign_copy_number_mcmc(cov, lens);
+        // self.assign_copy_number_mst(cov, &mut rng);
         self.squish_small_net(3);
         self.zip_up_overclustering_dev();
         self.resolve_repeats(reads, c, min_llr);
         self.z_edge_selection();
+        self.remove_zero_copy_path(0.2);
     }
     /// Squish small net-like-structure like below:
     /// [Long contig]---[Small contig]---[Long contig]

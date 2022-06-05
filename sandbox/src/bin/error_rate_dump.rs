@@ -50,7 +50,8 @@ fn main() -> std::io::Result<()> {
     if let Ok(mut wtr) = std::fs::File::create("dump.log").map(BufWriter::new) {
         for read in ds.encoded_reads.iter() {
             let error = read_error_rate[read.id as usize];
-            writeln!(&mut wtr, "READ\t{}\t{}", read.id, error)?;
+            let len = read.original_length;
+            writeln!(&mut wtr, "READ\t{}\t{}\t{}", read.id, error, len)?;
         }
         for unit in ds.selected_chunks.iter() {
             for (cl, error) in unit_error_rate[unit.id as usize].iter().enumerate() {

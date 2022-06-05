@@ -42,6 +42,11 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     }
     eprintln!("{graph}");
     graph.remove_lightweight_edges(2, true);
+    let cov = ds.coverage.unwrap();
+    let lens: Vec<_> = ds.raw_reads.iter().map(|r| r.seq().len()).collect();
+    graph.assign_copy_number_mcmc(cov, &lens);
+    // let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
+    // graph.assign_copy_number_mst(cov, &mut rng);
     // use log::*;
     // for node in graph.nodes() {
     //     let (unit, cl) = node.node;
@@ -58,33 +63,57 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     //         debug!("CONS\t>E{id}\nCONS\t{seq}");
     //     }
     // }
-    let (segments, edge, group, summaries) = graph.spell(c);
-    let nodes = segments.into_iter().map(|node| {
-        let tags = match summaries.iter().find(|x| x.id == node.sid) {
-            Some(contigsummary) => {
-                let ids: Vec<_> = contigsummary
-                    .summary
-                    .iter()
-                    .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
-                    .collect();
-                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
-                let coverage =
-                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
-                log::debug!(
-                    "CONUNIT\t{}\t{}\t{}",
-                    contigsummary.id,
-                    total / contigsummary.summary.len(),
-                    ids.join("\t")
-                );
-                vec![coverage]
-            }
-            None => Vec::new(),
+    let (segments, edge, _, summaries) = graph.spell(c);
+    let mut groups: HashMap<_, Vec<_>> = HashMap::new();
+    let nodes: Vec<_> = segments
+        .into_iter()
+        .map(|node| {
+            let tags = match summaries.iter().find(|x| x.id == node.sid) {
+                Some(contigsummary) => {
+                    let ids: Vec<_> = contigsummary
+                        .summary
+                        .iter()
+                        .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                        .collect();
+                    let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                    let coverage =
+                        gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                    let (cp, cpnum) = contigsummary
+                        .summary
+                        .iter()
+                        .filter_map(|elm| elm.copy_number)
+                        .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                    let copy_number = cp / cpnum.max(1);
+                    groups
+                        .entry(copy_number)
+                        .or_default()
+                        .push(node.sid.clone());
+                    let copy_number = gfa::SamTag::new(format!("cp:i:{copy_number}"));
+                    log::debug!(
+                        "CONUNIT\t{}\t{}\t{}",
+                        contigsummary.id,
+                        total / contigsummary.summary.len(),
+                        ids.join("\t")
+                    );
+                    vec![coverage, copy_number]
+                }
+                None => Vec::new(),
+            };
+            gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
+        })
+        .collect();
+    let groups = groups.into_iter().map(|(cp, ids)| {
+        let group = gfa::UnorderedGroup {
+            uid: Some(format!("cp:i:{}", cp)),
+            ids,
         };
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
+        let group = gfa::Content::Group(gfa::Group::Set(group));
+        gfa::Record::from_contents(group, vec![].into())
     });
     let edges = edge
         .into_iter()
         .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
-    std::iter::once(group).chain(nodes).chain(edges).collect()
+    groups.chain(nodes).chain(edges).collect()
+    // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
+    // std::iter::once(group).chain(nodes).chain(edges).collect()
 }

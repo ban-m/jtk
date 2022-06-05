@@ -88,7 +88,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         .filter(|(_, units)| !units.is_empty())
         .map(|(&unit_id, units)| {
             let ref_unit = chunks.get(&unit_id).unwrap();
-            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 25);
+            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 3490);
             let (seqs, mut ops): (Vec<_>, Vec<_>) = units
                 .iter()
                 .map(|node| (node.seq(), ops_to_kiley_ops(&node.cigar)))
@@ -183,6 +183,8 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     polishing_pairs
         .par_iter_mut()
         .for_each(|(consensus, seqs, ops, bw)| {
+            use kiley::bialignment::guided;
+            *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
             *consensus = hmm.polish_until_converge_with(consensus, seqs, ops, *bw);
         });
     debug!("POLISHED");
