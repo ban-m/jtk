@@ -31,7 +31,7 @@ impl AlignmentCorrection for DataSet {
             .map(|c| (c.id, (c.cluster_num, c.copy_num)))
             .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, &config))
             .collect();
-        let protected = get_protected_clusterings(&self);
+        let protected = get_protected_clusterings(self);
         let corrected_clustering_on_read = {
             let mut chunks_mut_ref: HashMap<_, _> =
                 self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
@@ -43,7 +43,7 @@ impl AlignmentCorrection for DataSet {
                     debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tP");
                     continue;
                 }
-                debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tC");
+                // debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tC");
                 assert!(cluster_num <= chunk.copy_num);
                 chunk.cluster_num = cluster_num;
                 for (id, idx, asn) in correcteds {
@@ -65,12 +65,15 @@ impl AlignmentCorrection for DataSet {
     }
 }
 
-fn get_protected_clusterings(ds: &DataSet) -> HashSet<u64> {
+fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
     let mut coverage: HashMap<_, u32> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         *coverage.entry(node.unit).or_default() += 1;
     }
-    let hmm = crate::local_clustering::get_tuned_model(ds);
+    if ds.model_param.is_none() {
+        crate::model_tune::update_model(ds);
+    }
+    let hmm = crate::model_tune::get_model(ds).unwrap();
     let gain = crate::local_clustering::estimate_minimum_gain(&hmm);
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
@@ -214,7 +217,7 @@ fn clustering(
     //     let cl = argmax(&ctx.1.posterior);
     //     trace!("DUMP\t{}\t{}\t{cl}", i, ctx.1.cluster);
     // }
-    let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
+    let _ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
         .enumerate()
@@ -330,14 +333,14 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
     let top_k_eigenvec = eigen_and_eigenvec[..pick_k]
         .iter()
         .flat_map(|(v, _)| v.iter().copied());
-    if log_enabled!(log::Level::Debug) {
+    if log_enabled!(log::Level::Trace) {
         for (i, lam) in eigen_and_eigenvec
             .iter()
             .map(|(_, lam)| lam)
             .take(8)
             .enumerate()
         {
-            debug!("LAMBDA\t{id}\t{i}\t{lam}\t{k}\t{pick_k}");
+            trace!("LAMBDA\t{id}\t{i}\t{lam}\t{k}\t{pick_k}");
         }
     }
     let top_k_eigenvec = nalgebra::DMatrix::from_iterator(datalen, pick_k, top_k_eigenvec);

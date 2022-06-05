@@ -18,9 +18,9 @@ impl std::default::Default for MSTConfig {
 pub struct Graph {
     hap_coverage: f64,
     edges: Vec<FatEdge>,
-    nodes: HashMap<Node, usize>,
+    // nodes: HashMap<Node, usize>,
     // rev_index[nodes[node]] = node.
-    rev_index: Vec<Node>,
+    // rev_index: Vec<Node>,
     graph: Vec<Vec<LightEdge>>,
     self_loops: Vec<FatEdge>,
     one_degree_nodes: Vec<usize>,
@@ -54,16 +54,17 @@ impl LightEdge {
 
 #[derive(Debug, Clone)]
 pub struct FatEdge {
-    from: usize,
-    to: usize,
+    pub from: usize,
+    pub to: usize,
+    len: usize,
     target: usize,
-    copy_number: usize,
+    pub copy_number: usize,
     is_in_mst: bool,
     penalty_diff: f64,
 }
 
 impl FatEdge {
-    pub fn new(from: usize, to: usize, target: usize) -> Self {
+    pub fn new(from: usize, to: usize, target: usize, len: usize) -> Self {
         let (from, to) = (from.min(to), from.max(to));
         Self {
             from,
@@ -72,50 +73,52 @@ impl FatEdge {
             copy_number: 0,
             is_in_mst: false,
             penalty_diff: 0f64,
+            len,
         }
     }
     pub fn key(&self) -> (usize, usize) {
         (self.from, self.to)
     }
     pub fn penalty_diff(&self, to_increase: bool, cov: f64) -> f64 {
-        let current_lk = poisson_lk(self.target, self.copy_number, cov);
-        let proposed_lk = match to_increase {
-            true => poisson_lk(self.target, self.copy_number + 1, cov),
-            false if self.copy_number == 0 => -LARGE_VALUE,
-            false => poisson_lk(self.target, self.copy_number - 1, cov),
+        let current_penalty = penalty(self.target, self.copy_number, cov);
+        let proposed_penalty = match to_increase {
+            true => penalty(self.target, self.copy_number + 1, cov),
+            false if self.copy_number == 0 => LARGE_VALUE,
+            false => penalty(self.target, self.copy_number - 1, cov),
         };
-        current_lk - proposed_lk
-        // let est_cov = self.copy_number as f64 * cov;
-        // let current_penalty = (self.target as f64 - est_cov).powi(2);
-        // let proposed_penalty = match to_increase {
-        //     true => (self.target as f64 - est_cov - cov).powi(2),
-        //     false if self.copy_number == 0 => LARGE_VALUE,
-        //     false => (self.target as f64 - est_cov + cov).powi(2),
-        // };
-        // proposed_penalty - current_penalty
+        (proposed_penalty - current_penalty) * self.len as f64
     }
 }
 
-// TODO: change this to normal distr.
-// Return log Poiss{x|lambda}
-fn poisson_lk(x: usize, copy_num: usize, hap_cov: f64) -> f64 {
-    let lambda = match copy_num {
-        0 => hap_cov * 0.2,
-        _ => hap_cov * copy_num as f64,
+// sq_error / copy_num / copy_num,
+// This is the same as the negative log-likelihood of the Norm(mean=copy_num * hap_cov, var = copy_num * hap_cov)
+fn penalty(x: usize, copy_num: usize, hap_cov: f64) -> f64 {
+    const ZERO_COPY: f64 = 0.15;
+    let mean = hap_cov * copy_num as f64;
+    let denom = match copy_num {
+        0 => ZERO_COPY * hap_cov,
+        _ => copy_num as f64 * hap_cov,
     };
-    x as f64 * lambda.ln() - lambda - (1..x + 1).map(|c| (c as f64).ln()).sum::<f64>()
+    (x as f64 - mean).powi(2) / denom
 }
 
-type Node = ((u64, u64), super::Position);
-type Edge = (Node, Node);
+// type Node = ((u64, u64), super::Position);
+// type Edge = (Node, Node);
 impl Graph {
+    pub fn edges(&self) -> &[FatEdge] {
+        self.edges.as_slice()
+    }
+    pub fn self_loops(&self) -> &[FatEdge] {
+        self.self_loops.as_slice()
+    }
     pub fn new(
         hap_coverage: f64,
-        nodes: HashMap<Node, usize>,
+        // nodes: HashMap<Node, usize>,
         edges: Vec<FatEdge>,
         self_loops: Vec<FatEdge>,
     ) -> Self {
-        let mut graph = vec![Vec::with_capacity(2); nodes.len()];
+        let max_idx = edges.iter().map(|x| x.from.max(x.to)).max().unwrap() + 1;
+        let mut graph = vec![Vec::with_capacity(2); max_idx];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
             graph[edge.to].push(LightEdge::new(edge.from));
@@ -126,14 +129,19 @@ impl Graph {
             .enumerate()
             .filter_map(|(i, eds)| (eds.len() == 1).then(|| i))
             .collect();
-        let mut rev_index = vec![((0, 0), super::Position::Head); nodes.len()];
-        for (&key, &idx) in nodes.iter() {
-            rev_index[idx] = key;
-        }
+        // let mut rev_index = vec![((0, 0), super::Position::Head); nodes.len()];
+        // for (&key, &idx) in nodes.iter() {
+        //     rev_index[idx] = key;
+        // }
+        // for edge in edges.iter() {
+        //     let from = rev_index[edge.from];
+        //     let to = rev_index[edge.to];
+        //     debug!("{from:?}<->{to:?}\t{}", edge.target);
+        // }
         Self {
             hap_coverage,
-            nodes,
-            rev_index,
+            // nodes,
+            // rev_index,
             edges,
             graph,
             one_degree_nodes,
@@ -169,40 +177,43 @@ impl Graph {
         let dfs_arrived_status = dfs_arrived_status.as_mut_slice();
         let (mut current_min, mut argmin) = (self.penalty(), self.edges.clone());
         let mut count = 0;
-        for _ in 0..5 {
+        loop {
             self.update_mst(true);
             self.update_lightedges();
             let (optimal_cycle, penalty_diff) =
                 self.find_optimal_cycle(dfs_stack, dfs_arrived_status);
             let prob = (-penalty_diff / config.temperature).exp().min(1f64);
-            // debug!("PROPOSED\t{prob:.4}\t{optimal_cycle:?}\t{penalty_diff}");
+            // trace!("PROPOSED\t{prob:.4}\t{optimal_cycle:?}\t{penalty_diff}");
             if rng.gen_bool(prob) {
                 self.update_copy_number_by_cycle(optimal_cycle);
+                self.update_self_loops();
+                let penalty = self.penalty();
+                if penalty < current_min {
+                    (current_min, argmin) = (penalty, self.edges.clone());
+                }
+                // debug!("COPYNUM\t{count}\t{current_min:.3}");
+                count += 1;
+            } else {
+                break;
             }
-            let penalty = self.penalty();
-            if penalty < current_min {
-                (current_min, argmin) = (penalty, self.edges.clone());
-            }
-            debug!("COPYNUM\t{count}\t{current_min:.3}");
-            count += 1;
-            self.update_self_loops();
         }
         for _ in 0..Self::LOOPTIMES {
             let to_increase = rng.gen_bool(0.5);
             self.update_mst(to_increase);
             self.update_lightedges();
-            if let Some(cycle) = self.sample_cycle(rng, dfs_stack, dfs_arrived_status) {
+            if let Some((_, cycle)) = self.sample_cycle(rng, dfs_stack, dfs_arrived_status) {
+                // trace!("UPDATE\t{diff:.3}");
                 self.update_copy_number_by_cycle(cycle);
             }
             let penalty = self.penalty();
             if penalty < current_min {
                 (current_min, argmin) = (penalty, self.edges.clone());
             }
-            debug!("COPYNUM\t{count}\t{current_min:.3}");
+            // debug!("COPYNUM\t{count}\t{current_min:.3}");
             count += 1;
             self.update_self_loops();
         }
-
+        trace!("MST\t{count}");
         self.edges = argmin;
     }
     fn update_self_loops(&mut self) {
@@ -233,14 +244,14 @@ impl Graph {
         }
     }
     fn penalty(&self) -> f64 {
+        self.edges
+            .iter()
+            .map(|e| penalty(e.target, e.copy_number, self.hap_coverage) * e.len as f64)
+            .sum()
         // self.edges
         //     .iter()
         //     .map(|e| (e.target as f64 - e.copy_number as f64 * self.hap_coverage).powi(2))
         //     .sum()
-        self.edges
-            .iter()
-            .map(|e| -poisson_lk(e.target, e.copy_number, self.hap_coverage))
-            .sum()
     }
     // Search minimum-spanning-tree.
     fn update_mst(&mut self, to_increase: bool) {
@@ -280,9 +291,9 @@ impl Graph {
             let cycle = self
                 .find_cycle_between(edge.from, edge.to, stack, status)
                 .unwrap_or_else(|| {
-                    let from = self.nodes.iter().find(|&(_, &i)| i == edge.from).unwrap();
-                    let to = self.nodes.iter().find(|&(_, &i)| i == edge.to).unwrap();
-                    panic!("{:?}\t{:?}", from.0, to.0);
+                    // let from = self.nodes.iter().find(|&(_, &i)| i == edge.from).unwrap();
+                    // let to = self.nodes.iter().find(|&(_, &i)| i == edge.to).unwrap();
+                    panic!("{:?}\t{:?}", edge.from, edge.to);
                 });
             let penalty = self.penalty_of_cycle(&cycle);
             if penalty < current_min {
@@ -308,7 +319,7 @@ impl Graph {
         rng: &mut R,
         stack: &mut Vec<usize>,
         status: &mut [Status],
-    ) -> Option<Vec<usize>> {
+    ) -> Option<(f64, Vec<usize>)> {
         let onedeg = self.one_degree_nodes.len();
         let mut cycles = Vec::with_capacity(self.edges.len() + onedeg * onedeg);
         let in_cycles = self
@@ -327,14 +338,14 @@ impl Graph {
             });
             cycles.extend(cs);
         }
-        const UPPER: f64 = 5000f64;
+        const UPPER: f64 = 50f64;
         cycles.iter_mut().for_each(|x| {
             x.0 = (-x.0).min(UPPER).exp();
         });
         cycles
             .choose_weighted(rng, |x| x.0)
             .ok()
-            .and_then(|(x, cycle)| rng.gen_bool(x.min(1f64)).then(|| cycle.clone()))
+            .and_then(|(x, cycle)| rng.gen_bool(x.min(1f64)).then(|| (*x, cycle.clone())))
     }
 
     fn find_cycle_between(
@@ -369,27 +380,6 @@ impl Graph {
         }
         None
     }
-    fn penalty_of_cycle_from(&self, cycle: &[usize], mut change_direction: bool) -> f64 {
-        let mut score = 0f64;
-        let mut is_prev_e_edge = false;
-        for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
-            let edge = match self.graph[from].iter().find(|e| e.to == to) {
-                Some(edge) => edge,
-                None => continue,
-            };
-            score += match change_direction {
-                true => edge.penalty_diff_by_increase,
-                false => edge.penalty_diff_by_decrease,
-            };
-            // let is_e_edge = self.rev_index[from].0 != self.rev_index[to].0;
-            let is_e_edge = from / 2 != to / 2;
-            if is_prev_e_edge && is_e_edge {
-                change_direction = !change_direction;
-            }
-            is_prev_e_edge = is_e_edge;
-        }
-        score
-    }
     fn penalty_of_cycle(&self, cycle: &[usize]) -> f64 {
         let from_up = self.penalty_of_cycle_from(cycle, true);
         let from_down = self.penalty_of_cycle_from(cycle, false);
@@ -404,11 +394,30 @@ impl Graph {
             self.update_copy_number_by_cycle_from(&cycle, false);
         }
     }
+    fn penalty_of_cycle_from(&self, cycle: &[usize], mut change_direction: bool) -> f64 {
+        let mut score = 0f64;
+        let mut is_prev_e_edge = false;
+        for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
+            let edge = match self.graph[from].iter().find(|e| e.to == to) {
+                Some(edge) => edge,
+                None => continue,
+            };
+            let is_e_edge = from / 2 != to / 2;
+            if is_prev_e_edge && is_e_edge {
+                change_direction = !change_direction;
+            }
+            score += match change_direction {
+                true => edge.penalty_diff_by_increase,
+                false => edge.penalty_diff_by_decrease,
+            };
+            is_prev_e_edge = is_e_edge;
+        }
+        score
+    }
     fn update_copy_number_by_cycle_from(&mut self, cycle: &[usize], mut change_direction: bool) {
         let mut mod_edges: HashMap<_, bool> = HashMap::new();
         let mut is_prev_e_edge = false;
         for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
-            // let is_e_edge = self.rev_index[from].0 != self.rev_index[to].0;
             let is_e_edge = from / 2 != to / 2;
             if is_prev_e_edge && is_e_edge {
                 change_direction = !change_direction;
@@ -424,58 +433,58 @@ impl Graph {
                 None => {}
             });
     }
-    pub fn self_loop_copy_numbers(&self) -> Vec<((u64, u64), usize)> {
-        self.self_loops
-            .iter()
-            .map(|edge| (self.rev_index[edge.from].0, edge.copy_number))
-            .collect()
-    }
-    pub fn node_copy_numbers(&self) -> HashMap<(u64, u64), usize> {
-        self.edges
-            .iter()
-            .filter_map(|edge| {
-                let from = self.rev_index[edge.from].0;
-                let to = self.rev_index[edge.to].0;
-                (from == to).then(|| (from, edge.copy_number))
-            })
-            .collect()
-    }
-    pub fn edge_copy_numbers(&self) -> HashMap<Edge, usize> {
-        let mut edge_copy = HashMap::new();
-        for edge in self.edges.iter() {
-            let from = self.rev_index[edge.from];
-            let to = self.rev_index[edge.to];
-            let cp = edge.copy_number;
-            if from.0 != to.0 {
-                edge_copy.insert((from, to), cp);
-                edge_copy.insert((to, from), cp);
-            }
-        }
-        edge_copy
-    }
+    // pub fn self_loop_copy_numbers(&self) -> Vec<((u64, u64), usize)> {
+    //     self.self_loops
+    //         .iter()
+    //         .map(|edge| (self.rev_index[edge.from].0, edge.copy_number))
+    //         .collect()
+    // }
+    // pub fn node_copy_numbers(&self) -> HashMap<(u64, u64), usize> {
+    //     self.edges
+    //         .iter()
+    //         .filter_map(|edge| {
+    //             let from = self.rev_index[edge.from].0;
+    //             let to = self.rev_index[edge.to].0;
+    //             (from == to).then(|| (from, edge.copy_number))
+    //         })
+    //         .collect()
+    // }
+    // pub fn edge_copy_numbers(&self) -> HashMap<Edge, usize> {
+    //     let mut edge_copy = HashMap::new();
+    //     for edge in self.edges.iter() {
+    //         let from = self.rev_index[edge.from];
+    //         let to = self.rev_index[edge.to];
+    //         let cp = edge.copy_number;
+    //         if from.0 != to.0 {
+    //             edge_copy.insert((from, to), cp);
+    //             edge_copy.insert((to, from), cp);
+    //         }
+    //     }
+    //     edge_copy
+    // }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
     fn mock_data_1() -> Graph {
-        let nodes = HashMap::new();
+        // let nodes = HashMap::new();
         let mut edges: Vec<_> = vec![];
-        edges.push(FatEdge::new(0, 1, 2));
-        edges.push(FatEdge::new(1, 2, 1));
-        edges.push(FatEdge::new(1, 4, 1));
-        edges.push(FatEdge::new(2, 3, 1));
-        edges.push(FatEdge::new(4, 5, 1));
-        edges.push(FatEdge::new(3, 6, 1));
-        edges.push(FatEdge::new(5, 6, 1));
-        edges.push(FatEdge::new(6, 7, 2));
-        edges.push(FatEdge::new(7, 8, 1));
-        edges.push(FatEdge::new(7, 10, 1));
-        edges.push(FatEdge::new(8, 9, 1));
-        edges.push(FatEdge::new(10, 11, 1));
-        edges.push(FatEdge::new(9, 12, 1));
-        edges.push(FatEdge::new(12, 11, 1));
-        edges.push(FatEdge::new(13, 12, 2));
+        edges.push(FatEdge::new(0, 1, 2, 1));
+        edges.push(FatEdge::new(1, 2, 1, 1));
+        edges.push(FatEdge::new(1, 4, 1, 1));
+        edges.push(FatEdge::new(2, 3, 1, 1));
+        edges.push(FatEdge::new(4, 5, 1, 1));
+        edges.push(FatEdge::new(3, 6, 1, 1));
+        edges.push(FatEdge::new(5, 6, 1, 1));
+        edges.push(FatEdge::new(6, 7, 2, 1));
+        edges.push(FatEdge::new(7, 8, 1, 1));
+        edges.push(FatEdge::new(7, 10, 1, 1));
+        edges.push(FatEdge::new(8, 9, 1, 1));
+        edges.push(FatEdge::new(10, 11, 1, 1));
+        edges.push(FatEdge::new(9, 12, 1, 1));
+        edges.push(FatEdge::new(12, 11, 1, 1));
+        edges.push(FatEdge::new(13, 12, 2, 1));
         let mut graph = vec![Vec::with_capacity(2); 14];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
@@ -490,32 +499,32 @@ pub mod tests {
         Graph {
             hap_coverage: 1f64,
             edges,
-            rev_index: vec![],
-            nodes,
+            // rev_index: vec![],
+            // nodes,
             graph,
             self_loops: vec![],
             one_degree_nodes,
         }
     }
     fn mock_data_2() -> Graph {
-        let nodes = HashMap::new();
+        // let nodes = HashMap::new();
         let mut edges: Vec<_> = vec![];
-        edges.push(FatEdge::new(0, 1, 2));
-        edges.push(FatEdge::new(1, 2, 2));
-        edges.push(FatEdge::new(2, 3, 3));
-        edges.push(FatEdge::new(3, 4, 1));
-        edges.push(FatEdge::new(3, 6, 2));
-        edges.push(FatEdge::new(4, 5, 1));
-        edges.push(FatEdge::new(5, 6, 1));
-        edges.push(FatEdge::new(6, 7, 3));
-        edges.push(FatEdge::new(7, 8, 2));
-        edges.push(FatEdge::new(7, 10, 1));
-        edges.push(FatEdge::new(8, 9, 2));
-        edges.push(FatEdge::new(9, 10, 2));
-        edges.push(FatEdge::new(10, 11, 3));
-        edges.push(FatEdge::new(11, 2, 1));
-        edges.push(FatEdge::new(11, 12, 2));
-        edges.push(FatEdge::new(12, 13, 2));
+        edges.push(FatEdge::new(0, 1, 2, 1));
+        edges.push(FatEdge::new(1, 2, 2, 1));
+        edges.push(FatEdge::new(2, 3, 3, 1));
+        edges.push(FatEdge::new(3, 4, 1, 1));
+        edges.push(FatEdge::new(3, 6, 2, 1));
+        edges.push(FatEdge::new(4, 5, 1, 1));
+        edges.push(FatEdge::new(5, 6, 1, 1));
+        edges.push(FatEdge::new(6, 7, 3, 1));
+        edges.push(FatEdge::new(7, 8, 2, 1));
+        edges.push(FatEdge::new(7, 10, 1, 1));
+        edges.push(FatEdge::new(8, 9, 2, 1));
+        edges.push(FatEdge::new(9, 10, 2, 1));
+        edges.push(FatEdge::new(10, 11, 3, 1));
+        edges.push(FatEdge::new(11, 2, 1, 1));
+        edges.push(FatEdge::new(11, 12, 2, 1));
+        edges.push(FatEdge::new(12, 13, 2, 1));
         let mut graph = vec![Vec::with_capacity(2); 14];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
@@ -529,25 +538,25 @@ pub mod tests {
         assert_eq!(one_degree_nodes, vec![0, 13]);
         Graph {
             hap_coverage: 1f64,
-            rev_index: vec![],
+            // rev_index: vec![],
             edges,
-            nodes,
+            // nodes,
             graph,
             self_loops: vec![],
             one_degree_nodes,
         }
     }
     fn mock_data_3() -> Graph {
-        let nodes = HashMap::new();
+        // let nodes = HashMap::new();
         let mut edges: Vec<_> = vec![];
-        edges.push(FatEdge::new(0, 1, 20));
-        edges.push(FatEdge::new(1, 2, 5));
-        edges.push(FatEdge::new(2, 3, 5));
-        edges.push(FatEdge::new(6, 3, 5));
-        edges.push(FatEdge::new(1, 4, 5));
-        edges.push(FatEdge::new(4, 5, 5));
-        edges.push(FatEdge::new(5, 6, 5));
-        edges.push(FatEdge::new(6, 7, 20));
+        edges.push(FatEdge::new(0, 1, 20, 1));
+        edges.push(FatEdge::new(1, 2, 5, 1));
+        edges.push(FatEdge::new(2, 3, 5, 1));
+        edges.push(FatEdge::new(6, 3, 5, 1));
+        edges.push(FatEdge::new(1, 4, 5, 1));
+        edges.push(FatEdge::new(4, 5, 5, 1));
+        edges.push(FatEdge::new(5, 6, 5, 1));
+        edges.push(FatEdge::new(6, 7, 20, 1));
         let mut graph = vec![Vec::with_capacity(2); 8];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
@@ -561,9 +570,8 @@ pub mod tests {
         assert_eq!(one_degree_nodes, vec![0, 7]);
         Graph {
             hap_coverage: 10f64,
-            rev_index: vec![],
             edges,
-            nodes,
+            // nodes,
             graph,
             self_loops: vec![],
             one_degree_nodes,

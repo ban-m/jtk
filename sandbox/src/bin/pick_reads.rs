@@ -56,8 +56,9 @@ fn main() -> std::io::Result<()> {
                 false => id2desc[&read.id].contains("251v2"),
                 true => id2desc[&read.id].contains("hapA"),
             };
+            let dir = node.is_forward;
             println!(
-                "{is_hap1}\t{}\t{}\t{len}\t{}",
+                "{is_hap1}\t{dir}\t{}\t{len}\t{}\t{}",
                 node.cluster,
                 dumps.join("\t"),
                 read.id,

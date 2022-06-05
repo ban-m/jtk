@@ -406,7 +406,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     if c.to_polish {
-        let hmm = crate::local_clustering::get_tuned_model(ds);
+        let hmm = crate::model_tune::get_model(ds).unwrap();
         polish_segments(&mut segments, ds, &summaries, c, &ds.read_type, &hmm);
         let lengths: HashMap<_, _> = segments
             .iter()

@@ -18,6 +18,14 @@ impl<'a> super::DitchGraph<'a> {
         let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);
         let mut candidates = self.enumerate_candidates();
         candidates.sort();
+        {
+            for node in self
+                .nodes()
+                .filter(|n| n.node == (1992, 0) || n.node == (126, 0))
+            {
+                debug!("{node}");
+            }
+        }
         for (node, p) in candidates {
             if arrived.contains(&node) {
                 continue;

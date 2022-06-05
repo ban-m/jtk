@@ -30,10 +30,36 @@ pub struct DataSet {
     pub assignments: Vec<Assignment>,
     /// The type of the reads.
     pub read_type: ReadType,
-    // /// Estimated parameter for a statistical model (used to phase local region)
-    // pub model_params: Option<ModelParameters>,
+    /// Estimated Hidden Markov model. TODO:Maybe we need the direct implementation here....
+    pub model_param: Option<HMMParam>,
     /// Estimated error rate.
     pub error_rate: ErrorRate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HMMParam {
+    /// Prob from mat.
+    /// Pr{Mat->Mat},
+    pub mat_mat: f64,
+    /// Pr{Mat->Ins}
+    pub mat_ins: f64,
+    /// Pr{Mat->Del}
+    pub mat_del: f64,
+    /// Pr{Ins->Mat}
+    pub ins_mat: f64,
+    /// Pr{Ins->Ins}
+    pub ins_ins: f64,
+    /// Pr{Ins->Del}
+    pub ins_del: f64,
+    /// Pr{Del->Mat}.
+    pub del_mat: f64,
+    /// Pr{Del -> Ins},
+    pub del_ins: f64,
+    /// Pr{Del->Del}
+    pub del_del: f64,
+    /// 4 * ref_base + query_base = Pr{Query|Ref}, 2bit-encoded.
+    /// A->0, C->1, G->2, T->3
+    pub mat_emit: [f64; 16],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -113,7 +139,7 @@ impl std::default::Default for DataSet {
             assignments: vec![],
             read_type: ReadType::None,
             masked_kmers: MaskInfo::default(),
-            // model_params: None,
+            model_param: None,
             error_rate: ErrorRate::default(),
         }
     }
@@ -147,7 +173,7 @@ impl DataSet {
             assignments,
             read_type,
             masked_kmers: MaskInfo::default(),
-            // model_params: None,
+            model_param: None,
             error_rate: ErrorRate::guess(read_type),
         }
     }
@@ -735,15 +761,6 @@ impl Assignment {
     pub fn new(id: u64, cluster: usize) -> Self {
         Self { id, cluster }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ModelParameters {
-    pub del_open: f64,
-    pub del_ext: f64,
-    pub ins_open: f64,
-    pub ins_ext: f64,
-    pub match_prob: f64,
 }
 
 /// The error rate with respect to the length of the alignment.

@@ -43,10 +43,10 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     eprintln!("{graph}");
     graph.remove_lightweight_edges(2, true);
     let cov = ds.coverage.unwrap();
-    let lens: Vec<_> = ds.raw_reads.iter().map(|r| r.seq().len()).collect();
-    graph.assign_copy_number_mcmc(cov, &lens);
-    // let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
-    // graph.assign_copy_number_mst(cov, &mut rng);
+    // let lens: Vec<_> = ds.raw_reads.iter().map(|r| r.seq().len()).collect();
+    // graph.assign_copy_number_mcmc(cov, &lens);
+    let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
+    graph.assign_copy_number_mst(cov, &mut rng);
     // use log::*;
     // for node in graph.nodes() {
     //     let (unit, cl) = node.node;
