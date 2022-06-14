@@ -34,14 +34,13 @@ fn main() -> std::io::Result<()> {
     //     }
     // }
     let selection: HashSet<u64> = args[2..].iter().filter_map(|r| r.parse().ok()).collect();
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build_global()
-        .unwrap();
+    // rayon::ThreadPoolBuilder::new()
+    //     .num_threads(1)
+    //     .build_global()
+    //     .unwrap();
     haplotyper::local_clustering::local_clustering_selected(&mut ds, &selection);
     // use haplotyper::phmm_likelihood_correction::*;
     // let config = CorrectionConfig::default();
     // ds.correct_clustering_selected(&selection, &config);
-
     Ok(())
 }

@@ -216,6 +216,17 @@ impl<'a> DitchNode<'a> {
     fn seq_as_string(&self) -> String {
         String::from_utf8(self.seq.clone()).unwrap()
     }
+    fn decrement_copy_number(&mut self) -> usize {
+        match self.copy_number {
+            Some(cp) if 0 < cp => {
+                let occ = self.occ / cp;
+                self.occ -= occ;
+                self.copy_number = Some(cp - 1);
+                occ
+            }
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -327,12 +338,17 @@ impl DitchEdge {
     // and decrease the .occ parameter appropriately.
     fn reduce_one_copy_number(&mut self) {
         match self.copy_number.as_mut() {
+            Some(cp) if *cp == 0 => {}
             Some(cp) if *cp == 1 => {
+                self.occ = 0;
+                *cp = 0;
+            }
+            Some(cp) => {
                 let occ_reduce = self.occ / *cp;
                 self.occ -= occ_reduce;
                 *cp -= 1;
             }
-            _ => {}
+            None => {}
         }
     }
 }
@@ -605,7 +621,7 @@ impl<'a> DitchGraph<'a> {
         for &(from, fdir, to, todir, target) in edges.iter() {
             let (from, to) = (2 * from + fdir as usize, 2 * to + todir as usize);
             let edge = copy_num_by_mst::FatEdge::new(from, to, target.ceil() as usize, 1);
-            if from != to {
+            if from / 2 != to / 2 {
                 fat_edges.push(edge);
             } else {
                 fat_self_loops.push(edge);
@@ -624,13 +640,13 @@ impl<'a> DitchGraph<'a> {
         let mut edge_cps = HashMap::new();
         for edge in graph.edges() {
             if edge.from / 2 == edge.to / 2 {
-                node_cps.push((edge.from / 2, edge.copy_number));
+                node_cps.push((edge.from / 2, edge.copy_number.max(0) as usize));
             } else {
-                edge_cps.insert((edge.from, edge.to), edge.copy_number);
+                edge_cps.insert((edge.from, edge.to), edge.copy_number.max(0) as usize);
             }
         }
         for edge in graph.self_loops() {
-            edge_cps.insert((edge.from, edge.to), edge.copy_number);
+            edge_cps.insert((edge.from, edge.to), edge.copy_number.max(0) as usize);
         }
         node_cps.sort_by_key(|x| x.0);
         let node_cp: Vec<_> = node_cps.into_iter().map(|x| x.1).collect();
@@ -779,9 +795,14 @@ impl<'a> DitchGraph<'a> {
             let from = (from, from_pos);
             let path_phasing = self.bfs_to_the_same_phase(from, len, &phaseset)?;
             let to = *path_phasing.last().unwrap();
-            let (label, proxying) = self.spell_along_path(&path_phasing, from);
-            debug!("PHASEPATH\tSpan\t{:?}\t{:?}\t{}", from.0, to.0, label.len());
-            self.span_region(from, to, &path_phasing, label, proxying);
+            let edge = self.spell_along_path(&path_phasing, from);
+            debug!(
+                "PHASEPATH\tSpan\t{:?}\t{:?}\t{}",
+                from.0,
+                to.0,
+                edge.seq.len()
+            );
+            self.span_region(from, to, &path_phasing, edge);
         }
         Some(())
     }
@@ -801,11 +822,10 @@ impl<'a> DitchGraph<'a> {
         let seed = self.nodes.len() as u64 * 7329;
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
         self.assign_copy_number_mst(cov, &mut rng);
-        // self.assign_copy_number(cov, lens);
+        self.remove_zero_copy_elements(lens, 0.3);
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
         }
-        self.remove_zero_copy_elements(lens, 0.3);
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
         let llr_stream = (0..10)
@@ -815,13 +835,11 @@ impl<'a> DitchGraph<'a> {
             .enumerate();
         for (i, llr) in llr_stream {
             self.assign_copy_number_mst(cov, &mut rng);
-            // self.assign_copy_number_mcmc(cov, lens);
             self.remove_zero_copy_elements(lens, 0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
             self.zip_up_overclustering(2);
             if i == 5 {
-                //self.assign_copy_number_mcmc(cov, lens);
                 self.assign_copy_number_mst(cov, &mut rng);
                 self.remove_zero_copy_elements(lens, 0.9);
                 self.remove_zero_copy_path(0.3);
@@ -834,12 +852,10 @@ impl<'a> DitchGraph<'a> {
             }
         }
         self.assign_copy_number_mst(cov, &mut rng);
-        //self.assign_copy_number_mcmc(cov, lens);
         self.remove_zero_copy_elements(lens, 0.9);
         self.remove_zero_copy_path(0.3);
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
-        //self.assign_copy_number_mcmc(cov, lens);
         self.assign_copy_number_mst(cov, &mut rng);
         self.squish_small_net(3);
         self.zip_up_overclustering_dev();
@@ -2194,9 +2210,12 @@ impl<'a> DitchGraph<'a> {
         }
         let from = (focus.from, focus.from_position);
         let to = (focus.to, focus.to_position);
-        let (label, proxying) = self.spell_along_path(&path_to_focus, from);
-        debug!("FOCUS\tSPAN\t{}\t{}bp", focus, label.len());
-        self.span_region(from, to, &path_to_focus, label, proxying);
+        assert_eq!(path_to_focus.last(), Some(&to));
+        let new_edge = self.spell_along_path(&path_to_focus, from);
+        debug!("FOCUS\tSPAN\t{}\t{}bp", focus, new_edge.seq.len());
+        self.span_region(from, to, &path_to_focus, new_edge);
+        assert_ne!(self.get_edges(focus.from, focus.from_position).count(), 0);
+        assert_ne!(self.get_edges(focus.to, focus.to_position).count(), 0);
         Some(())
     }
     fn is_path_branching(&self, focus: &Focus, path: &[(Node, Position)]) -> bool {
@@ -2222,26 +2241,9 @@ impl<'a> DitchGraph<'a> {
         (from, from_pos): (Node, Position),
         (to, to_pos): (Node, Position),
         path_spaning: &[(Node, Position)],
-        label: EdgeLabel,
-        proxying: Vec<(Node, bool, usize)>,
+        edge: DitchEdge,
     ) {
         assert_eq!(*path_spaning.last().unwrap(), (to, to_pos));
-        let mut edge = DitchEdge::with_proxy(from, from_pos, to, to_pos, label, proxying);
-        edge.occ = self.nodes[&from].edges.iter().map(|e| e.occ).sum();
-        // First, allocate edge to be removed.
-        // Note that sometimes the newly added edge is already in this node(i.e. resolving some short branch),
-        // So we should be care that the edge is not in the removing edges.
-        let remove_from: Vec<_> = self
-            .get_edges(from, from_pos)
-            .filter(|e| !(e.to == to && e.to_position == to_pos))
-            .map(|e| (e.to, e.to_position))
-            .collect();
-        let remove_to: Vec<_> = self
-            .get_edges(to, to_pos)
-            .filter(|e| !(e.to == from && e.to_position == from_pos))
-            .map(|e| (e.to, e.to_position))
-            .collect();
-        // Next, add the new edge. If there's already the same egdge, just update it.
         if let Some(node) = self.nodes.get_mut(&to) {
             let edge = edge.reverse();
             match node.edges.iter_mut().find(|e| e == &&edge) {
@@ -2255,67 +2257,94 @@ impl<'a> DitchGraph<'a> {
                 None => node.edges.push(edge),
             }
         }
-        // Next, removing the rest of the edges.
-        for (node, pos) in remove_from {
-            self.remove_edge_and_pruning(from, from_pos, node, pos);
+        // Next, removing zero-copy edges along the path.
+        {
+            let mut cps = vec![];
+            let (mut prev, mut prev_pos) = (from, from_pos);
+            for &(node, pos) in path_spaning.iter() {
+                let edge = self
+                    .get_edges(prev, prev_pos)
+                    .find(|e| e.to == node && e.to_position == pos);
+                let copy_num = edge.and_then(|e| e.copy_number);
+                cps.push(copy_num);
+                prev = node;
+                prev_pos = !pos;
+            }
+            debug!("ALONG\t{:?}", cps);
         }
-        for (node, pos) in remove_to {
-            self.remove_edge_and_pruning(to, to_pos, node, pos);
+        let (mut prev, mut prev_pos) = (from, from_pos);
+        for &(node, pos) in path_spaning {
+            let edge = self
+                .get_edges(prev, prev_pos)
+                .find(|e| e.to == node && e.to_position == pos);
+            let copy_num = edge.and_then(|e| e.copy_number);
+            if copy_num == Some(0) {
+                self.remove_edge_between((prev, prev_pos), (node, pos));
+            }
+            prev = node;
+            prev_pos = !pos;
         }
-        // Zip up traversed paths, if nessesarry.
-        // let mut to_remove = HashSet::new();
-        // for (node, pos) in path_spaning
-        //     .iter()
-        //     .filter(|(node, _)| self.nodes.contains_key(&node))
-        //     .flat_map(|&(node, pos)| self.get_edges(node, pos))
-        //     .map(|edge| (edge.to, edge.to_position))
-        //     .filter(|(node, _)| matches!(self.nodes[node].copy_number, Some(1)))
-        // {
-        //     let mut dests = self
-        //         .get_edges(node, pos)
-        //         .filter(|e| !to_remove.contains(&e.to))
-        //         .map(|edge| self.destination(edge));
-        //     // This is a "fork" branch.
-        //     let (first_dest, second_dest) = match (dests.next(), dests.next()) {
-        //         (Some(fst), Some(snd)) => (fst, snd),
-        //         _ => continue,
-        //     };
-        //     if dests.next().is_some() {
-        //         continue;
-        //     }
-        //     if first_dest == second_dest {
-        //         debug!("ZIPPINGUP\t{node:?}\t{pos}");
-        //         let start_edge = self
-        //             .get_edges(node, pos)
-        //             .filter(|e| !to_remove.contains(&e.to))
-        //             .max_by_key(|e| e.occ)
-        //             .unwrap();
-        //         to_remove.extend(self.simple_path_from(start_edge));
+        // Removing other branching edges along the path.
+        let remove: Vec<_> = self.nodes[&from]
+            .edges
+            .iter()
+            .filter(|edge| edge.from_position == from_pos && edge.copy_number == Some(0))
+            .map(|e| (e.to, e.to_position))
+            .collect();
+        for elm in remove {
+            self.remove_edge_between((from, from_pos), elm);
+        }
+        for &(node, _) in path_spaning {
+            let remove: Vec<_> = self.nodes[&node]
+                .edges
+                .iter()
+                .filter(|edge| edge.copy_number == Some(0))
+                .map(|e| ((e.from, e.from_position), (e.to, e.to_position)))
+                .collect();
+            for (f, t) in remove {
+                self.remove_edge_between(f, t);
+            }
+        }
+        for (node, _) in path_spaning {
+            // node might be absent, because it is included in a loop!
+            let is_empty = self.nodes.get(node).map(|n| n.edges.is_empty());
+            if is_empty.unwrap_or(false) {
+                self.nodes.remove(node);
+            }
+        }
+        // First, allocate edge to be removed.
+        // Note that sometimes the newly added edge is already in this node(i.e. resolving some short branch),
+        // So we should be care that the edge is not in the removing edges.
+        // let remove_from: Vec<_> = self
+        //     .get_edges(from, from_pos)
+        //     .filter(|e| !(e.to == to && e.to_position == to_pos))
+        //     .map(|e| (e.to, e.to_position))
+        //     .collect();
+        // let remove_to: Vec<_> = self
+        //     .get_edges(to, to_pos)
+        //     .filter(|e| !(e.to == from && e.to_position == from_pos))
+        //     .map(|e| (e.to, e.to_position))
+        //     .collect();
+        // // Next, add the new edge. If there's already the same egdge, just update it.
+        // if let Some(node) = self.nodes.get_mut(&to) {
+        //     let edge = edge.reverse();
+        //     match node.edges.iter_mut().find(|e| e == &&edge) {
+        //         Some(e) => *e = edge,
+        //         None => node.edges.push(edge),
         //     }
         // }
-        // self.remove_nodes(&to_remove);
-        // Removing nodes along path, if nessesarry.
-        // for &(node, pos) in path_spaning {
-        //     // Sometimes, this node is already removed from the graph.
-        //     if !self.nodes.contains_key(&node) {
-        //         continue;
+        // if let Some(node) = self.nodes.get_mut(&from) {
+        //     match node.edges.iter_mut().find(|e| e == &&edge) {
+        //         Some(e) => *e = edge,
+        //         None => node.edges.push(edge),
         //     }
-        //     // If it is not zero-copy node, do not anything.
-        //     if !matches!(self.nodes[&node].copy_number, Some(0)) {
-        //         continue;
-        //     }
-        //     let parents: Vec<_> = self
-        //         .get_edges(node, pos)
-        //         .map(|e| (e.to, e.to_position))
-        //         .collect();
-        //     for (parent, par_pos) in parents {
-        //         if self
-        //             .get_edges(parent, par_pos)
-        //             .any(|e| !(e.to == node && e.to_position == pos))
-        //         {
-        //             self.remove_edge_and_pruning(parent, par_pos, node, pos);
-        //         }
-        //     }
+        // }
+        // Next, removing the rest of the edges.
+        // for (node, pos) in remove_from {
+        //     self.remove_edge_and_pruning(from, from_pos, node, pos);
+        // }
+        // for (node, pos) in remove_to {
+        //     self.remove_edge_and_pruning(to, to_pos, node, pos);
         // }
     }
     // Fron (start,pos) position to the node with the same phase block.
@@ -2376,7 +2405,7 @@ impl<'a> DitchGraph<'a> {
         }
         Some(back_track)
     }
-    // Fron (start,pos) position to the focus target(start=focus.node, position=focus.position).
+    // From (start,pos) position to the focus target(start=focus.node, position=focus.position).
     // Note that, the path would contain the (target,target pos) at the end of the path and
     // not contain the (start,pos) position itself.
     // TODO: Maybe this function failed to find the target focus,
@@ -2524,8 +2553,11 @@ impl<'a> DitchGraph<'a> {
         &mut self,
         path: &[(Node, Position)],
         (start, pos): (Node, Position),
-    ) -> (EdgeLabel, Vec<(Node, bool, usize)>) {
+        //) -> (EdgeLabel, Vec<(Node, bool, usize)>) {
+    ) -> DitchEdge {
         let first_elm = path[0];
+        self.decrement_edge_copy_number((start, pos), first_elm);
+        let sum_occ: usize = self.get_edges(start, pos).map(|e| e.occ).sum();
         let (first_label, mut processed_nodes) = self
             .get_edges(start, pos)
             .find(|e| (e.to, e.to_position) == first_elm)
@@ -2557,16 +2589,10 @@ impl<'a> DitchGraph<'a> {
                     self.decrement_edge_copy_number(from, to)
                 }
                 // This unwrap never panics.
-                let node = self.nodes.get_mut(&from).unwrap();
-                match node.copy_number {
-                    Some(cp) if 0 < cp => {
-                        let occ = node.occ / cp;
-                        node.occ -= occ;
-                        node.copy_number = Some(cp - 1);
-                        occ
-                    }
-                    _ => 0,
-                }
+                self.nodes
+                    .get_mut(&from)
+                    .map(|n| n.decrement_copy_number())
+                    .unwrap_or(0)
             };
             processed_nodes.push((from, from_pos == Position::Head, occ));
             let passed_edge = self
@@ -2597,7 +2623,29 @@ impl<'a> DitchGraph<'a> {
                 EdgeLabel::Seq(seq)
             }
         };
-        (label, processed_nodes)
+        let &(to, to_pos) = path.last().unwrap();
+        let mut edge = DitchEdge::with_proxy(start, pos, to, to_pos, label, processed_nodes);
+        edge.occ = sum_occ;
+        edge.copy_number = Some(1);
+        edge
+        // (label, processed_nodes)
+    }
+    fn remove_edge_between(
+        &mut self,
+        (from, from_pos): (Node, Position),
+        (to, to_pos): (Node, Position),
+    ) {
+        if let Some(node) = self.nodes.get_mut(&from) {
+            node.edges.retain(|e| {
+                !(e.from_position == from_pos && e.to == to && e.to_position == to_pos)
+            });
+        }
+        // Remove in anti-direction.
+        if let Some(node) = self.nodes.get_mut(&to) {
+            node.edges.retain(|e| {
+                !(e.from_position == to_pos && e.to == from && e.to_position == from_pos)
+            });
+        }
     }
     // Removing (from,from_pos)-(to,to_pos) edge.
     // Then, recursively removing the edges in the opposite position and `to` node itself
@@ -2613,17 +2661,7 @@ impl<'a> DitchGraph<'a> {
             "Removing ({},{},{})-({},{},{})",
             from.0, from.1, from_pos, to.0, to.1, to_pos
         );
-        if let Some(node) = self.nodes.get_mut(&from) {
-            node.edges.retain(|e| {
-                !(e.from_position == from_pos && e.to == to && e.to_position == to_pos)
-            });
-        }
-        // Remove in anti-direction.
-        if let Some(node) = self.nodes.get_mut(&to) {
-            node.edges.retain(|e| {
-                !(e.from_position == to_pos && e.to == from && e.to_position == from_pos)
-            });
-        }
+        self.remove_edge_between((from, from_pos), (to, to_pos));
         // If the degree became zero and this node and the copy number is zero, remove recursively
         let removed_all_edges = self
             .nodes
@@ -2644,7 +2682,6 @@ impl<'a> DitchGraph<'a> {
                 // The edge is from the *opposite* position of the `to` node!
                 self.remove_edge_and_pruning(to, !to_pos, node, pos);
             }
-            // debug!("Removing {:?}", to);
             // Then, removing this node itself.
             if self.nodes.contains_key(&to) {
                 assert!(self.nodes[&to].edges.is_empty());
@@ -2865,7 +2902,7 @@ impl<'a> DitchGraph<'a> {
             // --Node--|
             //         |--Node(Copy>1)--
             // --Node--|
-            // Type branch
+            //  (We are here now)
             for pos in [Position::Head, Position::Tail] {
                 let edge_num = node
                     .edges
@@ -2965,21 +3002,19 @@ impl<'a> DitchGraph<'a> {
             };
             assert!(!correct_lk.is_nan());
             assert!(!error_lk.is_nan());
-            if let Some((lk_ratio, (to, to_pos))) = nodes
-                .iter()
-                .enumerate()
-                .filter(|(_, (node, _))| matches!(self.nodes[node].copy_number, Some(1)))
-                .map(|(k, &n)| {
-                    let lk: f64 = occs
-                        .iter()
-                        .map(|&x| x as f64)
-                        .enumerate()
-                        .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
-                        .sum();
-                    assert!(!lk.is_nan());
-                    (lk - null_prob, n)
-                })
-                .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
+            let nodes_with_idx = nodes.iter().enumerate();
+            let filtered_nodes =
+                nodes_with_idx.filter(|(_, (n, _))| self.nodes[n].copy_number == Some(1));
+            let nodes_with_lk = filtered_nodes.map(|(k, &n)| {
+                let occs_with_idx = occs.iter().map(|&x| x as f64).enumerate();
+                let lk: f64 = occs_with_idx
+                    .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
+                    .sum();
+                assert!(!lk.is_nan());
+                (lk - null_prob, n)
+            });
+            if let Some((lk_ratio, (to, to_pos))) =
+                nodes_with_lk.max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
             {
                 if focus.as_ref().map(|f| f.llr()).unwrap_or(0f64) < lk_ratio {
                     let f = Focus::new(node.node, pos, to, to_pos, dist, lk_ratio, occs);

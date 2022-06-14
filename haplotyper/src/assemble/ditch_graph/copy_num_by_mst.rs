@@ -1,8 +1,10 @@
 // To me: do not forget update lightedge if you update fatedges
 // Maybe it's better to explicitly state the original index of the nodes...?
 use rand::{prelude::SliceRandom, Rng};
+use rayon::prelude::*;
 use std::collections::HashMap;
 const LARGE_VALUE: f64 = 1000000f64;
+const INIT_NEG_COPY_NUM_PEN: f64 = 100f64;
 #[derive(Debug, Clone)]
 pub struct MSTConfig {
     temperature: f64,
@@ -15,12 +17,24 @@ impl std::default::Default for MSTConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct FitParam {
+    hap_coverage: f64,
+    negative_copy_num_pen: f64,
+}
+
+impl FitParam {
+    fn new(hap_coverage: f64, negative_copy_num_pen: f64) -> Self {
+        Self {
+            hap_coverage,
+            negative_copy_num_pen,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Graph {
     hap_coverage: f64,
     edges: Vec<FatEdge>,
-    // nodes: HashMap<Node, usize>,
-    // rev_index[nodes[node]] = node.
-    // rev_index: Vec<Node>,
     graph: Vec<Vec<LightEdge>>,
     self_loops: Vec<FatEdge>,
     one_degree_nodes: Vec<usize>,
@@ -58,7 +72,7 @@ pub struct FatEdge {
     pub to: usize,
     len: usize,
     target: usize,
-    pub copy_number: usize,
+    pub copy_number: isize,
     is_in_mst: bool,
     penalty_diff: f64,
 }
@@ -79,12 +93,20 @@ impl FatEdge {
     pub fn key(&self) -> (usize, usize) {
         (self.from, self.to)
     }
-    pub fn penalty_diff(&self, to_increase: bool, cov: f64) -> f64 {
-        let current_penalty = penalty(self.target, self.copy_number, cov);
-        let proposed_penalty = match to_increase {
-            true => penalty(self.target, self.copy_number + 1, cov),
-            false if self.copy_number == 0 => LARGE_VALUE,
-            false => penalty(self.target, self.copy_number - 1, cov),
+    pub fn penalty_diff(&self, to_increase: bool, param: &FitParam) -> f64 {
+        let cov = param.hap_coverage;
+        let neg_pen = param.negative_copy_num_pen;
+        let current_penalty = match self.copy_number {
+            x if x < 0 => neg_pen * -self.copy_number as f64,
+            _ => penalty(self.target, self.copy_number, cov),
+        };
+        let next_copy_num = match to_increase {
+            true => self.copy_number + 1,
+            false => self.copy_number - 1,
+        };
+        let proposed_penalty = match next_copy_num.cmp(&0) {
+            std::cmp::Ordering::Less => neg_pen * -next_copy_num as f64,
+            _ => penalty(self.target, next_copy_num, cov),
         };
         (proposed_penalty - current_penalty) * self.len as f64
     }
@@ -92,7 +114,8 @@ impl FatEdge {
 
 // sq_error / copy_num / copy_num,
 // This is the same as the negative log-likelihood of the Norm(mean=copy_num * hap_cov, var = copy_num * hap_cov)
-fn penalty(x: usize, copy_num: usize, hap_cov: f64) -> f64 {
+fn penalty(x: usize, copy_num: isize, hap_cov: f64) -> f64 {
+    assert!(0 <= copy_num);
     const ZERO_COPY: f64 = 0.15;
     let mean = hap_cov * copy_num as f64;
     let denom = match copy_num {
@@ -111,12 +134,7 @@ impl Graph {
     pub fn self_loops(&self) -> &[FatEdge] {
         self.self_loops.as_slice()
     }
-    pub fn new(
-        hap_coverage: f64,
-        // nodes: HashMap<Node, usize>,
-        edges: Vec<FatEdge>,
-        self_loops: Vec<FatEdge>,
-    ) -> Self {
+    pub fn new(hap_coverage: f64, edges: Vec<FatEdge>, self_loops: Vec<FatEdge>) -> Self {
         let max_idx = edges.iter().map(|x| x.from.max(x.to)).max().unwrap() + 1;
         let mut graph = vec![Vec::with_capacity(2); max_idx];
         for edge in edges.iter() {
@@ -129,110 +147,127 @@ impl Graph {
             .enumerate()
             .filter_map(|(i, eds)| (eds.len() == 1).then(|| i))
             .collect();
-        // let mut rev_index = vec![((0, 0), super::Position::Head); nodes.len()];
-        // for (&key, &idx) in nodes.iter() {
-        //     rev_index[idx] = key;
-        // }
-        // for edge in edges.iter() {
-        //     let from = rev_index[edge.from];
-        //     let to = rev_index[edge.to];
-        //     debug!("{from:?}<->{to:?}\t{}", edge.target);
-        // }
         Self {
             hap_coverage,
-            // nodes,
-            // rev_index,
             edges,
             graph,
             one_degree_nodes,
             self_loops,
         }
     }
-    fn update_lightedges(&mut self) {
+    fn update_lightedges(&mut self, param: &FitParam) {
         for edge in self.edges.iter() {
             let ledge = self.graph[edge.from]
                 .iter_mut()
                 .find(|e| e.to == edge.to)
                 .unwrap();
             ledge.is_in_mst = edge.is_in_mst;
-            ledge.penalty_diff_by_decrease = edge.penalty_diff(false, self.hap_coverage);
-            ledge.penalty_diff_by_increase = edge.penalty_diff(true, self.hap_coverage);
+            ledge.penalty_diff_by_decrease = edge.penalty_diff(false, param);
+            ledge.penalty_diff_by_increase = edge.penalty_diff(true, param);
             let ledge = self.graph[edge.to]
                 .iter_mut()
                 .find(|e| e.to == edge.from)
                 .unwrap();
             ledge.is_in_mst = edge.is_in_mst;
-            ledge.penalty_diff_by_decrease = edge.penalty_diff(false, self.hap_coverage);
-            ledge.penalty_diff_by_increase = edge.penalty_diff(true, self.hap_coverage);
+            ledge.penalty_diff_by_decrease = edge.penalty_diff(false, param);
+            ledge.penalty_diff_by_increase = edge.penalty_diff(true, param);
         }
     }
-    const LOOPTIMES: usize = 1000;
+    const LOOPTIMES: usize = 500;
     // TODO:Which is better, minimum penalty vs mcmc posterior prob?
     // I think this is not proper MCMC (as proposed distribution does not satisfy
     // detailed balanced condition), so I would like to retin the minimum penalty assignment.
     pub fn update_copy_numbers<R: Rng>(&mut self, rng: &mut R, config: &MSTConfig) {
-        let mut dfs_stack = vec![];
-        let mut dfs_arrived_status = vec![Status::Undiscovered; self.graph.len()];
-        let dfs_stack = &mut dfs_stack;
-        let dfs_arrived_status = dfs_arrived_status.as_mut_slice();
-        let (mut current_min, mut argmin) = (self.penalty(), self.edges.clone());
-        let mut count = 0;
+        let (min, argmin) = (0..10)
+            .map(|_| self.update_copy_numbers_inner(rng, config))
+            .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+            .unwrap();
+        self.edges = argmin;
+        debug!("MIN\t{min:.1}");
+        let neg_copy_num = self.edges.iter().filter(|x| x.copy_number < 0).count();
+        debug!("NEGCOPY\t{neg_copy_num}");
+    }
+    fn update_copy_numbers_inner<R: Rng>(
+        &mut self,
+        rng: &mut R,
+        config: &MSTConfig,
+    ) -> (f64, Vec<FatEdge>) {
+        for edge in self.edges.iter() {
+            let count = self.graph[edge.from]
+                .iter()
+                .filter(|e| e.to == edge.to)
+                .count();
+            assert_eq!(count, 1);
+            let count = self.graph[edge.to]
+                .iter()
+                .filter(|e| e.to == edge.from)
+                .count();
+            assert_eq!(count, 1);
+        }
+        self.edges.iter_mut().for_each(|e| e.copy_number = 0);
+        let mut parameters = FitParam::new(self.hap_coverage, INIT_NEG_COPY_NUM_PEN);
+        let (mut current_min, mut argmin) = (self.penalty(&parameters), self.edges.clone());
         loop {
-            self.update_mst(true);
-            self.update_lightedges();
-            let (optimal_cycle, penalty_diff) =
-                self.find_optimal_cycle(dfs_stack, dfs_arrived_status);
+            self.update_mst(true, &parameters);
+            parameters.negative_copy_num_pen =
+                (parameters.negative_copy_num_pen * 1.05f64).min(LARGE_VALUE);
+            self.update_lightedges(&parameters);
+            let (optimal_cycle, penalty_diff) = self.find_optimal_cycle();
             let prob = (-penalty_diff / config.temperature).exp().min(1f64);
-            // trace!("PROPOSED\t{prob:.4}\t{optimal_cycle:?}\t{penalty_diff}");
+            let len = optimal_cycle.len();
+            let pen = parameters.negative_copy_num_pen;
+            trace!("PROPOSED\t{prob:.4}\t{penalty_diff:.1}\t{len}\t{pen:.1}\t{current_min:.1}");
             if rng.gen_bool(prob) {
                 self.update_copy_number_by_cycle(optimal_cycle);
-                self.update_self_loops();
-                let penalty = self.penalty();
+                self.update_self_loops(&parameters);
+                let penalty = self.penalty(&parameters);
                 if penalty < current_min {
                     (current_min, argmin) = (penalty, self.edges.clone());
                 }
-                // debug!("COPYNUM\t{count}\t{current_min:.3}");
-                count += 1;
             } else {
                 break;
             }
         }
+        trace!("RANDOM Mode");
         for _ in 0..Self::LOOPTIMES {
+            parameters.negative_copy_num_pen =
+                (parameters.negative_copy_num_pen * 1.05).min(LARGE_VALUE);
             let to_increase = rng.gen_bool(0.5);
-            self.update_mst(to_increase);
-            self.update_lightedges();
-            if let Some((_, cycle)) = self.sample_cycle(rng, dfs_stack, dfs_arrived_status) {
-                // trace!("UPDATE\t{diff:.3}");
+            self.update_mst(to_increase, &parameters);
+            self.update_lightedges(&parameters);
+            if let Some((_diff, cycle)) = self.sample_cycle(rng) {
+                let len = cycle.len();
+                let pen = parameters.negative_copy_num_pen;
+                trace!("PROPOSED\t1\t{_diff:.1}\t{len}\t{pen}\t{current_min:.1}");
                 self.update_copy_number_by_cycle(cycle);
             }
-            let penalty = self.penalty();
+            let penalty = self.penalty(&parameters);
             if penalty < current_min {
                 (current_min, argmin) = (penalty, self.edges.clone());
             }
-            // debug!("COPYNUM\t{count}\t{current_min:.3}");
-            count += 1;
-            self.update_self_loops();
+            self.update_self_loops(&parameters);
         }
-        trace!("MST\t{count}");
-        self.edges = argmin;
+        parameters.negative_copy_num_pen = LARGE_VALUE;
+        let penalty = self.penalty(&parameters);
+        (penalty, argmin)
     }
-    fn update_self_loops(&mut self) {
+    fn update_self_loops(&mut self, param: &FitParam) {
         let self_loop_num = self.self_loops.len();
         for i in 0..self_loop_num {
             for to_increase in [true, false] {
-                self.tune_self_loop(i, to_increase);
+                self.tune_self_loop(i, to_increase, param);
             }
         }
     }
-    fn tune_self_loop(&mut self, i: usize, to_increase: bool) {
+    fn tune_self_loop(&mut self, i: usize, to_increase: bool, param: &FitParam) {
         let self_loop = self.self_loops.get_mut(i).unwrap();
         let main_edge = self
             .edges
             .iter_mut()
             .find(|edge| edge.key() == self_loop.key())
             .unwrap();
-        let main_edge_diff = main_edge.penalty_diff(to_increase, self.hap_coverage);
-        let self_loop_diff = self_loop.penalty_diff(to_increase, self.hap_coverage);
+        let main_edge_diff = main_edge.penalty_diff(to_increase, param);
+        let self_loop_diff = self_loop.penalty_diff(to_increase, param);
         if main_edge_diff + self_loop_diff < 0f64 {
             if to_increase {
                 self_loop.copy_number += 1;
@@ -243,24 +278,22 @@ impl Graph {
             }
         }
     }
-    fn penalty(&self) -> f64 {
+    fn penalty(&self, param: &FitParam) -> f64 {
         self.edges
             .iter()
-            .map(|e| penalty(e.target, e.copy_number, self.hap_coverage) * e.len as f64)
+            .map(|e| match e.copy_number {
+                x if x < 0 => -e.copy_number as f64 * param.negative_copy_num_pen,
+                _ => penalty(e.target, e.copy_number, param.hap_coverage) * e.len as f64,
+            })
             .sum()
-        // self.edges
-        //     .iter()
-        //     .map(|e| (e.target as f64 - e.copy_number as f64 * self.hap_coverage).powi(2))
-        //     .sum()
     }
     // Search minimum-spanning-tree.
-    fn update_mst(&mut self, to_increase: bool) {
+    fn update_mst(&mut self, to_increase: bool, param: &FitParam) {
         self.graph.iter().for_each(|eds| assert!(!eds.is_empty()));
         // Remove tempolary values
-        let hap_coverage = self.hap_coverage;
         self.edges.iter_mut().for_each(|edge| {
             edge.is_in_mst = false;
-            edge.penalty_diff = edge.penalty_diff(to_increase, hap_coverage);
+            edge.penalty_diff = edge.penalty_diff(to_increase, param);
         });
         // Find minimum spanning tree.
         self.edges
@@ -281,29 +314,25 @@ impl Graph {
         let tree_edges = self.edges.iter().filter(|e| e.is_in_mst).count();
         assert_eq!(tree_edges + cl_num, self.graph.len(), "{}", cl_num);
     }
-    fn find_optimal_cycle(
-        &self,
-        stack: &mut Vec<usize>,
-        status: &mut [Status],
-    ) -> (Vec<usize>, f64) {
-        let (mut current_min, mut argmin) = (LARGE_VALUE, vec![]);
-        for edge in self.edges.iter().filter(|e| !e.is_in_mst) {
-            let cycle = self
-                .find_cycle_between(edge.from, edge.to, stack, status)
-                .unwrap_or_else(|| {
-                    // let from = self.nodes.iter().find(|&(_, &i)| i == edge.from).unwrap();
-                    // let to = self.nodes.iter().find(|&(_, &i)| i == edge.to).unwrap();
-                    panic!("{:?}\t{:?}", edge.from, edge.to);
-                });
-            let penalty = self.penalty_of_cycle(&cycle);
-            if penalty < current_min {
-                current_min = penalty;
-                argmin = cycle;
-            }
-        }
+    fn find_optimal_cycle(&self) -> (Vec<usize>, f64) {
+        let (mut current_min, mut argmin) = self
+            .edges
+            .par_iter()
+            .filter(|e| !e.is_in_mst)
+            .map(|edge| {
+                let mut stack = vec![];
+                let mut status = vec![Status::Undiscovered; self.graph.len()];
+                self.find_cycle_between(edge.from, edge.to, &mut stack, &mut status)
+                    .map(|cycle| (self.penalty_of_cycle(&cycle), cycle))
+                    .unwrap_or_else(|| panic!("{:?}\t{:?}", edge.from, edge.to))
+            })
+            .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+            .unwrap_or((LARGE_VALUE, vec![]));
+        let mut stack = vec![];
+        let mut status = vec![Status::Undiscovered; self.graph.len()];
         for (i, &from) in self.one_degree_nodes.iter().enumerate() {
             for &to in self.one_degree_nodes.iter().skip(i + 1) {
-                if let Some(cycle) = self.find_cycle_between(from, to, stack, status) {
+                if let Some(cycle) = self.find_cycle_between(from, to, &mut stack, &mut status) {
                     let penalty = self.penalty_of_cycle(&cycle);
                     if penalty < current_min {
                         current_min = penalty;
@@ -312,28 +341,53 @@ impl Graph {
                 }
             }
         }
+        // let mut stack = vec![];
+        // let mut status = vec![Status::Undiscovered; self.graph.len()];
+        // let (mut current_min, mut argmin) = (LARGE_VALUE, vec![]);
+        // for edge in self.edges.iter().filter(|e| !e.is_in_mst) {
+        //     let cycle = self
+        //         .find_cycle_between(edge.from, edge.to, &mut stack, &mut status)
+        //         .unwrap_or_else(|| panic!("{:?}\t{:?}", edge.from, edge.to));
+        //     let penalty = self.penalty_of_cycle(&cycle);
+        //     if penalty < current_min {
+        //         current_min = penalty;
+        //         argmin = cycle;
+        //     }
+        // }
+        // for (i, &from) in self.one_degree_nodes.iter().enumerate() {
+        //     for &to in self.one_degree_nodes.iter().skip(i + 1) {
+        //         if let Some(cycle) = self.find_cycle_between(from, to, &mut stack, &mut status) {
+        //             let penalty = self.penalty_of_cycle(&cycle);
+        //             // let len = cycle.len();
+        //             // let (flip, flop) = self.diff_edge_count(&cycle);
+        //             if penalty < current_min {
+        //                 current_min = penalty;
+        //                 argmin = cycle;
+        //             }
+        //         }
+        //     }
+        // }
         (argmin, current_min)
     }
-    fn sample_cycle<R: Rng>(
-        &self,
-        rng: &mut R,
-        stack: &mut Vec<usize>,
-        status: &mut [Status],
-    ) -> Option<(f64, Vec<usize>)> {
+    fn sample_cycle<R: Rng>(&self, rng: &mut R) -> Option<(f64, Vec<usize>)> {
         let onedeg = self.one_degree_nodes.len();
         let mut cycles = Vec::with_capacity(self.edges.len() + onedeg * onedeg);
         let in_cycles = self
             .edges
-            .iter()
+            .par_iter()
             .filter(|e| !e.is_in_mst)
             .filter_map(|edge| {
-                self.find_cycle_between(edge.from, edge.to, stack, status)
+                let mut stack = vec![];
+                let mut status = vec![Status::Undiscovered; self.graph.len()];
+                self.find_cycle_between(edge.from, edge.to, &mut stack, &mut status)
                     .map(|cycle| (self.penalty_of_cycle(&cycle), cycle))
             });
-        cycles.extend(in_cycles);
+        cycles.par_extend(in_cycles);
+        let mut stack = vec![];
+        let mut status = vec![Status::Undiscovered; self.graph.len()];
         for (i, &from) in self.one_degree_nodes.iter().enumerate() {
             let cs = self.one_degree_nodes.iter().skip(i + 1).filter_map(|&to| {
-                self.find_cycle_between(from, to, stack, status)
+                self.find_cycle_between(from, to, &mut stack, &mut status)
                     .map(|cycle| (self.penalty_of_cycle(&cycle), cycle))
             });
             cycles.extend(cs);
@@ -378,6 +432,19 @@ impl Graph {
             let fin_node = stack.pop().unwrap();
             status[fin_node] = Status::Processed;
         }
+        // let mut fu = crate::find_union::FindUnion::new(status.len());
+        // for edge in self.edges.iter().filter(|e| e.is_in_mst) {
+        //     fu.unite(edge.from, edge.to);
+        // }
+        // for (from, node) in self.graph.iter().enumerate() {
+        //     for edge in node.iter().filter(|e| e.is_in_mst) {
+        //         fu.unite(from, edge.to);
+        //     }
+        // }
+        // let num_cl = (0..status.len()).filter(|&x| fu.find(x) == Some(x)).count();
+        // let arrived = status.iter().filter(|&&x| x == Status::Processed).count();
+        // let processing = status.iter().filter(|&&x| x == Status::Processing).count();
+        // error!("DUMP\t{}\t{arrived}\t{processing}\t{num_cl}", status.len());
         None
     }
     fn penalty_of_cycle(&self, cycle: &[usize]) -> f64 {
@@ -414,6 +481,20 @@ impl Graph {
         }
         score
     }
+    // fn diff_edge_count(&self, cycle: &[usize]) -> (usize, usize) {
+    //     let mut change_direction = true;
+    //     let mut counts = [0, 0];
+    //     let mut is_prev_e_edge = false;
+    //     for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
+    //         let is_e_edge = from / 2 != to / 2;
+    //         if is_prev_e_edge && is_e_edge {
+    //             change_direction = !change_direction;
+    //         }
+    //         counts[change_direction as usize] += 1;
+    //         is_prev_e_edge = is_e_edge;
+    //     }
+    //     (counts[0], counts[1])
+    // }
     fn update_copy_number_by_cycle_from(&mut self, cycle: &[usize], mut change_direction: bool) {
         let mut mod_edges: HashMap<_, bool> = HashMap::new();
         let mut is_prev_e_edge = false;
@@ -433,35 +514,6 @@ impl Graph {
                 None => {}
             });
     }
-    // pub fn self_loop_copy_numbers(&self) -> Vec<((u64, u64), usize)> {
-    //     self.self_loops
-    //         .iter()
-    //         .map(|edge| (self.rev_index[edge.from].0, edge.copy_number))
-    //         .collect()
-    // }
-    // pub fn node_copy_numbers(&self) -> HashMap<(u64, u64), usize> {
-    //     self.edges
-    //         .iter()
-    //         .filter_map(|edge| {
-    //             let from = self.rev_index[edge.from].0;
-    //             let to = self.rev_index[edge.to].0;
-    //             (from == to).then(|| (from, edge.copy_number))
-    //         })
-    //         .collect()
-    // }
-    // pub fn edge_copy_numbers(&self) -> HashMap<Edge, usize> {
-    //     let mut edge_copy = HashMap::new();
-    //     for edge in self.edges.iter() {
-    //         let from = self.rev_index[edge.from];
-    //         let to = self.rev_index[edge.to];
-    //         let cp = edge.copy_number;
-    //         if from.0 != to.0 {
-    //             edge_copy.insert((from, to), cp);
-    //             edge_copy.insert((to, from), cp);
-    //         }
-    //     }
-    //     edge_copy
-    // }
 }
 
 #[cfg(test)]
@@ -499,8 +551,6 @@ pub mod tests {
         Graph {
             hap_coverage: 1f64,
             edges,
-            // rev_index: vec![],
-            // nodes,
             graph,
             self_loops: vec![],
             one_degree_nodes,
@@ -538,9 +588,7 @@ pub mod tests {
         assert_eq!(one_degree_nodes, vec![0, 13]);
         Graph {
             hap_coverage: 1f64,
-            // rev_index: vec![],
             edges,
-            // nodes,
             graph,
             self_loops: vec![],
             one_degree_nodes,
@@ -571,7 +619,6 @@ pub mod tests {
         Graph {
             hap_coverage: 10f64,
             edges,
-            // nodes,
             graph,
             self_loops: vec![],
             one_degree_nodes,
@@ -600,7 +647,7 @@ pub mod tests {
         let config = MSTConfig::default();
         g.update_copy_numbers(&mut rng, &config);
         for edge in g.edges.iter() {
-            assert_eq!(edge.copy_number, edge.target);
+            assert_eq!(edge.copy_number as usize, edge.target);
         }
     }
     #[test]

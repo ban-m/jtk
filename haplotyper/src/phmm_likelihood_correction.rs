@@ -43,7 +43,6 @@ impl AlignmentCorrection for DataSet {
                     debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tP");
                     continue;
                 }
-                // debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tC");
                 assert!(cluster_num <= chunk.copy_num);
                 chunk.cluster_num = cluster_num;
                 for (id, idx, asn) in correcteds {
@@ -149,9 +148,9 @@ fn correct_unit(
         }
     }
     reads.sort_by_cached_key(|&(idx, ref read)| read.nodes[idx].cluster);
-    // trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
-    // let len = reads.len();
-    // trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
+    trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
+    let len = reads.len();
+    trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
     let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit_id, config);
     assert_eq!(assignments.len(), reads.len());
     let assignments: Vec<_> = reads
@@ -217,7 +216,6 @@ fn clustering(
     //     let cl = argmax(&ctx.1.posterior);
     //     trace!("DUMP\t{}\t{}\t{cl}", i, ctx.1.cluster);
     // }
-    let _ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
         .enumerate()
@@ -239,12 +237,13 @@ fn clustering(
                 .collect()
         })
         .collect();
-    // if log_enabled!(log::Level::Trace) {
-    //     for (i, sm) in sims.iter().enumerate() {
-    //         let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-    //         trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
-    //     }
-    // }
+    if log_enabled!(log::Level::Trace) {
+        let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
+        for (i, sm) in sims.iter().enumerate() {
+            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+            trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
+        }
+    }
     let laplacian = get_graph_laplacian(&sims);
     let (mut eigens, pick_k) = get_eigenvalues(&laplacian, k, id);
     for (eigen, (idx, read)) in eigens.iter_mut().zip(reads.iter()) {
