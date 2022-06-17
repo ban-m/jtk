@@ -1,5 +1,6 @@
 use crate::ALN_PARAMETER;
 const SEED: u64 = 394;
+const MIN_REQ_NEW_UNIT: usize = 10;
 use super::encode::Encode;
 use super::polish_units::PolishUnit;
 use super::polish_units::PolishUnitConfig;
@@ -147,11 +148,12 @@ impl DetermineUnit for definitions::DataSet {
             self.encode(config.threads, sim_thr);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
+            // TODO: Faster this region...!
             for _ in 0..10 {
                 let new_unit = fill_sparse_region_dev(self, &repetitive_kmer, config)
                     + fill_tips_dev(self, &repetitive_kmer, config);
                 crate::encode::deletion_fill::correct_unit_deletion(self, sim_thr);
-                if new_unit == 0 {
+                if new_unit < MIN_REQ_NEW_UNIT {
                     break;
                 }
             }

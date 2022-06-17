@@ -3,7 +3,6 @@
 use crate::ALN_PARAMETER;
 use definitions::*;
 use rayon::prelude::*;
-// use log::*;
 use std::collections::{HashMap, HashSet};
 // identity would be increased by this value when evaluating the edges.
 const EDGE_BOUND: f64 = 0.5;
@@ -717,9 +716,6 @@ pub fn correct_deletion_error(
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
     let pileups = get_pileup(read, reads);
-    // for (i, p) in pileups.iter().enumerate() {
-    //     trace!("Pileup\t{i}\t{p:?}\t{:?}",b read.nodes.get(i));
-    // }
     let nodes = &read.nodes;
     let mut inserts = vec![];
     let ins_thr = INS_THR.min(nodes.len());
@@ -915,71 +911,80 @@ fn encode_node(
 
 // Sequence, trimed base from the head, trimed base from the tail, ops, score.
 type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
+const EDLIB_OFS: f64 = 0.10;
 fn fine_mapping<'a>(
     orig_query: &'a [u8],
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<FineMapping<'a>> {
-    use kiley::bialignment::guided::infix_guided;
-    fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
-        use kiley::Op::*;
-        ops.iter()
-            .map(|&op| [Match, Ins, Del, Mismatch][op as usize])
-            .collect()
-    }
-    let (query, trim_head, trim_tail, ops, band) = {
-        // TODO:Is this correct?
-        let mode = edlib_sys::AlignMode::Global;
-        let task = edlib_sys::AlignTask::Alignment;
-        let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
-        let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-        let ops = edlib_op_to_kiley_op(&alignment.operations.unwrap());
-        // Align twice, to get an accurate alignment.
-        let (_, ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
-        let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
-        // Reverse ops
-        for op in ops.iter_mut() {
-            *op = match *op {
-                kiley::Op::Ins => kiley::Op::Del,
-                kiley::Op::Del => kiley::Op::Ins,
-                x => x,
-            }
-        }
-        let (trim_head, trim_tail) = trim_head_tail_insertion(&mut ops);
-        let query = &orig_query[trim_head..orig_query.len() - trim_tail];
-        (query, trim_head, trim_tail, ops, band)
-    };
-    let (below_dissim, info) = {
-        let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
-        let identity = mat_num as f64 / ops.len() as f64;
-        let (head_identity, tail_identity) = edge_identity(unitseq, query, &ops, EDGE_LEN);
+    let (query, trim_head, trim_tail, ops, band) =
+        fit_query_by_edlib(unitseq, orig_query, sim_thr)?;
+    let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
+    let identity = mat_num as f64 / ops.len() as f64;
+    let (head_identity, tail_identity) = edge_identity(unitseq, query, &ops, EDGE_LEN);
+    let iden_bound = 1f64 - sim_thr;
+    let below_dissim = iden_bound < identity && EDGE_BOUND < head_identity.min(tail_identity);
+    {
         let (rlen, qlen) = (unitseq.len(), query.len());
         let id = unit.id;
         let orig_len = orig_query.len();
         let info = format!("{id}\t{cluster}\t{identity:.2}\t{rlen}\t{qlen}\t{orig_len}");
-        let iden_bound = 1f64 - sim_thr;
-        let is_ok = iden_bound < identity && EDGE_BOUND < head_identity.min(tail_identity);
-        (is_ok, info)
-    };
-    if log_enabled!(log::Level::Trace) {
-        if below_dissim {
-            trace!("FILLDEL\t{}\tOK", info);
-        } else {
-            trace!("FILLDEL\t{}\tNG", info);
-            if log_enabled!(log::Level::Trace) {
-                let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
-                for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-                    eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
-                    eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
-                    eprintln!("ALN\t{}", String::from_utf8_lossy(yr));
-                }
-            }
+        trace!("FILLDEL\t{}\t{}", info, ["NG", "OK"][below_dissim as usize]);
+    }
+    if log_enabled!(log::Level::Trace) && !below_dissim {
+        let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
+        for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+            eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
+            eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
+            eprintln!("ALN\t{}", String::from_utf8_lossy(yr));
         }
     }
-    (below_dissim).then(|| {
-        let (score, new_ops) = infix_guided(unit.seq(), query, &ops, band, ALN_PARAMETER);
-        (query, trim_head, trim_tail, new_ops, score)
-    })
+    if !below_dissim {
+        return None;
+    }
+    let (score, new_ops) = infix_guided(unit.seq(), query, &ops, band, ALN_PARAMETER);
+    Some((query, trim_head, trim_tail, new_ops, score))
+}
+
+use kiley::bialignment::guided::infix_guided;
+fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
+    use kiley::Op::*;
+    ops.iter()
+        .map(|&op| [Match, Ins, Del, Mismatch][op as usize])
+        .collect()
+}
+
+fn fit_query_by_edlib<'a>(
+    unitseq: &[u8],
+    orig_query: &'a [u8],
+    sim_thr: f64,
+) -> Option<(&'a [u8], usize, usize, Vec<kiley::op::Op>, usize)> {
+    // TODO:Is this correct?
+    let mode = edlib_sys::AlignMode::Global;
+    let task = edlib_sys::AlignTask::Alignment;
+    let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
+    let ops = alignment.operations.unwrap();
+    // let diff = ops.split(|&x| x == 0).filter(|x| !x.is_empty()).count();
+    // let dissim = diff as f64 / ops.len() as f64;
+    // if sim_thr + EDLIB_OFS < dissim {
+    //     return None;
+    // }
+    let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
+    let ops = edlib_op_to_kiley_op(&ops);
+    // Align twice, to get an accurate alignment.
+    let (_, ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
+    let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
+    // Reverse ops
+    for op in ops.iter_mut() {
+        *op = match *op {
+            kiley::Op::Ins => kiley::Op::Del,
+            kiley::Op::Del => kiley::Op::Ins,
+            x => x,
+        }
+    }
+    let (trim_head, trim_tail) = trim_head_tail_insertion(&mut ops);
+    let query = &orig_query[trim_head..orig_query.len() - trim_tail];
+    Some((query, trim_head, trim_tail, ops, band))
 }
 
 #[allow(dead_code)]

@@ -32,13 +32,13 @@ fn subcommand_entry() -> Command<'static> {
                 .possible_values(&["CCS", "CLR", "ONT"])
                 .help("Read type. CCS, CLR, or ONT."),
         )
-        .arg(
-            Arg::new("slag")
-                .long("slag")
-                .takes_value(true)
-                .value_name("PATH")
-                .help("Dump low-quality reads into PATH"),
-        )
+        // .arg(
+        //     Arg::new("slag")
+        //         .long("slag")
+        //         .takes_value(true)
+        //         .value_name("PATH")
+        //         .help("Dump low-quality reads into PATH"),
+        // )
         .arg(
             Arg::new("threads")
                 .short('t')
@@ -788,7 +788,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     debug!("START\tEntry");
     set_threads(matches);
     let file = matches.value_of("input").unwrap();
-    let slag = matches.value_of("slag");
+    // let slag = matches.value_of("slag");
     let reader = std::fs::File::open(file).map(BufReader::new)?;
     debug!("Opening {}", file);
     let seqs: Vec<(String, Vec<u8>)> = match file.chars().last() {
@@ -813,7 +813,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
         _ => panic!("file type:{} not supported", file),
     };
     let read_type = matches.value_of("read_type").unwrap();
-    Ok(DataSet::entry(file, seqs, read_type, slag))
+    Ok(DataSet::entry(file, seqs, read_type))
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {

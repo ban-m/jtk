@@ -127,7 +127,48 @@ fn penalty(x: usize, copy_num: isize, hap_cov: f64) -> f64 {
 
 // type Node = ((u64, u64), super::Position);
 // type Edge = (Node, Node);
+type CopyNumber = (Vec<FatEdge>, Vec<FatEdge>);
 impl Graph {
+    pub fn sanity_check(&self) -> bool {
+        let mut diff_cp = vec![0; self.graph.len()];
+        for edge in self.edges.iter() {
+            if edge.from / 2 == edge.to / 2 {
+                diff_cp[edge.from] -= edge.copy_number;
+                diff_cp[edge.to] -= edge.copy_number;
+            } else {
+                diff_cp[edge.from] += edge.copy_number;
+                diff_cp[edge.to] += edge.copy_number;
+            }
+        }
+        for edge in self.self_loops.iter() {
+            diff_cp[edge.from] += edge.copy_number;
+            diff_cp[edge.to] += edge.copy_number;
+        }
+        diff_cp
+            .iter()
+            .enumerate()
+            .all(|(i, &e)| e == 0 || self.one_degree_nodes.contains(&i))
+    }
+    pub fn clone_copy_number(&self) -> CopyNumber {
+        (self.edges.clone(), self.self_loops.clone())
+        // let edge_cps: Vec<_> = self.edges.iter().map(|e| e.copy_number).collect();
+        // let loop_cps: Vec<_> = self.self_loops.iter().map(|e| e.copy_number).collect();
+        // (edge_cps, loop_cps)
+    }
+    pub fn set_copy_number(&mut self, (edge_cp, self_loop): CopyNumber) {
+        assert_eq!(self.edges.len(), edge_cp.len());
+        assert_eq!(self.self_loops.len(), self_loop.len());
+        self.edges = edge_cp;
+        self.self_loops = self_loop;
+        // self.edges
+        //     .iter_mut()
+        //     .zip(edge_cp.iter())
+        //     .for_each(|(e, &cp)| e.copy_number = cp);
+        // self.self_loops
+        //     .iter_mut()
+        //     .zip(self_loop.iter())
+        //     .for_each(|(e, &cp)| e.copy_number = cp);
+    }
     pub fn edges(&self) -> &[FatEdge] {
         self.edges.as_slice()
     }
@@ -182,7 +223,7 @@ impl Graph {
             .map(|_| self.update_copy_numbers_inner(rng, config))
             .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
             .unwrap();
-        self.edges = argmin;
+        self.set_copy_number(argmin);
         debug!("MIN\t{min:.1}");
         let neg_copy_num = self.edges.iter().filter(|x| x.copy_number < 0).count();
         debug!("NEGCOPY\t{neg_copy_num}");
@@ -191,7 +232,7 @@ impl Graph {
         &mut self,
         rng: &mut R,
         config: &MSTConfig,
-    ) -> (f64, Vec<FatEdge>) {
+    ) -> (f64, CopyNumber) {
         for edge in self.edges.iter() {
             let count = self.graph[edge.from]
                 .iter()
@@ -205,8 +246,10 @@ impl Graph {
             assert_eq!(count, 1);
         }
         self.edges.iter_mut().for_each(|e| e.copy_number = 0);
+        self.self_loops.iter_mut().for_each(|e| e.copy_number = 0);
         let mut parameters = FitParam::new(self.hap_coverage, INIT_NEG_COPY_NUM_PEN);
-        let (mut current_min, mut argmin) = (self.penalty(&parameters), self.edges.clone());
+        let test_param = FitParam::new(self.hap_coverage, LARGE_VALUE);
+        let (mut current_min, mut argmin) = (self.penalty(&test_param), self.clone_copy_number());
         loop {
             self.update_mst(true, &parameters);
             parameters.negative_copy_num_pen =
@@ -220,16 +263,16 @@ impl Graph {
             if rng.gen_bool(prob) {
                 self.update_copy_number_by_cycle(optimal_cycle);
                 self.update_self_loops(&parameters);
-                let penalty = self.penalty(&parameters);
+                let penalty = self.penalty(&test_param);
                 if penalty < current_min {
-                    (current_min, argmin) = (penalty, self.edges.clone());
+                    (current_min, argmin) = (penalty, self.clone_copy_number());
                 }
             } else {
                 break;
             }
         }
         trace!("RANDOM Mode");
-        for _ in 0..Self::LOOPTIMES {
+        for _t in 0..Self::LOOPTIMES {
             parameters.negative_copy_num_pen =
                 (parameters.negative_copy_num_pen * 1.05).min(LARGE_VALUE);
             let to_increase = rng.gen_bool(0.5);
@@ -238,36 +281,39 @@ impl Graph {
             if let Some((_diff, cycle)) = self.sample_cycle(rng) {
                 let len = cycle.len();
                 let pen = parameters.negative_copy_num_pen;
-                trace!("PROPOSED\t1\t{_diff:.1}\t{len}\t{pen}\t{current_min:.1}");
+                trace!("PROPOSED\t1\t{_diff:.1}\t{len}\t{pen}\t{current_min:.1}\t{_t}");
                 self.update_copy_number_by_cycle(cycle);
             }
-            let penalty = self.penalty(&parameters);
-            if penalty < current_min {
-                (current_min, argmin) = (penalty, self.edges.clone());
-            }
             self.update_self_loops(&parameters);
+            let penalty = self.penalty(&test_param);
+            if penalty < current_min {
+                (current_min, argmin) = (penalty, self.clone_copy_number());
+            }
         }
-        parameters.negative_copy_num_pen = LARGE_VALUE;
-        let penalty = self.penalty(&parameters);
-        (penalty, argmin)
+        (current_min, argmin)
     }
     fn update_self_loops(&mut self, param: &FitParam) {
         let self_loop_num = self.self_loops.len();
         for i in 0..self_loop_num {
-            for to_increase in [true, false] {
-                self.tune_self_loop(i, to_increase, param);
-            }
+            self.tune_self_loop(i, true, param);
+            self.tune_self_loop(i, false, param);
         }
     }
     fn tune_self_loop(&mut self, i: usize, to_increase: bool, param: &FitParam) {
         let self_loop = self.self_loops.get_mut(i).unwrap();
+        let num_main_edge = self
+            .edges
+            .iter()
+            .filter(|e| e.key() == self_loop.key())
+            .count();
+        assert_eq!(num_main_edge, 1);
         let main_edge = self
             .edges
             .iter_mut()
             .find(|edge| edge.key() == self_loop.key())
             .unwrap();
-        let main_edge_diff = main_edge.penalty_diff(to_increase, param);
         let self_loop_diff = self_loop.penalty_diff(to_increase, param);
+        let main_edge_diff = main_edge.penalty_diff(to_increase, param);
         if main_edge_diff + self_loop_diff < 0f64 {
             if to_increase {
                 self_loop.copy_number += 1;
@@ -392,6 +438,10 @@ impl Graph {
             });
             cycles.extend(cs);
         }
+        if cycles.iter().any(|x| x.0 < -0.01) {
+            let min = cycles.iter().min_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+            return min.cloned();
+        }
         const UPPER: f64 = 50f64;
         cycles.iter_mut().for_each(|x| {
             x.0 = (-x.0).min(UPPER).exp();
@@ -459,6 +509,9 @@ impl Graph {
             self.update_copy_number_by_cycle_from(&cycle, true);
         } else {
             self.update_copy_number_by_cycle_from(&cycle, false);
+        }
+        if !self.sanity_check() {
+            panic!("{:?}", cycle);
         }
     }
     fn penalty_of_cycle_from(&self, cycle: &[usize], mut change_direction: bool) -> f64 {
@@ -557,7 +610,6 @@ pub mod tests {
         }
     }
     fn mock_data_2() -> Graph {
-        // let nodes = HashMap::new();
         let mut edges: Vec<_> = vec![];
         edges.push(FatEdge::new(0, 1, 2, 1));
         edges.push(FatEdge::new(1, 2, 2, 1));
@@ -646,6 +698,10 @@ pub mod tests {
         let mut rng = Xoroshiro128PlusPlus::seed_from_u64(20329);
         let config = MSTConfig::default();
         g.update_copy_numbers(&mut rng, &config);
+        eprintln!("{:?}", g.clone_copy_number());
+        for edge in g.edges.iter() {
+            eprintln!("{edge:?}");
+        }
         for edge in g.edges.iter() {
             assert_eq!(edge.copy_number as usize, edge.target);
         }

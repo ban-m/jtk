@@ -34,7 +34,7 @@ if [ -f ${2}.entry.json ]
 then
     echo "Entry file found. Skip entry proc."
 else
-    jtk entry --input ${TARGET} --read_type $READTYPE |\
+    jtk entry -vv -t56 --input ${TARGET} --read_type $READTYPE |\
         jtk mask_repeats -k 15 -t ${THREADS} -vv |\
         jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
         jtk pick_components -vv -c1 -t${THREADS}|\

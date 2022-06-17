@@ -1,24 +1,14 @@
-use rayon::prelude::*;
-const K: usize = 6;
-const THR: f64 = 7.0;
-const LEN_THR: usize = 4_000;
+// use rayon::prelude::*;
+// const K: usize = 6;
+// const THR: f64 = 7.0;
+// const LEN_THR: usize = 4_000;
 
 pub trait Entry {
-    fn entry(
-        input_file: &str,
-        raw_data: Vec<(String, Vec<u8>)>,
-        rt: &str,
-        slag: Option<&str>,
-    ) -> Self;
+    fn entry(input_file: &str, raw_data: Vec<(String, Vec<u8>)>, rt: &str) -> Self;
 }
 
 impl Entry for definitions::DataSet {
-    fn entry(
-        input_file: &str,
-        raw_data: Vec<(String, Vec<u8>)>,
-        rt: &str,
-        _slag: Option<&str>,
-    ) -> Self {
+    fn entry(input_file: &str, raw_data: Vec<(String, Vec<u8>)>, rt: &str) -> Self {
         use definitions::ReadType;
         let read_type = match rt {
             "CLR" => ReadType::CLR,
@@ -32,11 +22,11 @@ impl Entry for definitions::DataSet {
             ReadType::ONT => 100,
             ReadType::None => 100,
         };
-        let (raw_data, slags): (Vec<_>, Vec<_>) = raw_data
-            .into_par_iter()
-            .partition(|(_, seq)| calc_entropy(&seq, K) > THR && seq.len() > LEN_THR);
-        let trimed: usize = slags.iter().map(|(_, seq)| seq.len()).sum();
-        debug!("ENTRY\tTrimmed\t{}bp", trimed);
+        // let (raw_data, slags): (Vec<_>, Vec<_>) = raw_data
+        //     .into_par_iter()
+        //     .partition(|(_, seq)| calc_entropy(&seq, K) > THR && seq.len() > LEN_THR);
+        // let trimed: usize = slags.iter().map(|(_, seq)| seq.len()).sum();
+        // debug!("ENTRY\tTrimmed\t{}bp", trimed);
         let raw_reads: Vec<_> = raw_data
             .into_iter()
             .enumerate()
@@ -143,47 +133,47 @@ fn compress_homopolymer(seq: &[u8], len: usize) -> Vec<u8> {
     compressed
 }
 
-use std::ops::Shl;
-fn calc_entropy(read: &[u8], k: usize) -> f64 {
-    if read.len() < k {
-        0.
-    } else {
-        let mut slots: Vec<u32> = vec![0; 4usize.pow(k as u32)];
-        let mask = 4usize.pow(k as u32) - 1;
-        let mut current = calc_index(&read[..k - 1]);
-        let total = (read.len() - k + 1) as f64;
-        for base in &read[k..] {
-            current = current.shl(2) & mask;
-            current += match base {
-                b'A' | b'a' => 0,
-                b'C' | b'c' => 1,
-                b'G' | b'g' => 2,
-                b'T' | b't' => 3,
-                _ => unreachable!(),
-            };
-            slots[current] += 1;
-        }
-        slots
-            .into_iter()
-            .filter(|&count| count != 0)
-            .map(|e| e as f64 / total)
-            .map(|e| -e * e.log2())
-            .sum::<f64>()
-    }
-}
+// use std::ops::Shl;
+// fn calc_entropy(read: &[u8], k: usize) -> f64 {
+//     if read.len() < k {
+//         0.
+//     } else {
+//         let mut slots: Vec<u32> = vec![0; 4usize.pow(k as u32)];
+//         let mask = 4usize.pow(k as u32) - 1;
+//         let mut current = calc_index(&read[..k - 1]);
+//         let total = (read.len() - k + 1) as f64;
+//         for base in &read[k..] {
+//             current = current.shl(2) & mask;
+//             current += match base {
+//                 b'A' | b'a' => 0,
+//                 b'C' | b'c' => 1,
+//                 b'G' | b'g' => 2,
+//                 b'T' | b't' => 3,
+//                 _ => unreachable!(),
+//             };
+//             slots[current] += 1;
+//         }
+//         slots
+//             .into_iter()
+//             .filter(|&count| count != 0)
+//             .map(|e| e as f64 / total)
+//             .map(|e| -e * e.log2())
+//             .sum::<f64>()
+//     }
+// }
 
-#[inline]
-fn calc_index(seq: &[u8]) -> usize {
-    seq.iter()
-        .map(|base| match base {
-            b'A' | b'a' => 0usize,
-            b'C' | b'c' => 1usize,
-            b'G' | b'g' => 2usize,
-            b'T' | b't' => 3usize,
-            _ => unreachable!(),
-        })
-        .fold(0, |sum, b| sum.shl(2) + b)
-}
+// #[inline]
+// fn calc_index(seq: &[u8]) -> usize {
+//     seq.iter()
+//         .map(|base| match base {
+//             b'A' | b'a' => 0usize,
+//             b'C' | b'c' => 1usize,
+//             b'G' | b'g' => 2usize,
+//             b'T' | b't' => 3usize,
+//             _ => unreachable!(),
+//         })
+//         .fold(0, |sum, b| sum.shl(2) + b)
+// }
 
 #[cfg(test)]
 mod test {

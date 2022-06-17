@@ -83,7 +83,12 @@ impl Stats for definitions::DataSet {
         }
         // Encoded Reads
         if !self.encoded_reads.is_empty() {
-            let reads: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
+            let reads: HashSet<_> = self
+                .encoded_reads
+                .iter()
+                .filter(|r| !r.is_gappy())
+                .map(|r| r.id)
+                .collect();
             let gap_read = self
                 .raw_reads
                 .iter()
@@ -112,7 +117,17 @@ impl Stats for definitions::DataSet {
             let cover_rate = covered_length as f64 / total_length as f64;
             let num_nodes: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
             writeln!(&mut wtr, "====EncodedRead====")?;
-            writeln!(&mut wtr, "Gappy read:{}\nGapMean:{}", gap_read, gap_mean)?;
+            let enc_num = self.encoded_reads.len();
+            writeln!(&mut wtr, "EncodedRead\tNumEncoded\t{enc_num}",)?;
+            let enc_len = self
+                .encoded_reads
+                .iter()
+                .flat_map(|r| r.nodes.iter())
+                .map(|n| n.query_length())
+                .sum::<usize>();
+            writeln!(&mut wtr, "EncodedRead\tLenEncoded\t{enc_len}",)?;
+            writeln!(&mut wtr, "EncodedRead\tNumGappy\t{gap_read}")?;
+            writeln!(&mut wtr, "EncodedRead\tGapMean\t{gap_mean}")?;
             writeln!(&mut wtr, "EncodedRate:{:.4}%", cover_rate)?;
             writeln!(&mut wtr, "EncodedNode:{:.4}", num_nodes)?;
             let lens: Vec<_> = self.encoded_reads.iter().map(|e| e.nodes.len()).collect();

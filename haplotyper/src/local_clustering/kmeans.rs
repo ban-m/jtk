@@ -248,10 +248,10 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
     config: &ClusteringConfig,
 ) -> Option<ClusteringDevResult> {
-    //trace!("{}", String::from_utf8_lossy(template));
-    // for (i, &is_forward) in strands.iter().enumerate() {
-    //     trace!("VARS\t{i}\t-1\t{}", is_forward as u8);
-    // }
+    // trace!("{}", String::from_utf8_lossy(template));
+    for (i, &is_forward) in strands.iter().enumerate() {
+        trace!("VARS\t{i}\t-1\t{}", is_forward as u8);
+    }
     let ClusteringConfig {
         band_width,
         copy_num,
@@ -273,16 +273,16 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     let copy_num = copy_num as usize;
     let selected_variants: Vec<Vec<_>> = {
         let probes = filter_profiles(&profiles, strands, copy_num, coverage, average_lk, rng);
-        for &(pos, _) in probes.iter() {
-            for (i, (prof, is_forward)) in profiles.iter().zip(strands.iter()).enumerate() {
-                let lk = prof[pos];
-                trace!("STRAND\t{pos}\t{i}\t{lk:.3}\t{is_forward}");
-            }
-            let lks = profiles.iter().map(|p| p[pos]);
-            let paired = lks.zip(strands.iter().copied());
-            let (diff, thr) = is_explainable_by_strandedness(paired, rng, 0.01, pos);
-            trace!("STATTEST\t{pos}\t{diff}\t{thr}");
-        }
+        // for &(pos, _) in probes.iter() {
+        //     for (i, (prof, is_forward)) in profiles.iter().zip(strands.iter()).enumerate() {
+        //         let lk = prof[pos];
+        //         trace!("STRAND\t{pos}\t{i}\t{lk:.3}\t{is_forward}");
+        //     }
+        //     let lks = profiles.iter().map(|p| p[pos]);
+        //     let paired = lks.zip(strands.iter().copied());
+        //     let (diff, thr) = is_explainable_by_strandedness(paired, rng, 0.01, pos);
+        //     trace!("STATTEST\t{pos}\t{diff}\t{thr}");
+        // }
         for &(pos, lk) in probes.iter() {
             let counts = profiles.iter().filter(|xs| 0f64 < xs[pos]).count();
             use kiley::hmm::guided::NUM_ROW;
@@ -302,7 +302,7 @@ fn is_explainable_by_strandedness<I, R: Rng>(
     profiles: I,
     rng: &mut R,
     fprate: f64,
-    pos: usize,
+    _pos: usize,
 ) -> (f64, f64)
 where
     I: std::iter::Iterator<Item = (f64, bool)>,
@@ -340,9 +340,9 @@ where
     mean_diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
     mean_diffs.reverse();
     let thr = (SAMPLE_NUM as f64 * fprate).ceil() as usize;
-    for x in mean_diffs.iter() {
-        trace!("SHUFFLE\t{pos}\t{x}");
-    }
+    // for x in mean_diffs.iter() {
+    //     trace!("SHUFFLE\t{pos}\t{x}");
+    // }
     (diff, mean_diffs[thr] + 0.01)
 }
 
@@ -385,17 +385,6 @@ fn clustering_selected_variants<R: Rng>(
                 trace!("VARS\t{i}\t{pos}\t{x}");
             }
         }
-        // trace!("VARS\tCOPYNUM\tID\tASN\tPOS\tLKDiff\tFilter");
-        // let asn_iter = assignments.iter().zip(selected_variants.iter());
-        // let mut id = 0;
-        // for c in 0..copy_num {
-        //     for (i, prf) in asn_iter.clone().filter(|x| *x.0 == c) {
-        //         for (pos, x) in prf.iter().enumerate() {
-        //             trace!("VARS\t{copy_num}\t{id}\t{i}\t{pos}\t{x}\tBefore");
-        //         }
-        //         id += 1;
-        //     }
-        // }
     }
     let selected_variants = filter_suspicious_variants(&selected_variants, &assignments);
     let (mut assignments, mut max, mut max_k) = (vec![0; datasize], 0f64, 1);
