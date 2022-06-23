@@ -33,10 +33,15 @@ pub fn minimap2_args(target: &str, query: &str, args: &[&str]) -> Vec<u8> {
     let mut args = args.to_vec();
     args.push(target);
     args.push(query);
-    let aln = std::process::Command::new("minimap2")
-        .args(&args)
-        .output()
-        .unwrap();
+    let aln = std::process::Command::new("minimap2").args(&args).output();
+    let aln = match aln {
+        Ok(res) => res,
+        Err(why) => {
+            eprintln!("{target},{query},{args:?}");
+            eprintln!("{why:?}");
+            panic!()
+        }
+    };
     if !aln.status.success() {
         panic!("Minimap2,{}", String::from_utf8_lossy(&aln.stderr));
     } else {

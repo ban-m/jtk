@@ -4,6 +4,4 @@ members = [
         "hla_cli", 
         "haplotyper",
         "sandbox",
-        "mcl",
-        "min_flow",
 ]

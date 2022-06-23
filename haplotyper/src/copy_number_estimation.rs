@@ -910,10 +910,10 @@ mod test {
         assert_eq!(graph.edge_terminals[0], (nodes[0], nodes[1]));
         if nodes[0] == 0 {
             assert_eq!(graph.downstream_edges[0], vec![0]);
-            assert_eq!(graph.upstream_edges[0], vec![]);
+            assert!(graph.upstream_edges[0].is_empty());
         } else {
-            assert_eq!(graph.downstream_edges[0], vec![]);
-            assert_eq!(graph.upstream_edges[0], vec![0]);
+            assert!(graph.downstream_edges[0].is_empty());
+            assert!(graph.upstream_edges[0].is_empty());
         }
     }
     #[test]

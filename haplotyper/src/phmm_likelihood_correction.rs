@@ -232,7 +232,7 @@ fn clustering(
                         true => 0f64,
                     };
                     // trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
-                    aln + 0.00001
+                    aln
                 })
                 .collect()
         })
@@ -324,6 +324,14 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
         .zip(eigens.eigenvalues.iter())
         .collect();
     eigen_and_eigenvec.sort_by(|x, y| x.1.abs().partial_cmp(&y.1.abs()).unwrap());
+    // Random thoughts:
+    // In this code, I try to determine the *optimal* number of the cluster.
+    // One metric is the # of the eigenvalues below threshould. It works fine usually.
+    // However, suppose two varaints separated more than 50Kbp. In this case,
+    // a few reads span them. Thus, the graph is densely connected.
+    // The smallest eigenvalue is zero, but the second smallest eigenvalues
+    // would be larger than THR usually.
+
     let opt_k = eigen_and_eigenvec
         .iter()
         .take_while(|&(_, &lam)| lam < EIGEN_THR)

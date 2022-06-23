@@ -1,8 +1,3 @@
-// use rayon::prelude::*;
-// const K: usize = 6;
-// const THR: f64 = 7.0;
-// const LEN_THR: usize = 4_000;
-
 pub trait Entry {
     fn entry(input_file: &str, raw_data: Vec<(String, Vec<u8>)>, rt: &str) -> Self;
 }
@@ -22,14 +17,10 @@ impl Entry for definitions::DataSet {
             ReadType::ONT => 100,
             ReadType::None => 100,
         };
-        // let (raw_data, slags): (Vec<_>, Vec<_>) = raw_data
-        //     .into_par_iter()
-        //     .partition(|(_, seq)| calc_entropy(&seq, K) > THR && seq.len() > LEN_THR);
-        // let trimed: usize = slags.iter().map(|(_, seq)| seq.len()).sum();
-        // debug!("ENTRY\tTrimmed\t{}bp", trimed);
         let raw_reads: Vec<_> = raw_data
             .into_iter()
             .enumerate()
+            // .filter(|(_, (_, seq))| seq.len() > 4_000) // TODO: Why this filtering improve accuracy?
             .map(|(idx, (name, seq))| {
                 let seq: definitions::DNASeq = compress_homopolymer(&seq, compress_thr).into();
                 let id = idx as u64;
@@ -41,6 +32,9 @@ impl Entry for definitions::DataSet {
                 }
             })
             .collect();
+        debug!("Input\tReadNum\t{}", raw_reads.len());
+        let sum: usize = raw_reads.iter().map(|r| r.seq().len()).sum();
+        debug!("Input\tBasePair(Mbp)\t{}", sum / 1000_000);
         use definitions::DataSet;
         for read in raw_reads.iter() {
             if read.seq().iter().any(|x| !b"ACGT".contains(x)) {

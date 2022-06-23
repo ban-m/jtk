@@ -279,6 +279,7 @@ fn mm2_unit_overlap(ds: &DataSet, config: &UnitConfig) -> std::io::Result<Vec<u8
         for unit in ds.selected_chunks.iter() {
             writeln!(&mut wtr, ">{}\n{}", unit.id, &unit.seq)?;
         }
+        wtr.flush()?;
         reference.into_os_string().into_string().unwrap()
     };
     use crate::minimap2;
@@ -326,13 +327,6 @@ fn remove_overlapping_units_dev(
     let unit_len = ds.selected_chunks.len();
     // How long one overlap should be at least.
     let overlap_len = config.chunk_len / 2;
-    // This is the percent identy.
-    // let overlap_thr: f64 = match ds.read_type {
-    //     ReadType::CCS => 0.95,
-    //     ReadType::CLR => 0.75,
-    //     ReadType::ONT => 0.85,
-    //     ReadType::None => 0.85,
-    // };
     let mm2 = mm2_unit_overlap(ds, config)?;
     let alignments = String::from_utf8_lossy(&mm2);
     let alignments = alignments

@@ -68,9 +68,6 @@ impl ComponentPicking for DataSet {
                 edge.to = unit_id_convert_table[&edge.to];
             }
         }
-        let retained_reads: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
-        self.raw_reads
-            .retain(|read| retained_reads.contains(&read.id));
         debug!(
             "PICKING\t{}\t{}\tEncodedRead",
             len,

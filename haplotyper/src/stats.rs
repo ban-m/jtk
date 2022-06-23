@@ -22,23 +22,14 @@ impl Stats for definitions::DataSet {
             let masked: usize = self
                 .raw_reads
                 .iter()
-                .map(|r| {
-                    r.seq()
-                        .iter()
-                        .copied()
-                        .filter(u8::is_ascii_lowercase)
-                        .count()
-                })
+                .map(|r| r.seq().iter().filter(|&x| x.is_ascii_lowercase()).count())
                 .sum();
-            let masked_parcent = masked as f64 / sum as f64 * 100f64;
-            writeln!(&mut wtr, "====Raw Reads====")?;
-            writeln!(
-                &mut wtr,
-                "Total Length:{}({:.2}% masked)",
-                sum, masked_parcent
-            )?;
-            writeln!(&mut wtr, "# of Read:{}(Mean Length:{})", len, ave)?;
-            writeln!(&mut wtr, "Max Length:{}, Min Length:{}", max, min)?;
+            writeln!(&mut wtr, "RAWREADS\tTotalLength\t{sum}")?;
+            writeln!(&mut wtr, "RAWREADS\tMaskedLength\t{masked}")?;
+            writeln!(&mut wtr, "RAWREADS\tNumOfRead\t{len}")?;
+            writeln!(&mut wtr, "RAWREADS\tMeanLength\t{ave}")?;
+            writeln!(&mut wtr, "RAWREADS\tMaxLength\t{max}")?;
+            writeln!(&mut wtr, "RAWREADS\tMinLength\t{min}")?;
             let mut lens: Vec<_> = self.raw_reads.iter().map(|r| r.seq().len()).collect();
             lens.sort_unstable();
             lens.reverse();
@@ -61,12 +52,9 @@ impl Stats for definitions::DataSet {
             let sum = lens.clone().sum::<usize>();
             let len = self.raw_reads.len() * 2;
             let ave = sum / len;
-            writeln!(&mut wtr, "====HiC Reads====")?;
-            writeln!(
-                &mut wtr,
-                "Total Length:{}\n# of Pairs:{}\nMean Length:{}",
-                sum, len, ave
-            )?;
+            writeln!(&mut wtr, "HICREADS\tNumOfReads\t{sum}")?;
+            writeln!(&mut wtr, "HICREADS\tTotalLength\t{len}")?;
+            writeln!(&mut wtr, "HICREADS\tMeanLength\t{ave}")?;
         }
         // Selected chunks
         if !self.selected_chunks.is_empty() {
@@ -74,12 +62,9 @@ impl Stats for definitions::DataSet {
             let sum = lens.clone().sum::<usize>();
             let len = self.selected_chunks.len();
             let ave = sum / len;
-            writeln!(&mut wtr, "====Chunks====")?;
-            writeln!(
-                &mut wtr,
-                "Total Length:{}\n# of Units:{}\nMean Length:{}",
-                sum, len, ave
-            )?;
+            writeln!(&mut wtr, "CHUNKS\tTotalLength\t{sum}")?;
+            writeln!(&mut wtr, "CHUNKS\tNumOfUnits\t{len}")?;
+            writeln!(&mut wtr, "CHUNKS\tMeanLength\t{ave}")?;
         }
         // Encoded Reads
         if !self.encoded_reads.is_empty() {
@@ -116,7 +101,6 @@ impl Stats for definitions::DataSet {
                 .sum::<usize>();
             let cover_rate = covered_length as f64 / total_length as f64;
             let num_nodes: usize = self.encoded_reads.iter().map(|r| r.nodes.len()).sum();
-            writeln!(&mut wtr, "====EncodedRead====")?;
             let enc_num = self.encoded_reads.len();
             writeln!(&mut wtr, "EncodedRead\tNumEncoded\t{enc_num}",)?;
             let enc_len = self
@@ -125,11 +109,11 @@ impl Stats for definitions::DataSet {
                 .flat_map(|r| r.nodes.iter())
                 .map(|n| n.query_length())
                 .sum::<usize>();
-            writeln!(&mut wtr, "EncodedRead\tLenEncoded\t{enc_len}",)?;
-            writeln!(&mut wtr, "EncodedRead\tNumGappy\t{gap_read}")?;
-            writeln!(&mut wtr, "EncodedRead\tGapMean\t{gap_mean}")?;
-            writeln!(&mut wtr, "EncodedRate:{:.4}%", cover_rate)?;
-            writeln!(&mut wtr, "EncodedNode:{:.4}", num_nodes)?;
+            writeln!(&mut wtr, "ENCODEDREAD\tLenEncoded\t{enc_len}",)?;
+            writeln!(&mut wtr, "ENCODEDREAD\tNumGappy\t{gap_read}")?;
+            writeln!(&mut wtr, "ENCODEDREAD\tGapMean\t{gap_mean}")?;
+            writeln!(&mut wtr, "ENCODEDRATE\t{:.4}%", cover_rate)?;
+            writeln!(&mut wtr, "ENCODEDNODE\t{:.4}", num_nodes)?;
             let lens: Vec<_> = self.encoded_reads.iter().map(|e| e.nodes.len()).collect();
             let hist = histgram_viz::Histgram::new(&lens);
             writeln!(&mut wtr, "{}", hist.format(20, 40))?;
@@ -152,12 +136,9 @@ impl Stats for definitions::DataSet {
             let (argmin, min) = *units.first().unwrap_or(&(0, 0));
             let sum = units.iter().map(|e| e.1).sum::<usize>();
             let ave = sum as f64 / units.len() as f64;
-            writeln!(&mut wtr, "====Encoding summary====")?;
-            writeln!(
-                &mut wtr,
-                "Min:({},{})\tMax:({},{})\tAve:{:.2}",
-                min, argmin, max, argmax, ave
-            )?;
+            writeln!(&mut wtr, "ENCODING\tMin\t{min}\t{argmin}")?;
+            writeln!(&mut wtr, "ENCODING\tMax\t{max}\t{argmax}")?;
+            writeln!(&mut wtr, "ENCODING\tAve\t{ave:.2}")?;
             let top_20: Vec<_> = units.iter().rev().take(20).copied().collect();
             let take_len = units.len() - 20.min(units.len());
             let units: Vec<_> = units.iter().take(take_len).map(|x| x.1).collect();

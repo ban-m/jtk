@@ -911,7 +911,7 @@ fn encode_node(
 
 // Sequence, trimed base from the head, trimed base from the tail, ops, score.
 type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
-const EDLIB_OFS: f64 = 0.10;
+// const EDLIB_OFS: f64 = 0.10;
 fn fine_mapping<'a>(
     orig_query: &'a [u8],
     (unit, cluster, unitseq): (&Unit, u64, &[u8]),
@@ -1635,10 +1635,10 @@ mod deletion_fill {
         assert_eq!(removed, vec![1]);
         let input = vec![vec![], vec![(0, 1)], vec![(0, 2), (1, 1)]];
         let removed = max_chain(3, &input, penalty);
-        assert_eq!(removed, vec![]);
+        assert!(removed.is_empty());
         let input = vec![vec![], vec![(0, 1)], vec![(1, 1)]];
         let removed = max_chain(3, &input, penalty);
-        assert_eq!(removed, vec![]);
+        assert!(removed.is_empty());
         let input = vec![
             vec![],                          //0
             vec![(0, 1)],                    // 1
