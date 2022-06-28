@@ -104,7 +104,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             use kiley::bialignment::guided::polish_until_converge_with;
             let cons = polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
             let cons = hmm.polish_until_converge_with(&cons, &seqs, &mut ops, band_width);
-            // let cons = hmm.polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain, read_type);
             use kmeans::*;
             let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
@@ -140,7 +139,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             unit.cluster_num = cluster_num;
         }
     }
-    // re_encode_reads(ds, &consensus_and_clusternum);
     normalize::normalize_local_clustering(ds);
 }
 

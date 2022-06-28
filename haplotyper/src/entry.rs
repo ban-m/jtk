@@ -20,7 +20,7 @@ impl Entry for definitions::DataSet {
         let raw_reads: Vec<_> = raw_data
             .into_iter()
             .enumerate()
-            // .filter(|(_, (_, seq))| seq.len() > 4_000) // TODO: Why this filtering improve accuracy?
+            //             .filter(|(_, (_, seq))| seq.len() > 4_000) // TODO: Why this filtering improve accuracy?
             .map(|(idx, (name, seq))| {
                 let seq: definitions::DNASeq = compress_homopolymer(&seq, compress_thr).into();
                 let id = idx as u64;

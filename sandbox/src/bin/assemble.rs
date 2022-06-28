@@ -41,9 +41,11 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
         assert_eq!(read.original_length, len);
     }
     eprintln!("{graph}");
-    graph.remove_lightweight_edges(2, true);
-    let cov = ds.coverage.unwrap();
+    graph.remove_lightweight_edges(3, true);
+    let cov = ds.coverage.unwrap_or(30.0);
     let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
+    // let lens: Vec<_> = ds.encoded_reads.iter().map(|r| r.original_length).collect();
+    // graph.assign_copy_number(cov, &lens);
     graph.assign_copy_number_mst(cov, &mut rng);
     // use log::*;
     // for node in graph.nodes() {
@@ -82,17 +84,13 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
                         .filter_map(|elm| elm.copy_number)
                         .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
                     let copy_number = cp / cpnum.max(1);
+                    let ids = ids.join("\t");
+                    log::debug!("CONUNIT\t{}\t{copy_number}\t{ids}", contigsummary.id,);
                     groups
                         .entry(copy_number)
                         .or_default()
                         .push(node.sid.clone());
                     let copy_number = gfa::SamTag::new(format!("cp:i:{copy_number}"));
-                    log::debug!(
-                        "CONUNIT\t{}\t{}\t{}",
-                        contigsummary.id,
-                        total / contigsummary.summary.len(),
-                        ids.join("\t")
-                    );
                     vec![coverage, copy_number]
                 }
                 None => Vec::new(),
@@ -112,6 +110,4 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
         .into_iter()
         .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
     groups.chain(nodes).chain(edges).collect()
-    // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
-    // std::iter::once(group).chain(nodes).chain(edges).collect()
 }

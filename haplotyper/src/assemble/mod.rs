@@ -301,36 +301,6 @@ impl Assemble for DataSet {
 }
 
 fn align_encoded_reads(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<usize>> {
-    // for (i, summary) in summaries.iter().enumerate() {
-    //     let line: Vec<_> = summary
-    //         .summary
-    //         .iter()
-    //         .map(|n| format!("{}-{}", n.unit, n.cluster))
-    //         .collect();
-    //     debug!("ALN\tCTG\t{i}\t{}", line.join("\t"));
-    // }
-    // let nodes: Vec<HashSet<_>> = summaries
-    //     .iter()
-    //     .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
-    //     .collect();
-    // for read in ds.encoded_reads.iter() {
-    //     let line: Vec<_> = read
-    //         .nodes
-    //         .iter()
-    //         .map(|n| format!("{}-{}", n.unit, n.cluster))
-    //         .collect();
-    //     debug!("ALN\tREAD\t{}\t{}", read.id, line.join("\t"));
-    //     let mut lightread: Vec<_> = read
-    //         .nodes
-    //         .iter()
-    //         .map(|n| (n.unit, n.cluster, n.position_from_start, n.query_length()))
-    //         .collect();
-    //     while let Some((tid, start, end)) =
-    //         search_aligned_region(&mut lightread, &nodes, &summaries)
-    //     {
-    //         debug!("ALN\tSEP\t{tid}\t{start}-{end}");
-    //     }
-    // }
     let nodes: Vec<HashSet<_>> = summaries
         .iter()
         .map(|smy| smy.summary.iter().map(|n| (n.unit, n.cluster)).collect())
@@ -338,20 +308,14 @@ fn align_encoded_reads(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<usi
     ds.encoded_reads
         .iter()
         .map(|read| {
-            // let id = read.id;
             let read: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
             let dist = distribute(&read, &nodes);
-            // let line: Vec<_> = read.iter().map(|(n, c)| format!("{n}-{c}")).collect();
-            // debug!("ALN\t{id}\t{}", line.join("\t"));
-            // let line: Vec<_> = dist.iter().map(|d| format!("{d}")).collect();
-            // debug!("ALN\t{id}\t{}", line.join("\t"));
             dist
         })
         .collect()
 }
 
-#[allow(dead_code)]
-fn distribute(read: &[(u64, u64)], contigs: &[HashSet<(u64, u64)>]) -> Vec<usize> {
+pub fn distribute(read: &[(u64, u64)], contigs: &[HashSet<(u64, u64)>]) -> Vec<usize> {
     let upperbound = read.len() as u64 + 10;
     // i -> j -> minimum number of switches from [0..i] position, ending with j-th contig.
     let mut dp = vec![vec![upperbound; contigs.len()]; read.len() + 1];

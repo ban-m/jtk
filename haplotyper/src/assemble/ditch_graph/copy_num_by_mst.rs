@@ -93,6 +93,7 @@ impl FatEdge {
     pub fn key(&self) -> (usize, usize) {
         (self.from, self.to)
     }
+    // Penalty difference. Lower is better.
     pub fn penalty_diff(&self, to_increase: bool, param: &FitParam) -> f64 {
         let cov = param.hap_coverage;
         let neg_pen = param.negative_copy_num_pen;
@@ -125,12 +126,10 @@ fn penalty(x: usize, copy_num: isize, hap_cov: f64) -> f64 {
     (x as f64 - mean).powi(2) / denom
 }
 
-// type Node = ((u64, u64), super::Position);
-// type Edge = (Node, Node);
 type CopyNumber = (Vec<FatEdge>, Vec<FatEdge>);
 impl Graph {
     pub fn sanity_check(&self) -> bool {
-        let mut diff_cp = vec![0; self.graph.len()];
+        let mut diff_cp = vec![0isize; self.graph.len()];
         for edge in self.edges.iter() {
             if edge.from / 2 == edge.to / 2 {
                 diff_cp[edge.from] -= edge.copy_number;
@@ -144,6 +143,17 @@ impl Graph {
             diff_cp[edge.from] += edge.copy_number;
             diff_cp[edge.to] += edge.copy_number;
         }
+        for (i, &e) in diff_cp.iter().enumerate() {
+            if e != 0 && !self.one_degree_nodes.contains(&i) {
+                eprintln!("ERR\t{i}\t{e}");
+                for edge in self.edges.iter().filter(|e| e.from == i || e.to == i) {
+                    eprintln!("\tEDGE\t{edge:?}");
+                }
+                for edge in self.self_loops.iter().filter(|e| e.from == i || e.to == i) {
+                    eprintln!("\tEDGE\t{edge:?}");
+                }
+            }
+        }
         diff_cp
             .iter()
             .enumerate()
@@ -151,23 +161,12 @@ impl Graph {
     }
     pub fn clone_copy_number(&self) -> CopyNumber {
         (self.edges.clone(), self.self_loops.clone())
-        // let edge_cps: Vec<_> = self.edges.iter().map(|e| e.copy_number).collect();
-        // let loop_cps: Vec<_> = self.self_loops.iter().map(|e| e.copy_number).collect();
-        // (edge_cps, loop_cps)
     }
     pub fn set_copy_number(&mut self, (edge_cp, self_loop): CopyNumber) {
         assert_eq!(self.edges.len(), edge_cp.len());
         assert_eq!(self.self_loops.len(), self_loop.len());
         self.edges = edge_cp;
         self.self_loops = self_loop;
-        // self.edges
-        //     .iter_mut()
-        //     .zip(edge_cp.iter())
-        //     .for_each(|(e, &cp)| e.copy_number = cp);
-        // self.self_loops
-        //     .iter_mut()
-        //     .zip(self_loop.iter())
-        //     .for_each(|(e, &cp)| e.copy_number = cp);
     }
     pub fn edges(&self) -> &[FatEdge] {
         self.edges.as_slice()
@@ -256,10 +255,13 @@ impl Graph {
                 (parameters.negative_copy_num_pen * 1.05f64).min(LARGE_VALUE);
             self.update_lightedges(&parameters);
             let (optimal_cycle, penalty_diff) = self.find_optimal_cycle();
+            // -0.1 to make sure that even if the penalty is the same, the have non-zero prob to break.
+            let penalty_diff = penalty_diff + 0.01;
             let prob = (-penalty_diff / config.temperature).exp().min(1f64);
             let len = optimal_cycle.len();
             let pen = parameters.negative_copy_num_pen;
-            trace!("PROPOSED\t{prob:.4}\t{penalty_diff:.1}\t{len}\t{pen:.1}\t{current_min:.1}");
+            let (cmin, neg) = (current_min, self.count_neg());
+            trace!("PROPOSED\t{prob:.4}\t{penalty_diff:.1}\t{len}\t{pen:.1}\t{cmin:.1}\t{neg}");
             if rng.gen_bool(prob) {
                 self.update_copy_number_by_cycle(optimal_cycle);
                 self.update_self_loops(&parameters);
@@ -276,12 +278,14 @@ impl Graph {
             parameters.negative_copy_num_pen =
                 (parameters.negative_copy_num_pen * 1.05).min(LARGE_VALUE);
             let to_increase = rng.gen_bool(0.5);
-            self.update_mst(to_increase, &parameters);
+            // self.update_mst(to_increase, &parameters);
+            self.update_mst_random(to_increase, rng, &parameters);
             self.update_lightedges(&parameters);
             if let Some((_diff, cycle)) = self.sample_cycle(rng) {
                 let len = cycle.len();
                 let pen = parameters.negative_copy_num_pen;
-                trace!("PROPOSED\t1\t{_diff:.1}\t{len}\t{pen}\t{current_min:.1}\t{_t}");
+                let (cmin, neg) = (current_min, self.count_neg());
+                trace!("PROPOSED\t1\t{_diff:.1}\t{len}\t{pen}\t{cmin:.1}\t{neg}");
                 self.update_copy_number_by_cycle(cycle);
             }
             self.update_self_loops(&parameters);
@@ -291,6 +295,9 @@ impl Graph {
             }
         }
         (current_min, argmin)
+    }
+    fn count_neg(&self) -> usize {
+        self.edges.iter().filter(|e| e.copy_number < 0).count()
     }
     fn update_self_loops(&mut self, param: &FitParam) {
         let self_loop_num = self.self_loops.len();
@@ -360,6 +367,35 @@ impl Graph {
         let tree_edges = self.edges.iter().filter(|e| e.is_in_mst).count();
         assert_eq!(tree_edges + cl_num, self.graph.len(), "{}", cl_num);
     }
+    // Randomly construct spanning tree.
+    fn update_mst_random<R: Rng>(&mut self, to_increase: bool, rng: &mut R, param: &FitParam) {
+        self.graph.iter().for_each(|eds| assert!(!eds.is_empty()));
+        // Remove tempolary values
+        self.edges.iter_mut().for_each(|edge| {
+            edge.is_in_mst = false;
+            edge.penalty_diff = edge.penalty_diff(to_increase, param);
+        });
+        // Find random spanning tree.
+        use crate::find_union;
+        let mut fu = find_union::FindUnion::new(self.graph.len());
+        let weight = |idx: usize| 1f64 - self.edges[idx].penalty_diff.min(0f64);
+        let edge_num = self.edges.len();
+        let sampled = rand::seq::index::sample_weighted(rng, edge_num, weight, edge_num).unwrap();
+        for edge_idx in sampled {
+            let edge = self.edges.get_mut(edge_idx).unwrap();
+            let from_parent = fu.find(edge.from).unwrap();
+            let to_parent = fu.find(edge.to).unwrap();
+            if from_parent != to_parent {
+                edge.is_in_mst = true;
+                fu.unite(edge.from, edge.to);
+            }
+        }
+        let cl_num: usize = (0..self.graph.len())
+            .filter(|&i| fu.find(i).unwrap() == i)
+            .count();
+        let tree_edges = self.edges.iter().filter(|e| e.is_in_mst).count();
+        assert_eq!(tree_edges + cl_num, self.graph.len(), "{}", cl_num);
+    }
     fn find_optimal_cycle(&self) -> (Vec<usize>, f64) {
         let (mut current_min, mut argmin) = self
             .edges
@@ -387,32 +423,6 @@ impl Graph {
                 }
             }
         }
-        // let mut stack = vec![];
-        // let mut status = vec![Status::Undiscovered; self.graph.len()];
-        // let (mut current_min, mut argmin) = (LARGE_VALUE, vec![]);
-        // for edge in self.edges.iter().filter(|e| !e.is_in_mst) {
-        //     let cycle = self
-        //         .find_cycle_between(edge.from, edge.to, &mut stack, &mut status)
-        //         .unwrap_or_else(|| panic!("{:?}\t{:?}", edge.from, edge.to));
-        //     let penalty = self.penalty_of_cycle(&cycle);
-        //     if penalty < current_min {
-        //         current_min = penalty;
-        //         argmin = cycle;
-        //     }
-        // }
-        // for (i, &from) in self.one_degree_nodes.iter().enumerate() {
-        //     for &to in self.one_degree_nodes.iter().skip(i + 1) {
-        //         if let Some(cycle) = self.find_cycle_between(from, to, &mut stack, &mut status) {
-        //             let penalty = self.penalty_of_cycle(&cycle);
-        //             // let len = cycle.len();
-        //             // let (flip, flop) = self.diff_edge_count(&cycle);
-        //             if penalty < current_min {
-        //                 current_min = penalty;
-        //                 argmin = cycle;
-        //             }
-        //         }
-        //     }
-        // }
         (argmin, current_min)
     }
     fn sample_cycle<R: Rng>(&self, rng: &mut R) -> Option<(f64, Vec<usize>)> {
@@ -482,19 +492,6 @@ impl Graph {
             let fin_node = stack.pop().unwrap();
             status[fin_node] = Status::Processed;
         }
-        // let mut fu = crate::find_union::FindUnion::new(status.len());
-        // for edge in self.edges.iter().filter(|e| e.is_in_mst) {
-        //     fu.unite(edge.from, edge.to);
-        // }
-        // for (from, node) in self.graph.iter().enumerate() {
-        //     for edge in node.iter().filter(|e| e.is_in_mst) {
-        //         fu.unite(from, edge.to);
-        //     }
-        // }
-        // let num_cl = (0..status.len()).filter(|&x| fu.find(x) == Some(x)).count();
-        // let arrived = status.iter().filter(|&&x| x == Status::Processed).count();
-        // let processing = status.iter().filter(|&&x| x == Status::Processing).count();
-        // error!("DUMP\t{}\t{arrived}\t{processing}\t{num_cl}", status.len());
         None
     }
     fn penalty_of_cycle(&self, cycle: &[usize]) -> f64 {
@@ -511,10 +508,11 @@ impl Graph {
             self.update_copy_number_by_cycle_from(&cycle, false);
         }
         if !self.sanity_check() {
-            panic!("{:?}", cycle);
+            panic!("AF\t{:?}", cycle);
         }
     }
-    fn penalty_of_cycle_from(&self, cycle: &[usize], mut change_direction: bool) -> f64 {
+    fn penalty_of_cycle_from(&self, cycle: &[usize], start_direction: bool) -> f64 {
+        let mut change_direction = start_direction;
         let mut score = 0f64;
         let mut is_prev_e_edge = false;
         for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
@@ -532,23 +530,26 @@ impl Graph {
             };
             is_prev_e_edge = is_e_edge;
         }
-        score
+        // Check consistency.
+        assert!(3 <= cycle.len());
+        assert_eq!(cycle.first(), cycle.last());
+        let (from, to) = (cycle[0], cycle[cycle.len() - 2]);
+        let parent_of_to = cycle[cycle.len() - 3];
+        let is_between_onedegree =
+            self.one_degree_nodes.contains(&from) && self.one_degree_nodes.contains(&to);
+        let is_between_node = from / 2 == to / 2;
+        let is_last_edge_node = parent_of_to / 2 == to / 2;
+        let is_consistent = match is_between_onedegree || is_between_node || is_last_edge_node {
+            true => start_direction == change_direction,
+            false => start_direction != change_direction,
+        };
+        match is_consistent {
+            true => score,
+            false => score + LARGE_VALUE,
+        }
     }
-    // fn diff_edge_count(&self, cycle: &[usize]) -> (usize, usize) {
-    //     let mut change_direction = true;
-    //     let mut counts = [0, 0];
-    //     let mut is_prev_e_edge = false;
-    //     for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
-    //         let is_e_edge = from / 2 != to / 2;
-    //         if is_prev_e_edge && is_e_edge {
-    //             change_direction = !change_direction;
-    //         }
-    //         counts[change_direction as usize] += 1;
-    //         is_prev_e_edge = is_e_edge;
-    //     }
-    //     (counts[0], counts[1])
-    // }
-    fn update_copy_number_by_cycle_from(&mut self, cycle: &[usize], mut change_direction: bool) {
+    fn update_copy_number_by_cycle_from(&mut self, cycle: &[usize], start_direction: bool) {
+        let mut change_direction = start_direction;
         let mut mod_edges: HashMap<_, bool> = HashMap::new();
         let mut is_prev_e_edge = false;
         for (from, to) in cycle.windows(2).map(|w| (w[0], w[1])) {
@@ -559,6 +560,13 @@ impl Graph {
             mod_edges.insert((from.min(to), from.max(to)), change_direction);
             is_prev_e_edge = is_e_edge;
         }
+        assert_eq!(cycle.first(), cycle.last());
+        let last_par = cycle[cycle.len() - 2] / 2;
+        let is_consistent = match cycle[0] / 2 == last_par {
+            true => start_direction == change_direction,
+            false => start_direction != change_direction,
+        };
+        println!("{cycle:?}\t{is_consistent}");
         self.edges
             .iter_mut()
             .for_each(|e| match mod_edges.get(&(e.from, e.to)) {

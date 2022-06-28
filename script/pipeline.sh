@@ -84,4 +84,6 @@ else
 fi
 
 cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} --no_polish > /dev/null
-cat ${GFA} | awk '($1 ~ /S/)' | awk '{print ">" $2 "\n" $4}' > ${GFA%.gfa}.fa
+cat ${GFA} |\
+ awk 'BEGIN{OFS="\t"} ($1 ~ /^S$/){print $1,$2,$3,"A", $5,$6} ($1 !~ /^S$/){print $0}' \
+ > ${GFA%.gfa}.noseq.gfa

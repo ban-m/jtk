@@ -1,7 +1,6 @@
 use haplotyper::local_clustering::ClusteringConfig;
 use kiley::gen_seq;
 use log::*;
-// use poa_hmm::*;
 const LK: f64 = 1.8;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;

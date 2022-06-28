@@ -13,7 +13,15 @@ fn main() -> std::io::Result<()> {
         .iter()
         .map(|r| (r.id, r.name.clone()))
         .collect();
-    for unit in args[2..].iter().map(|x| -> u64 { x.parse().unwrap() }) {
+    for query in &args[2..] {
+        let mut query = query.split(':');
+        let unit: u64 = query.next().unwrap().parse().unwrap();
+        let range = query.next().map(|range| {
+            let mut range = range.split('-');
+            let start: usize = range.next().unwrap().parse().unwrap();
+            let end: usize = range.next().unwrap().parse().unwrap();
+            (start, end)
+        });
         let ref_chunk = ds.selected_chunks.iter().find(|c| c.id == unit).unwrap();
         let mut nodes: Vec<_> = ds
             .encoded_reads
@@ -44,11 +52,35 @@ fn main() -> std::io::Result<()> {
                 identity,
             );
             println!("ALN\t{}", dist);
-            for ((query, aln), refr) in query.chunks(200).zip(aln.chunks(200)).zip(refr.chunks(200))
-            {
-                println!("ALN\t{}", String::from_utf8_lossy(query));
-                println!("ALN\t{}", String::from_utf8_lossy(aln));
-                println!("ALN\t{}", String::from_utf8_lossy(refr));
+            let (start, end) = match range {
+                Some((start, end)) => {
+                    let (st_pos, _) = refr
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, &b)| b != b' ')
+                        .take(start)
+                        .last()
+                        .unwrap();
+                    let (end_pos, _) = refr
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, &b)| b != b' ')
+                        .take(end)
+                        .last()
+                        .unwrap();
+                    (st_pos, end_pos)
+                }
+                None => (0, refr.len()),
+            };
+            let alns = query.into_iter().zip(aln).zip(refr);
+            let alns: Vec<_> = alns.skip(start).take(end - start).collect();
+            for chunk in alns.chunks(200) {
+                let query: Vec<_> = chunk.iter().map(|x| x.0 .0).collect();
+                let aln: Vec<_> = chunk.iter().map(|x| x.0 .1).collect();
+                let refr: Vec<_> = chunk.iter().map(|x| x.1).collect();
+                println!("ALN\t{}", String::from_utf8_lossy(&query));
+                println!("ALN\t{}", String::from_utf8_lossy(&aln));
+                println!("ALN\t{}", String::from_utf8_lossy(&refr));
             }
         }
     }
