@@ -493,7 +493,9 @@ fn polish_segments(
         .zip(fragments.iter())
         .for_each(|(seg, frag)| {
             polish_segment(seg, frag, c, read_type, hmm);
+            debug!("FirstPolish\t{}", seg.sid);
             polish_segment(seg, frag, c, read_type, hmm);
+            debug!("SecondPolish\t{}", seg.sid);
         });
 }
 

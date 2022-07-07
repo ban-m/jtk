@@ -48,8 +48,7 @@ fn main() -> std::io::Result<()> {
             let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));
             let name = &id2desc[&readid];
             println!(
-                "{readid}\t{is_hap1}\t{i}\t{len}\t{unit}\t{cluster}\t{:.2}\t{post}\t{name}",
-                identity,
+                "{readid}\t{is_hap1}\t{i}\t{len}\t{unit}\t{cluster}\t{identity:.2}\t{post}\t{name}",
             );
             println!("ALN\t{}", dist);
             let (start, end) = match range {

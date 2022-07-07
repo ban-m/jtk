@@ -9,6 +9,13 @@ pub trait AlignmentCorrection {
 }
 impl AlignmentCorrection for DataSet {
     fn correct_clustering(&mut self, config: &CorrectionConfig) {
+        let present: HashSet<_> = self
+            .encoded_reads
+            .iter()
+            .flat_map(|r| r.nodes.iter())
+            .map(|n| n.unit)
+            .collect();
+        self.selected_chunks.retain(|c| present.contains(&c.id));
         let selections: HashSet<_> = self
             .selected_chunks
             .iter()
@@ -73,7 +80,7 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
         crate::model_tune::update_model(ds);
     }
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    let gain = crate::local_clustering::estimate_minimum_gain(&hmm);
+    let gain = crate::local_clustering::estimate_minimum_gain(&hmm, ds.error_rate());
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
         .iter()
@@ -312,6 +319,12 @@ fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
 const EIGEN_THR: f64 = 0.25;
 fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, usize) {
     let datalen = matrix.len();
+    if datalen == 0 {
+        panic!("{}", id)
+    }
+    if matrix.iter().any(|x| x.is_empty()) {
+        panic!("{}", datalen);
+    }
     let rows: Vec<_> = matrix
         .iter()
         .map(|row| nalgebra::RowDVector::from(row.to_vec()))
@@ -337,6 +350,12 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
         .take_while(|&(_, &lam)| lam < EIGEN_THR)
         .count();
     let pick_k = opt_k;
+    if pick_k <= 0 {
+        for row in matrix.row_iter() {
+            eprintln!("{row:?}");
+        }
+        panic!("{}", opt_k);
+    }
     let top_k_eigenvec = eigen_and_eigenvec[..pick_k]
         .iter()
         .flat_map(|(v, _)| v.iter().copied());
@@ -359,6 +378,8 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
 }
 
 use rand::Rng;
+
+use crate::stats::Stats;
 fn kmeans<R: Rng>(xs: &[Vec<f64>], k: usize, rng: &mut R) -> (Vec<usize>, f64) {
     fn update_assignment(data: &[Vec<f64>], centers: &[Vec<f64>], asn: &mut [usize]) {
         asn.iter_mut().zip(data).for_each(|(asn, datum)| {

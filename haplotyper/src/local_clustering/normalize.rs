@@ -12,15 +12,29 @@ pub fn normalize_local_clustering(ds: &mut DataSet) {
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         pileups[node.unit as usize].push(node);
     }
-    for pileup in pileups.into_iter().filter(|pu| !pu.is_empty()) {
-        let max_cluster = pileup.iter().map(|n| n.cluster).max().unwrap();
-        let mut counts: Vec<(u64, u32)> = (0..=max_cluster).map(|c| (c, 0)).collect();
+    use std::collections::HashMap;
+    let cluster_num: HashMap<_, _> = ds
+        .selected_chunks
+        .iter()
+        .map(|c| (c.id, c.cluster_num))
+        .collect();
+    for (chunkid, pileup) in pileups
+        .into_iter()
+        .enumerate()
+        .filter(|(_, pu)| !pu.is_empty())
+    {
+        let max_cluster = cluster_num[&(chunkid as u64)] as u64;
+        pileup
+            .iter()
+            .for_each(|n| assert_eq!(n.posterior.len(), max_cluster as usize));
+        // let max_cluster = pileup.iter().map(|n| n.cluster).max().unwrap();
+        let mut counts: Vec<(u64, u32)> = (0..max_cluster).map(|c| (c, 0)).collect();
         for node in pileup.iter() {
             counts[node.cluster as usize].1 += 1;
         }
         counts.sort_by_key(|x| x.1);
         counts.reverse();
-        let mut mapsto = vec![0; max_cluster as usize + 1];
+        let mut mapsto = vec![0; max_cluster as usize];
         for (to, &(from, _)) in counts.iter().enumerate() {
             mapsto[from as usize] = to as u64;
         }

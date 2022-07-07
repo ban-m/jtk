@@ -4,7 +4,15 @@ fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
     let file = std::fs::File::open(&args[1]).map(BufReader::new)?;
-    for line in file.lines().filter_map(|x| x.ok()) {
+    let references = bio_utils::fasta::parse_into_vec(&args[2])?;
+    let lines: Vec<_> = file.lines().filter_map(|x| x.ok()).collect();
+    for (i, line) in lines.iter().enumerate() {
+        if i == 2 {
+            for refr in references.iter().filter(|refr| not_in(refr, &lines)) {
+                let (id, length) = (refr.id(), refr.seq().len());
+                println!("##contig=<ID={id},length={length}>");
+            }
+        }
         if line.starts_with('#') {
             println!("{}", line);
         } else {
@@ -16,6 +24,17 @@ fn main() -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+fn not_in(refr: &bio_utils::fasta::Record, lines: &[String]) -> bool {
+    let contains = lines
+        .iter()
+        .filter(|line| line.starts_with("##contig"))
+        .any(|line| {
+            let line = line.trim_start_matches("##contig=<ID=");
+            let line = line.split_once(',').unwrap().0;
+            line.trim() == refr.id()
+        });
+    !contains
 }
 
 // Convert LongShot VCF-field into whatshap compatible one.

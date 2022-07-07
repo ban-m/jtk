@@ -261,7 +261,7 @@ impl Graph {
             let len = optimal_cycle.len();
             let pen = parameters.negative_copy_num_pen;
             let (cmin, neg) = (current_min, self.count_neg());
-            trace!("PROPOSED\t{prob:.4}\t{penalty_diff:.1}\t{len}\t{pen:.1}\t{cmin:.1}\t{neg}");
+            trace!("PROPOSED\t{prob:.1}\t{penalty_diff:.1}\t{len}\t{pen:.1}\t{cmin:.1}\t{neg}");
             if rng.gen_bool(prob) {
                 self.update_copy_number_by_cycle(optimal_cycle);
                 self.update_self_loops(&parameters);
@@ -285,7 +285,7 @@ impl Graph {
                 let len = cycle.len();
                 let pen = parameters.negative_copy_num_pen;
                 let (cmin, neg) = (current_min, self.count_neg());
-                trace!("PROPOSED\t1\t{_diff:.1}\t{len}\t{pen}\t{cmin:.1}\t{neg}");
+                trace!("PROPOSED\t1.0\t{_diff:.1}\t{len}\t{pen}\t{cmin:.1}\t{neg}");
                 self.update_copy_number_by_cycle(cycle);
             }
             self.update_self_loops(&parameters);
@@ -534,12 +534,12 @@ impl Graph {
         assert!(3 <= cycle.len());
         assert_eq!(cycle.first(), cycle.last());
         let (from, to) = (cycle[0], cycle[cycle.len() - 2]);
-        let parent_of_to = cycle[cycle.len() - 3];
+        let first_node = cycle[1];
         let is_between_onedegree =
             self.one_degree_nodes.contains(&from) && self.one_degree_nodes.contains(&to);
         let is_between_node = from / 2 == to / 2;
-        let is_last_edge_node = parent_of_to / 2 == to / 2;
-        let is_consistent = match is_between_onedegree || is_between_node || is_last_edge_node {
+        let starts_with_node = from / 2 == first_node / 2;
+        let is_consistent = match is_between_onedegree || is_between_node || starts_with_node {
             true => start_direction == change_direction,
             false => start_direction != change_direction,
         };
@@ -560,13 +560,6 @@ impl Graph {
             mod_edges.insert((from.min(to), from.max(to)), change_direction);
             is_prev_e_edge = is_e_edge;
         }
-        assert_eq!(cycle.first(), cycle.last());
-        let last_par = cycle[cycle.len() - 2] / 2;
-        let is_consistent = match cycle[0] / 2 == last_par {
-            true => start_direction == change_direction,
-            false => start_direction != change_direction,
-        };
-        println!("{cycle:?}\t{is_consistent}");
         self.edges
             .iter_mut()
             .for_each(|e| match mod_edges.get(&(e.from, e.to)) {

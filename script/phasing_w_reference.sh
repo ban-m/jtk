@@ -20,22 +20,25 @@ PHASED=${OUTDIR}/phased.vcf.gz
 PHASED_LIST=${OUTDIR}/whatshap_phase.tsv
 PHASED_BAM=${OUTDIR}/phased_aln.bam
 
+## 0. Create directory
+mkdir -p ${OUTDIR}
+
 ## 1. Long-shot to detect the contig with variants.
 minimap2 -a -x map-pb --secondary=no ${REFERENCE} ${FASTQ} |\
     samtools view -O BAM -@ 24 |\
     samtools sort -O BAM -@ 24 -m 1G > ${BAM}
 samtools index ${BAM}
 samtools faidx ${REFERENCE}
-longshot --min_alt_count 5 -F --no_haps --out ${UNPHASED_RAW} --ref ${REFERENCE} --bam ${BAM}
+longshot -F --no_haps --out ${UNPHASED_RAW} --ref ${REFERENCE} --bam ${BAM}
 
 ## 3. Run whatshap.
-cargo run --release --bin longshot_to_whatshap -- ${UNPHASED_RAW} > ${UNPHASED}
+cargo run --release --bin longshot_to_whatshap -- ${UNPHASED_RAW} ${REFERENCE} > ${UNPHASED}
 
 whatshap phase --distrust-genotypes -o ${PHASED} --reference ${REFERENCE} \
-         --ignore-read-groups ${UNPHASED} ${BAM}
+         --ignore-read-groups ${UNPHASED} ${BAM} 
 tabix ${PHASED}
 whatshap haplotag -o ${PHASED_BAM} --ignore-read-groups \
          --reference ${REFERENCE} ${PHASED} ${BAM} \
-         --output-haplotag-list ${PHASED_LIST}
+         --output-haplotag-list ${PHASED_LIST} 
 whatshap stats --gtf=${OUTDIR}/phased_blocks.gtf ${PHASED}
 samtools index ${PHASED_BAM}

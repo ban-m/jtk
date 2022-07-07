@@ -2,13 +2,12 @@
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 // Should be greater than the maximum length of kiley::hmm::guided::COPY_SIZE or DEL_SIZE.
 const MASK_LENGTH: usize = 7;
-use definitions::ReadType;
+use kiley::hmm::guided::NUM_ROW;
 use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub struct ClusteringConfig {
-    read_type: ReadType,
     band_width: usize,
     // Minimum required Likelihood gain.
     gain: f64,
@@ -18,15 +17,8 @@ pub struct ClusteringConfig {
 }
 
 impl ClusteringConfig {
-    pub fn new(
-        band_width: usize,
-        copy_num: u8,
-        coverage: f64,
-        gain: f64,
-        read_type: ReadType,
-    ) -> Self {
+    pub fn new(band_width: usize, copy_num: u8, coverage: f64, gain: f64) -> Self {
         Self {
-            read_type,
             band_width,
             coverage,
             gain,
@@ -145,10 +137,12 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         })
         .collect();
     let copy_num = copy_num as usize;
-    let _ = get_homopolymer_length(template);
-    let probes = filter_profiles(&profiles, strands, copy_num, coverage, average_lk, rng);
+    let coverage_imp_thr = get_read_thr(reads.len() as f64 / copy_num as f64, 3f64);
+    let req_improve = average_lk / 2f64;
+    let req_cov_filter = coverage_imp_thr.saturating_sub(2);
+    let filter_params = (average_lk / 2f64, req_cov_filter, req_improve);
+    let probes = filter_profiles(&profiles, strands, copy_num, coverage, filter_params, rng);
     for (i, (pos, lk)) in probes.iter().enumerate() {
-        use kiley::hmm::guided::NUM_ROW;
         let sum: f64 = profiles.iter().map(|prof| prof[*pos].max(0f64)).sum();
         let (pos, ed) = (pos / NUM_ROW, pos % NUM_ROW);
         trace!("DUMP\t{i}\t{pos}\t{ed}\t{lk:.1}\t{sum:.1}");
@@ -163,30 +157,28 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         }
     }
     let datasize = reads.len();
-    // let coverage_imp_thr = (coverage / 2f64).ceil() as usize;
-    let coverage_imp_thr = (reads.len() as f64 / copy_num as f64 / 2f64).ceil() as usize;
     let (mut assignments, mut max, mut max_k, mut read_lk_gains) =
         (vec![0; datasize], 0f64, 1, vec![0f64; datasize]);
-    let mut likelihood_gains = vec![vec![0f64]; datasize];
+    // let mut likelihood_gains = vec![vec![0f64]; datasize];
     let init_copy_num = copy_num.max(3) - 1;
     for k in init_copy_num..=copy_num {
-        let (asn, score) = mcmc_clustering(&selected_variants, k, coverage, rng);
-        let new_lk_gains = get_read_lk_gains(&selected_variants, &asn, k);
-        // trace!("LK\t{k}\t{score:.3}\t1");
-        // let polished_variants = filter_suspicious_variants(&selected_variants, &asn);
-        // let (asn, score) = mcmc_clustering(&polished_variants, k, coverage, rng);
-        // let new_lk_gains = get_read_lk_gains(&polished_variants, &asn, k);
+        let (asn, score, new_lk_gains) = mcmc_clustering(&selected_variants, k, coverage, rng);
+        trace!("LK\t{k}\t{score:.3}\t1");
+        let score = score + get_lk_of_coverage(&asn, coverage, k);
         let improved_reads = std::iter::zip(read_lk_gains.iter(), new_lk_gains.iter())
-            .filter(|(&x, &y)| x + 0.1 < y)
+            .filter(|(&x, &y)| x + req_improve < y)
             .count();
-        let expected_gain = average_lk * improved_reads as f64;
+        // let (score, improved_reads) = std::iter::zip(read_lk_gains.iter(), new_lk_gains.iter())
+        //     .filter(|(&x, &y)| x + req_improve < y)
+        //     .fold((0f64, 0), |(lk, count), x| (lk + x.1, count + 1));
+        let expected_gain = average_lk * datasize as f64 / copy_num as f64;
+        // let expected_gain = average_lk * improved_reads as f64;
         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}\t{coverage_imp_thr}");
         if expected_gain < score - max && coverage_imp_thr < improved_reads {
             assignments = asn;
             max = score;
             max_k = k;
             read_lk_gains = new_lk_gains;
-            likelihood_gains = get_likelihood_gain(&selected_variants, &assignments, max_k);
         } else {
             break;
         }
@@ -195,39 +187,55 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         for (i, asn) in assignments.iter().enumerate() {
             trace!("VARS\t{i}\t-2\t{asn}");
         }
-        for (i, &is_forward) in strands.iter().enumerate() {
-            trace!("VARS\t{i}\t-1\t{}", is_forward as u8);
-        }
-        //let polished_variants = filter_suspicious_variants(&selected_variants, &assignments);
-        // for (i, prof) in polished_variants.iter().enumerate() {
-        //     for (idx, x) in prof.iter().enumerate() {
-        //         trace!("VARS\t{i}\t{idx}\t{x}");
-        //     }
+        // for (i, &is_forward) in strands.iter().enumerate() {
+        //     trace!("VARS\t{i}\t-1\t{}", is_forward as u8);
         // }
+    }
+    let mut likelihood_gains = get_likelihood_gain(&selected_variants, &assignments, max_k);
+    // Tune the assignments, is it ok .... ?
+    for (lks, asn) in likelihood_gains.iter().zip(assignments.iter_mut()) {
+        let iter = lks.iter().enumerate();
+        let (i, max) = iter.max_by(|x, y| x.1.partial_cmp(&y.1).unwrap()).unwrap();
+        if lks[*asn] + 0.001 < *max {
+            *asn = i;
+        }
     }
     to_posterior_probability(&mut likelihood_gains);
     Some((assignments, likelihood_gains, max, max_k as usize))
 }
 
-fn get_homopolymer_length(seq: &[u8]) -> Vec<usize> {
-    if seq.is_empty() {
-        return vec![];
+fn get_lk_of_coverage(asn: &[usize], cov: f64, k: usize) -> f64 {
+    let mut cluster = vec![0; k];
+    for &asn in asn.iter() {
+        cluster[asn] += 1;
     }
-    let mut length = Vec::with_capacity(seq.len());
-    let mut seq = seq.iter();
-    let (mut current, mut len) = (seq.next().unwrap(), 1);
-    for base in seq {
-        if base == current {
-            len += 1;
-        } else {
-            length.extend(std::iter::repeat(len).take(len));
-            current = base;
-            len = 1;
-        }
-    }
-    length.extend(std::iter::repeat(len).take(len));
-    length
+    cluster.iter().map(|&n| max_poisson_lk(n, cov, 1, k)).sum()
 }
+
+#[allow(dead_code)]
+fn get_read_thr(cov: f64, sigma: f64) -> usize {
+    (cov - sigma * cov.sqrt()).floor() as usize
+}
+
+// fn get_homopolymer_length(seq: &[u8]) -> Vec<usize> {
+//     if seq.is_empty() {
+//         return vec![];
+//     }
+//     let mut length = Vec::with_capacity(seq.len());
+//     let mut seq = seq.iter();
+//     let (mut current, mut len) = (seq.next().unwrap(), 1);
+//     for base in seq {
+//         if base == current {
+//             len += 1;
+//         } else {
+//             length.extend(std::iter::repeat(len).take(len));
+//             current = base;
+//             len = 1;
+//         }
+//     }
+//     length.extend(std::iter::repeat(len).take(len));
+//     length
+// }
 
 // fn to_table(asn: &[usize], k: usize) -> Vec<usize> {
 //     let mut counts = vec![0; k];
@@ -476,7 +484,7 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -
         .iter()
         .map(|vars| {
             lks.iter()
-                .map(|slots| {
+                .map(|slots| -> f64 {
                     vars.iter()
                         .zip(slots.iter())
                         .zip(use_columns.iter())
@@ -487,32 +495,6 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -
                 .collect::<Vec<_>>()
         })
         .collect()
-    // let is_used_position: Vec<Vec<_>> = total_lk_gain
-    //     .iter()
-    //     .map(|totals| totals.iter().map(|x| x.is_sign_positive()).collect())
-    //     .collect();
-    // let len: f64 = count.iter().sum();
-    // let fractions: Vec<_> = count.iter().map(|&x| (x as f64 / len)).collect();
-    // Padding -infinity to make sure that there are exactly k-slots.
-    // This is mainly because we do not want to these `mock` slots.
-    // Do NOT use std:;f64::NEG_INFINITY as it must cause under flows.
-    // let pad = std::iter::repeat(SMALL_LK).take(copy_num.saturating_sub(cluster_size));
-    // fn pick_vars(ps: &[bool], vars: &[f64]) -> f64 {
-    //     vars.iter()
-    //         .zip(ps)
-    //         .filter_map(|(lk, &p)| p.then(|| lk))
-    //         .sum()
-    // }
-    // variants
-    //     .iter()
-    //     .map(|vars| {
-    //         is_used_position
-    //             .iter()
-    //             .zip(fractions.iter())
-    //             .map(|(ps, f)| f.ln() + pick_vars(ps, vars))
-    //             .collect()
-    //     })
-    //     .collect()
 }
 
 fn get_read_lk_gains(variants: &[Vec<f64>], assignments: &[usize], k: usize) -> Vec<f64> {
@@ -611,19 +593,17 @@ fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[usize]) -> V
 
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
-const MIN_COV_FRACTION: usize = 6;
-const _HOMOPOLYMER_LEN: usize = 3;
+const MAX_GAIN_FAC: f64 = 0.6;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     profiles: &[T],
     strands: &[bool],
     cluster_num: usize,
     coverage: f64,
-    average_lk: f64,
+    (average_lk, req_count, req_lk): (f64, usize, f64),
     rng: &mut R,
 ) -> Vec<(usize, f64)> {
-    use kiley::hmm::guided::NUM_ROW;
     // (sum, maximum gain, number of positive element)
-    let total_improvement = column_sum_of(profiles);
+    let total_improvement = column_sum_of(profiles, req_lk);
     let template_len = total_improvement.len() / NUM_ROW;
     let base_position = |pos: usize| (pos / NUM_ROW, pos % NUM_ROW);
     let probes: Vec<(usize, f64)> = total_improvement
@@ -633,10 +613,12 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             let pos = base_position(pos).0;
             MASK_LENGTH <= pos && pos <= (template_len - MASK_LENGTH)
         })
-        .filter(|&(_, &(gain, _))| 0f64 < gain)
-        .filter(|&(_, &(_, count))| coverage.ceil() as usize / MIN_COV_FRACTION < count)
-        .filter(|&(_, &(gain, count))| count as f64 * average_lk < gain)
-        .map(|(pos, &(maxgain, count))| {
+        .filter(|&(_, &(gain, _, max_gain))| max_gain * MAX_GAIN_FAC < gain)
+        .filter(|&(pos, _)| pos % NUM_ROW < 4 + 4 + kiley::hmm::guided::COPY_SIZE)
+        .filter(|&(_, &(gain, _, _))| 0f64 < gain)
+        .filter(|&(_, &(_, count, _))| req_count < count)
+        .filter(|&(_, &(gain, count, _))| count as f64 * average_lk < gain)
+        .map(|(pos, &(maxgain, count, _))| {
             let max_lk = (1..cluster_num + 1)
                 .map(|k| poisson_lk(count, coverage * k as f64))
                 .max_by(|x, y| x.partial_cmp(y).unwrap())
@@ -706,23 +688,22 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
 // Each position have exactly one chance to contribute to the total sum.
 // In other words, for each position, one of the largest value would be
 // chosen as "varinats".
-fn column_sum_of<T: std::borrow::Borrow<[f64]>>(profiles: &[T]) -> Vec<(f64, usize)> {
-    let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
+fn column_sum_of<T: std::borrow::Borrow<[f64]>>(
+    profiles: &[T],
+    req_lk: f64,
+) -> Vec<(f64, usize, f64)> {
+    let mut total_improvement = vec![(0.0, 0, 0f64); profiles[0].borrow().len()];
     for (i, prof) in profiles.iter().map(|x| x.borrow()).enumerate() {
-        use kiley::hmm::guided::NUM_ROW;
         let total_per_row = total_improvement.chunks_exact_mut(NUM_ROW);
         for (row, total_row) in prof.chunks_exact(NUM_ROW).zip(total_per_row) {
             let (i, max) = pick_one_of_the_max(row, i);
-            total_row[i].0 += max.max(0f64);
-            total_row[i].1 += (0.00001 < max) as usize;
+            total_row[i].2 += max.max(0f64);
+            if req_lk < max {
+                total_row[i].0 += max.max(0f64);
+                total_row[i].1 += 1;
+            }
         }
     }
-    // for prof in profiles.iter().map(|x| x.borrow()) {
-    //     for ((maxgain, count), p) in total_improvement.iter_mut().zip(prof) {
-    //         *maxgain += p.max(0f64);
-    //         *count += (0.00001 < *p) as usize;
-    //     }
-    // }
     total_improvement
 }
 
@@ -815,11 +796,11 @@ fn mcmc_clustering<R: Rng>(
     k: usize,
     cov: f64,
     rng: &mut R,
-) -> (Vec<usize>, f64) {
+) -> (Vec<usize>, f64, Vec<f64>) {
     if k <= 1 || data.iter().all(|xs| xs.is_empty()) || data.len() <= k {
-        return (vec![0; data.len()], 0f64);
+        return (vec![0; data.len()], 0f64, vec![0f64; data.len()]);
     }
-    (0..20)
+    let (assignment, score) = (0..20)
         .map(|i| {
             let mut assignments: Vec<_> = match i % 2 == 0 {
                 true => (0..data.len()).map(|_| rng.gen_range(0..k)).collect(),
@@ -829,7 +810,12 @@ fn mcmc_clustering<R: Rng>(
             (assignments, lk)
         })
         .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-        .unwrap()
+        .unwrap();
+    let lk_gains = get_read_lk_gains(data, &assignment, k);
+    // Checking...
+    let total_gain: f64 = lk_gains.iter().sum();
+    assert!((score - total_gain).abs() < 0.0001, "The reg term matters?");
+    (assignment, score, lk_gains)
 }
 
 fn kmeans<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
@@ -1073,17 +1059,17 @@ fn mcmc_with_filter<R: Rng>(
     }
     // get max value.
     assign.iter_mut().zip(argmax).for_each(|(x, y)| *x = y);
-    if log_enabled!(log::Level::Trace) {
-        let mut clusters = vec![0; k];
-        let mut lks = vec![vec![(0f64, 0); data[0].len()]; k];
-        for (xs, &asn) in data.iter().zip(assign.iter()) {
-            clusters[asn] += 1;
-            for (lk, x) in lks[asn].iter_mut().zip(xs) {
-                lk.0 += x;
-                lk.1 += x.is_sign_positive() as usize;
-            }
+    let mut clusters = vec![0; k];
+    let mut lks = vec![vec![(0f64, 0); data[0].len()]; k];
+    for (xs, &asn) in data.iter().zip(assign.iter()) {
+        clusters[asn] += 1;
+        for (lk, x) in lks[asn].iter_mut().zip(xs) {
+            lk.0 += x;
+            lk.1 += x.is_sign_positive() as usize;
         }
     }
+    let lk = get_lk(&lks, &clusters, &size_to_lk);
+    assert!((max - lk).abs() < 0.0001);
     max
 }
 
@@ -1110,10 +1096,11 @@ fn flip(
     }
 }
 
-fn get_lk(lks: &[Vec<(f64, usize)>], clusters: &[usize], size_to_lk: &[f64]) -> f64 {
+fn get_lk(lks: &[Vec<(f64, usize)>], clusters: &[usize], _size_to_lk: &[f64]) -> f64 {
     // If true, then that column would not be used.
     let use_columns = get_used_columns(lks, clusters);
-    let mut lk: f64 = clusters.iter().map(|&size| size_to_lk[size]).sum();
+    let mut lk = 0f64;
+    //let mut lk: f64 = clusters.iter().map(|&size| size_to_lk[size]).sum();
     for lks in lks.iter() {
         for ((total, _), _) in lks.iter().zip(use_columns.iter()).filter(|x| *x.1) {
             lk += total.max(0f64);
@@ -1171,19 +1158,19 @@ mod kmeans_test {
             );
         }
     }
-    #[test]
-    fn cacl_homopolymer_length() {
-        let seq = b"AC";
-        let homop = get_homopolymer_length(seq);
-        assert_eq!(homop, vec![1, 1]);
-        let seq = b"ACC";
-        let homop = get_homopolymer_length(seq);
-        assert_eq!(homop, vec![1, 2, 2]);
-        let seq = b"ACCA";
-        let homop = get_homopolymer_length(seq);
-        assert_eq!(homop, vec![1, 2, 2, 1]);
-        let seq = b"AAACAAAGC";
-        let homop = get_homopolymer_length(seq);
-        assert_eq!(homop, vec![3, 3, 3, 1, 3, 3, 3, 1, 1]);
-    }
+    // #[test]
+    // fn cacl_homopolymer_length() {
+    //     let seq = b"AC";
+    //     let homop = get_homopolymer_length(seq);
+    //     assert_eq!(homop, vec![1, 1]);
+    //     let seq = b"ACC";
+    //     let homop = get_homopolymer_length(seq);
+    //     assert_eq!(homop, vec![1, 2, 2]);
+    //     let seq = b"ACCA";
+    //     let homop = get_homopolymer_length(seq);
+    //     assert_eq!(homop, vec![1, 2, 2, 1]);
+    //     let seq = b"AAACAAAGC";
+    //     let homop = get_homopolymer_length(seq);
+    //     assert_eq!(homop, vec![3, 3, 3, 1, 3, 3, 3, 1, 1]);
+    // }
 }

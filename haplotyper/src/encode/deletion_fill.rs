@@ -218,6 +218,13 @@ pub fn remove_weak_edges(ds: &mut DataSet) {
             }
         })
         .sum();
+    let present: HashSet<_> = ds
+        .encoded_reads
+        .iter()
+        .flat_map(|r| r.nodes.iter())
+        .map(|n| n.unit)
+        .collect();
+    ds.selected_chunks.retain(|c| present.contains(&c.id));
     debug!("RMEDGE\tTotal\t{deleted_nodes}");
 }
 

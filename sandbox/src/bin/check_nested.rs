@@ -34,8 +34,7 @@ fn main() -> std::io::Result<()> {
         let coverage = (test_num / 4) as f64;
         let clusters = 4;
         use haplotyper::local_clustering::kmeans::ClusteringConfig;
-        let config =
-            ClusteringConfig::new(100, clusters, coverage, 1.8, definitions::ReadType::CLR);
+        let config = ClusteringConfig::new(100, clusters, coverage, 1.8);
         use haplotyper::local_clustering::kmeans;
         let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
         let end = std::time::Instant::now();

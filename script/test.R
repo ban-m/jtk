@@ -1,7 +1,7 @@
 library(tidyverse)
 loadNamespace("cowplot")
 
-filename <- "new.1676.tsv"
+filename <- "659.tsv" # nolint
 
 dataset <- read_tsv(filename, col_names = FALSE)
 len <- dataset %>% pull(X1) %>% max()

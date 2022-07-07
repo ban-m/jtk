@@ -67,7 +67,7 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let mut groups: HashMap<_, Vec<_>> = HashMap::new();
     let nodes: Vec<_> = segments
         .into_iter()
-        .map(|node| {
+        .map(|mut node| {
             let tags = match summaries.iter().find(|x| x.id == node.sid) {
                 Some(contigsummary) => {
                     let ids: Vec<_> = contigsummary
@@ -95,6 +95,7 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
                 }
                 None => Vec::new(),
             };
+            node.sequence = Some(String::new());
             gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
         })
         .collect();
