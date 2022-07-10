@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 use definitions::*;
-use haplotyper::assemble::ditch_graph::Focus;
 use haplotyper::assemble::*;
 use haplotyper::determine_units::DetermineUnit;
 use nalgebra::RealField;

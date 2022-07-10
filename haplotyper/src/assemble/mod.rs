@@ -1,7 +1,6 @@
+pub mod consensus;
 pub mod copy_number;
 pub mod ditch_graph;
-// pub mod string_graph;
-// pub mod string_graph_dev;
 use definitions::*;
 use ditch_graph::*;
 use gfa::GFA;
@@ -177,7 +176,7 @@ impl Assemble for DataSet {
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         let cov = self.coverage.unwrap();
         let rt = self.read_type;
-        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), rt, c);
+        let mut graph = DitchGraph::new(&reads, &self.selected_chunks, rt, c);
         graph.remove_lightweight_edges(2, true);
         graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, self.read_type);
         // TODO: Parametrize here.
@@ -196,7 +195,7 @@ impl Assemble for DataSet {
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let cov = self.coverage.unwrap_or_else(|| panic!("Need coverage!"));
         let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let mut graph = DitchGraph::new(&reads, Some(&self.selected_chunks), self.read_type, c);
+        let mut graph = DitchGraph::new(&reads, self.selected_chunks.as_slice(), self.read_type, c);
         match self.read_type {
             ReadType::CCS => graph.remove_lightweight_edges(1, true),
             ReadType::ONT | ReadType::None | ReadType::CLR => {
@@ -359,19 +358,18 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
     let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
+    let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     debug!("GRAPH\t{graph}");
     match ds.read_type {
         ReadType::CCS => graph.remove_lightweight_edges(1, true),
         ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
     };
     graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, ds.read_type);
-    let (mut segments, mut edges, _, summaries) = graph.spell(c);
+    let (mut segments, mut edges, _, summaries, _) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     if c.to_polish {
-        let hmm = crate::model_tune::get_model(ds).unwrap();
-        polish_segments(&mut segments, ds, &summaries, c, &ds.read_type, &hmm);
+        polish_segments(&mut segments, ds, &summaries, c, &ds.read_type);
         let lengths: HashMap<_, _> = segments
             .iter()
             .map(|seg| (seg.sid.clone(), seg.slen))
@@ -435,9 +433,9 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
 }
 pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
+    let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     graph.remove_lightweight_edges(2, true);
-    let (segments, edge, group, summaries) = graph.spell(c);
+    let (segments, edge, group, summaries, _unit_positions) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     let nodes = segments.into_iter().map(|node| {
@@ -466,8 +464,8 @@ fn polish_segments(
     summaries: &[ContigSummary],
     c: &AssembleConfig,
     read_type: &definitions::ReadType,
-    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
 ) {
+    let hmm = crate::model_tune::get_model(ds).unwrap();
     // Record/Associate reads to each segments.
     let raw_reads: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let mut fragments: Vec<Vec<&[u8]>> = vec![vec![]; summaries.len()];
@@ -492,8 +490,8 @@ fn polish_segments(
         .iter_mut()
         .zip(fragments.iter())
         .for_each(|(seg, frag)| {
-            polish_segment(seg, frag, c, read_type, hmm);
-            polish_segment(seg, frag, c, read_type, hmm);
+            polish_segment(seg, frag, c, read_type, &hmm);
+            polish_segment(seg, frag, c, read_type, &hmm);
         });
 }
 

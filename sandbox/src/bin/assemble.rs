@@ -35,7 +35,7 @@ fn main() -> std::io::Result<()> {
 pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
-    let mut graph = DitchGraph::new(&reads, Some(&ds.selected_chunks), ds.read_type, c);
+    let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     for read in ds.encoded_reads.iter() {
         let len = read.recover_raw_read().len();
         assert_eq!(read.original_length, len);
@@ -63,7 +63,7 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     //         debug!("CONS\t>E{id}\nCONS\t{seq}");
     //     }
     // }
-    let (segments, edge, _, summaries) = graph.spell(c);
+    let (segments, edge, _, summaries, _) = graph.spell(c);
     let mut groups: HashMap<_, Vec<_>> = HashMap::new();
     let nodes: Vec<_> = segments
         .into_iter()

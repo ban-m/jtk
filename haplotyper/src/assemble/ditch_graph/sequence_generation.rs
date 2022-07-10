@@ -1,5 +1,103 @@
 //! module defines how a ditch graph would generate sequence, or reduce simple paths.
+//! 2022/07/07: I changed the strategy.
 use super::*;
+
+/// A summary of a contig. It tells us
+/// the unit, the cluster, and the direction
+/// it spelled.
+#[derive(Debug, Clone)]
+pub struct ContigSummary {
+    /// The ID of the focal contig.
+    pub id: String,
+    pub summary: Vec<ContigElement>,
+}
+
+impl ContigSummary {
+    fn new(id: &str, summary: &[ContigElement]) -> Self {
+        Self {
+            id: id.to_string(),
+            summary: summary.to_vec(),
+        }
+    }
+}
+
+impl std::fmt::Display for ContigSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let line: Vec<_> = self
+            .summary
+            .iter()
+            .map(|n| format!("{}-{}", n.unit, n.cluster))
+            .collect();
+        write!(f, "{}\t{}", self.id, line.join("\t"))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ContigElement {
+    pub unit: u64,
+    pub cluster: u64,
+    pub strand: bool,
+    /// The "coverage."
+    pub occ: usize,
+    pub copy_number: Option<usize>,
+}
+
+pub struct ContigEncoding {
+    pub id: String,
+    pub tiles: Vec<UnitAlignmentInfo>,
+}
+
+impl ContigEncoding {
+    fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            tiles: Vec::new(),
+        }
+    }
+    #[allow(dead_code)]
+    fn push(&mut self, tile: UnitAlignmentInfo) {
+        self.tiles.push(tile);
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UnitAlignmentInfo {
+    pub unit: u64,
+    pub cluster: u64,
+    pub contig_start: usize,
+    pub contig_end: usize,
+    /// If false, it should be rev-comped.
+    pub unit_direction: bool,
+    pub unit_start: usize,
+    pub unit_end: usize,
+}
+
+impl UnitAlignmentInfo {
+    fn set_unit_info(&mut self, node: Node, position: Position, len: usize) {
+        self.unit = node.0;
+        self.cluster = node.1;
+        self.unit_direction = position == Position::Head;
+        self.unit_start = 0;
+        self.unit_end = len;
+    }
+}
+
+// I use this enumeration to
+// tag a contig to nodes of a ditch graph.
+// Sometimes, a node of a ditch graph
+// has both end and start of the contig to
+// each tip (head and tail). Thus,
+// I explicitly express the position of each tags.
+// A contig named `String`, the length of which is `usize`,
+// ends at Position, or starts at `Position`, or both.
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ContigTag {
+    Start(String, Position, usize),
+    End(String, Position, usize),
+    // Start position, end position.
+    Both(String, Position, Position, usize),
+}
+
 impl<'a> super::DitchGraph<'a> {
     /// Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
     /// The contig summary contains the units used to construct a contig in the traversing order.
@@ -12,10 +110,12 @@ impl<'a> super::DitchGraph<'a> {
         Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
         gfa::Group,
         Vec<ContigSummary>,
+        Vec<ContigEncoding>,
     ) {
         let mut arrived = HashSet::new();
         let mut sids: HashMap<_, _> = HashMap::new();
         let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);
+        let mut unit_position_on_contigs = vec![];
         let mut candidates = self.enumerate_candidates();
         candidates.sort();
         for (node, p) in candidates {
@@ -23,22 +123,24 @@ impl<'a> super::DitchGraph<'a> {
                 continue;
             }
             let name = format!("tig_{:04}", g_segs.len());
-            let (contig, edges, summary) =
-                self.traverse_from(&mut arrived, &mut sids, node, p, name, c);
+            let contig_info = self.traverse_from(&mut arrived, &mut sids, node, p, name, c);
+            let (contig, edges, summary, unit_positions) = contig_info;
             g_segs.push(contig);
             g_edges.extend(edges);
             summaries.push(summary);
+            unit_position_on_contigs.push(unit_positions);
         }
-        let mut nodes: Vec<_> = self.nodes.keys().collect();
+        let mut nodes: Vec<_> = self.nodes().map(|x| x.0).collect();
         nodes.sort();
         for key in nodes {
-            if arrived.contains(key) {
+            if arrived.contains(&key) {
                 continue;
             }
             let p = Position::Head;
             let name = format!("tig_{:04}", g_segs.len());
-            let (contig, edges, summary) =
-                self.traverse_from(&mut arrived, &mut sids, *key, p, name, c);
+            let contig_info = self.traverse_from(&mut arrived, &mut sids, key, p, name, c);
+            let (contig, edges, summary, unit_positions) = contig_info;
+            unit_position_on_contigs.push(unit_positions);
             g_segs.push(contig);
             g_edges.extend(edges);
             summaries.push(summary);
@@ -50,17 +152,19 @@ impl<'a> super::DitchGraph<'a> {
             .collect();
         let uid = Some(format!("group-{}", 0));
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
-        (g_segs, g_edges, group, summaries)
+        (g_segs, g_edges, group, summaries, unit_position_on_contigs)
     }
     fn enumerate_adjacent_tag(
         &self,
         seqname: &str,
-        start: Node,
+        start: NodeIndex,
         start_position: Position,
-        sids: &HashMap<Node, ContigTag>,
+        sids: &HashMap<NodeIndex, ContigTag>,
         gfa_edge_start: gfa::Position,
     ) -> Vec<(gfa::Edge, Vec<gfa::SamTag>)> {
-        self.get_edges(start, start_position)
+        let edges = self.edges_from(start, start_position);
+        edges
+            .into_iter()
             .filter_map(|e| {
                 let (sid2, beg2) = match *sids.get(&e.to)? {
                     ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
@@ -134,9 +238,9 @@ impl<'a> super::DitchGraph<'a> {
     // construct this contig, in the order of apprearance.
     fn traverse_from(
         &self,
-        arrived: &mut HashSet<Node>,
-        sids: &mut HashMap<Node, ContigTag>,
-        start: Node,
+        arrived: &mut HashSet<NodeIndex>,
+        sids: &mut HashMap<NodeIndex, ContigTag>,
+        start: NodeIndex,
         start_position: Position,
         seqname: String,
         _c: &AssembleConfig,
@@ -144,40 +248,51 @@ impl<'a> super::DitchGraph<'a> {
         gfa::Segment,
         Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
         ContigSummary,
+        ContigEncoding,
     ) {
         // Find edges.
         let gfa_pos = gfa::Position::from(0, false);
         let edges = self.enumerate_adjacent_tag(&seqname, start, start_position, sids, gfa_pos);
-        let (mut node, mut position) = (start, start_position);
+        let position_of_units = ContigEncoding::new(&seqname);
+        let mut current_encoding = UnitAlignmentInfo::default();
+        let (mut node_index, mut position) = (start, start_position);
         let mut seq = self.initial_sequence(start, start_position);
         // Start traveresing.
         let mut unit_names = vec![];
         loop {
-            arrived.insert(node);
+            let node = self.node(node_index).unwrap();
+            current_encoding.set_unit_info(node.node, position, node.seq().len());
+            current_encoding.contig_start = seq.len();
+            arrived.insert(node_index);
             // Move forward.
             let cons = match position {
-                Position::Head => self.nodes[&node].seq_as_string(),
-                Position::Tail => revcmp_str(&self.nodes[&node].seq_as_string()),
+                Position::Head => node.seq_as_string(),
+                Position::Tail => revcmp_str(&node.seq_as_string()),
             };
             {
+                let (unit, cluster) = node.node;
                 let elm = ContigElement {
-                    unit: self.nodes[&node].node.0,
-                    cluster: self.nodes[&node].node.1,
+                    unit,
+                    cluster,
                     strand: position == Position::Head,
-                    occ: self.nodes[&node].occ,
-                    copy_number: self.nodes[&node].copy_number,
+                    occ: node.occ,
+                    copy_number: node.copy_number,
                 };
                 unit_names.push(elm);
             }
             seq += &cons;
             position = !position;
             // Check.
-            if self.get_edges(node, position).count() != 1 {
+            if self.count_edges(node_index, position) != 1 {
                 break;
             }
             // There is only one child.
-            let selected_edge = self.get_edges(node, position).next().unwrap();
-            assert_eq!(selected_edge.from, node);
+            let selected_edge = &node
+                .edges
+                .iter()
+                .find(|e| e.from_position == position)
+                .unwrap();
+            assert_eq!(selected_edge.from, node_index);
             assert_eq!(selected_edge.from_position, position);
             // Succeed along with the edge.
             match &selected_edge.seq {
@@ -186,63 +301,44 @@ impl<'a> super::DitchGraph<'a> {
                 }
                 EdgeLabel::Seq(label) => seq.extend(label.iter().map(|&x| x as char)),
             };
-            // Append nodes proxied by this edge to the last node. The order is correct(I created so.).
-            for &((unit, cluster), strand, occ) in selected_edge.proxying.iter() {
-                let elm = ContigElement {
-                    unit,
-                    cluster,
-                    strand,
-                    occ,
-                    copy_number: None,
-                };
-                unit_names.push(elm);
-            }
             let (next, next_position) = (selected_edge.to, selected_edge.to_position);
             // Check the number of child.
-            let num_children = self.nodes[&next]
-                .edges
-                .iter()
-                .filter(|e| e.from_position == next_position)
-                .count();
+            let num_children = self.count_edges(next, next_position);
             // Or looping...
             if num_children >= 2 || arrived.contains(&next) {
                 break;
             }
             // Jump to the next node.
             assert!(num_children == 1);
-            node = next;
+            node_index = next;
             position = next_position;
         }
-        seq += &self.trailing_sequence(node, position);
+        seq += &self.trailing_sequence(node_index, position);
         let summary = ContigSummary::new(&seqname, &unit_names);
         // Register start and tail node.
         // This if statement is no needed?
-        if start == node {
+        if start == node_index {
             let tag = ContigTag::Both(seqname.clone(), start_position, position, seq.len());
-            sids.insert(node, tag);
+            sids.insert(node_index, tag);
         } else {
             let tag = ContigTag::Start(seqname.clone(), start_position, seq.len());
             sids.insert(start, tag);
             let tag = ContigTag::End(seqname.clone(), position, seq.len());
-            sids.insert(node, tag);
+            sids.insert(node_index, tag);
         }
         let gfa_pos = gfa::Position::from(seq.len(), true);
         let seg = gfa::Segment::from(seqname.clone(), seq.len(), Some(seq));
-        let tail_edges = self.enumerate_adjacent_tag(&seqname, node, position, sids, gfa_pos);
+        let tail_edges = self.enumerate_adjacent_tag(&seqname, node_index, position, sids, gfa_pos);
         let mut edges = edges;
         edges.extend(tail_edges);
-        (seg, edges, summary)
+        (seg, edges, summary, position_of_units)
     }
-    fn initial_sequence(&self, node: Node, position: Position) -> String {
-        let num_edges = self.nodes[&node]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == position)
-            .count();
-        if num_edges > 0 {
+    fn initial_sequence(&self, node: NodeIndex, position: Position) -> String {
+        if self.count_edges(node, position) > 0 {
             String::new()
         } else {
-            self.nodes[&node]
+            self.node(node)
+                .unwrap()
                 .tips
                 .iter()
                 .filter(|tip| tip.position == position && !tip.seq.is_empty())
@@ -255,16 +351,12 @@ impl<'a> super::DitchGraph<'a> {
                 .unwrap_or_else(String::new)
         }
     }
-    fn trailing_sequence(&self, node: Node, position: Position) -> String {
-        let num_edges = self.nodes[&node]
-            .edges
-            .iter()
-            .filter(|e| e.from_position == position)
-            .count();
-        if num_edges > 0 {
+    fn trailing_sequence(&self, node: NodeIndex, position: Position) -> String {
+        if self.count_edges(node, position) > 0 {
             String::new()
         } else {
-            self.nodes[&node]
+            self.node(node)
+                .unwrap()
                 .tips
                 .iter()
                 .filter(|tip| tip.position == position && !tip.seq.is_empty())

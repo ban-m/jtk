@@ -48,7 +48,7 @@ impl MultiplicityEstimation for DataSet {
         let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 4, 0f64);
         let rt = self.read_type;
         let mut graph =
-            ditch_graph::DitchGraph::new(&reads, Some(&self.selected_chunks), rt, &assemble_config);
+            ditch_graph::DitchGraph::new(&reads, &self.selected_chunks, rt, &assemble_config);
         let thr = match self.read_type {
             definitions::ReadType::CCS => 1,
             definitions::ReadType::CLR => 2,
@@ -65,7 +65,7 @@ impl MultiplicityEstimation for DataSet {
         graph.assign_copy_number_mst(cov, &mut rng);
         let nodes: HashMap<_, _> = graph
             .nodes()
-            .filter_map(|node| node.copy_number.map(|c| (node.node, c)))
+            .filter_map(|(_, node)| node.copy_number.map(|c| (node.node, c)))
             .collect();
         let mut chunks: HashMap<_, _> =
             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
@@ -161,7 +161,7 @@ impl MultiplicityEstimation for DataSet {
 }
 
 fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
-    let (segments, edge, group, summaries) = graph.spell(c);
+    let (segments, edge, group, summaries, _) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("MULTIP\tAssembly\t{}\t{}bp", segments.len(), total_base);
     let nodes = segments.into_iter().map(|node| {
