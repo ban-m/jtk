@@ -36,16 +36,9 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
-    for read in ds.encoded_reads.iter() {
-        let len = read.recover_raw_read().len();
-        assert_eq!(read.original_length, len);
-    }
-    eprintln!("{graph}");
-    graph.remove_lightweight_edges(3, true);
+    graph.remove_lightweight_edges(2, true);
     let cov = ds.coverage.unwrap_or(30.0);
     let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
-    // let lens: Vec<_> = ds.encoded_reads.iter().map(|r| r.original_length).collect();
-    // graph.assign_copy_number(cov, &lens);
     graph.assign_copy_number_mst(cov, &mut rng);
     // use log::*;
     // for node in graph.nodes() {
@@ -63,6 +56,9 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     //         debug!("CONS\t>E{id}\nCONS\t{seq}");
     //     }
     // }
+    eprintln!("{graph}");
+    eprintln!("CC:{}", graph.cc());
+    assert!(graph.sanity_check());
     let (segments, edge, _, summaries, _) = graph.spell(c);
     let mut groups: HashMap<_, Vec<_>> = HashMap::new();
     let nodes: Vec<_> = segments

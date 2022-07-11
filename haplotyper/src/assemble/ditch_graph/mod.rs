@@ -177,7 +177,7 @@ pub struct DitchEdge {
     from_position: Position,
     to_position: Position,
     seq: EdgeLabel,
-    occ: usize,
+    pub occ: usize,
     // Estimated copy number. None if not available.
     copy_number: Option<usize>,
 }
@@ -243,25 +243,28 @@ impl DitchEdge {
             to_node: self.from_node,
             to_position: self.from_position,
             seq: self.seq.reverse(),
-            occ: 0,
+            occ: self.occ,
             copy_number: self.copy_number,
         }
     }
     // reduce the copy number by one,
     // and decrease the .occ parameter appropriately.
-    fn reduce_one_copy_number(&mut self) {
+    fn reduce_one_copy_number(&mut self) -> usize {
         match self.copy_number.as_mut() {
-            Some(cp) if *cp == 0 => {}
+            Some(cp) if *cp == 0 => 0,
             Some(cp) if *cp == 1 => {
+                let occ = self.occ;
                 self.occ = 0;
                 *cp = 0;
+                occ
             }
             Some(cp) => {
                 let occ_reduce = self.occ / *cp;
                 self.occ -= occ_reduce;
                 *cp -= 1;
+                occ_reduce
             }
-            None => {}
+            None => 0,
         }
     }
 }
@@ -408,11 +411,58 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         for read in reads.iter().map(|r| r.borrow()) {
             graph.append_tip(read, c);
         }
+        assert!(graph.sanity_check());
         graph
     }
     fn add_edge(&'b mut self, edge: DitchEdge) {
         self.node_mut(edge.to).unwrap().edges.push(edge.reverse());
         self.node_mut(edge.from).unwrap().edges.push(edge);
+    }
+    // Currently, just update the occ of the edge. Make sure that it truly has the edge.
+    fn merge_edge(&'b mut self, edge: &DitchEdge) {
+        // assert!(self.has_edge(edge.key()));
+        self.node_mut(edge.from)
+            .unwrap()
+            .edges
+            .iter_mut()
+            .find(|e| {
+                e.from_position == edge.from_position
+                    && e.to == edge.to
+                    && e.to_position == edge.to_position
+            })
+            .unwrap()
+            .occ += edge.occ;
+        self.node_mut(edge.to)
+            .unwrap()
+            .edges
+            .iter_mut()
+            .find(|e| {
+                e.from_position == edge.to_position
+                    && e.to == edge.from
+                    && e.to_position == edge.from_position
+            })
+            .unwrap()
+            .occ += edge.occ;
+    }
+    fn has_edge(&self, ((f, fpos), (t, tpos)): DitEdge) -> bool {
+        let f_has = self
+            .node(f)
+            .map(|node| {
+                node.edges
+                    .iter()
+                    .any(|e| e.from_position == fpos && e.to == t && e.to_position == tpos)
+            })
+            .unwrap_or(false);
+        let t_has = self
+            .node(t)
+            .map(|node| {
+                node.edges
+                    .iter()
+                    .any(|e| e.from_position == tpos && e.to == f && e.to_position == fpos)
+            })
+            .unwrap_or(false);
+        assert_eq!(f_has, t_has);
+        f_has
     }
     // Add weight of the graph.
     fn append_tip(&'b mut self, read: &'a EncodedRead, _c: &AssembleConfig) -> Option<()> {
@@ -481,7 +531,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// Get node at the `i`-th index. If it is deleted, panic.
     pub fn node(&'b self, NodeIndex(i): NodeIndex) -> Option<&'b DitchNode<'a>> {
         match self.nodes.get(i) {
-            Some(n) if n.is_deleted => panic!("Accessing a deleted node."),
+            Some(n) if n.is_deleted => {
+                error!("{:?}", n.node);
+                panic!("Accessing a deleted node.")
+            }
             x => x,
         }
     }
@@ -502,14 +555,19 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// Duplicate given node, return newly allocated index.
     /// The `self.node(index).unwrap().next_index` might not be the same as the
     /// returned value.
+    /// This function only duplicate node, not edges with it.
     pub fn duplicate(&'b mut self, index: NodeIndex) -> NodeIndex {
-        let node = self.node(index).unwrap().clone();
+        let mut node = self.node(index).unwrap().clone();
+        node.is_deleted = false;
+        node.next_index = None;
+        node.edges.clear();
         self.nodes.push(node);
         let len = self.nodes.len() - 1;
         let mut par_index = index;
         loop {
-            let node = self.node(par_index).unwrap();
-            par_index = match node.next_index {
+            // Here, self.node(par_index) is not appropriate, as
+            // sometimes the child is removed...
+            par_index = match self.nodes[par_index.0].next_index {
                 Some(next) => next,
                 None => break,
             };
@@ -537,8 +595,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         use rand_xoshiro::Xoshiro256PlusPlus;
         let seed = self.nodes.len() as u64 * 7329;
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
+        debug!("CC\tBFASN\t{}", self.cc());
         self.assign_copy_number_mst(cov, &mut rng);
         self.remove_zero_copy_elements(lens, 0.3);
+        debug!("CC\tRMZERO\t{}", self.cc());
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
         }
@@ -554,6 +614,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             self.remove_zero_copy_elements(lens, 0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
+            debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if i == 5 {
                 self.assign_copy_number_mst(cov, &mut rng);
@@ -566,6 +627,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             if log_enabled!(log::Level::Trace) {
                 dump(self, i + 1, c);
             }
+            // panic!();
         }
         self.assign_copy_number_mst(cov, &mut rng);
         self.remove_zero_copy_elements(lens, 0.9);
@@ -579,6 +641,18 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.z_edge_selection();
         self.remove_zero_copy_path(0.2);
         self.sanity_check();
+    }
+    pub fn cc(&self) -> usize {
+        // Connected component.
+        let mut fu = crate::find_union::FindUnion::new(self.nodes.len());
+        for (_, node) in self.nodes() {
+            for edge in node.edges.iter() {
+                fu.unite(edge.from.0, edge.to.0);
+            }
+        }
+        self.nodes()
+            .filter(|(idx, _)| fu.find(idx.0).unwrap() == idx.0)
+            .count()
     }
 }
 
@@ -603,7 +677,7 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
                 log::debug!(
                     "ASMDUMP\t{i}\t{}\t{}\t{}",
                     contigsummary.id,
-                    total / contigsummary.summary.len(),
+                    cp / cpnum.max(1),
                     ids.join("\t")
                 );
                 let cp = gfa::SamTag::new(format!("cp:i:{}", cp / cpnum.max(1)));
@@ -666,23 +740,21 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         &'b mut self,
         (from_idx, from_pos): (NodeIndex, Position),
         (to_idx, to_pos): (NodeIndex, Position),
-    ) {
-        self.node_mut(from_idx)
-            .unwrap()
-            .edges
-            .iter_mut()
-            .filter(|edge| {
-                edge.from_position == from_pos && edge.to == to_idx && edge.to_position == to_pos
-            })
-            .for_each(|edge| edge.reduce_one_copy_number());
-        self.node_mut(to_idx)
-            .unwrap()
-            .edges
-            .iter_mut()
-            .filter(|edge| {
-                edge.from_position == to_pos && edge.to == from_idx && edge.to_position == from_pos
-            })
-            .for_each(|edge| edge.reduce_one_copy_number());
+    ) -> usize {
+        let (mut num, mut total) = (0, 0);
+        for edge in self.node_mut(from_idx).unwrap().edges.iter_mut() {
+            if edge.from_position == from_pos && edge.to == to_idx && edge.to_position == to_pos {
+                total += edge.reduce_one_copy_number();
+                num += 1;
+            }
+        }
+        for edge in self.node_mut(to_idx).unwrap().edges.iter_mut() {
+            if edge.from_position == to_pos && edge.to == from_idx && edge.to_position == from_pos {
+                total += edge.reduce_one_copy_number();
+                num += 1;
+            }
+        }
+        total / num
     }
     // Return tuples of node and their position from which
     // we can start simple-path-reduction.
@@ -775,12 +847,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 }
             })
             .collect();
-        debug!("UNSOUND\t{}\t{}", unsound_nodes.len(), self.active_nodes());
-        let _ave_unit_len = {
-            let nodes = self.nodes().map(|(_, n)| n.seq().len());
-            let (sum_len, num) = nodes.fold((0, 0), |(sum, num), len| (sum + len, num + 1));
-            sum_len / num
-        };
+        debug!(
+            "UNSOUND\t{}\t{}\t{}",
+            unsound_nodes.len(),
+            self.active_nodes(),
+            self.nodes.len()
+        );
         let mut is_ok_to_remove = HashSet::new();
         let mut retain_edges = HashSet::new();
         for (index, node) in self.nodes() {
@@ -791,9 +863,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
             for position in [Position::Head, Position::Tail] {
                 let edges = node.edges.iter().filter(|e| e.from_position == position);
-                // It is ok to take max by this way because if the max is 0, there's no edge.
-                let max: usize = edges.clone().map(|e| e.occ).fold(0, |x, y| x.max(y));
-                // It automatically drop the heviest edge from the selection.
+                let max = edges.clone().map(|e| e.occ).max().unwrap_or(0);
                 for edge in edges {
                     if matches!(edge.copy_number, Some(0)) && edge.occ as f64 / (max as f64) < thr {
                         is_ok_to_remove.insert(format_edge(edge));
@@ -803,21 +873,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 }
             }
         }
-        for e in retain_edges.iter() {
-            is_ok_to_remove.remove(e);
+        let (mut max_removed_weight, mut removed_num) = (0, 0);
+        for &(f, t) in is_ok_to_remove.difference(&retain_edges) {
+            if let Some(removed) = self.remove_edge_between(f, t) {
+                removed_num += 1;
+                max_removed_weight = max_removed_weight.max(removed.occ);
+            }
         }
-        let (mut max_removed_weight, mut removed) = (0, 0);
-        self.modify_by(|node| {
-            node.edges.retain(|e| {
-                if is_ok_to_remove.contains(&format_edge(e)) {
-                    max_removed_weight = max_removed_weight.max(e.occ);
-                    removed += 1;
-                }
-                !is_ok_to_remove.contains(&format_edge(e))
-            });
-        });
-        debug!("REMOVED\t{}\t{}", removed, max_removed_weight);
-        // If the condition 2. and 3. hold, then the degree should be 0.
+        debug!("REMOVED\t{removed_num}\t{max_removed_weight}");
         self.modify_by(|node| {
             if matches!(node.copy_number, Some(0)) && node.edges.is_empty() {
                 node.is_deleted = true;
@@ -896,7 +959,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     );
                     let targets: Vec<_> = zc_edges.iter().map(|e| (e.to, e.to_position)).collect();
                     for (node, pos) in targets {
-                        self.remove_edge_and_pruning(parent_index, par_pos, node, pos);
+                        self.remove_edge_and_pruning((parent_index, par_pos), (node, pos));
                     }
                 }
             }
@@ -979,120 +1042,97 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         self.remove_nodes(&to_remove);
     }
-
+    fn has_self_loop(&self, index: NodeIndex) -> bool {
+        let node = self.node(index).unwrap();
+        let unit_cl = node.node;
+        node.edges.iter().any(|e| e.to_node == unit_cl)
+    }
     pub fn zip_up_overclustering_dev(&'b mut self) {
-        // TODO:Split this function into ...
         let mut keys: Vec<_> = self.nodes().map(|n| n.0).collect();
         keys.sort_unstable();
         for node in keys {
-            if self.is_deleted(node) {
+            if self.is_deleted(node) || self.has_self_loop(node) {
                 continue;
             }
-            // Check if both side of this node is either
-            // 1. Branching
-            // 2. Connected to branching node.
-            // Reflexitive siblings, parents.
-            let (tail_side_par, tail_side_sibs) = self.get_reflex_nodes(node, Position::Tail, 6);
-            let (head_side_par, head_side_sibs) = self.get_reflex_nodes(node, Position::Head, 6);
-            // Check if this is branching.
-            // Check if this is proper fork.
-            if tail_side_sibs.len().max(head_side_sibs.len()) <= 1 {
-                continue;
-            }
-            if head_side_par.is_empty() || tail_side_par.is_empty() {
-                continue;
-            }
-            // Check if, on each side, there are exactly one type of unit.
-            let unit_and_position = |(idx, pos)| (self.node(idx).unwrap().node.0, pos);
-            let is_tail_side_par_unique = {
-                let key = unit_and_position(tail_side_par[0]);
-                tail_side_par.iter().all(|&e| unit_and_position(e) == key)
+            let (retain, sibs) = match self.zippable(node) {
+                Some(res) => res,
+                None => continue,
             };
-            let is_head_side_par_unique = {
-                let key = unit_and_position(head_side_par[0]);
-                head_side_par.iter().all(|&e| unit_and_position(e) == key)
-            };
-            if !is_tail_side_par_unique || !is_head_side_par_unique {
-                continue;
-            }
-            // Check if the siblings meets on both side.
-            if tail_side_sibs.len() != head_side_sibs.len() {
-                continue;
-            }
-            let tail_iter = tail_side_sibs.iter().map(|&e| unit_and_position(e).0);
-            let head_iter = head_side_sibs.iter().map(|&e| unit_and_position(e).0);
-            if tail_iter.zip(head_iter).any(|(x, y)| x != y) {
-                continue;
-            }
-            // First determine the one to be retained.
-            let (retain, sibs): (_, Vec<_>) = {
-                let mut sibs: Vec<_> = tail_side_sibs.iter().map(|(node, _)| *node).collect();
-                sibs.sort_by_cached_key(|&node| self.node(node).unwrap().occ);
-                let retain = sibs.pop().unwrap();
-                assert!(!sibs.is_empty());
-                (retain, sibs)
-            };
-            // debug!("ZIPDEV\t{node:?}\t{retain:?}\t{head_side_par:?}\t{head_side_sibs:?}\t{tail_side_par:?}");
             // Make all the edges into sibs to retain.
             let (edges, increase_occ, increase_copy_num) = {
                 let (mut edges, mut occ, mut cp) = (vec![], 0, 0);
                 for &node in sibs.iter() {
-                    // Is this OK?
                     let removed = self.node(node).unwrap();
                     edges.extend(removed.edges.clone());
                     occ += removed.occ;
                     cp += removed.copy_number.unwrap_or(0);
                     self.delete(node);
                 }
+                for edge in edges.iter_mut() {
+                    edge.from = retain;
+                }
                 (edges, occ, cp)
             };
-            for edge in edges.iter() {
-                fn is_match(e1: &DitchEdge, e2: &DitchEdge) -> bool {
-                    e1.from_position == e2.to_position
-                        && e1.to_position == e2.from_position
-                        && e1.from == e2.to
-                }
-                let to_node = self.node_mut(edge.to).unwrap();
-                let idx = to_node.edges.iter_mut().position(|e| is_match(edge, e));
-                let mut removed = to_node.edges.remove(idx.unwrap());
-                removed.to = retain;
-                let already = to_node.edges.iter_mut().find(|e| {
-                    e.to == retain
-                        && e.from_position == edge.to_position
-                        && e.to_position == edge.from_position
-                });
-                match already {
-                    Some(edge) => {
-                        edge.occ += removed.occ;
-                        if let Some(cp) = edge.copy_number.as_mut() {
-                            *cp += removed.copy_number.unwrap_or(0);
-                        }
-                    }
-                    None => to_node.edges.push(removed),
-                }
-            }
             {
                 let retain_node = self.node_mut(retain).unwrap();
                 retain_node.occ += increase_occ;
                 if let Some(cp) = retain_node.copy_number.as_mut() {
                     *cp += increase_copy_num;
                 }
-                for mut edge in edges {
-                    edge.from = retain;
-                    let key = (edge.to, edge.to_position);
-                    let mut probe = retain_node.edges.iter_mut();
-                    match probe.find(|e| (e.to, e.to_position) == key) {
-                        Some(res) => {
-                            res.occ += edge.occ;
-                            if let Some(cp) = res.copy_number.as_mut() {
-                                *cp += edge.copy_number.unwrap_or(0);
-                            }
-                        }
-                        None => retain_node.edges.push(edge),
-                    }
+            }
+            for edge in edges {
+                if self.has_edge(edge.key()) {
+                    self.merge_edge(&edge);
+                } else {
+                    self.add_edge(edge);
                 }
             }
         }
+    }
+
+    // Check if both side of this node is either
+    // 1. Branching
+    // 2. Connected to branching node.
+    // Reflexitive siblings, parents.
+    fn zippable(&self, node: NodeIndex) -> Option<(NodeIndex, Vec<NodeIndex>)> {
+        let (tail_side_par, tail_side_sibs) = self.get_reflex_nodes(node, Position::Tail, 6);
+        let (head_side_par, head_side_sibs) = self.get_reflex_nodes(node, Position::Head, 6);
+        if tail_side_sibs.len().max(head_side_sibs.len()) <= 1 {
+            // This is not a "net-like structure"
+            return None;
+        }
+        if head_side_par.is_empty() || tail_side_par.is_empty() {
+            return None;
+        }
+        // Check if, on each side, there are exactly one type of unit.
+        let unit_and_position = |(idx, pos)| (self.node(idx).unwrap().node.0, pos);
+        let is_tail_side_par_unique = {
+            let key = unit_and_position(tail_side_par[0]);
+            tail_side_par.iter().all(|&e| unit_and_position(e) == key)
+        };
+        let is_head_side_par_unique = {
+            let key = unit_and_position(head_side_par[0]);
+            head_side_par.iter().all(|&e| unit_and_position(e) == key)
+        };
+        if !is_tail_side_par_unique || !is_head_side_par_unique {
+            return None;
+        }
+        // Check if the siblings meets on both side.
+        if tail_side_sibs.len() != head_side_sibs.len() {
+            return None;
+        }
+        let tail_iter = tail_side_sibs.iter().map(|&e| unit_and_position(e).0);
+        let head_iter = head_side_sibs.iter().map(|&e| unit_and_position(e).0);
+        if tail_iter.zip(head_iter).any(|(x, y)| x != y) {
+            return None;
+        }
+        // First determine the one to be retained.
+
+        let mut sibs: Vec<_> = tail_side_sibs.iter().map(|(node, _)| *node).collect();
+        sibs.sort_by_cached_key(|&node| self.node(node).unwrap().occ);
+        let retain = sibs.pop().unwrap();
+        assert!(!sibs.is_empty());
+        Some((retain, sibs))
     }
     // Get (node,position), return the reflexitive parents and reflex siblings.
     // In other words, we define the k-th siblings S(k) and the k-th parents P(k) as
@@ -1326,7 +1366,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         &mut self,
         (from, from_pos): (NodeIndex, Position),
         (to, to_pos): (NodeIndex, Position),
-    ) {
+    ) -> Option<DitchEdge> {
+        let removed = self.node_mut(from).and_then(|node| {
+            node.edges
+                .iter()
+                .find(|e| !(e.from_position == from_pos && e.to == to && e.to_position == to_pos))
+                .cloned()
+        });
         if let Some(node) = self.node_mut(from) {
             node.edges.retain(|e| {
                 !(e.from_position == from_pos && e.to == to && e.to_position == to_pos)
@@ -1338,16 +1384,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 !(e.from_position == to_pos && e.to == from && e.to_position == from_pos)
             });
         }
+        removed
     }
     // Removing (from,from_pos)-(to,to_pos) edge.
     // Then, recursively removing the edges in the opposite position and `to` node itself
     // if the degree of `(to,to_pos)` is zero after removing.
     fn remove_edge_and_pruning(
         &'b mut self,
-        from: NodeIndex,
-        from_pos: Position,
-        to: NodeIndex,
-        to_pos: Position,
+        (from, from_pos): (NodeIndex, Position),
+        (to, to_pos): (NodeIndex, Position),
     ) {
         let from_node = self.node(from).unwrap().node;
         let to_node = self.node(to).unwrap().node;
@@ -1372,7 +1417,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .collect();
             for &(node, pos) in remove_edges.iter() {
                 // The edge is from the *opposite* position of the `to` node!
-                self.remove_edge_and_pruning(to, !to_pos, node, pos);
+                self.remove_edge_and_pruning((to, !to_pos), (node, pos));
             }
             // Then, removing this node itself.
             if !self.is_deleted(to) {
@@ -1479,7 +1524,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .map(|e| (e.to, e.to_position, e.occ))
             .collect();
         edges.sort_by_key(|&(_, _, occ)| occ);
-        // Merge all non-primary edges into the rist element. What is to marge is just occurance.
+        // Merge all non-primary edges into the rist element. What is to merge is just occurance.
         let total_occ: usize = edges.iter().map(|&(_, _, occ)| occ).sum();
         let (primary, primary_pos, _) = edges.pop().unwrap();
         // Root -> primary edge.
@@ -1547,68 +1592,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
         }
         ((primary, !primary_pos), removed_node_indices)
-        // let mut new_node = DitchNode::new(first_node, seq);
-        // let edge_to_root = DitchEdge::new(first_node, first_pos, root, position, edgelabel);
-        // new_node.edges.push(edge_to_root);
-        // let node_otherside: HashSet<_> = merged_nodes
-        //     .iter()
-        //     .flat_map(|node| self.nodes[node].edges.iter())
-        //     .filter_map(|e| (e.from_position != first_pos).then(|| (e.to, e.to_position)))
-        //     .collect();
-        // for node in merged_nodes.iter() {
-        //     new_node.occ += self.nodes[node].occ;
-        //     if let Some(node) = self.nodes.get_mut(node) {
-        //         while let Some(tip) = node.tips.pop() {
-        //             new_node.tips.push(tip)
-        //         }
-        //     }
-        //     while let Some(mut edge) = self.nodes.get_mut(node).unwrap().edges.pop() {
-        //         if let Some(existing) = new_node
-        //             .edges
-        //             .iter_mut()
-        //             .find(|e| e.to == edge.to && e.to_position == edge.to_position)
-        //         {
-        //             existing.occ += edge.occ;
-        //         } else {
-        //             edge.from = new_node.node;
-        //             new_node.edges.push(edge);
-        //         }
-        //     }
-        // }
-        // self.nodes
-        //     .get_mut(&root)
-        //     .unwrap()
-        //     .edges
-        //     .retain(|e| (e.from_position != position));
-        // let root_to_edge = new_node
-        //     .edges
-        //     .iter()
-        //     .find(|e| e.to == root && e.to_position == position)
-        //     .unwrap()
-        //     .reverse();
-        // self.nodes.get_mut(&root).unwrap().edges.push(root_to_edge);
-        // self.nodes.insert(first_node, new_node);
-        // let num_edge = self.get_edges(root, position).count();
-        // assert_eq!(num_edge, 1);
-        // for (other, other_position) in node_otherside {
-        //     let (removed_occ, label) = self
-        //         .get_edges(other, other_position)
-        //         .filter(|e| merged_nodes.contains(&e.to))
-        //         .fold((0, EdgeLabel::Ovlp(0)), |(cum, _), e| {
-        //             (cum + e.occ, e.seq.clone())
-        //         });
-        //     self.nodes
-        //         .get_mut(&other)
-        //         .unwrap()
-        //         .edges
-        //         .retain(|e| !(other_position == e.from_position && merged_nodes.contains(&e.to)));
-        //     let mut new_edge = DitchEdge::new(other, other_position, first_node, !first_pos, label);
-        //     new_edge.occ += removed_occ;
-        //     self.nodes.get_mut(&other).unwrap().edges.push(new_edge);
-        // }
-        // let mut merged_nodes = merged_nodes;
-        // merged_nodes.retain(|&x| x != first_node);
-        // ((first_node, !first_pos), merged_nodes)
     }
     /// Squish short bubbles.
     /// In other words, if there is a branch,
@@ -1742,54 +1725,36 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// set `retain_single_edge` to `true`.
     pub fn remove_lightweight_edges(&mut self, thr: usize, retain_single_edge: bool) {
         debug!("RM\t{thr}");
-        let mut removed_edges: HashMap<_, Vec<_>> =
-            self.nodes().map(|(index, _)| (index, vec![])).collect();
+        let mut removed_edges = vec![];
         for (from, node) in self.nodes() {
             for &pos in &[Position::Head, Position::Tail] {
-                let edges = node.edges.iter().filter(|e| e.from_position == pos);
-                if edges.clone().count() <= 1 {
+                if self.count_edges(from, pos) <= 1 {
                     continue;
-                };
-                let thr = {
-                    let max_occ = edges.clone().map(|x| x.occ).max().unwrap();
-                    if retain_single_edge {
-                        thr.min(max_occ - 1)
-                    } else {
-                        thr
-                    }
-                };
+                }
+                let edges = node.edges.iter().filter(|e| e.from_position == pos);
                 for e in edges.clone().filter(|e| e.occ <= thr) {
                     // If retain mode, check this is not the only edge
-                    let is_occ_small = self
+                    let is_safe = self
                         .node(e.to)
                         .unwrap()
                         .edges
                         .iter()
                         .filter(|e| e.from_position == e.to_position)
-                        .any(|f| e.occ < f.occ);
-                    let removable = !retain_single_edge || is_occ_small;
+                        .any(|f| thr < f.occ);
+                    let removable = !retain_single_edge || is_safe;
                     if removable {
-                        let to = e.to;
-                        let t_pos = e.to_position;
-                        removed_edges
-                            .entry(from)
-                            .or_default()
-                            .push((pos, to, t_pos));
-                        removed_edges
-                            .entry(to)
-                            .or_default()
-                            .push((t_pos, from, pos));
+                        let (f, t) = e.key();
+                        let norm_key = (f.min(t), f.max(t));
+                        removed_edges.push(norm_key);
                     }
                 }
             }
         }
-        self.modify_by_with_index(|(index, node)| {
-            let to_be_removed = &removed_edges[&index];
-            node.edges.retain(|x| {
-                let probe = (x.from_position, x.to, x.to_position);
-                !to_be_removed.contains(&probe)
-            })
-        });
+        removed_edges.sort_unstable();
+        removed_edges.dedup();
+        for (f, t) in removed_edges {
+            self.remove_edge_between(f, t);
+        }
     }
 }
 

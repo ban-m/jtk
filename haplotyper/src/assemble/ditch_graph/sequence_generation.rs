@@ -140,10 +140,13 @@ impl<'a> super::DitchGraph<'a> {
             let name = format!("tig_{:04}", g_segs.len());
             let contig_info = self.traverse_from(&mut arrived, &mut sids, key, p, name, c);
             let (contig, edges, summary, unit_positions) = contig_info;
-            unit_position_on_contigs.push(unit_positions);
             g_segs.push(contig);
             g_edges.extend(edges);
             summaries.push(summary);
+            unit_position_on_contigs.push(unit_positions);
+        }
+        for (idx, _) in self.nodes() {
+            assert!(arrived.contains(&idx));
         }
         let ids: Vec<_> = g_segs
             .iter()
@@ -183,7 +186,6 @@ impl<'a> super::DitchGraph<'a> {
                 };
                 let eid = None;
                 let sid1 = gfa::RefID::from(seqname, true);
-                // let beg1 = gfa::Position::from(0, false);
                 let beg1 = gfa_edge_start;
                 let a = None;
                 let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
@@ -198,40 +200,6 @@ impl<'a> super::DitchGraph<'a> {
             })
             .collect()
     }
-    // let tail_edges = self.nodes[&node]
-    // .edges
-    // .iter()
-    // .filter(|e| e.from_position == position)
-    // .filter_map(|e| {
-    //     let (sid2, beg2) = match sids.get(&e.to)? {
-    //         &ContigTag::Start(ref name, pos, _) if pos == e.to_position => {
-    //             (gfa::RefID::from(name, true), gfa::Position::from(0, false))
-    //         }
-    //         &ContigTag::End(ref name, pos, len) if pos == e.to_position => {
-    //             (gfa::RefID::from(name, true), gfa::Position::from(len, true))
-    //         }
-    //         &ContigTag::Both(ref name, pos, _, _) if pos == e.to_position => {
-    //             (gfa::RefID::from(name, true), gfa::Position::from(0, false))
-    //         }
-    //         &ContigTag::Both(ref name, _, pos, len) if pos == e.to_position => {
-    //             (gfa::RefID::from(name, true), gfa::Position::from(len, true))
-    //         }
-    //         _ => return None,
-    //     };
-    //     let eid = None;
-    //     let sid1 = gfa::RefID::from(&seqname, true);
-    //     let beg1 = gfa::Position::from(seq.len(), true);
-    //     let a = None;
-    //     let edge = gfa::Edge::from(eid, sid1, sid2, beg1, beg1, beg2, beg2, a);
-    //     let mut samtag = vec![
-    //         gfa::SamTag::new(format!("cv:i:{}", e.occ)),
-    //         gfa::SamTag::new(format!("ln:i:{}", e.seq.len())),
-    //     ];
-    //     if let Some(cp) = e.copy_number {
-    //         samtag.push(gfa::SamTag::new(format!("cp:i:{}", cp)));
-    //     }
-    //     Some((edge, samtag))
-    // });
 
     // Traverse from the given `start` node of `start_position` Position.
     // The retuened ContigSummary contains which (unit,cluster) elements is used to
@@ -318,8 +286,8 @@ impl<'a> super::DitchGraph<'a> {
         // Register start and tail node.
         // This if statement is no needed?
         if start == node_index {
-            let tag = ContigTag::Both(seqname.clone(), start_position, position, seq.len());
-            sids.insert(node_index, tag);
+            let tag = ContigTag::Both(seqname.clone(), start_position, !start_position, seq.len());
+            sids.insert(start, tag);
         } else {
             let tag = ContigTag::Start(seqname.clone(), start_position, seq.len());
             sids.insert(start, tag);
