@@ -40,26 +40,19 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let cov = ds.coverage.unwrap_or(30.0);
     let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
     graph.assign_copy_number_mst(cov, &mut rng);
-    // use log::*;
-    // for node in graph.nodes() {
-    //     let (unit, cl) = node.node;
-    //     let seq = std::str::from_utf8(node.seq()).unwrap();
-    //     debug!("CONS\t>N{unit}-{cl}\nCONS\t{seq}");
-    //     for edge in node.edges.iter().filter(|e| e.from <= e.to) {
-    //         let seq = match edge.label() {
-    //             Some(res) => std::str::from_utf8(res).unwrap(),
-    //             None => continue,
-    //         };
-    //         let (funit, fcl) = edge.from;
-    //         let (tunit, tcl) = edge.to;
-    //         let id = format!("{funit}-{fcl}-{tunit}-{tcl}");
-    //         debug!("CONS\t>E{id}\nCONS\t{seq}");
-    //     }
-    // }
     eprintln!("{graph}");
     eprintln!("CC:{}", graph.cc());
     assert!(graph.sanity_check());
-    let (segments, edge, _, summaries, _) = graph.spell(c);
+    let (segments, edge, _, summaries, _encs) = graph.spell(c);
+    // for enc in encs {
+    //     let id = &enc.id;
+    //     for tile in enc.tiles.iter() {
+    //         let (cs, ce) = tile.contig_range();
+    //         let (strand, us, ue) = tile.unit_range();
+    //         let (node, cluster) = tile.unit_info();
+    //         log::debug!("TILE\t{id}\t{cs}\t{ce}\t{strand}\t{us}\t{ue}\t{node}\t{cluster}");
+    //     }
+    // }
     let mut groups: HashMap<_, Vec<_>> = HashMap::new();
     let nodes: Vec<_> = segments
         .into_iter()

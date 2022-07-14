@@ -173,12 +173,12 @@ impl Assemble for DataSet {
             }
         }
         let reads: Vec<_> = self.encoded_reads.iter().collect();
-        let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         let cov = self.coverage.unwrap();
         let rt = self.read_type;
         let mut graph = DitchGraph::new(&reads, &self.selected_chunks, rt, c);
         graph.remove_lightweight_edges(2, true);
-        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, self.read_type);
+        graph.clean_up_graph_for_assemble(cov, &reads, c, self.read_type);
         // TODO: Parametrize here.
         let squish = graph.squish_bubbles(2);
         self.encoded_reads
@@ -194,7 +194,7 @@ impl Assemble for DataSet {
         // assert!(c.to_resolve);
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let cov = self.coverage.unwrap_or_else(|| panic!("Need coverage!"));
-        let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
+        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
         let mut graph = DitchGraph::new(&reads, self.selected_chunks.as_slice(), self.read_type, c);
         match self.read_type {
             ReadType::CCS => graph.remove_lightweight_edges(1, true),
@@ -202,7 +202,7 @@ impl Assemble for DataSet {
                 graph.remove_lightweight_edges(2, true)
             }
         };
-        graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, self.read_type);
+        graph.clean_up_graph_for_assemble(cov, &reads, c, self.read_type);
         let squish = graph.squish_bubbles(len);
         self.encoded_reads
             .iter_mut()
@@ -357,14 +357,14 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     assert!(c.to_resolve);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
-    let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
+    // let lens: Vec<_> = ds.raw_reads.iter().map(|x| x.seq().len()).collect();
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     debug!("GRAPH\t{graph}");
     match ds.read_type {
         ReadType::CCS => graph.remove_lightweight_edges(1, true),
         ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
     };
-    graph.clean_up_graph_for_assemble(cov, &lens, &reads, c, ds.read_type);
+    graph.clean_up_graph_for_assemble(cov, &reads, c, ds.read_type);
     let (mut segments, mut edges, _, summaries, _) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);

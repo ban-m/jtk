@@ -29,7 +29,6 @@ impl PurgeDivergent for DataSet {
         // TODO: Do we need this? Maybe.
         // purged_cluster.extend(purge_erroneous_nodes(self, config));
         debug!("PD\tEncodedRead\t{}\t{}\t1", prev, self.encoded_reads.len());
-        // Reclustering...
         re_cluster(self, config.threads, &purged_cluster);
     }
 }

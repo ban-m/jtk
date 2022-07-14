@@ -42,43 +42,193 @@ pub struct ContigElement {
     pub copy_number: Option<usize>,
 }
 
+impl ContigElement {
+    fn new(node: &DitchNode, position: Position) -> Self {
+        let (unit, cluster) = node.node;
+        let strand = position == Position::Head;
+        let occ = node.occ;
+        let copy_number = node.copy_number;
+        Self {
+            unit,
+            cluster,
+            strand,
+            occ,
+            copy_number,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ContigEncoding {
     pub id: String,
-    pub tiles: Vec<UnitAlignmentInfo>,
+    tiles: Vec<UnitAlignmentInfo>,
+    // Is this OK?
+    cache: HashMap<(Node, u8), usize>,
 }
 
 impl ContigEncoding {
+    pub fn tiles(&self) -> &[UnitAlignmentInfo] {
+        self.tiles.as_slice()
+    }
+    pub fn matches<'a>(&'a self, node: Node, direction: bool) -> MatchIter<'a> {
+        MatchIter {
+            inner: self,
+            node,
+            direction,
+            hit: 0,
+        }
+    }
     fn new(id: &str) -> Self {
         Self {
             id: id.to_string(),
             tiles: Vec::new(),
+            cache: HashMap::new(),
         }
     }
-    #[allow(dead_code)]
     fn push(&mut self, tile: UnitAlignmentInfo) {
+        let k = tile.unit_info();
+        let hit = (0..).find(|&i| !self.cache.contains_key(&(k, i))).unwrap();
+        self.cache.insert((k, hit), self.tiles.len());
         self.tiles.push(tile);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchIter<'a> {
+    inner: &'a ContigEncoding,
+    node: Node,
+    direction: bool,
+    hit: u8,
+}
+
+impl<'a> std::iter::Iterator for MatchIter<'a> {
+    type Item = (usize, &'a UnitAlignmentInfo);
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.inner.cache.get(&(self.node, self.hit)) {
+                Some(&idx) if self.inner.tiles[idx].unit_direction == self.direction => break,
+                None => return None,
+                Some(_) => self.hit += 1,
+            }
+        }
+        self.hit += 1;
+        let idx = *self.inner.cache.get(&(self.node, self.hit - 1)).unwrap();
+        self.inner.tiles.get(idx).map(|t| (idx, t))
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct UnitAlignmentInfo {
-    pub unit: u64,
-    pub cluster: u64,
-    pub contig_start: usize,
-    pub contig_end: usize,
-    /// If false, it should be rev-comped.
-    pub unit_direction: bool,
-    pub unit_start: usize,
-    pub unit_end: usize,
+    unit: u64,
+    cluster: u64,
+    contig_start: usize,
+    contig_end: usize,
+    // If false, it should be rev-comped.
+    unit_direction: bool,
+    unit_start: usize,
+    unit_end: usize,
+    unit_len: usize,
 }
 
 impl UnitAlignmentInfo {
-    fn set_unit_info(&mut self, node: Node, position: Position, len: usize) {
-        self.unit = node.0;
-        self.cluster = node.1;
-        self.unit_direction = position == Position::Head;
-        self.unit_start = 0;
-        self.unit_end = len;
+    pub fn unit_len(&self) -> usize {
+        self.unit_len
+    }
+    pub fn contig_range(&self) -> (usize, usize) {
+        (self.contig_start, self.contig_end)
+    }
+    pub fn unit_range(&self) -> (bool, usize, usize) {
+        (self.unit_direction, self.unit_start, self.unit_end)
+    }
+    pub fn unit_info(&self) -> Node {
+        (self.unit, self.cluster)
+    }
+    pub fn unit_and_dir_info(&self) -> (Node, bool) {
+        ((self.unit, self.cluster), self.unit_direction)
+    }
+    pub fn new(
+        (unit, cluster): (u64, u64),
+        (unit_direction, unit_start, unit_end): (bool, usize, usize),
+        (contig_start, contig_end): (usize, usize),
+        unit_len: usize,
+    ) -> Self {
+        Self {
+            unit,
+            cluster,
+            contig_start,
+            contig_end,
+            unit_direction,
+            unit_start,
+            unit_end,
+            unit_len,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+struct UnitAlnInfoBuilder {
+    pub unit: Option<u64>,
+    pub cluster: Option<u64>,
+    pub contig_start: Option<usize>,
+    pub contig_end: Option<usize>,
+    /// If false, it should be rev-comped.
+    pub unit_direction: Option<bool>,
+    pub unit_start: Option<usize>,
+    pub unit_end: Option<usize>,
+    pub unit_len: Option<usize>,
+}
+
+impl UnitAlnInfoBuilder {
+    fn set_node(mut self, (unit, cluster): Node) -> Self {
+        self.unit = Some(unit);
+        self.cluster = Some(cluster);
+        self
+    }
+    fn set_contig_start(mut self, start: usize) -> Self {
+        self.contig_start = Some(start);
+        self
+    }
+    fn set_contig_end(mut self, end: usize) -> Self {
+        self.contig_end = Some(end);
+        self
+    }
+    fn set_unit_direction(mut self, position: Position) -> Self {
+        self.unit_direction = Some(position == Position::Head);
+        self
+    }
+    fn set_unit_start(mut self, start: usize) -> Self {
+        self.unit_start = Some(start);
+        self
+    }
+    fn set_unit_end(mut self, end: usize) -> Self {
+        self.unit_end = Some(end);
+        self
+    }
+    fn set_unit_len(mut self, len: usize) -> Self {
+        self.unit_len = Some(len);
+        self
+    }
+    fn build(&self) -> UnitAlignmentInfo {
+        let Self {
+            unit,
+            cluster,
+            contig_start,
+            contig_end,
+            unit_direction,
+            unit_start,
+            unit_end,
+            unit_len,
+        } = *self;
+        UnitAlignmentInfo {
+            unit: unit.unwrap(),
+            cluster: cluster.unwrap(),
+            contig_start: contig_start.unwrap(),
+            contig_end: contig_end.unwrap(),
+            unit_direction: unit_direction.unwrap(),
+            unit_start: unit_start.unwrap(),
+            unit_end: unit_end.unwrap(),
+            unit_len: unit_len.unwrap(),
+        }
     }
 }
 
@@ -219,39 +369,38 @@ impl<'a> super::DitchGraph<'a> {
         ContigEncoding,
     ) {
         // Find edges.
+        // I impled here!
         let gfa_pos = gfa::Position::from(0, false);
         let edges = self.enumerate_adjacent_tag(&seqname, start, start_position, sids, gfa_pos);
-        let position_of_units = ContigEncoding::new(&seqname);
-        let mut current_encoding = UnitAlignmentInfo::default();
+        let mut position_of_units = ContigEncoding::new(&seqname);
         let (mut node_index, mut position) = (start, start_position);
         let mut seq = self.initial_sequence(start, start_position);
         // Start traveresing.
         let mut unit_names = vec![];
         loop {
+            let mut builder = UnitAlnInfoBuilder::default();
             let node = self.node(node_index).unwrap();
-            current_encoding.set_unit_info(node.node, position, node.seq().len());
-            current_encoding.contig_start = seq.len();
+            builder = builder
+                .set_node(node.node)
+                .set_contig_start(seq.len())
+                .set_unit_start(0)
+                .set_unit_direction(position)
+                .set_unit_len(node.seq().len());
             arrived.insert(node_index);
             // Move forward.
             let cons = match position {
                 Position::Head => node.seq_as_string(),
                 Position::Tail => revcmp_str(&node.seq_as_string()),
             };
-            {
-                let (unit, cluster) = node.node;
-                let elm = ContigElement {
-                    unit,
-                    cluster,
-                    strand: position == Position::Head,
-                    occ: node.occ,
-                    copy_number: node.copy_number,
-                };
-                unit_names.push(elm);
-            }
+            unit_names.push(ContigElement::new(node, position));
             seq += &cons;
             position = !position;
             // Check.
             if self.count_edges(node_index, position) != 1 {
+                builder = builder
+                    .set_contig_end(seq.len())
+                    .set_unit_end(node.seq().len());
+                position_of_units.push(builder.build());
                 break;
             }
             // There is only one child.
@@ -266,9 +415,18 @@ impl<'a> super::DitchGraph<'a> {
             match &selected_edge.seq {
                 EdgeLabel::Ovlp(l) => {
                     let _ = (0..(-l)).filter_map(|_| seq.pop()).count();
+                    builder = builder
+                        .set_contig_end(seq.len())
+                        .set_unit_end(node.seq().len() - (-l) as usize);
                 }
-                EdgeLabel::Seq(label) => seq.extend(label.iter().map(|&x| x as char)),
+                EdgeLabel::Seq(label) => {
+                    builder = builder
+                        .set_contig_end(seq.len())
+                        .set_unit_end(node.seq().len());
+                    seq.extend(label.iter().map(|&x| x as char));
+                }
             };
+            position_of_units.push(builder.build());
             let (next, next_position) = (selected_edge.to, selected_edge.to_position);
             // Check the number of child.
             let num_children = self.count_edges(next, next_position);

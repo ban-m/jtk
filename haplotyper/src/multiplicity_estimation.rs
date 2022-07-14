@@ -56,12 +56,10 @@ impl MultiplicityEstimation for DataSet {
             definitions::ReadType::None => 1,
         };
         graph.remove_lightweight_edges(thr, true);
-        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        // graph.assign_copy_number_mcmc(cov, &lens);
+        debug!("{graph}");
         use rand::SeedableRng;
         use rand_xoshiro::Xoroshiro128PlusPlus;
-        let seed = (self.encoded_reads.len() * 113) as u64;
-        let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
+        let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(config.seed);
         graph.assign_copy_number_mst(cov, &mut rng);
         let nodes: HashMap<_, _> = graph
             .nodes()

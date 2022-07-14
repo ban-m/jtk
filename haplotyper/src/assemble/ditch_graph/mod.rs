@@ -385,22 +385,24 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         _read_type: definitions::ReadType,
         c: &AssembleConfig,
     ) -> Self {
-        let mut nodes: Vec<_> = units
-            .iter()
-            .flat_map(|unit| -> Vec<DitchNode> {
-                let seq = unit.seq().to_vec();
-                (0..unit.cluster_num)
-                    .map(|cl| DitchNode::new((unit.id, cl as u64), seq.clone()))
-                    .collect()
-            })
-            .collect();
-        let nodes_index: HashMap<_, _> = nodes
-            .iter()
-            .enumerate()
-            .map(|(idx, node)| (node.node, NodeIndex(idx)))
-            .collect();
+        let nodes_seq: HashMap<_, _> = units.iter().map(|c| (c.id, c.seq())).collect();
+        use std::collections::BTreeMap;
+        let mut nodes_counts: BTreeMap<_, usize> = BTreeMap::new();
         for node in reads.iter().flat_map(|r| r.borrow().nodes.iter()) {
-            nodes[nodes_index[&(node.unit, node.cluster)].0].occ += 1;
+            *nodes_counts.entry((node.unit, node.cluster)).or_default() += 1;
+        }
+        let (nodes, nodes_index): (Vec<_>, HashMap<Node, _>) = nodes_counts
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (node, occ))| {
+                let seq = nodes_seq[&node.0].to_vec();
+                let mut d_node = DitchNode::new(node, seq.clone());
+                d_node.occ = occ;
+                (d_node, (node, NodeIndex(idx)))
+            })
+            .unzip();
+        for (&node, &idx) in nodes_index.iter() {
+            assert_eq!(nodes[idx.0].node, node);
         }
         let edge_seq: Vec<_> = take_representative(reads, &nodes_index);
         let mut graph = Self { nodes, nodes_index };
@@ -586,7 +588,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     pub fn clean_up_graph_for_assemble(
         &'b mut self,
         cov: f64,
-        lens: &[usize],
         reads: &[&EncodedRead],
         c: &super::AssembleConfig,
         _read_type: definitions::ReadType,
@@ -597,7 +598,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
         debug!("CC\tBFASN\t{}", self.cc());
         self.assign_copy_number_mst(cov, &mut rng);
-        self.remove_zero_copy_elements(lens, 0.3);
+        self.remove_zero_copy_elements(0.3);
         debug!("CC\tRMZERO\t{}", self.cc());
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
@@ -611,14 +612,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .enumerate();
         for (i, llr) in llr_stream {
             self.assign_copy_number_mst(cov, &mut rng);
-            self.remove_zero_copy_elements(lens, 0.8);
+            self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if i == 5 {
                 self.assign_copy_number_mst(cov, &mut rng);
-                self.remove_zero_copy_elements(lens, 0.9);
+                self.remove_zero_copy_elements(0.9);
                 self.remove_zero_copy_path(0.3);
                 self.remove_lightweight_edges(0, true);
                 self.remove_tips(0.8, 4);
@@ -630,7 +631,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             // panic!();
         }
         self.assign_copy_number_mst(cov, &mut rng);
-        self.remove_zero_copy_elements(lens, 0.9);
+        self.remove_zero_copy_elements(0.9);
         self.remove_zero_copy_path(0.3);
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
@@ -821,7 +822,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// 3. If it is a node, and the bounding constraint does not hold.
     ///    In other words, it connected to the non-ZCP edge.
     /// 4. If it is an edge, and the occ is more than `thr * max_out_dgree`
-    pub fn remove_zero_copy_elements(&mut self, _lens: &[usize], thr: f64) {
+    pub fn remove_zero_copy_elements(&mut self, thr: f64) {
         // (from,from_position,to,to_position) and from.0 <= to.0.
         fn format_edge(e: &DitchEdge) -> DitEdge {
             let (f, t) = e.key();

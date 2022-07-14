@@ -412,6 +412,11 @@ impl Graph {
             .unwrap_or((LARGE_VALUE, vec![]));
         let mut stack = vec![];
         let mut status = vec![Status::Undiscovered; self.graph.len()];
+        // TODO:If there are too many one-degree nodes, the inference gets slower and slower.
+        // (from,to) should be resides in the same connected components....
+        // Use find union tree to check if two node is in the same ....
+        // No, we should first enumerate reachable one-degree nodes at first.
+        // But we usually see no problem here...
         for (i, &from) in self.one_degree_nodes.iter().enumerate() {
             for &to in self.one_degree_nodes.iter().skip(i + 1) {
                 if let Some(cycle) = self.find_cycle_between(from, to, &mut stack, &mut status) {
