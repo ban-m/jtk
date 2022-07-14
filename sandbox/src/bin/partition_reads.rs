@@ -28,11 +28,11 @@ fn main() -> std::io::Result<()> {
     for read in reads.iter() {
         match partitions.get(read.id()) {
             Some(0) | None => {
-                writeln!(&mut hap1_wtr, "{read}")?;
-                writeln!(&mut hap2_wtr, "{read}")?
+                writeln!(hap1_wtr, "{read}")?;
+                writeln!(hap2_wtr, "{read}")?
             }
-            Some(1) => writeln!(&mut hap1_wtr, "{read}")?,
-            Some(2) => writeln!(&mut hap2_wtr, "{read}")?,
+            Some(1) => writeln!(hap1_wtr, "{read}")?,
+            Some(2) => writeln!(hap2_wtr, "{read}")?,
             _ => panic!(),
         }
     }

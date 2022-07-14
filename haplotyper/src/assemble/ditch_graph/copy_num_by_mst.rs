@@ -489,11 +489,16 @@ impl Graph {
             }
             status[last] = Status::Processing;
             let edge_in_tree = self.graph[last].iter().filter(|e| e.is_in_mst);
-            let edge_undiscovered = edge_in_tree.filter(|e| status[e.to] == Status::Undiscovered);
-            for take_edge in edge_undiscovered {
+            let mut edge_undiscovered =
+                edge_in_tree.filter(|e| status[e.to] == Status::Undiscovered);
+            if let Some(take_edge) = edge_undiscovered.next() {
                 stack.push(take_edge.to);
                 continue 'dfs;
             }
+            // for take_edge in edge_undiscovered {
+            //     stack.push(take_edge.to);
+            //     continue 'dfs;
+            // }
             let fin_node = stack.pop().unwrap();
             status[fin_node] = Status::Processed;
         }
@@ -580,22 +585,23 @@ pub mod tests {
     use super::*;
     fn mock_data_1() -> Graph {
         // let nodes = HashMap::new();
-        let mut edges: Vec<_> = vec![];
-        edges.push(FatEdge::new(0, 1, 2, 1));
-        edges.push(FatEdge::new(1, 2, 1, 1));
-        edges.push(FatEdge::new(1, 4, 1, 1));
-        edges.push(FatEdge::new(2, 3, 1, 1));
-        edges.push(FatEdge::new(4, 5, 1, 1));
-        edges.push(FatEdge::new(3, 6, 1, 1));
-        edges.push(FatEdge::new(5, 6, 1, 1));
-        edges.push(FatEdge::new(6, 7, 2, 1));
-        edges.push(FatEdge::new(7, 8, 1, 1));
-        edges.push(FatEdge::new(7, 10, 1, 1));
-        edges.push(FatEdge::new(8, 9, 1, 1));
-        edges.push(FatEdge::new(10, 11, 1, 1));
-        edges.push(FatEdge::new(9, 12, 1, 1));
-        edges.push(FatEdge::new(12, 11, 1, 1));
-        edges.push(FatEdge::new(13, 12, 2, 1));
+        let edges = vec![
+            FatEdge::new(0, 1, 2, 1),
+            FatEdge::new(1, 2, 1, 1),
+            FatEdge::new(1, 4, 1, 1),
+            FatEdge::new(2, 3, 1, 1),
+            FatEdge::new(4, 5, 1, 1),
+            FatEdge::new(3, 6, 1, 1),
+            FatEdge::new(5, 6, 1, 1),
+            FatEdge::new(6, 7, 2, 1),
+            FatEdge::new(7, 8, 1, 1),
+            FatEdge::new(7, 10, 1, 1),
+            FatEdge::new(8, 9, 1, 1),
+            FatEdge::new(10, 11, 1, 1),
+            FatEdge::new(9, 12, 1, 1),
+            FatEdge::new(12, 11, 1, 1),
+            FatEdge::new(13, 12, 2, 1),
+        ];
         let mut graph = vec![Vec::with_capacity(2); 14];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
@@ -616,23 +622,24 @@ pub mod tests {
         }
     }
     fn mock_data_2() -> Graph {
-        let mut edges: Vec<_> = vec![];
-        edges.push(FatEdge::new(0, 1, 2, 1));
-        edges.push(FatEdge::new(1, 2, 2, 1));
-        edges.push(FatEdge::new(2, 3, 3, 1));
-        edges.push(FatEdge::new(3, 4, 1, 1));
-        edges.push(FatEdge::new(3, 6, 2, 1));
-        edges.push(FatEdge::new(4, 5, 1, 1));
-        edges.push(FatEdge::new(5, 6, 1, 1));
-        edges.push(FatEdge::new(6, 7, 3, 1));
-        edges.push(FatEdge::new(7, 8, 2, 1));
-        edges.push(FatEdge::new(7, 10, 1, 1));
-        edges.push(FatEdge::new(8, 9, 2, 1));
-        edges.push(FatEdge::new(9, 10, 2, 1));
-        edges.push(FatEdge::new(10, 11, 3, 1));
-        edges.push(FatEdge::new(11, 2, 1, 1));
-        edges.push(FatEdge::new(11, 12, 2, 1));
-        edges.push(FatEdge::new(12, 13, 2, 1));
+        let edges = vec![
+            FatEdge::new(0, 1, 2, 1),
+            FatEdge::new(1, 2, 2, 1),
+            FatEdge::new(2, 3, 3, 1),
+            FatEdge::new(3, 4, 1, 1),
+            FatEdge::new(3, 6, 2, 1),
+            FatEdge::new(4, 5, 1, 1),
+            FatEdge::new(5, 6, 1, 1),
+            FatEdge::new(6, 7, 3, 1),
+            FatEdge::new(7, 8, 2, 1),
+            FatEdge::new(7, 10, 1, 1),
+            FatEdge::new(8, 9, 2, 1),
+            FatEdge::new(9, 10, 2, 1),
+            FatEdge::new(10, 11, 3, 1),
+            FatEdge::new(11, 2, 1, 1),
+            FatEdge::new(11, 12, 2, 1),
+            FatEdge::new(12, 13, 2, 1),
+        ];
         let mut graph = vec![Vec::with_capacity(2); 14];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
@@ -654,15 +661,16 @@ pub mod tests {
     }
     fn mock_data_3() -> Graph {
         // let nodes = HashMap::new();
-        let mut edges: Vec<_> = vec![];
-        edges.push(FatEdge::new(0, 1, 20, 1));
-        edges.push(FatEdge::new(1, 2, 5, 1));
-        edges.push(FatEdge::new(2, 3, 5, 1));
-        edges.push(FatEdge::new(6, 3, 5, 1));
-        edges.push(FatEdge::new(1, 4, 5, 1));
-        edges.push(FatEdge::new(4, 5, 5, 1));
-        edges.push(FatEdge::new(5, 6, 5, 1));
-        edges.push(FatEdge::new(6, 7, 20, 1));
+        let edges: Vec<_> = vec![
+            FatEdge::new(0, 1, 20, 1),
+            FatEdge::new(1, 2, 5, 1),
+            FatEdge::new(2, 3, 5, 1),
+            FatEdge::new(6, 3, 5, 1),
+            FatEdge::new(1, 4, 5, 1),
+            FatEdge::new(4, 5, 5, 1),
+            FatEdge::new(5, 6, 5, 1),
+            FatEdge::new(6, 7, 20, 1),
+        ];
         let mut graph = vec![Vec::with_capacity(2); 8];
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));

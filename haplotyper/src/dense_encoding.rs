@@ -268,7 +268,7 @@ fn write_to_file(
         let gfa = gfa::GFA::from_records(records);
         if let Ok(mut wtr) = std::fs::File::create(file).map(std::io::BufWriter::new) {
             use std::io::Write;
-            if let Err(why) = writeln!(&mut wtr, "{}", gfa) {
+            if let Err(why) = writeln!(wtr, "{}", gfa) {
                 eprintln!("{:?}", why);
             }
         }

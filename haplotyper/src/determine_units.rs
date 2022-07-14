@@ -118,7 +118,7 @@ impl DetermineUnit for definitions::DataSet {
         };
         debug!("Select Unit: Configuration:{:?}", config);
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
-        self.selected_chunks = pick_random(&self.raw_reads, &config, &mut rng);
+        self.selected_chunks = pick_random(&self.raw_reads, config, &mut rng);
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
         let overlap_identity_thr = match self.read_type {
             ReadType::CCS => 0.95,
@@ -277,7 +277,7 @@ fn mm2_unit_overlap(ds: &DataSet, config: &UnitConfig) -> std::io::Result<Vec<u8
         reference.push("chunks.fa");
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
         for unit in ds.selected_chunks.iter() {
-            writeln!(&mut wtr, ">{}\n{}", unit.id, &unit.seq)?;
+            writeln!(wtr, ">{}\n{}", unit.id, &unit.seq)?;
         }
         wtr.flush()?;
         reference.into_os_string().into_string().unwrap()
@@ -478,7 +478,7 @@ fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> HashMap<FilledEd
     let count_thr = get_count_thr(ds, config);
     debug!("FillSparse\tEdge\tThreshold\t{}", count_thr);
     edge_count.retain(|_, seq| count_thr < seq.len());
-    take_consensus(&edge_count, &ds.read_type, &config)
+    take_consensus(&edge_count, &ds.read_type, config)
 }
 
 fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
@@ -491,7 +491,7 @@ fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
         .map(|(key, seqs)| {
             let radius = read_type.band_width(config.chunk_len);
             let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
-            let consensus = kiley::bialignment::guided::polish_until_converge(&cons, &seqs, radius);
+            let consensus = kiley::bialignment::guided::polish_until_converge(&cons, seqs, radius);
             (key.clone(), consensus)
         })
         .collect()
@@ -728,7 +728,7 @@ fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> HashMap<(u64, boo
         }
     }
     // We fill units for each sparsed region.
-    let count_thr = get_count_thr(&ds, config);
+    let count_thr = get_count_thr(ds, config);
     tail_counts.retain(|_, labels| count_thr.max(1) < labels.len());
     debug!("FillSparse\tTip\tThreshold\t{}", count_thr);
     let tail_counts: HashMap<_, _> = tail_counts

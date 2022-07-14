@@ -38,9 +38,9 @@ fn main() -> std::io::Result<()> {
     let mut hapa_file = std::fs::File::create(&args[2]).map(BufWriter::new)?;
     let mut hapb_file = std::fs::File::create(&args[3]).map(BufWriter::new)?;
     let reference = String::from_utf8_lossy(&reference);
-    writeln!(&mut refr_file, ">reference\n{}", reference)?;
-    writeln!(&mut hapa_file, ">hapA\n{}", String::from_utf8_lossy(&hap_a))?;
-    writeln!(&mut hapb_file, ">hapB\n{}", String::from_utf8_lossy(&hap_b))?;
+    writeln!(refr_file, ">reference\n{}", reference)?;
+    writeln!(hapa_file, ">hapA\n{}", String::from_utf8_lossy(&hap_a))?;
+    writeln!(hapb_file, ">hapB\n{}", String::from_utf8_lossy(&hap_b))?;
     Ok(())
 }
 

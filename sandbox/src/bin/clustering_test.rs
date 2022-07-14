@@ -59,7 +59,7 @@ fn main() -> std::io::Result<()> {
         .map(|seq| kiley::bialignment::global_banded(template, seq, 1, -1, -1, -1, radius).1)
         .collect();
     let (preds, _, _, _) =
-        kmeans::clustering_dev(&template, &seqs, &mut ops, &strand, &mut rng, &hmm, &config)
+        kmeans::clustering_dev(template, &seqs, &mut ops, &strand, &mut rng, &hmm, &config)
             .unwrap();
     for (ans, record) in preds.iter().zip(dataset.iter()) {
         println!("{}\t{ans}", record.id());

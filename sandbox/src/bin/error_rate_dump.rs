@@ -51,11 +51,11 @@ fn main() -> std::io::Result<()> {
         for read in ds.encoded_reads.iter() {
             let error = read_error_rate[read.id as usize];
             let len = read.original_length;
-            writeln!(&mut wtr, "READ\t{}\t{}\t{}", read.id, error, len)?;
+            writeln!(wtr, "READ\t{}\t{}\t{}", read.id, error, len)?;
         }
         for unit in ds.selected_chunks.iter() {
             for (cl, error) in unit_error_rate[unit.id as usize].iter().enumerate() {
-                writeln!(&mut wtr, "UNIT\t{}\t{cl}\t{error}", unit.id)?;
+                writeln!(wtr, "UNIT\t{}\t{cl}\t{error}", unit.id)?;
             }
         }
     }

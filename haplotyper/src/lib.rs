@@ -11,7 +11,7 @@ pub mod entry;
 pub mod extract;
 pub mod find_union;
 pub mod global_clustering;
-pub mod hapcut;
+// pub mod hapcut;
 pub mod local_clustering;
 pub mod minimap2;
 pub mod model_tune;

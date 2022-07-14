@@ -29,7 +29,7 @@ fn main() -> std::io::Result<()> {
     let template: Vec<_> = gen_seq::generate_seq(&mut rng, len);
     let mut templates = vec![template.clone()];
     let (var_type, seq) = {
-        let mut seq = template.clone();
+        let mut seq = template;
         let var_pos = rng.gen_range(0..seq.len());
         let var_type = loop {
             let var_type = rng.gen::<usize>() % 9;

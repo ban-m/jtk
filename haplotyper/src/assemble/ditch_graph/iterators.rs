@@ -19,7 +19,7 @@ impl<'b> DitchGraph<'b> {
     {
         self.nodes.iter_mut().filter(|n| n.is_deleted).for_each(f);
     }
-    pub fn edges<'a>(&'a self) -> impl std::iter::Iterator<Item = &'a DitchEdge> {
+    pub fn edges(&self) -> impl std::iter::Iterator<Item = &DitchEdge> {
         self.nodes().flat_map(|(_, n)| n.edges.iter())
     }
     pub fn modify_by_with_index<F>(&mut self, f: F)

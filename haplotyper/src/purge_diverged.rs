@@ -36,9 +36,9 @@ impl PurgeDivergent for DataSet {
 // Purge node with very high error rate.
 pub fn purge_erroneous_nodes(ds: &mut DataSet, _config: &PurgeDivConfig) -> HashSet<u64> {
     const SAFE_MARGIN: f64 = 5f64;
-    let fallback = crate::determine_units::calc_sim_thr(&ds, 0.5);
+    let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
     use crate::encode::deletion_fill::estimate_error_rate_dev;
-    let (read_erorr_rate, unit_error_rate, sigma_of_er) = estimate_error_rate_dev(&ds, fallback);
+    let (read_erorr_rate, unit_error_rate, sigma_of_er) = estimate_error_rate_dev(ds, fallback);
     debug!("PD\tPurgeErroneousNode\t{SAFE_MARGIN}\t{sigma_of_er}");
     let mut units_of_removed_nodes = HashSet::new();
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
@@ -255,9 +255,9 @@ pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> 
     use crate::encode::deletion_fill::estimate_error_rate_dev;
     // let error_rate = ds.error_rate();
     // let fallback = error_rate.total + SD_SIGMA * error_rate.total_sd;
-    let fallback = crate::determine_units::calc_sim_thr(&ds, 0.5);
+    let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
     debug!("PD\tFallback\t{fallback}");
-    let (_, unit_error_rate, _) = estimate_error_rate_dev(&ds, fallback);
+    let (_, unit_error_rate, _) = estimate_error_rate_dev(ds, fallback);
     unit_error_rate
         .iter()
         .map(|es| es.iter().map(|&x| thr < x).collect())

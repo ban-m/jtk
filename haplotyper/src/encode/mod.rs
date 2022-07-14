@@ -327,13 +327,13 @@ pub fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec
         reference.push("units.fa");
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
         for unit in ds.selected_chunks.iter() {
-            writeln!(&mut wtr, ">{}\n{}", unit.id, &unit.seq)?;
+            writeln!(wtr, ">{}\n{}", unit.id, &unit.seq)?;
         }
         let mut reads = c_dir.clone();
         reads.push("reads.fa");
         let mut wtr = std::fs::File::create(&reads).map(BufWriter::new)?;
         for read in ds.raw_reads.iter() {
-            writeln!(&mut wtr, ">{}\n{}", read.name, &read.seq)?;
+            writeln!(wtr, ">{}\n{}", read.name, &read.seq)?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads.into_os_string().into_string().unwrap();
@@ -400,7 +400,7 @@ mod tests {
             Op::Match(10),
         ];
         let iter = ops.iter().map(|x| match x {
-            Op::Match(l) | Op::Ins(l) => *l as i32 * -1,
+            Op::Match(l) | Op::Ins(l) => -(*l as i32),
             Op::Del(l) => *l as i32 * 2,
         });
         let max_del = max_region(iter);
@@ -414,7 +414,7 @@ mod tests {
             Op::Match(10),
         ];
         let iter = ops.iter().map(|x| match x {
-            Op::Match(l) | Op::Del(l) => *l as i32 * -1,
+            Op::Match(l) | Op::Del(l) => -(*l as i32),
             Op::Ins(l) => *l as i32 * 2,
         });
         let max_in = max_region(iter);
@@ -429,7 +429,7 @@ mod tests {
             Op::Ins(100),  // 203
         ];
         let iter = ops.iter().map(|x| match x {
-            Op::Match(l) | Op::Del(l) => *l as i32 * -1,
+            Op::Match(l) | Op::Del(l) => -(*l as i32),
             Op::Ins(l) => *l as i32 * 2,
         });
         let max_in = max_region(iter);

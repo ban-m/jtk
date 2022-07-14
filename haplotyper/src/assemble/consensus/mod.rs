@@ -40,10 +40,10 @@ impl std::default::Default for PolishConfig {
     fn default() -> Self {
         Self {
             seed: Default::default(),
-            min_coverage: 1,
+            min_coverage: 3,
             window_size: 2000,
             radius: 100,
-            round_num: 1,
+            round_num: 2,
         }
     }
 }
@@ -56,18 +56,17 @@ pub fn polish_segment(
     config: &PolishConfig,
 ) -> Vec<Segment> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    for seg in segments.iter() {
-        log::debug!("LEN\t{}\t{}", seg.sid, seg.slen);
-    }
-    for enc in encs.iter() {
-        let id = &enc.id;
-        for tile in enc.tiles() {
-            let (start, end) = tile.contig_range();
-            let (dir, ustart, uend) = tile.unit_range();
-            log::debug!("ENCODING\t{id}\t{start}\t{end}\t{dir}\t{ustart}\t{uend}");
-        }
-    }
-    log::debug!("NUMSEG\t{}", segments.len());
+    // for seg in segments.iter() {
+    //     log::debug!("LEN\t{}\t{}", seg.sid, seg.slen);
+    // }
+    // for enc in encs.iter() {
+    //     let id = &enc.id;
+    //     for tile in enc.tiles() {
+    //         let (start, end) = tile.contig_range();
+    //         let (dir, ustart, uend) = tile.unit_range();
+    //         log::debug!("ENCODING\t{id}\t{start}\t{end}\t{dir}\t{ustart}\t{uend}");
+    //     }
+    // }
     let alignments: Vec<_> = reads
         .par_iter()
         .enumerate()
@@ -76,69 +75,52 @@ pub fn polish_segment(
             let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
             let mut raw_read = read.recover_raw_read();
             raw_read.iter_mut().for_each(u8::make_ascii_uppercase);
-            align_to_contigs(read, &raw_read, &encs, &segments, &mut rng)
+            align_to_contigs(read, &raw_read, encs, segments, &mut rng)
         })
         .collect();
     use std::collections::BTreeMap;
     let mut alignments_on_contigs: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    for aln in alignments.into_iter().flat_map(|aln| aln) {
+    for aln in alignments.into_iter().flatten() {
         alignments_on_contigs
             .entry(aln.contig.clone())
             .or_default()
             .push(aln);
     }
     let hmm = get_model(ds).unwrap();
-    if log_enabled!(log::Level::Debug) {
-        let (mut mat, mut len) = (0, 0);
-        for alns in alignments_on_contigs.values() {
-            for aln in alns.iter() {
-                mat += aln.ops.iter().filter(|&&op| op == Op::Match).count();
-                len += aln.ops.len();
-            }
-        }
-        log::debug!("ALN\t{mat}\t{len}\t{}", mat as f64 / len as f64);
-    }
-    let polished: Vec<_> = alignments_on_contigs
-        .iter_mut()
-        .map(|(sid, alignments)| {
-            log::debug!("POLISH\t{sid}");
-            let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
-            let seg = seg.sequence.as_ref().unwrap().as_bytes();
-            let seq = polish(seg, alignments, &hmm, config);
-            (sid.clone(), seq)
-        })
-        .collect();
-    if log_enabled!(log::Level::Debug) {
-        let (mut mat, mut len) = (0, 0);
-        for alns in alignments_on_contigs.values() {
-            for aln in alns.iter() {
-                mat += aln.ops.iter().filter(|&&op| op == Op::Match).count();
-                len += aln.ops.len();
-            }
-        }
-        log::debug!("ALN\t{mat}\t{len}\t{}", mat as f64 / len as f64);
-    }
-    // for aln in alignments_on_contigs
-    //     .values()
-    //     .flat_map(|alns| alns)
-    //     .take(10)
-    // {
-    //     let refr = polished
-    //         .iter()
-    //         .find(|(id, _)| id == &aln.contig)
-    //         .map(|(_, seq)| seq.as_slice())
-    //         .unwrap();
-    //     let refr = &refr[aln.contig_start..aln.contig_end];
-    //     let (refr, ops, query) = kiley::recover(refr, &aln.query, &aln.ops);
-    //     for ((refr, ops), query) in refr.chunks(200).zip(ops.chunks(200)).zip(query.chunks(200)) {
-    //         eprintln!("{}", std::str::from_utf8(refr).unwrap());
-    //         eprintln!("{}", std::str::from_utf8(ops).unwrap());
-    //         eprintln!("{}", std::str::from_utf8(query).unwrap());
+    // let old = alignments_on_contigs.clone();
+    //    let polished: Vec<_> = alignments_on_contigs
+    let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
+        log::debug!("POLISH\t{sid}");
+        let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
+        let seg = seg.sequence.as_ref().unwrap().as_bytes();
+        let seq = polish(sid, seg, alignments, &hmm, config);
+        (sid.clone(), seq)
+    });
+    // for (sid, alns) in alignments_on_contigs.iter() {
+    //     let old_alns = old.get(sid).unwrap();
+    //     for (old, aln) in old_alns.iter().zip(alns.iter()) {
+    //         let old_score = old.ops.iter().filter(|&&op| op == Op::Match).count();
+    //         let score = aln.ops.iter().filter(|&&op| op == Op::Match).count();
+    //         if score + 300 < old_score {
+    //             log::debug!("SCORE\t{score}\t{old_score}\t{}", aln.ops.len());
+    //             let refr = polished
+    //                 .iter()
+    //                 .find(|(id, _)| id == &aln.contig)
+    //                 .map(|(_, seq)| seq.as_slice())
+    //                 .unwrap();
+    //             let refr = &refr[aln.contig_start..aln.contig_end];
+    //             debug!("Q{}\tR{}", aln.query.len(), refr.len());
+    //             let (refr, ops, query) = kiley::recover(refr, &aln.query, &aln.ops);
+    //             for ((refr, ops), query) in
+    //                 refr.chunks(200).zip(ops.chunks(200)).zip(query.chunks(200))
+    //             {
+    //                 eprintln!("{}", std::str::from_utf8(refr).unwrap());
+    //                 eprintln!("{}", std::str::from_utf8(ops).unwrap());
+    //                 eprintln!("{}", std::str::from_utf8(query).unwrap());
+    //             }
+    //             eprintln!("----------------");
+    //         }
     //     }
-    //     eprintln!("----------------");
-    //     let score = aln.ops.iter().filter(|&&op| op == Op::Match).count();
-    //     log::debug!("SCORE\t{score}\t{}", aln.ops.len());
-    //     assert!(score > aln.ops.len() / 2);
     // }
     polished
         .into_iter()
@@ -154,7 +136,22 @@ pub fn polish_segment(
         .collect()
 }
 
+fn log_identity(sid: &str, alignments: &[Alignment]) {
+    if log_enabled!(log::Level::Debug) {
+        let (mut mat, mut len) = (0, 0);
+        for aln in alignments.iter() {
+            let match_num = aln.ops.iter().filter(|&&op| op == Op::Match).count();
+            let aln_len = aln.ops.len();
+            mat += match_num;
+            len += aln_len;
+            assert!(len < 2 * mat);
+        }
+        log::debug!("ALN\t{sid}\t{mat}\t{len}\t{}", mat as f64 / len as f64);
+    }
+}
+
 fn polish(
+    sid: &str,
     draft: &[u8],
     alignments: &mut [Alignment],
     hmm: &PairHiddenMarkovModel,
@@ -162,6 +159,7 @@ fn polish(
 ) -> Vec<u8> {
     let window = config.window_size;
     let mut polished = draft.to_vec();
+    log_identity(sid, alignments);
     for _ in 0..config.round_num {
         // Allocation.
         let num_slot = polished.len() / window + (polished.len() % window != 0) as usize;
@@ -181,23 +179,30 @@ fn polish(
                 (start, put_position, end)
             })
             .collect();
-        //     log::debug!("ALLOCATED");
-        // for (i, (ps, po)) in pileup_seq.iter().zip(pileup_ops.iter()).enumerate() {
-        //     assert_eq!(ps.len(), po.len());
-        //     log::debug!("{i}\t{}\t{}", ps.len(), po.len());
-        // }
         //  Polish
-        //  Does it parallel well? Check `top`.
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
             .zip(pileup_seq.par_iter())
             .zip(pileup_ops.par_iter_mut())
             .map(|((draft, seqs), ops)| {
-                if seqs.len() < config.min_coverage {
+                let before: Vec<_> = ops
+                    .iter()
+                    .map(|ops| ops.iter().filter(|&&op| op == Op::Match).count())
+                    .collect();
+                let polished = if seqs.len() < config.min_coverage {
                     draft.to_vec()
                 } else {
                     hmm.polish_until_converge_with(draft, seqs, ops, config.radius)
+                };
+                let after: Vec<_> = ops
+                    .iter()
+                    .map(|ops| ops.iter().filter(|&&op| op == Op::Match).count())
+                    .collect();
+                assert_eq!(before.len(), after.len());
+                for (&before, &after) in before.iter().zip(after.iter()) {
+                    assert!(before <= 2 * after);
                 }
+                polished
             })
             .collect();
         let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
@@ -206,31 +211,66 @@ fn polish(
             (xs, len)
         });
         assert_eq!(acc_len.len(), polished_seg.len() + 1);
-        polished = polished_seg.iter().flat_map(|x| x).copied().collect();
+        polished = polished_seg.iter().flatten().copied().collect();
         // Fix alignment.
         alignments
             .iter_mut()
             .zip(allocated_positions.iter())
-            .for_each(
-                |(aln, &((start, first_pos), ref allocated_pos, (end, last_pos)))| {
-                    aln.ops.clear();
-                    let first_pos_bp = acc_len[first_pos + 1];
-                    let (ops, contig_len) =
-                        align_leading(&aln.query[..start], &polished[..first_pos_bp]);
-                    aln.contig_start = first_pos_bp - contig_len;
-                    aln.ops.extend(ops);
-                    for &(pos, idx) in allocated_pos.iter() {
-                        aln.ops.extend(pileup_ops[pos][idx].iter());
-                    }
-                    let last_pos_bp = acc_len[last_pos];
-                    let (ops, contig_len) =
-                        align_trailing(&aln.query[end..], &polished[last_pos_bp..]);
-                    aln.ops.extend(ops);
-                    aln.contig_end = last_pos_bp + contig_len;
-                },
-            );
+            .for_each(|(aln, aloc_pos)| {
+                fix_alignment(aln, aloc_pos, &polished, &acc_len, &pileup_ops)
+            });
+        log_identity(sid, alignments);
     }
     polished
+}
+
+fn fix_alignment(
+    aln: &mut Alignment,
+    aloc_pos: &(TipPos, Vec<(usize, usize)>, TipPos),
+    polished: &[u8],
+    acc_len: &[usize],
+    pileup_ops: &[Vec<Vec<Op>>],
+) {
+    aln.ops.clear();
+    let &((start, first_pos), ref allocated_pos, (end, last_pos)) = aloc_pos;
+    if start == end && first_pos == last_pos {
+        // Contained alignment.
+        let (contig_start, contig_end) = (acc_len[first_pos], acc_len[first_pos + 1]);
+        let (start, ops, end) = align_infix(&aln.query, &polished[contig_start..contig_end]);
+        aln.ops.extend(ops);
+        aln.contig_start = contig_start + start;
+        aln.contig_end = contig_start + end;
+        return;
+    }
+    if start != 0 {
+        let first_pos_bp = acc_len[first_pos + 1];
+        let (ops, contig_len) = align_leading(&aln.query[..start], &polished[..first_pos_bp]);
+        aln.contig_start = first_pos_bp - contig_len;
+        aln.ops.extend(ops);
+    } else {
+        aln.contig_start = acc_len[first_pos];
+    }
+    for &(pos, idx) in allocated_pos.iter() {
+        aln.ops.extend(pileup_ops[pos][idx].iter());
+    }
+    if end != aln.query.len() {
+        let last_pos_bp = acc_len[last_pos];
+        let (ops, contig_len) = align_trailing(&aln.query[end..], &polished[last_pos_bp..]);
+        aln.ops.extend(ops);
+        aln.contig_end = last_pos_bp + contig_len;
+    } else {
+        aln.contig_end = acc_len[last_pos];
+    }
+}
+
+fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
+    let mode = edlib_sys::AlignMode::Infix;
+    let task = edlib_sys::AlignTask::Alignment;
+    let aln = edlib_sys::edlib_align(query, seg, mode, task);
+    let (start, end) = aln.locations.unwrap()[0];
+    let ops = aln.operations.unwrap();
+    let ops: Vec<_> = ops.iter().map(|&op| EDLIB2KILEY[op as usize]).collect();
+    (start, ops, end + 1)
 }
 
 // ------------> seg
@@ -289,12 +329,12 @@ const EDGE: usize = 100;
 // (bp position in the query, chunk id in the contig)
 type TipPos = (usize, usize);
 type Chunk<'a> = (usize, &'a [u8], Vec<Op>);
-fn split<'a>(
-    alignment: &'a Alignment,
+fn split(
+    alignment: &Alignment,
     window: usize,
     window_num: usize,
     contig_len: usize,
-) -> (TipPos, Vec<Chunk<'a>>, TipPos) {
+) -> (TipPos, Vec<Chunk>, TipPos) {
     let start_chunk_id = alignment.contig_start / window;
     let start_pos_in_contig = match alignment.contig_start % window == 0 {
         true => start_chunk_id * window,
@@ -315,7 +355,10 @@ fn split<'a>(
         }
     }
     let start_pos_in_query = qpos;
-    // early drop if cpos < start_pos_in_contig?
+    if cpos < start_pos_in_contig {
+        let start = (start_pos_in_query, start_chunk_id);
+        return (start, Vec::new(), start);
+    }
     let mut chunks = vec![];
     let mut current_chunk_id = start_pos_in_contig / window;
     let mut end_pos = qpos;
@@ -546,8 +589,8 @@ fn match_score(n: &LightNode, m: &UnitAlignmentInfo) -> (i64, Op) {
 }
 fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> Vec<Op> {
     let mut dp = vec![vec![0; refr.len() + 1]; query.len() + 1];
-    for i in 0..query.len() + 1 {
-        dp[i][0] = i as i64 * GAP;
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i as i64 * GAP;
     }
     for j in 0..refr.len() + 1 {
         dp[0][j] = j as i64 * GAP;
@@ -588,14 +631,17 @@ fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> Vec<Op> {
 
 fn get_range(start: ChainNode, ops: &mut Vec<Op>) -> ((usize, usize), (usize, usize)) {
     // Remove useless Ins/Del.
-    loop {
-        match ops.last() {
-            Some(Op::Del) | Some(Op::Ins) => {
-                assert!(matches!(ops.pop(), Some(Op::Del) | Some(Op::Ins)))
-            }
-            _ => break,
-        }
+    while matches!(ops.last(), Some(Op::Del) | Some(Op::Ins)) {
+        assert!(matches!(ops.pop(), Some(Op::Del) | Some(Op::Ins)))
     }
+    // loop {
+    //     match ops.last() {
+    //         Some(Op::Del) | Some(Op::Ins) => {
+    //             assert!(matches!(ops.pop(), Some(Op::Del) | Some(Op::Ins)))
+    //         }
+    //         _ => break,
+    //     }
+    // }
     // Seek to the beginning.
     let (mut q_pos, mut r_pos) = (start.read_index, start.contig_index);
     ops.reverse();
@@ -745,14 +791,14 @@ fn base_pair_alignment(
             assert!(r_start <= r_end);
             let read_bet = &seq[r_start..r_end];
             // log::debug!("QUERY\t{r_start}\t{r_end}");
-            extend_between(&mut query, &mut ops, read_bet, &seg_bet);
+            extend_between(&mut query, &mut ops, read_bet, seg_bet);
         } else {
             let r_start = w.get(1).map(|((_, p), _)| p.0).unwrap();
             let r_end = w.get(0).map(|((p, _), _)| p.0).unwrap();
             assert!(r_start <= r_end);
             let read_bet = bio_utils::revcmp(&seq[r_start..r_end]);
             // log::debug!("QUERY\t{r_start}\t{r_end}");
-            extend_between(&mut query, &mut ops, &read_bet, &seg_bet);
+            extend_between(&mut query, &mut ops, &read_bet, seg_bet);
         }
     }
     let ((start, end), (node, enc)) = tiles.last().unwrap();
@@ -1102,14 +1148,10 @@ fn append_range(
     for op in alignment {
         if (start..end).contains(&u_pos) && (r_start..r_end).contains(&r_pos) {
             temp_o.push(op);
-        } else if (start..end).contains(&u_pos) {
-            if op != Op::Ins {
-                temp_o.push(Op::Del);
-            }
-        } else if (r_start..r_end).contains(&r_pos) {
-            if op != Op::Del {
-                temp_o.push(Op::Ins)
-            }
+        } else if (start..end).contains(&u_pos) && op != Op::Ins {
+            temp_o.push(Op::Del);
+        } else if (r_start..r_end).contains(&r_pos) && op != Op::Del {
+            temp_o.push(Op::Ins)
         }
         match op {
             Op::Match | Op::Mismatch => {
@@ -1135,6 +1177,7 @@ fn append_range(
     }
 }
 
+#[derive(Debug, Clone)]
 struct Alignment {
     contig: String,
     contig_start: usize,

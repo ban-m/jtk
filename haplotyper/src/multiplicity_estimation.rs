@@ -108,7 +108,7 @@ impl MultiplicityEstimation for DataSet {
         {
             use std::io::Write;
             let gfa = convert_to_gfa(&graph, &assemble_config);
-            writeln!(&mut file, "{}", gfa).unwrap();
+            writeln!(file, "{}", gfa).unwrap();
         }
     }
 

@@ -13,7 +13,7 @@ fn main() -> std::io::Result<()> {
     let seq1 = gen_seq::generate_seq(&mut rng, 100);
     let seq2 = gen_seq::generate_seq(&mut rng, 100);
     let hap1 = vec![seq1.clone(), vec![b'A'; 4], seq2.clone()].concat();
-    let hap2 = vec![seq1.clone(), vec![b'A'; 6], seq2.clone()].concat();
+    let hap2 = vec![seq1, vec![b'A'; 6], seq2].concat();
     let prof = gen_seq::PROFILE;
     for i in 0..100 {
         let read = match i % 2 == 0 {

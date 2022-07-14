@@ -77,12 +77,12 @@ fn main() -> std::io::Result<()> {
         let mut path = command_arg.output_dir.clone();
         path.push(&format!("{}.fa", i));
         let mut wtr = std::fs::File::create(path).map(BufWriter::new)?;
-        let seq = std::str::from_utf8(&template).unwrap();
-        writeln!(&mut wtr, ">{i}\n{seq}")?;
+        let seq = std::str::from_utf8(template).unwrap();
+        writeln!(wtr, ">{i}\n{seq}")?;
     }
     // Write reads.
-    let mut path = command_arg.output_dir.clone();
-    path.push(&format!("reads.fa"));
+    let mut path = command_arg.output_dir;
+    path.push("reads.fa");
     let mut wtr = std::fs::File::create(path).map(BufWriter::new)?;
     for (i, (seq, answer)) in dataset.iter().zip(answer.iter()).enumerate() {
         let seq = match i % 2 == 0 {
@@ -91,7 +91,7 @@ fn main() -> std::io::Result<()> {
         };
         let seq = std::str::from_utf8(&seq).unwrap();
         let is_rev = i % 2 == 1;
-        writeln!(&mut wtr, ">{i}_{answer} is_rev={is_rev}\n{seq}")?;
+        writeln!(wtr, ">{i}_{answer} is_rev={is_rev}\n{seq}")?;
     }
     Ok(())
 }

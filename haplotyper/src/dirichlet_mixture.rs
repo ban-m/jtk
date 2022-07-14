@@ -514,7 +514,7 @@ impl HMMixtureModel {
             })
             .sum()
     }
-    fn update(&mut self, weights: &mut Vec<Vec<f64>>, contexts: &[Context], iteration: usize) {
+    fn update(&mut self, weights: &mut [Vec<f64>], contexts: &[Context], iteration: usize) {
         // E-step
         // TODO:Maybe we can speed up here,
         // because sometimes we do not need to align a read to far-away clusters.
@@ -528,7 +528,7 @@ impl HMMixtureModel {
         }
     }
     // 2nd return value: the expectation of aligning information of each cluster k.
-    fn e_step(&self, contexts: &[Context], weights: &mut Vec<Vec<f64>>) -> Vec<AlignInfo> {
+    fn e_step(&self, contexts: &[Context], weights: &mut [Vec<f64>]) -> Vec<AlignInfo> {
         let mut alignments = Vec::with_capacity(contexts.len() * self.k + 1);
         for (cl, (m, f)) in self.models.iter().zip(self.fractions.iter()).enumerate() {
             let f = f.ln();

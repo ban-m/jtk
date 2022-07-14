@@ -64,7 +64,7 @@ impl RepeatMask for definitions::DataSet {
         debug!("Constructed {}-mer filter. Size:{}", config.k, mask.len());
         self.raw_reads
             .par_iter_mut()
-            .for_each(|read| mask_repeats(read.seq.as_mut(), &mask, config.k));
+            .for_each(|read| mask_repeats(read.seq.seq_mut(), &mask, config.k));
         let num_bases = self.raw_reads.iter().map(|r| r.seq.len()).sum::<usize>();
         let num_lower_base = self
             .raw_reads

@@ -24,6 +24,7 @@ fn main() -> std::io::Result<()> {
     align_to_draft(&ds, &config);
     Ok(())
 }
+
 pub fn align_to_draft(ds: &DataSet, c: &AssembleConfig) {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
@@ -36,15 +37,15 @@ pub fn align_to_draft(ds: &DataSet, c: &AssembleConfig) {
     eprintln!("{graph}");
     eprintln!("CC:{}", graph.cc());
     assert!(graph.sanity_check());
-    let (mut segments, _, _, _, mut encs) = graph.spell(c);
-    segments
-        .iter()
-        .zip(encs.iter())
-        .for_each(|(s, e)| assert_eq!(s.sid, e.id));
-    while segments.len() > 1 {
-        segments.pop();
-        encs.pop();
-    }
+    let (segments, _, _, _, encs) = graph.spell(c);
+    // segments
+    //     .iter()
+    //     .zip(encs.iter())
+    //     .for_each(|(s, e)| assert_eq!(s.sid, e.id));
+    // while segments.len() > 1 {
+    //     segments.pop();
+    //     encs.pop();
+    // }
     let config = haplotyper::assemble::consensus::PolishConfig::default();
-    haplotyper::assemble::consensus::polish_segment(&ds, &segments, &encs, &config);
+    haplotyper::assemble::consensus::polish_segment(ds, &segments, &encs, &config);
 }

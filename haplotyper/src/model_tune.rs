@@ -25,7 +25,7 @@ pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovMod
             del_mat,
             del_ins,
             del_del,
-            mat_emit: mat_emit.clone(),
+            mat_emit: *mat_emit,
         }
     })
 }

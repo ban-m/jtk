@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
     let hap2 = gen_seq::introduce_randomness(&hap1, &mut rng, &div_rate);
     use sandbox::generate_test_data;
     let probs = vec![0.5, 0.5];
-    let templates = vec![hap1.clone(), hap2.clone()];
+    let templates = vec![hap1.clone(), hap2];
     let (dataset, answer) = generate_test_data(&templates, test_num, &mut rng, &probs, &profile);
     let mut counts: HashMap<_, u32> = HashMap::new();
     for &ans in answer.iter() {

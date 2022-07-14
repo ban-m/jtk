@@ -21,8 +21,8 @@ fn main() -> std::io::Result<()> {
     let seed: u64 = args[2].parse().unwrap();
     let mut rng: Xoshiro128StarStar = SeedableRng::seed_from_u64(seed);
     let (hap_a, hap_b) = gen_haploids(&mut rng);
-    writeln!(&mut hap_file, ">hapA\n{}", String::from_utf8_lossy(&hap_a))?;
-    writeln!(&mut hap_file, ">hapB\n{}", String::from_utf8_lossy(&hap_b))?;
+    writeln!(hap_file, ">hapA\n{}", String::from_utf8_lossy(&hap_a))?;
+    writeln!(hap_file, ">hapB\n{}", String::from_utf8_lossy(&hap_b))?;
     Ok(())
 }
 

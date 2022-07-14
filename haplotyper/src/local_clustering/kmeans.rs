@@ -195,7 +195,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     // Tune the assignments, is it ok .... ?
     for (lks, asn) in likelihood_gains.iter().zip(assignments.iter_mut()) {
         let iter = lks.iter().enumerate();
-        let (i, max) = iter.max_by(|x, y| x.1.partial_cmp(&y.1).unwrap()).unwrap();
+        let (i, max) = iter.max_by(|x, y| x.1.partial_cmp(y.1).unwrap()).unwrap();
         if lks[*asn] + 0.001 < *max {
             *asn = i;
         }

@@ -181,8 +181,8 @@ pub fn remove_weak_edges(ds: &mut DataSet) {
                 0..=1 => 0,
                 2 => {
                     let (f, t) = (&read.nodes[0], &read.nodes[1]);
-                    let (fmat, flen) = f.aln_info(&units[&f.unit]);
-                    let (tmat, tlen) = t.aln_info(&units[&t.unit]);
+                    let (fmat, flen) = f.aln_info(units[&f.unit]);
+                    let (tmat, tlen) = t.aln_info(units[&t.unit]);
                     let query = (f.unit, f.is_forward, t.unit, t.is_forward);
                     if edge_counts[&query] < thr {
                         let erroneous = (tmat * flen < fmat * tlen) as usize;
@@ -353,7 +353,7 @@ fn filling_until_stable(
                 .iter_mut()
                 .zip(failed_trials.iter_mut())
                 .zip(is_updated.iter_mut())
-                .filter(|((r, _), is_updated)| 0 < r.nodes.len() && **is_updated);
+                .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated);
             reads
                 .flat_map(|((read, fails), is_updated)| {
                     let error_rate = read_error_rate[read.id as usize];
@@ -369,7 +369,7 @@ fn filling_until_stable(
                 .par_iter_mut()
                 .zip(failed_trials.par_iter_mut())
                 .zip(is_updated.par_iter_mut())
-                .filter(|((r, _), is_updated)| 0 < r.nodes.len() && **is_updated);
+                .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated);
             reads
                 .flat_map(|((read, fails), is_updated)| {
                     let error_rate = read_error_rate[read.id as usize];
@@ -577,7 +577,7 @@ pub fn estimate_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, 
             .zip(unit_counts.iter())
             .filter(|&(_, &count)| 0 < count)
             .for_each(|(x, c)| {
-                *x = *x / (*c as f64 + 1f64);
+                *x /= *c as f64 + 1f64;
             });
         let resid = residual(&errors, &read_error_rate, &unit_error_rate);
         if (current_resid - resid).abs() < 0.001 {
@@ -1324,14 +1324,14 @@ impl Pileup {
     fn insertion_head(&self) -> HashMap<LightNode, usize> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.head_inserted.iter() {
-            *count.entry(node.clone()).or_default() += 1;
+            *count.entry(*node).or_default() += 1;
         }
         count
     }
     fn insertion_tail(&self) -> HashMap<LightNode, usize> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.tail_inserted.iter() {
-            *count.entry(node.clone()).or_default() += 1;
+            *count.entry(*node).or_default() += 1;
         }
         count
     }
@@ -1348,7 +1348,7 @@ impl Pileup {
     fn information_tail(&self, node: &LightNode) -> (Option<isize>, Option<isize>) {
         Self::summarize(&self.tail_inserted, node)
     }
-    fn summarize<'a>(inserts: &[LightNode], target: &LightNode) -> (Option<isize>, Option<isize>) {
+    fn summarize(inserts: &[LightNode], target: &LightNode) -> (Option<isize>, Option<isize>) {
         let inserts = inserts.iter().filter(|&node| node == target);
         let (mut prev_count, mut prev_total) = (0, 0);
         let (mut after_count, mut after_total) = (0, 0);
@@ -1381,7 +1381,7 @@ impl Pileup {
         let mut inserts = self.insertion_head();
         inserts.retain(|_, num| threshold <= *num);
         inserts.retain(|node, num| {
-            let (prev_offset, _) = self.information_head(&node);
+            let (prev_offset, _) = self.information_head(node);
             let start_position = nodes[idx - 1].position_from_start + nodes[idx - 1].query_length();
             match prev_offset {
                 Some(x) => {
@@ -1571,7 +1571,7 @@ impl<'a> std::iter::Iterator for SkeltonIter<'a> {
 }
 
 #[cfg(test)]
-mod deletion_fill {
+mod deletion_fill_test {
     use super::*;
     #[test]
     fn aln_test_gotoh() {

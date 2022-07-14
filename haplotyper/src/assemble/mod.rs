@@ -7,6 +7,8 @@ use gfa::GFA;
 use serde::*;
 use std::collections::{HashMap, HashSet};
 
+use crate::model_tune::get_model;
+const IS_OLD: bool = true;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
     pub nodes: Vec<Node>,
@@ -68,6 +70,7 @@ impl Graph {
 
 #[derive(Debug, Clone)]
 pub struct AssembleConfig {
+    #[allow(dead_code)]
     threads: usize,
     to_polish: bool,
     #[allow(dead_code)]
@@ -308,8 +311,7 @@ fn align_encoded_reads(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<usi
         .iter()
         .map(|read| {
             let read: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
-            let dist = distribute(&read, &nodes);
-            dist
+            distribute(&read, &nodes)
         })
         .collect()
 }
@@ -365,11 +367,16 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
         ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
     };
     graph.clean_up_graph_for_assemble(cov, &reads, c, ds.read_type);
-    let (mut segments, mut edges, _, summaries, _) = graph.spell(c);
+    let (mut segments, mut edges, _, summaries, encodings) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     if c.to_polish {
-        polish_segments(&mut segments, ds, &summaries, c, &ds.read_type);
+        if IS_OLD {
+            polish_segments_old(ds, &mut segments, &summaries, &ds.read_type, c);
+        } else {
+            let config = consensus::PolishConfig::default();
+            segments = consensus::polish_segment(ds, &segments, &encodings, &config);
+        }
         let lengths: HashMap<_, _> = segments
             .iter()
             .map(|seg| (seg.sid.clone(), seg.slen))
@@ -457,22 +464,21 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Ve
     let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
     (records, summaries)
 }
-
-fn polish_segments(
-    segments: &mut [gfa::Segment],
+fn polish_segments_old(
     ds: &DataSet,
+    segments: &mut [gfa::Segment],
     summaries: &[ContigSummary],
-    c: &AssembleConfig,
     read_type: &definitions::ReadType,
+    c: &AssembleConfig,
 ) {
-    let hmm = crate::model_tune::get_model(ds).unwrap();
+    let hmm = get_model(ds).unwrap();
     // Record/Associate reads to each segments.
     let raw_reads: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let mut fragments: Vec<Vec<&[u8]>> = vec![vec![]; summaries.len()];
     let dists = align_encoded_reads(ds, summaries);
     for (read, dist) in ds.encoded_reads.iter().zip(dists.iter()) {
         let seq = raw_reads[&read.id];
-        if dist.len() == 0 {
+        if dist.is_empty() {
             continue;
         }
         let mut pos = 0;
@@ -618,11 +624,11 @@ fn polish_segment(
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
 ) {
     debug!("Aligning {} reads", seqs.len());
-    let alns = match align_reads(segment, &seqs, rt, c) {
+    let alns = match align_reads(segment, seqs, rt, c) {
         Ok(res) => res,
         Err(why) => panic!("{:?}", why),
     };
-    let seq = String::from_utf8(polish_by_chunking(&alns, segment, &seqs, c, rt, hmm)).unwrap();
+    let seq = String::from_utf8(polish_by_chunking(&alns, segment, seqs, c, rt, hmm)).unwrap();
     segment.slen = seq.len() as u64;
     segment.sequence = Some(seq);
 }
@@ -644,12 +650,12 @@ fn align_reads(
         reference.push("segment.fa");
         use std::io::{BufWriter, Write};
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
-        writeln!(&mut wtr, ">{id}\n{}", segment.sequence.as_ref().unwrap())?;
+        writeln!(wtr, ">{id}\n{}", segment.sequence.as_ref().unwrap())?;
         let mut reads_dir = c_dir.clone();
         reads_dir.push("reads.fa");
         let mut wtr = std::fs::File::create(&reads_dir).map(BufWriter::new)?;
         for (i, seq) in reads.iter().enumerate() {
-            writeln!(&mut wtr, ">{}\n{}", i, std::str::from_utf8(seq).unwrap())?;
+            writeln!(wtr, ">{}\n{}", i, std::str::from_utf8(seq).unwrap())?;
         }
         let reference = reference.into_os_string().into_string().unwrap();
         let reads = reads_dir.into_os_string().into_string().unwrap();

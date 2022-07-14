@@ -279,7 +279,7 @@ pub struct DitchTip<'a> {
 impl<'a> DitchTip<'a> {
     fn new(seq: &'a DNASeq, position: Position, in_direction: bool) -> Self {
         Self {
-            seq: &seq.as_slice(),
+            seq: seq.as_slice(),
             position,
             in_direction,
         }
@@ -396,7 +396,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .enumerate()
             .map(|(idx, (node, occ))| {
                 let seq = nodes_seq[&node.0].to_vec();
-                let mut d_node = DitchNode::new(node, seq.clone());
+                let mut d_node = DitchNode::new(node, seq);
                 d_node.occ = occ;
                 (d_node, (node, NodeIndex(idx)))
             })
@@ -702,7 +702,7 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
     let gfa = gfa::GFA::from_records(records);
     if let Ok(mut wtr) = std::fs::File::create(format!("{}.gfa", i)).map(std::io::BufWriter::new) {
         use std::io::Write;
-        if let Err(why) = writeln!(&mut wtr, "{}", gfa) {
+        if let Err(why) = writeln!(wtr, "{}", gfa) {
             trace!("{:?}", why);
         }
     }
@@ -859,7 +859,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         for (index, node) in self.nodes() {
             // If the estimation of the copy number is is poor, do not remove edges.
             if unsound_nodes.contains(&index) {
-                retain_edges.extend(node.edges.iter().map(|e| format_edge(e)));
+                retain_edges.extend(node.edges.iter().map(format_edge));
                 continue;
             }
             for position in [Position::Head, Position::Tail] {
@@ -1210,11 +1210,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 break;
             }
             // Move node. Unwrap never panics here.
-            let edges = self.node(current_node).unwrap().edges.iter();
-            let traced_edge = edges
-                .filter(|e| e.from_position == current_pos)
-                .next()
-                .unwrap();
+            let mut edges = self.node(current_node).unwrap().edges.iter();
+            let traced_edge = edges.find(|e| e.from_position == current_pos).unwrap();
             current_node = traced_edge.to;
             current_pos = traced_edge.to_position;
         }
@@ -1252,11 +1249,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 break;
             }
             // Move node. Unwrap never panics here.
-            let edge = self.node(current_node).unwrap().edges.iter();
-            let traced_edge = edge
-                .filter(|e| e.from_position == current_pos)
-                .next()
-                .unwrap();
+            let mut edge = self.node(current_node).unwrap().edges.iter();
+            let traced_edge = edge.find(|e| e.from_position == current_pos).unwrap();
             current_node = traced_edge.to;
             current_pos = traced_edge.to_position;
         }
@@ -1514,8 +1508,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .unwrap()
                 .edges
                 .iter()
-                .filter(|e| e.from_position == edge.to_position)
-                .next()
+                .find(|e| e.from_position == edge.to_position)
                 .unwrap();
             assert_eq!(first.to, root);
             assert_eq!(first.to_position, position);

@@ -70,7 +70,7 @@ impl ContigEncoding {
     pub fn tiles(&self) -> &[UnitAlignmentInfo] {
         self.tiles.as_slice()
     }
-    pub fn matches<'a>(&'a self, node: Node, direction: bool) -> MatchIter<'a> {
+    pub fn matches(&self, node: Node, direction: bool) -> MatchIter {
         MatchIter {
             inner: self,
             node,
@@ -474,7 +474,7 @@ impl<'a> super::DitchGraph<'a> {
                 })
                 .max_by_key(|x| x.len())
                 .and_then(|x| String::from_utf8(x).ok())
-                .unwrap_or_else(String::new)
+                .unwrap_or_default()
         }
     }
     fn trailing_sequence(&self, node: NodeIndex, position: Position) -> String {
@@ -492,7 +492,7 @@ impl<'a> super::DitchGraph<'a> {
                 })
                 .max_by_key(|x| x.len())
                 .and_then(|x| String::from_utf8(x).ok())
-                .unwrap_or_else(String::new)
+                .unwrap_or_default()
         }
     }
 }

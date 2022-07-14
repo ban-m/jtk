@@ -327,7 +327,7 @@ impl DNASeq {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn as_mut(&mut self) -> &mut [u8] {
+    pub fn seq_mut(&mut self) -> &mut [u8] {
         self.0.as_mut()
     }
     pub fn as_slice(&self) -> &[u8] {
@@ -348,9 +348,9 @@ impl std::convert::From<Vec<u8>> for DNASeq {
     }
 }
 
-impl std::convert::Into<Vec<u8>> for DNASeq {
-    fn into(self) -> Vec<u8> {
-        self.0
+impl std::convert::From<DNASeq> for Vec<u8> {
+    fn from(seq: DNASeq) -> Self {
+        seq.0
     }
 }
 
@@ -716,11 +716,17 @@ impl std::convert::From<Vec<Op>> for Ops {
         Ops(xs)
     }
 }
-impl std::convert::Into<Vec<Op>> for Ops {
-    fn into(self) -> Vec<Op> {
-        self.0
+
+impl std::convert::From<Ops> for Vec<Op> {
+    fn from(ops: Ops) -> Self {
+        ops.0
     }
 }
+// impl std::convert::Into<Vec<Op>> for Ops {
+//     fn into(self) -> Vec<Op> {
+//         self.0
+//     }
+// }
 
 impl std::str::FromStr for Ops {
     type Err = u64;

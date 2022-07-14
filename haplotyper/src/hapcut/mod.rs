@@ -1058,7 +1058,7 @@ fn mean_length(reads: &[(u64, Vec<(u64, u64)>)]) -> usize {
 }
 
 #[cfg(test)]
-pub mod hapcut {
+pub mod hapcut_test {
     use super::*;
     // Generate HapCut test dataset.
     // The first n fragments come from the hapA, others from hapB.
@@ -1566,7 +1566,7 @@ pub mod hapcut {
         for &mut (_, ref mut read) in reads.iter_mut() {
             for node in read.iter_mut() {
                 match node.0 {
-                    2 => node.1 = node.1,
+                    2 => {} //node.1 = node.1,
                     4 => node.1 = node.1 + 2,
                     6 => node.1 = node.1 + 4,
                     8 => node.1 = node.1 + 6,

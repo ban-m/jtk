@@ -20,7 +20,7 @@ fn main() -> std::io::Result<()> {
     records.shuffle(&mut rng);
     use std::io::Write;
     for (i, record) in records.iter().enumerate() {
-        writeln!(&mut files[i % split_into], "{record}")?;
+        writeln!(files[i % split_into], "{record}")?;
     }
     Ok(())
 }

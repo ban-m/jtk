@@ -844,7 +844,7 @@ fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result
             let asn_name_desc = dataset.extract_assignments();
             let mut wtr = BufWriter::new(file);
             for (asn, name, desc) in asn_name_desc {
-                writeln!(&mut wtr, "{}\t{}\t{}", asn, name, desc)?;
+                writeln!(wtr, "{}\t{}\t{}", asn, name, desc)?;
             }
         }
         &_ => unreachable!(),
@@ -1031,7 +1031,7 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let to_recal = matches.is_present("re_cluster");
     use haplotyper::determine_units::calc_sim_thr;
     use haplotyper::determine_units::TAKE_THR;
-    let sim_thr = calc_sim_thr(&dataset, TAKE_THR);
+    let sim_thr = calc_sim_thr(dataset, TAKE_THR);
     use haplotyper::encode::deletion_fill::*;
     let config = CorrectDeletionConfig::new(to_recal, sim_thr);
     debug!("SIMTHR\t{sim_thr}");
@@ -1206,7 +1206,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
     let gfa = dataset.assemble(&config);
-    writeln!(&mut file, "{}", gfa)?;
+    writeln!(file, "{}", gfa)?;
     Ok(())
 }
 

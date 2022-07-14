@@ -22,7 +22,7 @@ impl AlignmentCorrection for DataSet {
             .filter(|c| 1 < c.cluster_num)
             .map(|c| c.id)
             .collect();
-        self.correct_clustering_selected(&selections, &config);
+        self.correct_clustering_selected(&selections, config);
         self.sanity_check();
     }
     fn correct_clustering_selected(
@@ -36,7 +36,7 @@ impl AlignmentCorrection for DataSet {
             .par_iter()
             .filter(|c| 1 < c.cluster_num && selections.contains(&c.id))
             .map(|c| (c.id, (c.cluster_num, c.copy_num)))
-            .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, &config))
+            .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, config))
             .collect();
         let protected = get_protected_clusterings(self);
         let corrected_clustering_on_read = {
@@ -138,13 +138,14 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
         .collect()
 }
 
+type CorrectionResult = (Vec<(u64, usize, u64)>, (u64, usize));
 fn correct_unit(
     ds: &DataSet,
     unit_id: u64,
     cluster_and_copynum: (usize, usize),
     copy_numbers: &[Vec<f64>],
     config: &CorrectionConfig,
-) -> (Vec<(u64, usize, u64)>, (u64, usize)) {
+) -> CorrectionResult {
     //) -> Vec<(u64, usize, Vec<f64>)> {
     let mut reads = vec![];
     for read in ds.encoded_reads.iter() {
@@ -154,7 +155,7 @@ fn correct_unit(
             }
         }
     }
-    reads.sort_by_cached_key(|&(idx, ref read)| read.nodes[idx].cluster);
+    reads.sort_by_cached_key(|&(idx, read)| read.nodes[idx].cluster);
     trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
     let len = reads.len();
     trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
@@ -234,12 +235,13 @@ fn clustering(
                 .map(|(j, dtx)| {
                     // Remove self loop/
                     // trace!("-------------");
-                    let aln = match i == j {
+                    // let aln =
+                    match i == j {
                         false => alignment(ctx, dtx, copy_numbers),
                         true => 0f64,
-                    };
+                    }
                     // trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
-                    aln
+                    // aln
                 })
                 .collect()
         })
@@ -350,7 +352,7 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
         .take_while(|&(_, &lam)| lam < EIGEN_THR)
         .count();
     let pick_k = opt_k;
-    if pick_k <= 0 {
+    if pick_k == 0 {
         for row in matrix.row_iter() {
             eprintln!("{row:?}");
         }
@@ -372,7 +374,7 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
     let top_k_eigenvec = nalgebra::DMatrix::from_iterator(datalen, pick_k, top_k_eigenvec);
     let features: Vec<Vec<_>> = top_k_eigenvec
         .row_iter()
-        .map(|row| row.iter().map(|&x| x).collect())
+        .map(|row| row.iter().copied().collect())
         .collect();
     (features, pick_k)
 }
@@ -456,8 +458,8 @@ fn alignment<'a>(
     assert_eq!(center1.unit, center2.unit);
     let center_copy_num = &copy_numbers[center1.unit as usize];
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
-    let up_aln = align_swg(up1, up2, &copy_numbers);
-    let down_aln = align_swg(down1, down2, &copy_numbers);
+    let up_aln = align_swg(up1, up2, copy_numbers);
+    let down_aln = align_swg(down1, down2, copy_numbers);
     let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
     assert!(0f64 <= similarity);
     // if log_enabled!(log::Level::Trace) {
@@ -490,8 +492,8 @@ fn align_swg<'a>(
     let lower = (len1 + len2 + 2) as f64 * MISM;
     // Match,Del on arm2, Del on arm1.
     let mut dp = vec![vec![(lower, lower, lower); len2 + 1]; len1 + 1];
-    for i in 1..len1 + 1 {
-        dp[i][0].2 = GAP_OPEN + (i - 1) as f64 * GAP_EXTEND;
+    for (i, row) in dp.iter_mut().enumerate().skip(1) {
+        row[0].2 = GAP_OPEN + (i - 1) as f64 * GAP_EXTEND;
     }
     for j in 1..len2 + 1 {
         dp[0][j].1 = GAP_OPEN + (j - 1) as f64 * GAP_EXTEND;
@@ -510,11 +512,13 @@ fn align_swg<'a>(
             };
             // Match
             let mat = max(dp[i - 1][j - 1]) + match_score;
-            let del2 = match dp[i][j - 1] {
-                (mat, d2, d1) => (mat + GAP_OPEN).max(d2 + GAP_EXTEND).max(d1 + GAP_OPEN),
+            let del2 = {
+                let (mat, d2, d1) = dp[i][j - 1];
+                (mat + GAP_OPEN).max(d2 + GAP_EXTEND).max(d1 + GAP_OPEN)
             };
-            let del1 = match dp[i - 1][j] {
-                (mat, d2, d1) => (mat + GAP_OPEN).max(d2 + GAP_OPEN).max(d1 + GAP_EXTEND),
+            let del1 = {
+                let (mat, d2, d1) = dp[i - 1][j];
+                (mat + GAP_OPEN).max(d2 + GAP_OPEN).max(d1 + GAP_EXTEND)
             };
             dp[i][j] = (mat, del2, del1);
         }
@@ -523,7 +527,7 @@ fn align_swg<'a>(
     let column_last = dp.iter().filter_map(|l| l.last()).map(|&x| max(x));
     row_last
         .chain(column_last)
-        .max_by(|x, y| x.partial_cmp(&y).unwrap())
+        .max_by(|x, y| x.partial_cmp(y).unwrap())
         .unwrap()
 }
 
@@ -576,7 +580,7 @@ fn align<'a>(
         .map(|(i, s)| (i, arm2.len(), s));
     let (mut i, mut j, score) = last_row
         .chain(last_column)
-        .max_by(|x, y| x.2.partial_cmp(&y.2).unwrap())
+        .max_by(|x, y| x.2.partial_cmp(y.2).unwrap())
         .unwrap();
     // 0->Deletion or insertion,1->Match
     let mut ops = vec![];
