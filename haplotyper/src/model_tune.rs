@@ -31,13 +31,15 @@ pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovMod
 }
 
 pub fn update_model(ds: &mut DataSet) {
-    let mut pileups: HashMap<u64, Vec<_>> =
-        ds.selected_chunks.iter().map(|u| (u.id, vec![])).collect();
-    let chunks: HashMap<u64, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    // let mut pileups: HashMap<u64, Vec<_>> =
+    //     ds.selected_chunks.iter().map(|u| (u.id, vec![])).collect();
+    let mut pileups: HashMap<_, Vec<_>> = HashMap::new();
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        if let Some(bucket) = pileups.get_mut(&node.unit) {
-            bucket.push(node);
-        }
+        pileups
+            .entry((node.unit, node.cluster))
+            .or_default()
+            .push(node);
     }
     let hmm = estimate_model_parameters(ds.read_type, &pileups, &chunks);
     let PairHiddenMarkovModel {
@@ -67,18 +69,17 @@ pub fn update_model(ds: &mut DataSet) {
 }
 
 use crate::local_clustering::ops_to_kiley_ops;
-use rayon::prelude::*;
 fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     read_type: ReadType,
-    pileups: &HashMap<u64, Vec<N>>,
+    pileups: &HashMap<(u64, u64), Vec<N>>,
     chunks: &HashMap<u64, &Unit>,
 ) -> kiley::hmm::guided::PairHiddenMarkovModel {
     let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
     let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
     let mut seqs_and_ref_units: Vec<_> = pileups
         .iter()
-        .filter(|(_, us)| (cov.max(1) - 1..cov + 2).contains(&us.len()))
-        .map(|(id, us)| (chunks.get(id).unwrap(), us))
+        .filter(|(_, us)| (cov.max(2) - 2..cov + 2).contains(&us.len()))
+        .map(|((unit, _), us)| (chunks.get(unit).unwrap(), us))
         .collect();
     seqs_and_ref_units.sort_by_cached_key(|c| c.0.id);
     seqs_and_ref_units.truncate(2);
@@ -98,16 +99,19 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
             (ref_unit.seq().to_vec(), seqs, ops, band_width)
         })
         .collect();
-    polishing_pairs
-        .par_iter_mut()
-        .for_each(|(consensus, seqs, ops, bw)| {
+    // polishing_pairs
+    //     .par_iter_mut()
+    //     .for_each(|(consensus, seqs, ops, bw)| {
+    //         use kiley::bialignment::guided;
+    //         *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
+    //         *consensus = hmm.polish_until_converge_with(consensus, seqs, ops, *bw);
+    //     });
+    debug!("TUNING");
+    for _ in 0..3 {
+        for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
             use kiley::bialignment::guided;
             *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
             *consensus = hmm.polish_until_converge_with(consensus, seqs, ops, *bw);
-        });
-    debug!("POLISHED");
-    for _ in 0..2 {
-        for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
             hmm.fit_naive_with_par(consensus, seqs, ops, *bw);
         }
     }

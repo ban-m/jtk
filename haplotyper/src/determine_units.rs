@@ -196,12 +196,6 @@ impl DetermineUnit for definitions::DataSet {
             self.encode(config.threads, sim_thr);
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
-            // use crate::repeat_masking::RepeatMask;
-            // let repetitive_kmer = self.get_repetitive_kmer();
-            // let mut config = config.clone();
-            // config.chunk_len = config.chunk_len / 2;
-            // let _ = fill_sparse_region_dev(self, &repetitive_kmer, &config);
-            // crate::encode::deletion_fill::correct_unit_deletion(self, sim_thr);
             dump_histogram(self);
         }
         compaction_units(self);

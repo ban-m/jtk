@@ -177,9 +177,9 @@ pub fn estimate_minimum_gain(
     const SEQ_NUM: usize = 500;
     const LEN: usize = 100;
     const BAND: usize = 25;
-    const FRAC: f64 = 0.05;
+    // const FRAC: f64 = 0.01;
     const MIN_REQ: f64 = 1f64;
-    const PICK: usize = (SAMPLE_NUM as f64 * FRAC) as usize;
+    // const PICK: usize = (SAMPLE_NUM as f64 * FRAC) as usize;
     let prof = kiley::gen_seq::Profile {
         sub: error_rate.mismatch,
         del: error_rate.del,
@@ -207,7 +207,8 @@ pub fn estimate_minimum_gain(
         })
         .collect();
     medians.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    medians[PICK].max(MIN_REQ)
+    debug!("MIN_GAIN\t{:?}", &medians[..6]);
+    (medians[2]).max(MIN_REQ)
 }
 
 // pub fn estimate_imum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {

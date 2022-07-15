@@ -575,6 +575,23 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             active_nodes.extend(found_nodes.iter().map(|&(i, p)| (i, !p)));
             nodes_at.push(found_nodes);
         }
+        // TODO: I remove duplicated nodes here, but it may cause some problems I do not know currently.
+        for nodes in nodes_at.iter_mut() {
+            let duplicated: Vec<_> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, &(n, _))| {
+                    nodes[i + 1..]
+                        .iter()
+                        .any(|&(m, _)| self.node(n).unwrap().node == self.node(m).unwrap().node)
+                })
+                .collect();
+            let mut idx = 0;
+            nodes.retain(|_| {
+                idx += 1;
+                !duplicated[idx - 1]
+            });
+        }
         nodes_at
     }
     fn max_reach(reads: &[&EncodedRead], min_span: usize, node: Node, pos: Position) -> usize {

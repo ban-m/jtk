@@ -63,10 +63,6 @@ impl PolishUnit for DataSet {
                     .unzip();
                 use kiley::bialignment::guided::polish_until_converge_with;
                 let cons = polish_until_converge_with(unit.seq(), &seqs, &mut ops, radius);
-                // use kiley::bialignment::guided::polish_until_converge_with_take;
-                // let cons_size = c.consensus_size;
-                // let cons =
-                //     polish_until_converge_with_take(unit.seq(), &seqs, &mut ops, radius, cons_size);
                 pileup
                     .iter_mut()
                     .zip(ops)

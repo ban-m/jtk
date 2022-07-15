@@ -406,18 +406,21 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         let edge_seq: Vec<_> = take_representative(reads, &nodes_index);
         let mut graph = Self { nodes, nodes_index };
-        assert!(graph.sanity_check());
+        assert!(graph.sanity_check(), "{}", line!());
         for edge in edge_seq.into_iter() {
             graph.add_edge(edge);
         }
         for read in reads.iter().map(|r| r.borrow()) {
             graph.append_tip(read, c);
         }
-        assert!(graph.sanity_check());
+        assert!(graph.sanity_check(), "{}", line!());
         graph
     }
     fn add_edge(&'b mut self, edge: DitchEdge) {
-        self.node_mut(edge.to).unwrap().edges.push(edge.reverse());
+        let (f, t) = edge.key();
+        if f != t {
+            self.node_mut(edge.to).unwrap().edges.push(edge.reverse());
+        }
         self.node_mut(edge.from).unwrap().edges.push(edge);
     }
     // Currently, just update the occ of the edge. Make sure that it truly has the edge.
@@ -486,18 +489,27 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         Some(())
     }
     pub fn sanity_check(&self) -> bool {
-        self.nodes().for_each(|(_, node)| {
+        for (_, node) in self.nodes() {
             assert!(!node.is_deleted);
             let mut edges = HashSet::new();
             for e in node.edges.iter() {
-                assert!(!edges.contains(&e.key()));
+                if edges.contains(&e.key()) {
+                    error!("DUPLCATE EDGE\t{}", node);
+                    return false;
+                }
                 edges.insert(e.key());
             }
-        });
-        self.nodes().all(|(i, node)| {
-            node.edges.iter().all(|edge| {
-                assert_eq!(edge.from, i);
-                assert_eq!(edge.from_node, node.node);
+        }
+        for (i, node) in self.nodes() {
+            for edge in node.edges.iter() {
+                if edge.from != i {
+                    error!("EDGE INCONSIS\t{node}\t{edge}\t{i}");
+                    return false;
+                }
+                if edge.from_node != node.node {
+                    error!("EDGE NOMATCH\t{node}\t{edge}");
+                    return false;
+                }
                 let rev = edge.reverse();
                 assert!(!self.node(edge.to).unwrap().is_deleted);
                 let count = self
@@ -507,9 +519,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     .iter()
                     .filter(|e| e == &&rev)
                     .count();
-                count == 1
-            })
-        })
+                if count != 1 {
+                    error!("REV EDGE \t{}", node);
+                    error!("{count}\t{edge}");
+                    return false;
+                }
+            }
+        }
+        true
     }
     pub fn active_nodes(&self) -> usize {
         self.nodes().count()
@@ -624,11 +641,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 self.remove_lightweight_edges(0, true);
                 self.remove_tips(0.8, 4);
                 self.squish_small_net(3);
+                assert!(self.sanity_check(), "{}", line!());
             }
             if log_enabled!(log::Level::Trace) {
                 dump(self, i + 1, c);
             }
-            // panic!();
         }
         self.assign_copy_number_mst(cov, &mut rng);
         self.remove_zero_copy_elements(0.9);
@@ -636,12 +653,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
         self.assign_copy_number_mst(cov, &mut rng);
+        assert!(self.sanity_check(), "{}", line!());
         self.squish_small_net(3);
+        assert!(self.sanity_check(), "{}", line!());
         self.zip_up_overclustering_dev();
+        assert!(self.sanity_check(), "{}", line!());
         self.resolve_repeats(reads, c, min_llr);
         self.z_edge_selection();
         self.remove_zero_copy_path(0.2);
-        self.sanity_check();
+        assert!(self.sanity_check(), "{}", line!());
     }
     pub fn cc(&self) -> usize {
         // Connected component.
@@ -1069,8 +1089,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     cp += removed.copy_number.unwrap_or(0);
                     self.delete(node);
                 }
+                let retain_node = self.node(retain).unwrap().node;
                 for edge in edges.iter_mut() {
                     edge.from = retain;
+                    edge.from_node = retain_node;
                 }
                 (edges, occ, cp)
             };
@@ -1080,7 +1102,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 if let Some(cp) = retain_node.copy_number.as_mut() {
                     *cp += increase_copy_num;
                 }
-            }
+            };
             for edge in edges {
                 if self.has_edge(edge.key()) {
                     self.merge_edge(&edge);

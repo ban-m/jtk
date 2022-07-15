@@ -1205,6 +1205,10 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let min_lk = dataset.read_type.min_llr_value();
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
+    if !skip_polish {
+        use haplotyper::model_tune::update_model;
+        update_model(dataset);
+    }
     let gfa = dataset.assemble(&config);
     writeln!(file, "{}", gfa)?;
     Ok(())

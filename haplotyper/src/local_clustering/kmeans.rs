@@ -606,6 +606,9 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let total_improvement = column_sum_of(profiles, req_lk);
     let template_len = total_improvement.len() / NUM_ROW;
     let base_position = |pos: usize| (pos / NUM_ROW, pos % NUM_ROW);
+    if true {
+        panic!("NUMROW is not correct!");
+    }
     let probes: Vec<(usize, f64)> = total_improvement
         .iter()
         .enumerate()
@@ -614,7 +617,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             MASK_LENGTH <= pos && pos <= (template_len - MASK_LENGTH)
         })
         .filter(|&(_, &(gain, _, max_gain))| max_gain * MAX_GAIN_FAC < gain)
-        .filter(|&(pos, _)| pos % NUM_ROW < 4 + 4 + kiley::hmm::guided::COPY_SIZE)
+        //    .filter(|&(pos, _)| pos % NUM_ROW < 4 + 4 + kiley::hmm::guided::COPY_SIZE)
         .filter(|&(_, &(gain, _, _))| 0f64 < gain)
         .filter(|&(_, &(_, count, _))| req_count < count)
         .filter(|&(_, &(gain, count, _))| count as f64 * average_lk < gain)

@@ -59,12 +59,12 @@ pub fn polish_segment(
     // for seg in segments.iter() {
     //     log::debug!("LEN\t{}\t{}", seg.sid, seg.slen);
     // }
-    // for enc in encs.iter() {
+    // for enc in encs.iter().filter(|e| e.id == "tig_0000") {
     //     let id = &enc.id;
     //     for tile in enc.tiles() {
     //         let (start, end) = tile.contig_range();
     //         let (dir, ustart, uend) = tile.unit_range();
-    //         log::debug!("ENCODING\t{id}\t{start}\t{end}\t{dir}\t{ustart}\t{uend}");
+    //         debug!("ENCODING\t{id}\t{start}\t{end}\t{dir}\t{ustart}\t{uend}");
     //     }
     // }
     let alignments: Vec<_> = reads
@@ -86,6 +86,14 @@ pub fn polish_segment(
             .or_default()
             .push(aln);
     }
+    // if log_enabled!(log::Level::Debug) {
+    //     let id2name: BTreeMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
+    //     for (sid, alns) in alignments_on_contigs.iter() {
+    //         for aln in alns.iter() {
+    //             debug!("ALNDUMP\t{sid}\t{}", id2name[&aln.read_id]);
+    //         }
+    //     }
+    // }
     let hmm = get_model(ds).unwrap();
     // let old = alignments_on_contigs.clone();
     //    let polished: Vec<_> = alignments_on_contigs
@@ -179,6 +187,9 @@ fn polish(
                 (start, put_position, end)
             })
             .collect();
+        // for (i, pu) in pileup_seq.iter().enumerate() {
+        //     debug!("PILEUP\t{i}\t{}", pu.len());
+        // }
         //  Polish
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
@@ -192,7 +203,9 @@ fn polish(
                 let polished = if seqs.len() < config.min_coverage {
                     draft.to_vec()
                 } else {
-                    hmm.polish_until_converge_with(draft, seqs, ops, config.radius)
+                    use kiley::bialignment::guided::polish_until_converge_with;
+                    let draft = polish_until_converge_with(draft, &seqs, ops, config.radius);
+                    hmm.polish_until_converge_with(&draft, seqs, ops, config.radius)
                 };
                 let after: Vec<_> = ops
                     .iter()
@@ -412,7 +425,14 @@ fn align_to_contigs<R: Rng>(
     rng: &mut R,
 ) -> Vec<Alignment> {
     let mut chains = enumerate_chain(read, encs);
-    //log::trace!("Chains:{}", chains.len());
+    // if read.nodes.iter().any(|n| n.unit == 20) {
+    // let nodes: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
+    // debug!("Read\t{nodes:?}");
+    //     debug!("Chains\t{}", chains.len());
+    //     for c in chains.iter() {
+    //         debug!("\t{c:?}");
+    //     }
+    // }
     let mut alns = vec![];
     while !chains.is_empty() {
         let choises: Vec<_> = (0..chains.len()).collect();
@@ -428,7 +448,6 @@ fn align_to_contigs<R: Rng>(
             .unwrap();
         let chain = chains.remove(*picked);
         chains.retain(|c| c.overlap_frac(&chain) < 0.5);
-        //log::trace!("ChainPick\t{}\t{}", chain.apporox_score(), chains.len());
         let seg = segs.iter().find(|seg| seg.sid == chain.id).unwrap();
         let enc = encs.iter().find(|enc| enc.id == chain.id).unwrap();
         alns.push(base_pair_alignment(read, seq, &chain, seg, enc));
@@ -437,7 +456,6 @@ fn align_to_contigs<R: Rng>(
 }
 
 fn enumerate_chain(read: &EncodedRead, encs: &[ContigEncoding]) -> Vec<Chain> {
-    // log::debug!("ReadLen\t{}", read.nodes.len());
     let mut chains = vec![];
     let mut nodes_run: Vec<_> = read
         .nodes
@@ -449,7 +467,6 @@ fn enumerate_chain(read: &EncodedRead, encs: &[ContigEncoding]) -> Vec<Chain> {
         })
         .collect();
     for enc in encs.iter() {
-        // log::debug!("AlignTo\t{}\tForward\t{}", enc.id, enc.tiles().len());
         chains.extend(enumerate_chain_norev(&nodes_run, enc, true));
     }
     // Reverse
@@ -457,12 +474,12 @@ fn enumerate_chain(read: &EncodedRead, encs: &[ContigEncoding]) -> Vec<Chain> {
     nodes_run.reverse();
     nodes_run.iter_mut().for_each(|x| x.reverse(len));
     for enc in encs.iter() {
-        // log::debug!("AlignTo\t{}\tReverse\t{}", enc.id, enc.tiles().len());
         chains.extend(enumerate_chain_norev(&nodes_run, enc, false));
     }
     chains
 }
 
+#[derive(Debug, Clone)]
 struct LightNode {
     node: (u64, u64),
     is_forward: bool,
@@ -487,9 +504,6 @@ fn enumerate_chain_norev(nodes: &[LightNode], enc: &ContigEncoding, direction: b
     let mut chain_nodes = vec![];
     for (q_idx, node) in nodes.iter().enumerate() {
         for (r_idx, target) in enc.matches(node.node, node.is_forward) {
-            // let rstart = node.range.1;
-            // let cstart = target.contig_range().0;
-            // log::debug!("HIT\t{q_idx}\t{r_idx}\t{rstart}\t{cstart}");
             chain_nodes.push(ChainNode::new(q_idx, node, r_idx, target));
         }
     }
@@ -510,7 +524,6 @@ fn enumerate_chain_norev(nodes: &[LightNode], enc: &ContigEncoding, direction: b
             idx += 1;
             !chain_indices.contains(&(idx - 1))
         });
-        // log::debug!("Chain\t{}\t{}", chain_indices.len(), chain_nodes.len());
     }
     chains
 }
@@ -560,12 +573,16 @@ fn align_in_chunk_space(
     let query = &nodes[first.read_index..last.read_index + 1];
     let refr = &enc.tiles()[first.contig_index..last.contig_index + 1];
     let mut ops = alignment(query, refr);
+    // if nodes.iter().any(|n| n.node.0 == 20) {
+    //     debug!("{first:?}\t{ops:?}\t{:?}", &nodes[first.read_index]);
+    // }
     // Removing head/tail...
     let (start_position, end_position) = get_range(first, &mut ops);
     Chain::new(
         enc.id.clone(),
         start_position,
         end_position,
+        nodes.len(),
         is_forward,
         ops,
     )
@@ -634,14 +651,6 @@ fn get_range(start: ChainNode, ops: &mut Vec<Op>) -> ((usize, usize), (usize, us
     while matches!(ops.last(), Some(Op::Del) | Some(Op::Ins)) {
         assert!(matches!(ops.pop(), Some(Op::Del) | Some(Op::Ins)))
     }
-    // loop {
-    //     match ops.last() {
-    //         Some(Op::Del) | Some(Op::Ins) => {
-    //             assert!(matches!(ops.pop(), Some(Op::Del) | Some(Op::Ins)))
-    //         }
-    //         _ => break,
-    //     }
-    // }
     // Seek to the beginning.
     let (mut q_pos, mut r_pos) = (start.read_index, start.contig_index);
     ops.reverse();
@@ -649,11 +658,11 @@ fn get_range(start: ChainNode, ops: &mut Vec<Op>) -> ((usize, usize), (usize, us
         match ops.last() {
             Some(Op::Del) => {
                 ops.pop();
-                q_pos += 1;
+                r_pos += 1;
             }
             Some(Op::Ins) => {
                 ops.pop();
-                r_pos += 1;
+                q_pos += 1;
             }
             _ => break,
         }
@@ -713,6 +722,7 @@ struct Chain {
     is_forward: bool,
     query_start_idx: usize,
     query_end_idx: usize,
+    query_nodes_len: usize,
     ops: Vec<Op>,
 }
 
@@ -729,17 +739,33 @@ impl Chain {
             })
             .sum()
     }
+    fn coord(&self) -> (usize, usize) {
+        match self.is_forward {
+            true => (self.query_start_idx, self.query_end_idx),
+            false => (
+                self.query_nodes_len - self.query_end_idx,
+                self.query_nodes_len - self.query_start_idx,
+            ),
+        }
+    }
     fn overlap_frac(&self, other: &Self) -> f64 {
-        let len = self.query_end_idx - self.query_start_idx + 1;
-        let ovlp = (self.query_end_idx.min(other.query_end_idx) + 1)
-            .saturating_sub(self.query_start_idx.max(other.query_start_idx));
+        // let len = self.query_end_idx - self.query_start_idx;
+        let (start, end) = self.coord();
+        let (others, othere) = other.coord();
+        let len = end - start;
+        let ovlp = end.min(othere).saturating_sub(start.max(others));
         assert!(ovlp <= len);
         ovlp as f64 / len as f64
+        //     let ovlp = (self.query_end_idx.min(other.query_end_idx))
+        //         .saturating_sub(self.query_start_idx.max(other.query_start_idx));
+        //     assert!(ovlp <= len);
+        //     ovlp as f64 / len as f64
     }
     fn new(
         id: String,
         (query_start_idx, contig_start_idx): (usize, usize),
         (query_end_idx, contig_end_idx): (usize, usize),
+        query_nodes_len: usize,
         is_forward: bool,
         ops: Vec<Op>,
     ) -> Self {
@@ -751,6 +777,7 @@ impl Chain {
             ops,
             query_start_idx,
             query_end_idx,
+            query_nodes_len,
         }
     }
 }
@@ -766,12 +793,13 @@ fn base_pair_alignment(
     encs: &crate::assemble::ditch_graph::ContigEncoding,
 ) -> Alignment {
     let seg_seq = seg.sequence.as_ref().unwrap().as_bytes();
-    // TODO: Please include the edge sequence into consideration.
     let tiles = convert_into_tiles(read, chain, encs);
-    // for ((s, t), _) in tiles.iter() {
-    //     let (read_start, contig_start) = s;
-    //     let (read_end, contig_end) = t;
-    //     log::trace!("Tile\t{read_start}\t{read_end}\t{contig_start}\t{contig_end}");
+    // if seg.sid == "tig_0000" {
+    //     for ((s, t), _) in tiles.iter() {
+    //         let (read_start, contig_start) = s;
+    //         let (read_end, contig_end) = t;
+    //         debug!("Tile\t{read_start}\t{read_end}\t{contig_start}\t{contig_end}");
+    //     }
     // }
     let (mut query, mut ops, tip_len) = match chain.contig_start_idx {
         0 => align_tip(seq, seg, chain, tiles.first().unwrap()),
@@ -804,7 +832,7 @@ fn base_pair_alignment(
     let ((start, end), (node, enc)) = tiles.last().unwrap();
     // log::debug!("QUERY\t{}\t{}", start.0, end.0,);
     append_range(&mut query, &mut ops, node, enc, (start.0, end.0));
-    let (tail, tail_ops, tail_len) = match chain.contig_end_idx == encs.tiles().len() - 1 {
+    let (tail, tail_ops, tail_len) = match chain.contig_end_idx == encs.tiles().len() {
         true => align_tail(seq, seg, chain, tiles.last().unwrap()),
         false => (Vec::new(), Vec::new(), 0),
     };
@@ -832,6 +860,7 @@ fn base_pair_alignment(
     //     assert!(forward || reverse);
     // }
     Alignment {
+        read_id: read.id,
         contig: encs.id.to_string(),
         contig_start: contig_start - tip_len,
         contig_end: contig_end + tail_len,
@@ -1179,6 +1208,8 @@ fn append_range(
 
 #[derive(Debug, Clone)]
 struct Alignment {
+    #[allow(dead_code)]
+    read_id: u64,
     contig: String,
     contig_start: usize,
     contig_end: usize,

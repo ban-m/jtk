@@ -295,9 +295,6 @@ impl Assemble for DataSet {
                 }
             })
             .collect();
-        // for summary in summaries.iter() {
-        //     debug!("SUMMARY\t{}", summary);
-        // }
         Graph { nodes, edges }
     }
 }
@@ -441,7 +438,9 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
 pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
+    debug!("CC\t{}", graph.cc());
     graph.remove_lightweight_edges(2, true);
+    debug!("CC\t{}\tAfterRm", graph.cc());
     let (segments, edge, group, summaries, _unit_positions) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
