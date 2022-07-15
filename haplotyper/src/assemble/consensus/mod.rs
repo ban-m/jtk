@@ -205,6 +205,23 @@ fn polish(
                 } else {
                     use kiley::bialignment::guided::polish_until_converge_with;
                     let draft = polish_until_converge_with(draft, &seqs, ops, config.radius);
+                    if log_enabled!(log::Level::Debug) {
+                        for (seq, op) in seqs.iter().zip(ops.iter()) {
+                            let pre = hmm.likelihood_guided(&draft, seq, op, config.radius);
+                            let post = hmm.likelihood_guided_post(&draft, seq, op, config.radius);
+                            if pre.is_nan() || post.is_nan() {
+                                let (r, a, q) = kiley::recover(&draft, seq, op);
+                                for ((r, a), q) in
+                                    r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200))
+                                {
+                                    debug!("ALN\t{}", std::str::from_utf8(r).unwrap());
+                                    debug!("ALN\t{}", std::str::from_utf8(a).unwrap());
+                                    debug!("ALN\t{}", std::str::from_utf8(q).unwrap());
+                                }
+                                panic!();
+                            }
+                        }
+                    }
                     hmm.polish_until_converge_with(&draft, seqs, ops, config.radius)
                 };
                 let after: Vec<_> = ops
@@ -1224,7 +1241,6 @@ impl Alignment {}
 #[cfg(test)]
 mod align_test {
     use super::*;
-
     fn mock_chain_node(rstart: usize, cstart: usize) -> ChainNode {
         ChainNode {
             contig_index: 0,

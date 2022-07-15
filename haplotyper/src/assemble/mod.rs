@@ -8,7 +8,7 @@ use serde::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::model_tune::get_model;
-const IS_OLD: bool = true;
+const IS_OLD: bool = false;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Graph {
     pub nodes: Vec<Node>,
