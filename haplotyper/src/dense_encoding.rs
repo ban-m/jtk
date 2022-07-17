@@ -677,8 +677,8 @@ fn tune_position<'a>(
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     // First, let's truncate the `seq`
-    let alignment = edlib_sys::edlib_align(contig, &seq, mode, task);
-    let (seq_start, seq_end) = alignment.locations.unwrap()[0];
+    let alignment = edlib_sys::align(contig, &seq, mode, task);
+    let (seq_start, seq_end) = alignment.location().unwrap();
     let seq_end = seq_end + 1;
     // Modefy seq into truncate version.
     let pop_num = seq.len() - seq_end;
@@ -692,11 +692,11 @@ fn tune_position<'a>(
         false => (end - seq_end, end - seq_start),
     };
     // Second, let's truncate the contig.
-    let alignment = edlib_sys::edlib_align(&seq, contig, mode, task);
-    let (ctg_start, ctg_end) = alignment.locations.unwrap()[0];
+    let alignment = edlib_sys::align(&seq, contig, mode, task);
+    let (ctg_start, ctg_end) = alignment.location().unwrap();
     let ctg_end = ctg_end + 1;
     let contig = &contig[ctg_start..ctg_end];
-    let alignment = alignment.operations.unwrap();
+    let alignment = alignment.operations().unwrap();
     let edlib_to_op = {
         use kiley::Op::*;
         [Match, Ins, Del, Mismatch]

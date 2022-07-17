@@ -56,7 +56,7 @@ impl MultiplicityEstimation for DataSet {
             definitions::ReadType::None => 1,
         };
         graph.remove_lightweight_edges(thr, true);
-        debug!("{graph}");
+        debug!("SQUISHED\t{graph}");
         use rand::SeedableRng;
         use rand_xoshiro::Xoroshiro128PlusPlus;
         let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(config.seed);

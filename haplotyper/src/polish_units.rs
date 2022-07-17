@@ -122,8 +122,8 @@ impl PolishUnit for DataSet {
                 pileup.iter_mut().for_each(|node| {
                     let mode = edlib_sys::AlignMode::Global;
                     let task = edlib_sys::AlignTask::Alignment;
-                    let aln = edlib_sys::edlib_align(node.seq(), &draft, mode, task);
-                    let aln = aln.operations.unwrap();
+                    let aln = edlib_sys::align(node.seq(), &draft, mode, task);
+                    let aln = aln.operations().unwrap();
                     let k_ops: Vec<_> = aln.iter().map(|&op| ED_OPS[op as usize]).collect();
                     node.cigar = crate::encode::compress_kiley_ops(&k_ops).into();
                 });

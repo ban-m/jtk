@@ -187,53 +187,20 @@ fn polish(
                 (start, put_position, end)
             })
             .collect();
-        // for (i, pu) in pileup_seq.iter().enumerate() {
-        //     debug!("PILEUP\t{i}\t{}", pu.len());
-        // }
+        for (i, pu) in pileup_seq.iter().enumerate() {
+            debug!("PILEUP\t{i}\t{}", pu.len());
+        }
         //  Polish
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
             .zip(pileup_seq.par_iter())
             .zip(pileup_ops.par_iter_mut())
-            .map(|((draft, seqs), ops)| {
-                let before: Vec<_> = ops
-                    .iter()
-                    .map(|ops| ops.iter().filter(|&&op| op == Op::Match).count())
-                    .collect();
-                let polished = if seqs.len() < config.min_coverage {
-                    draft.to_vec()
-                } else {
-                    use kiley::bialignment::guided::polish_until_converge_with;
-                    let draft = polish_until_converge_with(draft, &seqs, ops, config.radius);
-                    if log_enabled!(log::Level::Debug) {
-                        for (seq, op) in seqs.iter().zip(ops.iter()) {
-                            let pre = hmm.likelihood_guided(&draft, seq, op, config.radius);
-                            let post = hmm.likelihood_guided_post(&draft, seq, op, config.radius);
-                            if pre.is_nan() || post.is_nan() {
-                                let (r, a, q) = kiley::recover(&draft, seq, op);
-                                for ((r, a), q) in
-                                    r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200))
-                                {
-                                    debug!("ALN\t{}", std::str::from_utf8(r).unwrap());
-                                    debug!("ALN\t{}", std::str::from_utf8(a).unwrap());
-                                    debug!("ALN\t{}", std::str::from_utf8(q).unwrap());
-                                }
-                                panic!();
-                            }
-                        }
-                    }
-                    hmm.polish_until_converge_with(&draft, seqs, ops, config.radius)
-                };
-                let after: Vec<_> = ops
-                    .iter()
-                    .map(|ops| ops.iter().filter(|&&op| op == Op::Match).count())
-                    .collect();
-                assert_eq!(before.len(), after.len());
-                for (&before, &after) in before.iter().zip(after.iter()) {
-                    assert!(before <= 2 * after);
-                }
-                polished
-            })
+            .map(
+                |((draft, seqs), ops)| match seqs.len() < config.min_coverage {
+                    true => draft.to_vec(),
+                    false => polish_seg(hmm, draft, seqs, ops, config.radius),
+                },
+            )
             .collect();
         let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
             let len = len + x.len();
@@ -252,6 +219,27 @@ fn polish(
         log_identity(sid, alignments);
     }
     polished
+}
+
+fn polish_seg(
+    hmm: &PairHiddenMarkovModel,
+    draft: &[u8],
+    seqs: &[&[u8]],
+    ops: &mut [Vec<Op>],
+    radius: usize,
+) -> Vec<u8> {
+    use kiley::bialignment::guided::polish_until_converge_with;
+    let draft = polish_until_converge_with(draft, &seqs, ops, radius);
+    // Check validity.
+    let has_large_del = seqs.iter().zip(ops.iter()).any(|(seq, op)| {
+        let lk_pre = hmm.likelihood_guided(&draft, seq, op, radius);
+        let lk_pos = hmm.likelihood_guided_post(&draft, seq, op, radius);
+        lk_pre.is_nan() || lk_pos.is_nan()
+    });
+    match has_large_del {
+        true => draft,
+        false => hmm.polish_until_converge_with(&draft, seqs, ops, radius),
+    }
 }
 
 fn fix_alignment(
@@ -296,9 +284,9 @@ fn fix_alignment(
 fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
-    let aln = edlib_sys::edlib_align(query, seg, mode, task);
-    let (start, end) = aln.locations.unwrap()[0];
-    let ops = aln.operations.unwrap();
+    let aln = edlib_sys::align(query, seg, mode, task);
+    let (start, end) = aln.location().unwrap();
+    let ops = aln.operations().unwrap();
     let ops: Vec<_> = ops.iter().map(|&op| EDLIB2KILEY[op as usize]).collect();
     (start, ops, end + 1)
 }
@@ -315,11 +303,11 @@ fn align_leading(query: &[u8], seg: &[u8]) -> (Vec<Op>, usize) {
     } else {
         let mode = edlib_sys::AlignMode::Infix;
         let task = edlib_sys::AlignTask::Alignment;
-        let aln = edlib_sys::edlib_align(query, seg, mode, task);
-        let (_, end) = aln.locations.unwrap()[0];
+        let aln = edlib_sys::align(query, seg, mode, task);
+        let (_, end) = aln.location().unwrap();
         let end = end + 1;
         let mut ops: Vec<_> = aln
-            .operations
+            .operations()
             .unwrap()
             .iter()
             .map(|&op| EDLIB2KILEY[op as usize])
@@ -343,10 +331,10 @@ fn align_trailing(query: &[u8], seg: &[u8]) -> (Vec<Op>, usize) {
     } else {
         let mode = edlib_sys::AlignMode::Prefix;
         let task = edlib_sys::AlignTask::Alignment;
-        let aln = edlib_sys::edlib_align(query, seg, mode, task);
-        let (_, end) = aln.locations.unwrap()[0];
+        let aln = edlib_sys::align(query, seg, mode, task);
+        let (_, end) = aln.location().unwrap();
         let ops: Vec<_> = aln
-            .operations
+            .operations()
             .unwrap()
             .iter()
             .map(|&op| EDLIB2KILEY[op as usize])
@@ -952,11 +940,11 @@ fn align_tip_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         // Seg:         --------->
         // Que:  ------------------->
         //              |         |
-        let aln = edlib_sys::edlib_align(seg, query, mode, task);
-        let (start, end) = aln.locations.unwrap()[0];
+        let aln = edlib_sys::align(seg, query, mode, task);
+        let (start, end) = aln.location().unwrap();
         let end = end + 1;
         let ops_table = [Op::Match, Op::Del, Op::Ins, Op::Mismatch];
-        let ops = aln.operations.unwrap();
+        let ops = aln.operations().unwrap();
         let mut ops: Vec<_> = ops.iter().map(|&op| ops_table[op as usize]).collect();
         assert!(end <= query.len());
         ops.extend(std::iter::repeat(Op::Ins).take(query.len() - end));
@@ -965,10 +953,10 @@ fn align_tip_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
     } else {
         // Seg: ------------------->
         // Query:          -------->
-        let aln = edlib_sys::edlib_align(query, seg, mode, task);
-        let (_, end) = aln.locations.unwrap()[0];
+        let aln = edlib_sys::align(query, seg, mode, task);
+        let (_, end) = aln.location().unwrap();
         let end = end + 1;
-        let ops = aln.operations.unwrap();
+        let ops = aln.operations().unwrap();
         let mut ops: Vec<_> = ops.iter().map(|&op| EDLIB2KILEY[op as usize]).collect();
         ops.extend(std::iter::repeat(Op::Del).take(seg.len() - end));
         // Pop leading insertions.
@@ -990,11 +978,11 @@ fn align_tail_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         // Seg:  --------->
         // Que:  ------------------->
         //         |      |
-        let aln = edlib_sys::edlib_align(seg, query, mode, task);
-        let (start, end) = aln.locations.unwrap()[0];
+        let aln = edlib_sys::align(seg, query, mode, task);
+        let (start, end) = aln.location().unwrap();
         let end = end + 1;
         let ops_table = [Op::Match, Op::Del, Op::Ins, Op::Mismatch];
-        let aln = aln.operations.unwrap();
+        let aln = aln.operations().unwrap();
         let mut ops = vec![Op::Ins; start];
         ops.extend(aln.iter().map(|&op| ops_table[op as usize]));
         let query = query[..end].to_vec();
@@ -1003,9 +991,9 @@ fn align_tail_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         //          |      |
         // Seg:   ------------------->
         // Query:   -------|->
-        let aln = edlib_sys::edlib_align(query, seg, mode, task);
-        let (start, _) = aln.locations.unwrap()[0];
-        let aln = aln.operations.unwrap();
+        let aln = edlib_sys::align(query, seg, mode, task);
+        let (start, _) = aln.location().unwrap();
+        let aln = aln.operations().unwrap();
         let mut ops = vec![Op::Del; start];
         ops.extend(aln.iter().map(|&op| EDLIB2KILEY[op as usize]));
         let mut poped = 0;
@@ -1024,19 +1012,10 @@ fn extend_between(query: &mut Vec<u8>, ops: &mut Vec<Op>, read: &[u8], seg: &[u8
     } else if read.is_empty() {
         ops.extend(std::iter::repeat(Op::Del).take(seg.len()));
     } else {
-        let ops_bet = edlib_sys::global(seg, read);
-        // {
-        //     let ops: Vec<_> = ops_bet.iter().map(|&op| EDLIB2KILEY[op as usize]).collect();
-        //     let len = 100;
-        //     let (r, a, q) = kiley::recover(seg, read, &ops);
-        //     for ((r, a), q) in r.chunks(len).zip(a.chunks(len)).zip(q.chunks(len)) {
-        //         log::debug!("ALN\t{}", std::str::from_utf8(r).unwrap());
-        //         log::debug!("ALN\t{}", std::str::from_utf8(a).unwrap());
-        //         log::debug!("ALN\t{}", std::str::from_utf8(q).unwrap());
-        //         log::debug!("ALN")
-        //     }
-        //     log::debug!("ALN");
-        // }
+        let mode = edlib_sys::AlignMode::Global;
+        let task = edlib_sys::AlignTask::Alignment;
+        let aln = edlib_sys::align(seg, read, mode, task);
+        let ops_bet = aln.operations().unwrap();
         query.extend(read);
         ops.extend(ops_bet.iter().map(|&op| EDLIB2KILEY[op as usize]));
     }

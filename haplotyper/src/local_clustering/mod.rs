@@ -87,8 +87,8 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         crate::model_tune::update_model(ds);
     }
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    use crate::stats::Stats;
-    let gain = estimate_minimum_gain(&hmm, ds.error_rate());
+    // use crate::stats::Stats;
+    let gain = estimate_minimum_gain(&hmm); //ds.error_rate()
     debug!("MinGain\t{:.3}", gain);
     let mut pileups: HashMap<u64, Vec<&mut Node>> =
         selection.iter().map(|&id| (id, vec![])).collect();
@@ -168,10 +168,9 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     normalize::normalize_local_clustering(ds);
 }
 
-pub fn estimate_minimum_gain(
-    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
-    error_rate: ErrorRate,
-) -> f64 {
+// _error_rate: ErrorRate,
+
+pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 23908;
     const SAMPLE_NUM: usize = 1000;
     const SEQ_NUM: usize = 500;
@@ -180,11 +179,11 @@ pub fn estimate_minimum_gain(
     // const FRAC: f64 = 0.01;
     const MIN_REQ: f64 = 1f64;
     // const PICK: usize = (SAMPLE_NUM as f64 * FRAC) as usize;
-    let prof = kiley::gen_seq::Profile {
-        sub: error_rate.mismatch,
-        del: error_rate.del,
-        ins: error_rate.ins,
-    };
+    // let prof = kiley::gen_seq::Profile {
+    //     sub: error_rate.mismatch,
+    //     del: error_rate.del,
+    //     ins: error_rate.ins,
+    // };
     let mut medians: Vec<_> = (0..SAMPLE_NUM)
         .into_par_iter()
         .map(|seed| {
@@ -194,9 +193,10 @@ pub fn estimate_minimum_gain(
                 true => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 0, 1),
                 false => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 1, 0),
             };
+            use kiley::gen_seq::Generate;
             let mut lks: Vec<_> = (0..SEQ_NUM)
                 .map(|_| {
-                    let read = kiley::gen_seq::introduce_randomness(&hap1, &mut rng, &prof);
+                    let read = hmm.gen(&hap1, &mut rng);
                     let lk_base = hmm.likelihood(&hap1, &read, BAND);
                     let lk_diff = hmm.likelihood(&hap2, &read, BAND);
                     lk_base - lk_diff
@@ -204,6 +204,22 @@ pub fn estimate_minimum_gain(
                 .collect();
             *lks.select_nth_unstable_by(SEQ_NUM / 2, |x, y| x.partial_cmp(y).unwrap())
                 .1
+            // let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED + seed as u64);
+            // let hap1 = kiley::gen_seq::generate_seq(&mut rng, LEN);
+            // let hap2 = match seed % 2 == 0 {
+            //     true => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 0, 1),
+            //     false => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 1, 0),
+            // };
+            // let mut lks: Vec<_> = (0..SEQ_NUM)
+            //     .map(|_| {
+            //         let read = kiley::gen_seq::introduce_randomness(&hap1, &mut rng, &prof);
+            //         let lk_base = hmm.likelihood(&hap1, &read, BAND);
+            //         let lk_diff = hmm.likelihood(&hap2, &read, BAND);
+            //         lk_base - lk_diff
+            //     })
+            //     .collect();
+            // *lks.select_nth_unstable_by(SEQ_NUM / 2, |x, y| x.partial_cmp(y).unwrap())
+            //     .1
         })
         .collect();
     medians.sort_by(|x, y| x.partial_cmp(y).unwrap());

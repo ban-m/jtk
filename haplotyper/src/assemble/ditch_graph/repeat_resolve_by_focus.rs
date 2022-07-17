@@ -476,73 +476,19 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             self.enumerate_candidate_nodes(&reads, config.min_span_reads, node_index, pos);
         let mut focus: Option<Focus> = None;
         for (dist, node_indices) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
-            let total_occs: usize = node_indices
-                .iter()
-                .filter_map(|(n, _)| self.node(*n).map(|n| n.occ))
-                .sum();
-            if total_occs == config.min_span_reads {
-                continue;
-            }
-            let dist = dist + 1;
             let nodes: Vec<_> = node_indices
                 .iter()
                 .map(|(n, _)| self.node(*n).unwrap())
                 .collect();
-            let mut occs: Vec<_> = vec![0; nodes.len()];
-            for read in reads.iter() {
-                let start = read
-                    .nodes
-                    .iter()
-                    .position(|n| (n.unit, n.cluster) == node.node)
-                    .unwrap();
-                let check_node = match (read.nodes[start].is_forward, pos == Position::Tail) {
-                    (true, true) | (false, false) if start + dist < read.nodes.len() => {
-                        &read.nodes[start + dist]
-                    }
-                    (false, true) | (true, false) if dist <= start => &read.nodes[start - dist],
-                    _ => continue,
-                };
-                let check_node = (check_node.unit, check_node.cluster);
-                if let Some(hit_node) = nodes.iter().position(|n| n.node == check_node) {
-                    occs[hit_node] += 1;
-                }
+            if nodes.iter().map(|n| n.occ).sum::<usize>() <= config.min_span_reads {
+                continue;
             }
-            let ith_ln = {
-                let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
-                let sum: f64 = probs.iter().sum();
-                probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
-                assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
-                probs
-            };
-            let null_prob: f64 = occs
-                .iter()
-                .zip(ith_ln.iter())
-                .map(|(&occ, ln)| match occ {
-                    0 => 0f64,
-                    _ => occ as f64 * ln,
-                })
-                .sum();
-            assert!(!null_prob.is_nan(), "{:?}\t{:?}", ith_ln, occs);
-            assert!(null_prob < std::f64::INFINITY, "{:?}\t{:?}", ith_ln, occs);
-            let (correct_lk, error_lk) = lk_pairs(nodes.len());
-            assert_eq!(nodes.len(), node_indices.len());
-            let nodes_with_lk = nodes
-                .iter()
-                .zip(node_indices.iter())
-                .enumerate()
-                .filter(|(_, (n, _))| n.copy_number == Some(1))
-                .map(|(k, (n, idx))| {
-                    let occs_with_idx = occs.iter().map(|&x| x as f64).enumerate();
-                    let lk: f64 = occs_with_idx
-                        .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
-                        .sum();
-                    assert!(!lk.is_nan());
-                    (lk - null_prob, n, idx)
-                })
-                .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap());
+            let dist = dist + 1;
+            let occs = Self::count_occurences((node, pos), dist, &nodes, &reads);
+            let nodes_with_lk = Self::max_lk_node(&occs, &nodes, node_indices);
             if let Some((lk_ratio, to, (to_idx, to_pos))) = nodes_with_lk {
                 if focus.as_ref().map(|f| f.llr()).unwrap_or(0f64) < lk_ratio {
-                    let to = (*to_idx, to.node, *to_pos);
+                    let to = (to_idx, to.node, to_pos);
                     let from = (node_index, node.node, pos);
                     let f = Focus::new(from, to, dist, lk_ratio, occs);
                     focus.replace(f);
@@ -550,6 +496,104 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
         }
         focus
+    }
+    fn count_occurences(
+        (node, pos): (&DitchNode, Position),
+        dist: usize,
+        nodes: &[&DitchNode],
+        reads: &[&EncodedRead],
+    ) -> Vec<usize> {
+        let mut occs: Vec<_> = vec![0; nodes.len()];
+        for read in reads.iter() {
+            let start = read
+                .nodes
+                .iter()
+                .position(|n| (n.unit, n.cluster) == node.node)
+                .unwrap();
+            let check_node = match (read.nodes[start].is_forward, pos == Position::Tail) {
+                (true, true) | (false, false) if start + dist < read.nodes.len() => {
+                    &read.nodes[start + dist]
+                }
+                (false, true) | (true, false) if dist <= start => &read.nodes[start - dist],
+                _ => continue,
+            };
+            let check_node = (check_node.unit, check_node.cluster);
+            if let Some(hit_node) = nodes.iter().position(|n| n.node == check_node) {
+                occs[hit_node] += 1;
+            }
+        }
+        occs
+    }
+    fn max_lk_node_dev<'c>(
+        occs: &[usize],
+        nodes: &[&'c DitchNode<'a>],
+        node_indices: &[(NodeIndex, Position)],
+    ) -> Option<(f64, &'c DitchNode<'a>, (NodeIndex, Position))> {
+        let cov_total: f64 = nodes.iter().map(|n| n.occ as f64).sum();
+        let occ_total: f64 = occs.iter().map(|&occ| occ as f64).sum();
+        nodes
+            .iter()
+            .zip(node_indices.iter())
+            .zip(occs.iter())
+            .filter(|((n, _), &occ)| 0 < occ && matches!(n.copy_number, Some(1)))
+            .map(|((n, idx), &occ)| {
+                let occ = occ as f64;
+                let null_lk = Self::likelihood_with(occs, occ, n.occ as f64 / cov_total);
+                let alt_lk = Self::likelihood_with(occs, occ, occ / occ_total);
+                (alt_lk - null_lk, *n, *idx)
+            })
+            .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
+    }
+    fn likelihood_with(occs: &[usize], occ: f64, prob: f64) -> f64 {
+        assert!(prob <= 1f64);
+        assert!(0f64 <= prob);
+        // modify so that .ln() would not fail
+        let prob = prob.max(0.0001).min(0.999);
+        let lk: f64 = occs
+            .iter()
+            .map(|&occ| occ as f64 * (1f64 - prob).ln())
+            .sum();
+        lk + occ * prob.ln() - occ * (1f64 - prob).ln()
+    }
+    #[allow(dead_code)]
+    fn max_lk_node<'c>(
+        occs: &[usize],
+        nodes: &[&'c DitchNode<'a>],
+        node_indices: &[(NodeIndex, Position)],
+    ) -> Option<(f64, &'c DitchNode<'a>, (NodeIndex, Position))> {
+        let ith_ln = {
+            let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
+            let sum: f64 = probs.iter().sum();
+            probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
+            assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
+            probs
+        };
+        let null_prob: f64 = occs
+            .iter()
+            .zip(ith_ln.iter())
+            .map(|(&occ, ln)| match occ {
+                0 => 0f64,
+                _ => occ as f64 * ln,
+            })
+            .sum();
+        assert!(!null_prob.is_nan(), "{:?}\t{:?}", ith_ln, occs);
+        assert!(null_prob < std::f64::INFINITY, "{:?}\t{:?}", ith_ln, occs);
+        let (correct_lk, error_lk) = lk_pairs(nodes.len());
+        assert_eq!(nodes.len(), node_indices.len());
+        nodes
+            .iter()
+            .zip(node_indices.iter())
+            .enumerate()
+            .filter(|(_, (n, _))| n.copy_number == Some(1))
+            .map(|(k, (n, idx))| {
+                let occs_with_idx = occs.iter().map(|&x| x as f64).enumerate();
+                let lk: f64 = occs_with_idx
+                    .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
+                    .sum();
+                assert!(!lk.is_nan());
+                (lk - null_prob, *n, *idx)
+            })
+            .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
     }
     fn enumerate_candidate_nodes(
         &self,

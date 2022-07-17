@@ -80,7 +80,8 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
         crate::model_tune::update_model(ds);
     }
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    let gain = crate::local_clustering::estimate_minimum_gain(&hmm, ds.error_rate());
+    // ds.error_rate()
+    let gain = crate::local_clustering::estimate_minimum_gain(&hmm);
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
         .iter()
@@ -381,7 +382,7 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
 
 use rand::Rng;
 
-use crate::stats::Stats;
+// use crate::stats::Stats;
 fn kmeans<R: Rng>(xs: &[Vec<f64>], k: usize, rng: &mut R) -> (Vec<usize>, f64) {
     fn update_assignment(data: &[Vec<f64>], centers: &[Vec<f64>], asn: &mut [usize]) {
         asn.iter_mut().zip(data).for_each(|(asn, datum)| {

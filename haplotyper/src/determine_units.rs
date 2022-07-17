@@ -558,8 +558,8 @@ fn fill_gap(
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
-    let alignment = edlib_sys::edlib_align(unit.seq(), &seq, mode, task);
-    let (seq_start, seq_end) = alignment.locations.unwrap()[0];
+    let alignment = edlib_sys::align(unit.seq(), &seq, mode, task);
+    let (seq_start, seq_end) = alignment.location().unwrap();
     let seq_end = seq_end + 1;
     let position_from_start = match direction {
         true => start + seq_start,
@@ -571,7 +571,7 @@ fn fill_gap(
         use kiley::Op::*;
         [Match, Del, Ins, Mismatch]
     };
-    let alignment = alignment.operations.unwrap();
+    let alignment = alignment.operations().unwrap();
     let ops: Vec<_> = alignment.iter().map(|&x| edlib_to_op[x as usize]).collect();
     let (_, ops) =
         kiley::bialignment::guided::global_guided(unit.seq(), seq, &ops, band, ALN_PARAMETER);

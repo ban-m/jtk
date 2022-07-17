@@ -237,11 +237,11 @@ fn semiglobal(xs: &[u8], ys: &[u8]) -> Vec<kiley::Op> {
     }
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
-    let aln = edlib_sys::edlib_align(xs, ys, mode, task);
-    let (start, end) = aln.locations.unwrap()[0];
+    let aln = edlib_sys::align(xs, ys, mode, task);
+    let (start, end) = aln.location().unwrap();
     let end = end + 1;
     let mut ops = vec![kiley::Op::Ins; start];
-    ops.extend(aln.operations.unwrap().iter().map(|op| match op {
+    ops.extend(aln.operations().unwrap().iter().map(|op| match op {
         0 => kiley::Op::Match,
         1 => kiley::Op::Del,
         2 => kiley::Op::Ins,

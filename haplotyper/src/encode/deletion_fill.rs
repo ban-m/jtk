@@ -969,8 +969,8 @@ fn fit_query_by_edlib<'a>(
     // TODO:Is this correct?
     let mode = edlib_sys::AlignMode::Global;
     let task = edlib_sys::AlignTask::Alignment;
-    let alignment = edlib_sys::edlib_align(unitseq, orig_query, mode, task);
-    let ops = alignment.operations.unwrap();
+    let alignment = edlib_sys::align(unitseq, orig_query, mode, task);
+    let ops = alignment.operations().unwrap();
     // let diff = ops.split(|&x| x == 0).filter(|x| !x.is_empty()).count();
     // let dissim = diff as f64 / ops.len() as f64;
     // if sim_thr + EDLIB_OFS < dissim {
