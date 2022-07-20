@@ -61,7 +61,8 @@ impl MultiplicityEstimation for DataSet {
         use rand_xoshiro::Xoroshiro128PlusPlus;
         let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(config.seed);
         // graph.assign_copy_number_mcmc(cov, &mut rng);
-        graph.assign_copy_number_mst(cov, &mut rng);
+        // graph.assign_copy_number_mst(cov, &mut rng);
+        graph.assign_copy_number_flow(cov, &mut rng);
         let nodes: HashMap<_, _> = graph
             .nodes()
             .filter_map(|(_, node)| node.copy_number.map(|c| (node.node, c)))

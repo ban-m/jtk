@@ -616,10 +616,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
         debug!("CC\tBFASN\t{}", self.cc());
         // MSST->MCMC
-        const IS_MCMC: bool = false;
-        match IS_MCMC {
-            true => self.assign_copy_number_mcmc(cov, &mut rng),
-            false => self.assign_copy_number_mst(cov, &mut rng),
+        const MULTIP_TYPE: u8 = 2;
+        match MULTIP_TYPE {
+            0 => self.assign_copy_number_mcmc(cov, &mut rng),
+            1 => self.assign_copy_number_mst(cov, &mut rng),
+            _ => self.assign_copy_number_flow(cov, &mut rng),
         };
         self.remove_zero_copy_elements(0.3);
         debug!("CC\tRMZERO\t{}", self.cc());
@@ -634,9 +635,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .take_while(|&x| min_llr < x)
             .enumerate();
         for (i, llr) in llr_stream {
-            match IS_MCMC {
-                true => self.assign_copy_number_mcmc(cov, &mut rng),
-                false => self.assign_copy_number_mst(cov, &mut rng),
+            match MULTIP_TYPE {
+                0 => self.assign_copy_number_mcmc(cov, &mut rng),
+                1 => self.assign_copy_number_mst(cov, &mut rng),
+                _ => self.assign_copy_number_flow(cov, &mut rng),
             };
 
             self.remove_zero_copy_elements(0.8);
@@ -645,9 +647,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if i == 5 {
-                match IS_MCMC {
-                    true => self.assign_copy_number_mcmc(cov, &mut rng),
-                    false => self.assign_copy_number_mst(cov, &mut rng),
+                match MULTIP_TYPE {
+                    0 => self.assign_copy_number_mcmc(cov, &mut rng),
+                    1 => self.assign_copy_number_mst(cov, &mut rng),
+                    _ => self.assign_copy_number_flow(cov, &mut rng),
                 };
                 self.remove_zero_copy_elements(0.9);
                 self.remove_zero_copy_path(0.3);
@@ -660,9 +663,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 dump(self, i + 1, c);
             }
         }
-        match IS_MCMC {
-            true => self.assign_copy_number_mcmc(cov, &mut rng),
-            false => self.assign_copy_number_mst(cov, &mut rng),
+        match MULTIP_TYPE {
+            0 => self.assign_copy_number_mcmc(cov, &mut rng),
+            1 => self.assign_copy_number_mst(cov, &mut rng),
+            _ => self.assign_copy_number_flow(cov, &mut rng),
         };
         self.remove_zero_copy_elements(0.9);
         self.remove_zero_copy_path(0.3);
