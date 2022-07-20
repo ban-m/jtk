@@ -60,6 +60,7 @@ impl MultiplicityEstimation for DataSet {
         use rand::SeedableRng;
         use rand_xoshiro::Xoroshiro128PlusPlus;
         let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(config.seed);
+        // graph.assign_copy_number_mcmc(cov, &mut rng);
         graph.assign_copy_number_mst(cov, &mut rng);
         let nodes: HashMap<_, _> = graph
             .nodes()
@@ -130,60 +131,44 @@ impl MultiplicityEstimation for DataSet {
                 }
             }
         });
-        // let raw_seq: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
-        // let convert_table: HashMap<_, _> = self
-        //     .selected_chunks
-        //     .iter_mut()
-        //     .enumerate()
-        //     .map(|(idx, chunk)| {
-        //         let convert = (chunk.id, idx as u64);
-        //         chunk.id = idx as u64;
-        //         convert
-        //     })
-        //     .collect();
-        // self.encoded_reads.iter_mut().for_each(|read| {
-        //     read.nodes.retain(|n| !to_remove.contains(&n.unit));
-        //     read.nodes
-        //         .iter_mut()
-        //         .for_each(|n| n.unit = convert_table[&n.unit]);
-        // });
         self.encoded_reads.retain(|read| !read.nodes.is_empty());
-        // self.encoded_reads.iter_mut().for_each(|read| {
-        //     assert!(!read.nodes.is_empty());
-        //     let mut nodes = Vec::with_capacity(read.nodes.len());
-        //     nodes.append(&mut read.nodes);
-        //     let seq = raw_seq[&read.id];
-        //     *read = crate::encode::nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-        // });
     }
 }
 
 fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
-    let (segments, edge, group, summaries, _) = graph.spell(c);
+    let (segments, edge, _group, summaries, _) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("MULTIP\tAssembly\t{}\t{}bp", segments.len(), total_base);
-    let nodes = segments.into_iter().map(|node| {
-        let tags = summaries
-            .iter()
-            .find(|x| x.id == node.sid)
-            .map(|contigsummary| {
-                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
-                let coverage =
-                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
-                let (cp, cpnum) = contigsummary
-                    .summary
-                    .iter()
-                    .filter_map(|elm| elm.copy_number)
-                    .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
-                let mut tags = vec![coverage];
-                if cpnum != 0 {
-                    tags.push(gfa::SamTag::new(format!("cp:i:{}", cp / cpnum)));
-                }
-                tags
-            })
-            .unwrap_or_else(Vec::new);
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
-    });
+    let mut groups: HashMap<_, Vec<_>> = HashMap::new();
+    let nodes: Vec<_> = segments
+        .into_iter()
+        .map(|node| {
+            let tags = summaries
+                .iter()
+                .find(|x| x.id == node.sid)
+                .map(|contigsummary| {
+                    let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                    let coverage =
+                        gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                    let (cp, cpnum) = contigsummary
+                        .summary
+                        .iter()
+                        .filter_map(|elm| elm.copy_number)
+                        .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                    let mut tags = vec![coverage];
+                    if cpnum != 0 {
+                        tags.push(gfa::SamTag::new(format!("cp:i:{}", cp / cpnum)));
+                    }
+                    groups
+                        .entry(cp / cpnum.max(1))
+                        .or_default()
+                        .push(node.sid.clone());
+                    tags
+                })
+                .unwrap_or_else(Vec::new);
+            gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
+        })
+        .collect();
     {
         for summary in summaries.iter() {
             let (copy_num, tig_num) = summary
@@ -195,6 +180,7 @@ fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
                 0 => 0,
                 _ => (copy_num as f64 / tig_num as f64).round() as usize,
             };
+
             let ids: Vec<_> = summary
                 .summary
                 .iter()
@@ -211,10 +197,18 @@ fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
     let edges = edge
         .into_iter()
         .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
-    let group = std::iter::once(group);
+    let groups = groups.into_iter().map(|(cp, ids)| {
+        let group = gfa::UnorderedGroup {
+            uid: Some(format!("cp:i:{}", cp)),
+            ids,
+        };
+        let group = gfa::Content::Group(gfa::Group::Set(group));
+        gfa::Record::from_contents(group, vec![].into())
+    });
+    // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
+    // let group = std::iter::once(group);
     let header = gfa::Content::Header(gfa::Header::default());
     let header = std::iter::once(gfa::Record::from_contents(header, vec![].into()));
-    let records: Vec<_> = header.chain(group).chain(nodes).chain(edges).collect();
+    let records: Vec<_> = header.chain(groups).chain(nodes).chain(edges).collect();
     gfa::GFA::from_records(records)
 }

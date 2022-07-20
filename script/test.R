@@ -1,7 +1,7 @@
 library(tidyverse)
 loadNamespace("cowplot")
 
-filename <- "659.tsv" # nolint
+filename <- "40.tsv" # nolint
 
 dataset <- read_tsv(filename, col_names = FALSE)
 len <- dataset %>% pull(X1) %>% max()
@@ -24,3 +24,6 @@ temp %>%
     summarize(across(starts_with("Pos"), ~ sum(.x[0 < .x])))
 temp %>%
     summarize(across(starts_with("Pos"), ~ sum(0 < .x)))
+
+
+matrix_data <- dataset %>% select(-X1, -X2) %>% as.matrix()

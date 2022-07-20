@@ -285,7 +285,7 @@ impl Graph {
                 let len = cycle.len();
                 let pen = parameters.negative_copy_num_pen;
                 let (cmin, neg) = (current_min, self.count_neg());
-                trace!("PROPOSED\t1.0\t{_diff:.1}\t{len}\t{pen}\t{cmin:.1}\t{neg}");
+                trace!("PROPOSED\t1.0\t{_diff:.1}\t{len}\t{pen:.1}\t{cmin:.1}\t{neg}");
                 self.update_copy_number_by_cycle(cycle);
             }
             self.update_self_loops(&parameters);
@@ -421,6 +421,11 @@ impl Graph {
             for &to in self.one_degree_nodes.iter().skip(i + 1) {
                 if let Some(cycle) = self.find_cycle_between(from, to, &mut stack, &mut status) {
                     let penalty = self.penalty_of_cycle(&cycle);
+                    trace!("CYCLE\t{penalty:.2}");
+                    for idx in cycle.iter() {
+                        let (node, tip) = (idx / 2, idx % 2);
+                        trace!("CYCLE\t{node}\t{tip}");
+                    }
                     if penalty < current_min {
                         current_min = penalty;
                         argmin = cycle;

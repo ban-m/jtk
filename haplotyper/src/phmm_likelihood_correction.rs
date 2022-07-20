@@ -233,16 +233,9 @@ fn clustering(
             contexts
                 .iter()
                 .enumerate()
-                .map(|(j, dtx)| {
-                    // Remove self loop/
-                    // trace!("-------------");
-                    // let aln =
-                    match i == j {
-                        false => alignment(ctx, dtx, copy_numbers),
-                        true => 0f64,
-                    }
-                    // trace!("PAIR\t{id}\t{i}\t{j}\t{aln:.2}");
-                    // aln
+                .map(|(j, dtx)| match i == j {
+                    false => alignment(ctx, dtx, copy_numbers),
+                    true => 0f64,
                 })
                 .collect()
         })
@@ -292,13 +285,13 @@ fn clustering(
     //         .unwrap();
     //     debug!("KMEANS\t{id}\t{k}\t{dist}");
     // }
-    // if log_enabled!(log::Level::Trace) {
-    //     for (i, sm) in eigens.iter().enumerate() {
-    //         let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-    //         let cls = contexts[i].1.cluster;
-    //         trace!("EIG\t{id}\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
-    //     }
-    // }
+    if log_enabled!(log::Level::Trace) {
+        for (i, sm) in eigens.iter().enumerate() {
+            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+            let cls = contexts[i].1.cluster;
+            trace!("EIG\t{id}\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
+        }
+    }
     assert!(asn.iter().all(|&x| x <= cluster_num));
     (asn, cluster_num)
 }
@@ -320,7 +313,7 @@ fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
 }
 
 const EIGEN_THR: f64 = 0.25;
-fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, usize) {
+fn get_eigenvalues(matrix: &[Vec<f64>], _k: usize, id: u64) -> (Vec<Vec<f64>>, usize) {
     let datalen = matrix.len();
     if datalen == 0 {
         panic!("{}", id)
@@ -347,7 +340,6 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
     // a few reads span them. Thus, the graph is densely connected.
     // The smallest eigenvalue is zero, but the second smallest eigenvalues
     // would be larger than THR usually.
-
     let opt_k = eigen_and_eigenvec
         .iter()
         .take_while(|&(_, &lam)| lam < EIGEN_THR)
@@ -359,23 +351,8 @@ fn get_eigenvalues(matrix: &[Vec<f64>], k: usize, id: u64) -> (Vec<Vec<f64>>, us
         }
         panic!("{}", opt_k);
     }
-    let top_k_eigenvec = eigen_and_eigenvec[..pick_k]
-        .iter()
-        .flat_map(|(v, _)| v.iter().copied());
-    if log_enabled!(log::Level::Trace) {
-        for (i, lam) in eigen_and_eigenvec
-            .iter()
-            .map(|(_, lam)| lam)
-            .take(8)
-            .enumerate()
-        {
-            trace!("LAMBDA\t{id}\t{i}\t{lam}\t{k}\t{pick_k}");
-        }
-    }
-    let top_k_eigenvec = nalgebra::DMatrix::from_iterator(datalen, pick_k, top_k_eigenvec);
-    let features: Vec<Vec<_>> = top_k_eigenvec
-        .row_iter()
-        .map(|row| row.iter().copied().collect())
+    let features: Vec<Vec<_>> = (0..datalen)
+        .map(|i| (0..pick_k).map(|j| eigen_and_eigenvec[j].0[i]).collect())
         .collect();
     (features, pick_k)
 }
@@ -450,7 +427,7 @@ fn kmeans<R: Rng>(xs: &[Vec<f64>], k: usize, rng: &mut R) -> (Vec<usize>, f64) {
 }
 
 type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
-const LK_CAP: f64 = 5f64;
+const LK_CAP: f64 = 15f64;
 fn alignment<'a>(
     (up1, center1, down1): &Context<'a>,
     (up2, center2, down2): &Context<'a>,
@@ -461,8 +438,18 @@ fn alignment<'a>(
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let up_aln = align_swg(up1, up2, copy_numbers);
     let down_aln = align_swg(down1, down2, copy_numbers);
-    let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
-    assert!(0f64 <= similarity);
+    // This is probably the correct formulation of the similarity score, a.k.a the
+    // likelihood ratio of the identity-by-haplotype. Exp(ln(From the same Hap) - ln(1-From the same hap)).
+    // However, likelihood ratio test is usually goes to extreme and we want to examine the difference between exp(150) vs exp(151) into
+    // similarity matrix.
+    // Anyway, use Max(0, log likleihood ratio) instead.
+    let likelihood_ratio = up_aln + down_aln + center;
+    match likelihood_ratio <= LK_CAP {
+        true => likelihood_ratio.exp(),
+        false => LK_CAP.exp() + (likelihood_ratio - LK_CAP),
+    }
+    // let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
+    // assert!(0f64 <= similarity);
     // if log_enabled!(log::Level::Trace) {
     //     fn to_line<'a>(vector: &[(u64, &'a [f64])]) -> Vec<String> {
     //         vector
@@ -477,7 +464,7 @@ fn alignment<'a>(
     //     let (cl1, cl2) = (argmax(&center1.posterior), argmax(&center2.posterior));
     //     trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}\t{cl1}\t{cl2}");
     // }
-    similarity
+    // similarity
 }
 
 // Align by SWG.

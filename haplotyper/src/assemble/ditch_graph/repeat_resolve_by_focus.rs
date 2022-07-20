@@ -72,12 +72,17 @@ impl Focus {
     }
 }
 
+use std::collections::HashSet;
 impl<'b, 'a: 'b> DitchGraph<'a> {
     /// Check the dynamic of foci.
     fn survey_foci(&'b mut self, foci: &[Focus]) -> usize {
         let mut solved = 0;
+        let mut affected_nodes: HashSet<NodeIndex> = HashSet::new();
         for focus in foci {
             if self.is_deleted(focus.from) || self.is_deleted(focus.to) {
+                continue;
+            }
+            if affected_nodes.contains(&focus.from) || affected_nodes.contains(&focus.to) {
                 continue;
             }
             // Check if the targets are present in the graph.
@@ -99,26 +104,29 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 continue;
             }
             debug!("FOCUS\tTRY\t{}", focus);
-            solved += self.survey_focus(focus).is_some() as usize;
-            //     if solved == 10 {
-            //         return 0;
-            //     }
+            solved += self.survey_focus(focus, &mut affected_nodes).is_some() as usize;
         }
         solved
     }
     // If resolveing successed, return Some(())
     // othewise, it encountered a stronger focus, and return None.
-    // TODO:Select path(ButHow?)
-    fn survey_focus(&'b mut self, focus: &Focus) -> Option<()> {
+    fn survey_focus(&'b mut self, focus: &Focus, affected: &mut HashSet<NodeIndex>) -> Option<()> {
         let path_to_focus = self.dfs_to_the_target(focus)?;
+        if path_to_focus.iter().any(|(n, _)| affected.contains(n)) {
+            return None;
+        }
         // If this path is no-branching, it is no use.
         if !self.is_path_branching(focus, &path_to_focus) {
             return None;
         }
-        self.duplicate_along(focus, &path_to_focus);
-        debug!("Duped");
+        for (i, &(index, pos)) in path_to_focus.iter().enumerate() {
+            let node = self.node(index).unwrap().node;
+            debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
+        }
+        let new_nodes = self.duplicate_along(focus, &path_to_focus);
+        affected.extend(new_nodes);
+        affected.extend(path_to_focus.iter().map(|x| x.0));
         self.remove_along(focus, &path_to_focus);
-        debug!("Removed");
         Some(())
     }
     fn is_path_branching(&self, focus: &Focus, path: &[(NodeIndex, Position)]) -> bool {
@@ -139,46 +147,91 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         is_branching
     }
-
-    fn duplicate_along(&'b mut self, focus: &Focus, path_spanning: &[(NodeIndex, Position)]) {
-        let mut new_id_runs = vec![focus.from];
-        for &(to_id, _) in path_spanning.iter() {
-            if to_id != focus.to {
-                let occ = self
-                    .node_mut(to_id)
-                    .map(|n| n.decrement_copy_number())
-                    .unwrap_or(0);
-                let new_idx = self.duplicate(to_id);
-                let new_node = self.node_mut(new_idx).unwrap();
-                new_node.occ = occ;
-                new_node.copy_number = Some(1);
-                new_id_runs.push(new_idx);
-            } else {
-                new_id_runs.push(to_id);
-            }
-        }
-        assert_eq!(new_id_runs.len(), path_spanning.len() + 1);
+    // Return nodes newly allocated.
+    fn duplicate_along(
+        &'b mut self,
+        focus: &Focus,
+        path_spaning: &[(NodeIndex, Position)],
+    ) -> Vec<NodeIndex> {
         let (mut c_index, mut c_pos) = (focus.from, focus.from_position);
-        for (window, &(old_idx, old_pos)) in new_id_runs.windows(2).zip(path_spanning.iter()) {
-            let occ = self.decrement_edge_copy_number((c_index, c_pos), (old_idx, old_pos));
+        let mut prev_id = focus.from;
+        let mut newly_allocated = vec![];
+        for (i, &(to_id, to_pos)) in path_spaning.iter().enumerate() {
+            // Duplicate if nessesary.
+            let new_idx = match i + 1 == path_spaning.len() {
+                true => to_id,
+                false => {
+                    let occ = self
+                        .node_mut(to_id)
+                        .map(|n| n.decrement_copy_number())
+                        .unwrap_or(0);
+                    let new_idx = self.duplicate(to_id);
+                    if let Some(n) = self.node_mut(new_idx) {
+                        n.occ = occ;
+                        n.copy_number = Some(1);
+                    }
+                    newly_allocated.push(new_idx);
+                    new_idx
+                }
+            };
+            let edge_occ = self.decrement_edge_copy_number((c_index, c_pos), (to_id, to_pos));
             let mut edge = self
                 .node(c_index)
                 .unwrap()
                 .edges
                 .iter()
-                .find(|e| (e.from_position, e.to, e.to_position) == (c_pos, old_idx, old_pos))
+                .find(|e| (e.from_position, e.to, e.to_position) == (c_pos, to_id, to_pos))
                 .unwrap()
                 .clone();
-            edge.occ = occ;
+            edge.occ = edge_occ;
             edge.copy_number = Some(1);
-            edge.from = window[0];
-            edge.to = window[1];
+            edge.from = prev_id;
+            edge.to = new_idx;
             self.add_edge(edge);
-            c_index = old_idx;
-            c_pos = !old_pos;
+            c_index = to_id;
+            c_pos = !to_pos;
+            prev_id = new_idx;
         }
-        // Removing edges to the last node...
+        newly_allocated
     }
+    // fn duplicate_along(&'b mut self, focus: &Focus, path_spanning: &[(NodeIndex, Position)]) {
+    //     let mut new_id_runs = vec![focus.from];
+    //     for &(to_id, _) in path_spanning.iter() {
+    //         if to_id != focus.to {
+    //             let occ = self
+    //                 .node_mut(to_id)
+    //                 .map(|n| n.decrement_copy_number())
+    //                 .unwrap_or(0);
+    //             let new_idx = self.duplicate(to_id);
+    //             let new_node = self.node_mut(new_idx).unwrap();
+    //             new_node.occ = occ;
+    //             new_node.copy_number = Some(1);
+    //             new_id_runs.push(new_idx);
+    //         } else {
+    //             new_id_runs.push(to_id);
+    //         }
+    //     }
+    //     assert_eq!(new_id_runs.len(), path_spanning.len() + 1);
+    //     let (mut c_index, mut c_pos) = (focus.from, focus.from_position);
+    //     for (window, &(old_idx, old_pos)) in new_id_runs.windows(2).zip(path_spanning.iter()) {
+    //         let occ = self.decrement_edge_copy_number((c_index, c_pos), (old_idx, old_pos));
+    //         let mut edge = self
+    //             .node(c_index)
+    //             .unwrap()
+    //             .edges
+    //             .iter()
+    //             .find(|e| (e.from_position, e.to, e.to_position) == (c_pos, old_idx, old_pos))
+    //             .unwrap()
+    //             .clone();
+    //         edge.occ = occ;
+    //         edge.copy_number = Some(1);
+    //         edge.from = window[0];
+    //         edge.to = window[1];
+    //         self.add_edge(edge);
+    //         c_index = old_idx;
+    //         c_pos = !old_pos;
+    //     }
+    // }
     fn remove_along(&'b mut self, focus: &Focus, path_spaning: &[(NodeIndex, Position)]) {
         // Removing zero-copy edges along the path.
         let (mut prev, mut prev_pos) = (focus.from, focus.from_position);
@@ -362,10 +415,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             };
         }
         back_track.reverse();
-        for (i, &(index, pos)) in back_track.iter().enumerate() {
-            let node = self.node(index).unwrap().node;
-            debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
-        }
         Some(back_track)
     }
     // Spell along the given path,
@@ -403,6 +452,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         thr: f64,
     ) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
+        warn!("Please fix lk computation!");
         let mut count = 1;
         while count != 0 {
             let mut foci = self.get_foci(reads, config);
@@ -524,6 +574,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         occs
     }
+    #[allow(dead_code)]
     fn max_lk_node_dev<'c>(
         occs: &[usize],
         nodes: &[&'c DitchNode<'a>],

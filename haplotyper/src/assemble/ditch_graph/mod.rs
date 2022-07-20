@@ -1,6 +1,7 @@
 use super::AssembleConfig;
 use definitions::DNASeq;
 use definitions::{EncodedRead, Unit};
+mod copy_num_by_flow;
 mod copy_num_by_mst;
 pub mod sequence_generation;
 pub use sequence_generation::*;
@@ -614,7 +615,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let seed = self.nodes.len() as u64 * 7329;
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
         debug!("CC\tBFASN\t{}", self.cc());
-        self.assign_copy_number_mst(cov, &mut rng);
+        // MSST->MCMC
+        const IS_MCMC: bool = false;
+        match IS_MCMC {
+            true => self.assign_copy_number_mcmc(cov, &mut rng),
+            false => self.assign_copy_number_mst(cov, &mut rng),
+        };
         self.remove_zero_copy_elements(0.3);
         debug!("CC\tRMZERO\t{}", self.cc());
         if log_enabled!(log::Level::Trace) {
@@ -628,14 +634,21 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .take_while(|&x| min_llr < x)
             .enumerate();
         for (i, llr) in llr_stream {
-            self.assign_copy_number_mst(cov, &mut rng);
+            match IS_MCMC {
+                true => self.assign_copy_number_mcmc(cov, &mut rng),
+                false => self.assign_copy_number_mst(cov, &mut rng),
+            };
+
             self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.resolve_repeats(reads, c, llr as f64);
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if i == 5 {
-                self.assign_copy_number_mst(cov, &mut rng);
+                match IS_MCMC {
+                    true => self.assign_copy_number_mcmc(cov, &mut rng),
+                    false => self.assign_copy_number_mst(cov, &mut rng),
+                };
                 self.remove_zero_copy_elements(0.9);
                 self.remove_zero_copy_path(0.3);
                 self.remove_lightweight_edges(0, true);
@@ -647,12 +660,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 dump(self, i + 1, c);
             }
         }
-        self.assign_copy_number_mst(cov, &mut rng);
+        match IS_MCMC {
+            true => self.assign_copy_number_mcmc(cov, &mut rng),
+            false => self.assign_copy_number_mst(cov, &mut rng),
+        };
         self.remove_zero_copy_elements(0.9);
         self.remove_zero_copy_path(0.3);
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
-        self.assign_copy_number_mst(cov, &mut rng);
+        self.assign_copy_number_mcmc(cov, &mut rng);
         assert!(self.sanity_check(), "{}", line!());
         self.squish_small_net(3);
         assert!(self.sanity_check(), "{}", line!());
@@ -1748,14 +1764,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     continue;
                 }
                 let edges = node.edges.iter().filter(|e| e.from_position == pos);
-                for e in edges.clone().filter(|e| e.occ <= thr) {
+                for e in edges.filter(|e| e.occ <= thr) {
                     // If retain mode, check this is not the only edge
                     let is_safe = self
                         .node(e.to)
                         .unwrap()
                         .edges
                         .iter()
-                        .filter(|e| e.from_position == e.to_position)
+                        .filter(|f| f.from_position == e.to_position)
                         .any(|f| thr < f.occ);
                     let removable = !retain_single_edge || is_safe;
                     if removable {

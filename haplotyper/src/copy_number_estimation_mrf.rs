@@ -1,6 +1,5 @@
 use definitions::EncodedRead;
-use rand::{Rng, SeedableRng};
-use rand_xoshiro::Xoroshiro128StarStar;
+use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
 type Node = (u64, u64);
@@ -14,14 +13,12 @@ pub trait CopyNumberEstimation {
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     haploid_coverage: Option<f64>,
-    seed: u64,
 }
 
 impl Config {
-    pub fn new(haploid_coverage: f64, seed: u64) -> Self {
+    pub fn new(haploid_coverage: f64) -> Self {
         Self {
             haploid_coverage: Some(haploid_coverage),
-            seed,
         }
     }
 }
@@ -237,13 +234,16 @@ impl Graph {
     //     (mean_cov + (hap_cov - 1f64) / len) / (mean_cp + 1f64 / len)
     // }
     // Return vector of (MAP-estimated) copy numbers of nodes and those of edges.
-    pub fn map_estimate_copy_numbers(&self, config: &Config) -> ((Vec<usize>, Vec<usize>), f64) {
+    pub fn map_estimate_copy_numbers<R: Rng>(
+        &self,
+        rng: &mut R,
+        config: &Config,
+    ) -> ((Vec<usize>, Vec<usize>), f64) {
         let hap_cov = config
             .haploid_coverage
             .unwrap_or_else(|| self.estimate_coverage());
-        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(config.seed);
         let mut mcmc_config = MCMCConfig::new(1f64, 1f64, hap_cov);
-        let (mut node_cp, mut edge_cp) = self.initial_guess(&mcmc_config, &mut rng);
+        let (mut node_cp, mut edge_cp) = self.initial_guess(&mcmc_config, rng);
         // To get MAP estimates, get the lowest potential combination.
         // We gradually increase the consistency factor so that after BURN_IN period,
         // the consistency factor would be TARGET.
@@ -252,14 +252,14 @@ impl Graph {
         mcmc_config.temprature = 100f64;
         let chill = (100f64.ln() / total_step as f64).exp();
         for _t in 1..total_step {
-            let _ = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
+            let _ = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, rng);
             mcmc_config.consist_factor *= grad;
             mcmc_config.temprature /= chill;
         }
         let mut minpot = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
         let mut argmin = (node_cp.clone(), edge_cp.clone());
         for _t in 0..1000 {
-            let (accept, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
+            let (accept, _) = self.update(&mut node_cp, &mut edge_cp, &mcmc_config, rng);
             if accept {
                 let pot = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
                 // trace!("DUMP\t{}\t{}\t{}", config.seed, _t, pot);
@@ -625,6 +625,8 @@ fn logsumexp(xs: &[f64]) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
+    use rand::SeedableRng;
+    use rand_xoshiro::Xoroshiro128StarStar;
     #[test]
     fn it_works() {}
     #[test]
@@ -636,8 +638,9 @@ mod test {
             (2, false, 3, true),
         ];
         let graph = Graph::with(&edges, &coverages);
-        let config = Config::new(10f64, 4329804);
-        let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(10f64);
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         assert_eq!(node_cp, vec![1; 4]);
         assert_eq!(edge_cp, vec![1; 3]);
     }
@@ -655,8 +658,10 @@ mod test {
             assert_eq!(eds[0].len(), 1);
             assert_eq!(eds[1].len(), 1);
         }
-        let config = Config::new(mean_cov as f64, 392480);
-        let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(mean_cov as f64);
+
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp, edge_cp), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         for (i, cp) in node_cp.iter().enumerate().filter(|&(_, &cp)| cp != 1) {
             println!("ND\t{}\t{}", cp, graph.coverages[i].0);
         }
@@ -715,8 +720,10 @@ mod test {
             (13, false, 18, true), //21
         ];
         let graph = Graph::with(&edges, &coverages);
-        let config = Config::new(mean_cov as f64, 392480);
-        let ((node_cp_e, _edge_cp_e), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(mean_cov as f64);
+
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp_e, _edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         assert_eq!(node_cp_e, node_cp);
         // assert_eq!(edge_cp_e, edge_cp);
     }
@@ -747,8 +754,10 @@ mod test {
             (7, false, 8, true),
         ];
         let graph = Graph::with(&edges, &coverages);
-        let config = Config::new(mean_cov as f64, 392480);
-        let ((node_cp_e, edge_cp_e), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(mean_cov as f64);
+
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp_e, edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         println!("{}\t{:?}", mean_cov, coverages);
         println!("{:?}\n{:?}", node_cp_e, edge_cp_e);
         assert_eq!(node_cp_e, node_cp);
@@ -781,8 +790,10 @@ mod test {
             (6, false, 7, true),
         ];
         let graph = Graph::with(&edges, &coverages);
-        let config = Config::new(mean_cov as f64, 392480);
-        let ((node_cp_e, edge_cp_e), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(mean_cov as f64);
+
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp_e, edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         assert_eq!(node_cp_e, node_cp);
         assert_eq!(edge_cp_e, edge_cp);
     }
@@ -844,8 +855,10 @@ mod test {
         let mean_cov = total_units as f64 / hap.len() as f64 / 2f64;
         let (graph, node_to_idx, _) = Graph::new(&reads);
         println!("{}", graph);
-        let config = Config::new(mean_cov, 392480);
-        let ((node_cp_e, _edge_cp_e), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(mean_cov);
+
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp_e, _edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         let mut node_cp_e: Vec<_> = node_to_idx
             .iter()
             .map(|(&(u, _), &idx)| (u, node_cp_e[idx]))
@@ -898,8 +911,10 @@ mod test {
         let mean_cov = total_units as f64 / (hap1.len() + hap2.len()) as f64;
         let (graph, node_to_idx, _) = Graph::new(&reads);
         println!("{}", graph);
-        let config = Config::new(mean_cov, 392480);
-        let ((node_cp_e, _edge_cp_e), _) = graph.map_estimate_copy_numbers(&config);
+        let config = Config::new(mean_cov);
+
+        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+        let ((node_cp_e, _edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
         let mut node_cp_e: Vec<_> = node_to_idx
             .iter()
             .map(|(&(u, _), &idx)| (u, node_cp_e[idx]))

@@ -328,12 +328,12 @@ fn choose_copy_num<R: Rng>(
 }
 
 const CHAIN_NUM: u64 = 56;
-const SEED: u64 = 293480;
 //Input:haploid coverage.
-pub fn estimate_copy_number_mcmc(
+pub fn estimate_copy_number_mcmc<R: Rng>(
     nodes: &[(f64, usize)],
     edges: &[Edge],
     cov: f64,
+    rng: &mut R,
 ) -> (Vec<usize>, Vec<usize>) {
     let edges: Vec<_> = edges
         .iter()
@@ -346,11 +346,13 @@ pub fn estimate_copy_number_mcmc(
     let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
     debug!("COPYNUM\tGraph\t{}", graph);
     use rayon::prelude::*;
-    let (argmin, min) = (0..CHAIN_NUM)
+    let seeds: Vec<_> = (0..CHAIN_NUM).map(|_| rng.gen::<u64>()).collect();
+    let (argmin, min) = seeds
         .into_par_iter()
-        .map(|i| {
-            let config = crate::copy_number_estimation_mrf::Config::new(cov, SEED + i);
-            graph.map_estimate_copy_numbers(&config)
+        .map(|seed| {
+            let config = crate::copy_number_estimation_mrf::Config::new(cov);
+            let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(seed);
+            graph.map_estimate_copy_numbers(&mut rng, &config)
         })
         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .unwrap();

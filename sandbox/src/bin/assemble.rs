@@ -39,20 +39,13 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     graph.remove_lightweight_edges(2, true);
     let cov = ds.coverage.unwrap_or(30.0);
     let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
-    graph.assign_copy_number_mst(cov, &mut rng);
+    // graph.assign_copy_number_mcmc(cov, &mut rng);
+    // graph.assign_copy_number_mst(cov, &mut rng);
+    graph.assign_copy_number_flow(cov, &mut rng);
     eprintln!("{graph}");
     eprintln!("CC:{}", graph.cc());
     assert!(graph.sanity_check());
     let (segments, edge, _, summaries, _encs) = graph.spell(c);
-    // for enc in encs {
-    //     let id = &enc.id;
-    //     for tile in enc.tiles.iter() {
-    //         let (cs, ce) = tile.contig_range();
-    //         let (strand, us, ue) = tile.unit_range();
-    //         let (node, cluster) = tile.unit_info();
-    //         log::debug!("TILE\t{id}\t{cs}\t{ce}\t{strand}\t{us}\t{ue}\t{node}\t{cluster}");
-    //     }
-    // }
     let mut groups: HashMap<_, Vec<_>> = HashMap::new();
     let nodes: Vec<_> = segments
         .into_iter()

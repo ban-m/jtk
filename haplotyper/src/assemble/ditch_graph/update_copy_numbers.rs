@@ -1,5 +1,8 @@
 //! Methods to update copy numbers.
 //!
+use rand::Rng;
+
+use super::copy_num_by_flow;
 use super::copy_num_by_mst;
 use super::DitEdge;
 use super::DitchEdge;
@@ -102,16 +105,16 @@ impl<'a> DitchGraph<'a> {
     /// Estimoate copy number of nodes and edges by MCMC.
     /// *This function does not modify the graph content*.
     /// If you want to assign copy number to each node, call `assign_copy_number_gbs` instead.
-    pub fn copy_number_estimation_mcmc(
+    pub fn copy_number_estimation_mcmc<R: Rng>(
         &self,
         cov: f64,
-        _lens: &[usize],
+        rng: &mut R,
     ) -> (CopyNumbers, HashMap<DitEdge, usize>) {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (terminals, edges) = self.convert_connecting_edges(&node_to_pathid, &connecting_edges);
         let nodes = self.convert_path_weight(&node_to_pathid);
         let (node_cp, edge_cp) =
-            crate::assemble::copy_number::estimate_copy_number_mcmc(&nodes, &edges, cov);
+            crate::assemble::copy_number::estimate_copy_number_mcmc(&nodes, &edges, cov, rng);
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
             for ((cov, len), cp) in nodes.iter().zip(node_cp.iter()) {
@@ -125,9 +128,8 @@ impl<'a> DitchGraph<'a> {
     }
     // TODO:Fasten this function.
     /// (Re-)estimate copy number on each node and edge.
-    pub fn assign_copy_number_mcmc(&mut self, naive_cov: f64, lens: &[usize]) {
-        let (node_copy_number, edge_copy_number) =
-            self.copy_number_estimation_mcmc(naive_cov, lens);
+    pub fn assign_copy_number_mcmc<R: Rng>(&mut self, naive_cov: f64, rng: &mut R) {
+        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_mcmc(naive_cov, rng);
         self.modify_by_with_index(|(index, node)| {
             let cp = node_copy_number[index];
             node.copy_number = Some(cp);
@@ -200,6 +202,36 @@ impl<'a> DitchGraph<'a> {
     /// (Re-)estimate copy number on each node and edge.
     pub fn assign_copy_number_mst<R: rand::Rng>(&mut self, naive_cov: f64, rng: &mut R) {
         let (node_copy_number, edge_copy_number) = self.copy_number_estimation_mst(naive_cov, rng);
+        self.modify_by_with_index(|(index, node)| {
+            let cp = node_copy_number[index];
+            node.copy_number = Some(cp);
+            for edge in node.edges.iter_mut() {
+                edge.copy_number = edge_copy_number.get(&edge.key()).copied();
+            }
+        });
+    }
+
+    /// Estimoate copy number of nodes and edges by Flow algorithm.
+    /// *This function does not modify the graph content*.
+    /// If you want to assign copy number to each node, call `assign_copy_number_gbs` instead.
+    pub fn copy_number_estimation_flow<R: rand::Rng>(
+        &self,
+        hap_cov: f64,
+        rng: &mut R,
+    ) -> (CopyNumbers, HashMap<DitEdge, usize>) {
+        let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
+        let (terminals, edges) = self.convert_connecting_edges(&node_to_pathid, &connecting_edges);
+        let nodes = self.convert_path_weight(&node_to_pathid);
+        let mut graph = copy_num_by_flow::Graph::new(&nodes, &edges, hap_cov);
+        graph.optimize(rng);
+        let (node_cp, edge_cp) = graph.copy_numbers();
+        assert_eq!(nodes.len(), node_cp.len());
+        assert_eq!(edges.len(), edge_cp.len());
+        self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
+    }
+    /// (Re-)estimate copy number on each node and edge.
+    pub fn assign_copy_number_flow<R: rand::Rng>(&mut self, naive_cov: f64, rng: &mut R) {
+        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_flow(naive_cov, rng);
         self.modify_by_with_index(|(index, node)| {
             let cp = node_copy_number[index];
             node.copy_number = Some(cp);
