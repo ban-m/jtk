@@ -229,7 +229,7 @@ fn polish_seg(
     radius: usize,
 ) -> Vec<u8> {
     use kiley::bialignment::guided::polish_until_converge_with;
-    let draft = polish_until_converge_with(draft, &seqs, ops, radius);
+    let draft = polish_until_converge_with(draft, seqs, ops, radius);
     // Check validity.
     let has_large_del = seqs.iter().zip(ops.iter()).any(|(seq, op)| {
         let lk_pre = hmm.likelihood_guided(&draft, seq, op, radius);

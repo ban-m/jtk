@@ -443,38 +443,38 @@ fn subcommand_partition_local() -> Command<'static> {
         )
 }
 
-fn subcommand_squish() -> Command<'static> {
-    Command::new("squish")
-        .version("0.1")
-        .author("BanshoMasutani")
-        .about("Squish unreliable clusterings (Local).")
-        .arg(
-            Arg::new("verbose")
-                .short('v')
-                .multiple_occurrences(true)
-                .help("Debug mode"),
-        )
-        .arg(
-            Arg::new("threads")
-                .short('t')
-                .long("threads")
-                .required(false)
-                .value_name("THREADS")
-                .help("Number of Threads")
-                .default_value("1")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::new("supress_level")
-                .short('s')
-                .long("supress")
-                .required(false)
-                .value_name("THR")
-                .help("Supression level from 0(=do not supress) to 1=(squish all the clusters).")
-                .default_value("0.4")
-                .takes_value(true),
-        )
-}
+// fn subcommand_squish() -> Command<'static> {
+//     Command::new("squish")
+//         .version("0.1")
+//         .author("BanshoMasutani")
+//         .about("Squish unreliable clusterings (Local).")
+//         .arg(
+//             Arg::new("verbose")
+//                 .short('v')
+//                 .multiple_occurrences(true)
+//                 .help("Debug mode"),
+//         )
+//         .arg(
+//             Arg::new("threads")
+//                 .short('t')
+//                 .long("threads")
+//                 .required(false)
+//                 .value_name("THREADS")
+//                 .help("Number of Threads")
+//                 .default_value("1")
+//                 .takes_value(true),
+//         )
+//         .arg(
+//             Arg::new("supress_level")
+//                 .short('s')
+//                 .long("supress")
+//                 .required(false)
+//                 .value_name("THR")
+//                 .help("Supression level from 0(=do not supress) to 1=(squish all the clusters).")
+//                 .default_value("0.4")
+//                 .takes_value(true),
+//         )
+// }
 
 fn subcommand_purge_diverged() -> Command<'static> {
     Command::new("purge_diverged")
@@ -1002,16 +1002,16 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     dataset.local_clustering();
 }
 
-fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
-    set_threads(matches);
-    let supress: f64 = matches
-        .value_of("supress_level")
-        .and_then(|e| e.parse().ok())
-        .unwrap();
-    use haplotyper::squish_erroneous_clusters::*;
-    let config = SquishConfig::new(supress, 5);
-    dataset.squish_erroneous_clusters(&config);
-}
+// fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+//     set_threads(matches);
+//     let supress: f64 = matches
+//         .value_of("supress_level")
+//         .and_then(|e| e.parse().ok())
+//         .unwrap();
+//     use haplotyper::squish_erroneous_clusters::*;
+//     let config = SquishConfig::new(supress, 5);
+//     dataset.squish_erroneous_clusters(&config);
+// }
 
 fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tPurge diverged clusters");
@@ -1254,7 +1254,6 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_polish_encoding())
         .subcommand(subcommand_estimate_multiplicity())
         .subcommand(subcommand_partition_local())
-        .subcommand(subcommand_squish())
         .subcommand(subcommand_purge_diverged())
         .subcommand(subcommand_correct_deletion())
         .subcommand(subcommand_correct_clustering())
@@ -1285,7 +1284,6 @@ fn main() -> std::io::Result<()> {
         Some(("pick_components", sub_m)) => pick_components(sub_m, ds),
         Some(("polish_encoding", sub_m)) => polish_encode(sub_m, ds),
         Some(("partition_local", sub_m)) => local_clustering(sub_m, ds),
-        Some(("squish", sub_m)) => squish(sub_m, ds),
         Some(("purge_diverged", sub_m)) => purge_diverged(sub_m, ds),
         Some(("correct_deletion", sub_m)) => correct_deletion(sub_m, ds),
         Some(("estimate_multiplicity", sub_m)) => multiplicity_estimation(sub_m, ds),

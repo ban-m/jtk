@@ -248,20 +248,17 @@ enum ContigTag {
     Both(String, Position, Position, usize),
 }
 
+type TraversedContigs = (
+    Vec<gfa::Segment>,
+    Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
+    gfa::Group,
+    Vec<ContigSummary>,
+    Vec<ContigEncoding>,
+);
 impl<'a> super::DitchGraph<'a> {
     /// Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
     /// The contig summary contains the units used to construct a contig in the traversing order.
-    #[allow(clippy::type_complexity)]
-    pub fn spell(
-        &self,
-        c: &AssembleConfig,
-    ) -> (
-        Vec<gfa::Segment>,
-        Vec<(gfa::Edge, Vec<gfa::SamTag>)>,
-        gfa::Group,
-        Vec<ContigSummary>,
-        Vec<ContigEncoding>,
-    ) {
+    pub fn spell(&self, c: &AssembleConfig) -> TraversedContigs {
         let mut arrived = HashSet::new();
         let mut sids: HashMap<_, _> = HashMap::new();
         let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);

@@ -194,46 +194,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         newly_allocated
     }
-    // fn duplicate_along(&'b mut self, focus: &Focus, path_spanning: &[(NodeIndex, Position)]) {
-    //     let mut new_id_runs = vec![focus.from];
-    //     for &(to_id, _) in path_spanning.iter() {
-    //         if to_id != focus.to {
-    //             let occ = self
-    //                 .node_mut(to_id)
-    //                 .map(|n| n.decrement_copy_number())
-    //                 .unwrap_or(0);
-    //             let new_idx = self.duplicate(to_id);
-    //             let new_node = self.node_mut(new_idx).unwrap();
-    //             new_node.occ = occ;
-    //             new_node.copy_number = Some(1);
-    //             new_id_runs.push(new_idx);
-    //         } else {
-    //             new_id_runs.push(to_id);
-    //         }
-    //     }
-    //     assert_eq!(new_id_runs.len(), path_spanning.len() + 1);
-    //     let (mut c_index, mut c_pos) = (focus.from, focus.from_position);
-    //     for (window, &(old_idx, old_pos)) in new_id_runs.windows(2).zip(path_spanning.iter()) {
-    //         let occ = self.decrement_edge_copy_number((c_index, c_pos), (old_idx, old_pos));
-    //         let mut edge = self
-    //             .node(c_index)
-    //             .unwrap()
-    //             .edges
-    //             .iter()
-    //             .find(|e| (e.from_position, e.to, e.to_position) == (c_pos, old_idx, old_pos))
-    //             .unwrap()
-    //             .clone();
-    //         edge.occ = occ;
-    //         edge.copy_number = Some(1);
-    //         edge.from = window[0];
-    //         edge.to = window[1];
-    //         self.add_edge(edge);
-    //         c_index = old_idx;
-    //         c_pos = !old_pos;
-    //     }
-    // }
+
     fn remove_along(&'b mut self, focus: &Focus, path_spaning: &[(NodeIndex, Position)]) {
-        // Removing zero-copy edges along the path.
+        // TODO: should return affected.
+        // TODO: should watch removed nodes.
         let (mut prev, mut prev_pos) = (focus.from, focus.from_position);
         for &(node, pos) in path_spaning {
             let prev_node = self.node(prev).unwrap();
@@ -249,29 +213,36 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             prev_pos = !pos;
         }
         // Removing other branching edges along the path.
-        let remove: Vec<_> = {
-            let mut remove_edges = self.edges_from(focus.from, focus.from_position);
-            remove_edges.retain(|edge| edge.copy_number == Some(0));
-            remove_edges.iter().map(|e| e.key()).collect()
-        };
-        for (f, t) in remove {
-            self.remove_edge_between(f, t);
+        let mut remove = vec![];
+        {
+            let edges = self
+                .node(focus.from)
+                .unwrap()
+                .edges
+                .iter()
+                .filter(|e| e.from_position == focus.from_position);
+            let remove_edges = edges.filter(|e| e.copy_number == Some(0));
+            remove.extend(remove_edges.map(|e| e.norm_key()));
         }
         for &(node, _) in path_spaning {
-            let remove: Vec<_> = self
+            let edges = self
                 .node(node)
                 .unwrap()
                 .edges
                 .iter()
                 .filter(|edge| edge.copy_number == Some(0))
-                .map(|e| ((e.from, e.from_position), (e.to, e.to_position)))
-                .collect();
-            for (f, t) in remove {
-                self.remove_edge_between(f, t);
-            }
+                .map(|e| e.norm_key());
+            remove.extend(edges);
         }
-        for &(node, _) in path_spaning {
-            // node might be absent, because it is included in a loop!
+        for &(f, t) in remove.iter() {
+            self.remove_edge_between(f, t);
+        }
+        let affected: HashSet<_> = remove
+            .iter()
+            .flat_map(|(f, t)| [f.0, t.0])
+            .chain(path_spaning.iter().map(|n| n.0))
+            .collect();
+        for node in affected {
             if !self.is_deleted(node) {
                 let edge_num = self.node(node).unwrap().edges.len();
                 if edge_num == 0 {
@@ -280,81 +251,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
         }
     }
-    // Span the region by `path_spaning`.
-    // fn span_region(&'b mut self, focus: &Focus, path_spaning: &[(NodeIndex, Position)]) {
-    //     assert_eq!(*path_spaning.last().unwrap(), (focus.to, focus.to_position));
-    //     // 1. Duplicate nodes along with the path, except the last node.
-    //     let mut duplicated_nodes = vec![];
-    //     for &(node, _) in path_spaning.iter().take(len - 1) {
-    //         let new_idx = self.duplicate(node);
-    //         duplicated_nodes.push(new_idx);
-    //     }
-    //     // 2. Remove all the edges in the newly allocated nodes.
-    //     for &index in duplicated_nodes.iter() {
-    //         self.node_mut(index).unwrap().edges.clear()
-    //     }
-    //     // 3. Add edges appropriately.
-    //     let (mut from, mut from_pos) = (focus.from, focus.from_position);
-    //     for (&(old, old_pos), &new) in path_spaning.iter().zip(duplicated_nodes.iter()) {
-    //         let from_node = self.node(from).unwrap();
-    //         let mut new_edge = from_node
-    //             .edges
-    //             .iter()
-    //             .find(|e| e.from_position == from_pos && e.to == old && e.to_position == old_pos)
-    //             .unwrap()
-    //             .clone();
-    //         new_edge.to = new;
-    //         self.add_edge(new_edge);
-    //         from = old;
-    //         from_pos = !old_pos;
-    //     }
-    //     // 4. removing zero-copy edges along the path.
-    //     let (mut prev, mut prev_pos) = (focus.from, focus.from_position);
-    //     for &(node, pos) in path_spaning {
-    //         let prev_node = self.node(prev).unwrap();
-    //         let edge = prev_node
-    //             .edges
-    //             .iter()
-    //             .find(|e| e.from_position == prev_pos && e.to == node && e.to_position == pos);
-    //         let copy_num = edge.and_then(|e| e.copy_number);
-    //         if copy_num == Some(0) {
-    //             self.remove_edge_between((prev, prev_pos), (node, pos));
-    //         }
-    //         prev = node;
-    //         prev_pos = !pos;
-    //     }
-    //     // Removing other branching edges along the path.
-    //     let remove: Vec<_> = {
-    //         let mut remove_edges = self.edges_from(from, from_pos);
-    //         remove_edges.retain(|edge| edge.copy_number == Some(0));
-    //         remove_edges.iter().map(|e| e.key()).collect()
-    //     };
-    //     for (f, t) in remove {
-    //         self.remove_edge_between(f, t);
-    //     }
-    //     for &(node, _) in path_spaning {
-    //         let remove: Vec<_> = self
-    //             .node(node)
-    //             .unwrap()
-    //             .edges
-    //             .iter()
-    //             .filter(|edge| edge.copy_number == Some(0))
-    //             .map(|e| ((e.from, e.from_position), (e.to, e.to_position)))
-    //             .collect();
-    //         for (f, t) in remove {
-    //             self.remove_edge_between(f, t);
-    //         }
-    //     }
-    //     for &(node, _) in path_spaning {
-    //         // node might be absent, because it is included in a loop!
-    //         if !self.is_deleted(node) {
-    //             let edge_num = self.node(node).unwrap().edges.len();
-    //             if edge_num == 0 {
-    //                 self.delete(node);
-    //             }
-    //         }
-    //     }
-    // }
     // From (start,pos) position to the focus target(start=focus.node, position=focus.position).
     // Note that, the path would contain the (target,target pos) at the end of the path and
     // not contain the (start,pos) position itself.

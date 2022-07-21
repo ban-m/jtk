@@ -207,6 +207,11 @@ impl DitchEdge {
     pub fn key(&self) -> DitEdge {
         ((self.from, self.from_position), (self.to, self.to_position))
     }
+    /// Normalized key (f,t) where f <= t.
+    pub fn norm_key(&self) -> DitEdge {
+        let (f, t) = self.key();
+        (f.min(t), f.max(t))
+    }
     pub fn occ(&self) -> usize {
         self.occ
     }
@@ -337,7 +342,8 @@ fn take_representative<R: std::borrow::Borrow<EncodedRead>>(
     reads: &[R],
     node_to_idx: &HashMap<Node, NodeIndex>,
 ) -> Vec<DitchEdge> {
-    let mut edges: HashMap<_, (i64, i64, Vec<u8>)> = HashMap::new();
+    use std::collections::BTreeMap;
+    let mut edges: BTreeMap<_, (i64, i64, Vec<u8>)> = BTreeMap::new();
     use Position::*;
     for read in reads.iter().map(|r| r.borrow()) {
         for (i, edge) in read.edges.iter().enumerate() {
@@ -426,8 +432,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
     // Currently, just update the occ of the edge. Make sure that it truly has the edge.
     fn merge_edge(&'b mut self, edge: &DitchEdge) {
-        // assert!(self.has_edge(edge.key()));
-        self.node_mut(edge.from)
+        let forward = self
+            .node_mut(edge.from)
             .unwrap()
             .edges
             .iter_mut()
@@ -436,9 +442,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     && e.to == edge.to
                     && e.to_position == edge.to_position
             })
-            .unwrap()
-            .occ += edge.occ;
-        self.node_mut(edge.to)
+            .unwrap();
+        forward.occ += edge.occ;
+        if let Some(cp) = forward.copy_number.as_mut() {
+            *cp += edge.copy_number.unwrap_or(0);
+        }
+        let reverse = self
+            .node_mut(edge.to)
             .unwrap()
             .edges
             .iter_mut()
@@ -447,8 +457,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     && e.to == edge.from
                     && e.to_position == edge.from_position
             })
-            .unwrap()
-            .occ += edge.occ;
+            .unwrap();
+        reverse.occ += edge.occ;
+        if let Some(cp) = reverse.copy_number.as_mut() {
+            *cp += edge.copy_number.unwrap_or(0);
+        }
     }
     fn has_edge(&self, ((f, fpos), (t, tpos)): DitEdge) -> bool {
         let f_has = self
@@ -513,16 +526,26 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 }
                 let rev = edge.reverse();
                 assert!(!self.node(edge.to).unwrap().is_deleted);
-                let count = self
+                let mut match_edge = self
                     .node(edge.to)
                     .unwrap()
                     .edges
                     .iter()
-                    .filter(|e| e == &&rev)
-                    .count();
-                if count != 1 {
-                    error!("REV EDGE \t{}", node);
-                    error!("{count}\t{edge}");
+                    .filter(|e| e == &&rev);
+                let rev_edge = match match_edge.next() {
+                    Some(e) => e,
+                    None => {
+                        error!("NO REV EDGE\t{}\t{}", node, edge);
+                        return false;
+                    }
+                };
+                if rev_edge.copy_number != edge.copy_number {
+                    error!("MULTIPNOTAGREE\n{rev_edge}\n{edge}");
+                    return false;
+                }
+                if match_edge.next().is_some() {
+                    error!("REV EDGE MULTIP\t{}", node);
+                    error!("{edge}");
                     return false;
                 }
             }
@@ -601,8 +624,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.nodes_index.contains_key(&node)
     }
     // POINTER: ASSEMBLEIMPL
-    // TODO: Tune this.
-    // TODO: Maybe we should turn the optimization part into gibbs sampling...?
     pub fn clean_up_graph_for_assemble(
         &'b mut self,
         cov: f64,
@@ -615,18 +636,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let seed = self.nodes.len() as u64 * 7329;
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
         debug!("CC\tBFASN\t{}", self.cc());
-        // MSST->MCMC
-        const MULTIP_TYPE: u8 = 2;
-        match MULTIP_TYPE {
-            0 => self.assign_copy_number_mcmc(cov, &mut rng),
-            1 => self.assign_copy_number_mst(cov, &mut rng),
-            _ => self.assign_copy_number_flow(cov, &mut rng),
-        };
-        self.remove_zero_copy_elements(0.3);
+        self.assign_copy_number(cov, &mut rng);
+        self.remove_tips(0.8, 4);
+        assert!(self.sanity_check());
         debug!("CC\tRMZERO\t{}", self.cc());
         if log_enabled!(log::Level::Trace) {
             dump(self, 0, c);
         }
+        self.remove_tips(0.8, 4);
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
         let llr_stream = (0..10)
@@ -635,23 +652,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .take_while(|&x| min_llr < x)
             .enumerate();
         for (i, llr) in llr_stream {
-            match MULTIP_TYPE {
-                0 => self.assign_copy_number_mcmc(cov, &mut rng),
-                1 => self.assign_copy_number_mst(cov, &mut rng),
-                _ => self.assign_copy_number_flow(cov, &mut rng),
-            };
-
+            self.assign_copy_number(cov, &mut rng);
             self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
+            self.remove_zero_copy_path(0.1);
             self.resolve_repeats(reads, c, llr as f64);
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if i == 5 {
-                match MULTIP_TYPE {
-                    0 => self.assign_copy_number_mcmc(cov, &mut rng),
-                    1 => self.assign_copy_number_mst(cov, &mut rng),
-                    _ => self.assign_copy_number_flow(cov, &mut rng),
-                };
+                self.assign_copy_number(cov, &mut rng);
                 self.remove_zero_copy_elements(0.9);
                 self.remove_zero_copy_path(0.3);
                 self.remove_lightweight_edges(0, true);
@@ -663,25 +672,17 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 dump(self, i + 1, c);
             }
         }
-        match MULTIP_TYPE {
-            0 => self.assign_copy_number_mcmc(cov, &mut rng),
-            1 => self.assign_copy_number_mst(cov, &mut rng),
-            _ => self.assign_copy_number_flow(cov, &mut rng),
-        };
+        self.assign_copy_number(cov, &mut rng);
         self.remove_zero_copy_elements(0.9);
         self.remove_zero_copy_path(0.3);
         self.remove_lightweight_edges(0, true);
         self.remove_tips(0.8, 4);
-        self.assign_copy_number_mcmc(cov, &mut rng);
-        assert!(self.sanity_check(), "{}", line!());
         self.squish_small_net(3);
-        assert!(self.sanity_check(), "{}", line!());
+        self.assign_copy_number(cov, &mut rng);
         self.zip_up_overclustering_dev();
-        assert!(self.sanity_check(), "{}", line!());
         self.resolve_repeats(reads, c, min_llr);
         self.z_edge_selection();
         self.remove_zero_copy_path(0.2);
-        assert!(self.sanity_check(), "{}", line!());
     }
     pub fn cc(&self) -> usize {
         // Connected component.
@@ -698,44 +699,61 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
 }
 
 fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
-    let (segments, edge, group, summaries, _) = graph.spell(c);
-    let nodes = segments.into_iter().map(|node| {
-        let tags = match summaries.iter().find(|x| x.id == node.sid) {
-            Some(contigsummary) => {
-                let ids: Vec<_> = contigsummary
-                    .summary
-                    .iter()
-                    .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
-                    .collect();
-                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
-                let coverage =
-                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
-                let (cp, cpnum) = contigsummary
-                    .summary
-                    .iter()
-                    .filter_map(|elm| elm.copy_number)
-                    .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
-                log::debug!(
-                    "ASMDUMP\t{i}\t{}\t{}\t{}",
-                    contigsummary.id,
-                    cp / cpnum.max(1),
-                    ids.join("\t")
-                );
-                let cp = gfa::SamTag::new(format!("cp:i:{}", cp / cpnum.max(1)));
-                vec![coverage, cp]
-            }
-            None => Vec::new(),
-        };
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
-    });
+    let (segments, edge, _group, summaries, _) = graph.spell(c);
+    let mut groups: HashMap<_, Vec<_>> = HashMap::new();
+    let nodes: Vec<_> = segments
+        .into_iter()
+        .map(|mut node| {
+            let tags = match summaries.iter().find(|x| x.id == node.sid) {
+                Some(contigsummary) => {
+                    let ids: Vec<_> = contigsummary
+                        .summary
+                        .iter()
+                        .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                        .collect();
+                    let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
+                    let coverage =
+                        gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
+                    let (cp, cpnum) = contigsummary
+                        .summary
+                        .iter()
+                        .filter_map(|elm| elm.copy_number)
+                        .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                    log::debug!(
+                        "ASMDUMP\t{i}\t{}\t{}\t{}",
+                        contigsummary.id,
+                        cp / cpnum.max(1),
+                        ids.join("\t")
+                    );
+                    groups
+                        .entry(cp / cpnum.max(1))
+                        .or_default()
+                        .push(node.sid.clone());
+                    let cp = gfa::SamTag::new(format!("cp:i:{}", cp / cpnum.max(1)));
+                    vec![coverage, cp]
+                }
+                None => Vec::new(),
+            };
+            node.sequence = Some("A".to_string());
+            gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
+        })
+        .collect();
     let edges = edge
         .into_iter()
         .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
+    let groups = groups.into_iter().map(|(cp, ids)| {
+        let group = gfa::UnorderedGroup {
+            uid: Some(format!("cp:i:{}", cp)),
+            ids,
+        };
+        let group = gfa::Content::Group(gfa::Group::Set(group));
+        gfa::Record::from_contents(group, vec![].into())
+    });
+    // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![].into());
     let records = std::iter::once(header)
-        .chain(std::iter::once(group))
+        .chain(groups)
         .chain(nodes)
         .chain(edges)
         .collect();
@@ -863,43 +881,30 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     ///    In other words, it connected to the non-ZCP edge.
     /// 4. If it is an edge, and the occ is more than `thr * max_out_dgree`
     pub fn remove_zero_copy_elements(&mut self, thr: f64) {
-        // (from,from_position,to,to_position) and from.0 <= to.0.
-        fn format_edge(e: &DitchEdge) -> DitEdge {
-            let (f, t) = e.key();
-            (f.min(t), f.max(t))
-        }
         // Check the node violating for right-left condition.
         let unsound_nodes: HashSet<NodeIndex> = self
             .nodes()
             .filter_map(|(index, node)| {
-                let (plus, minus) = node.edges.iter().fold((0, 0), |mut copy_nums, edge| {
+                let degrees: [usize; 2] = node.edges.iter().fold([0, 0], |mut copy_nums, edge| {
                     if let Some(cp) = edge.copy_number {
-                        match edge.from_position {
-                            Position::Head => copy_nums.0 += cp,
-                            Position::Tail => copy_nums.1 += cp,
-                        }
+                        copy_nums[(edge.from_position == Position::Head) as usize] += cp;
                     }
                     copy_nums
                 });
-                match (plus, minus) {
-                    (0, _) | (_, 0) => None,
-                    (x, y) if x != y => Some(index),
+                match degrees {
+                    [0, _] | [_, 0] => None,
+                    [x, y] if x != y => Some(index),
                     _ => None,
                 }
             })
             .collect();
-        debug!(
-            "UNSOUND\t{}\t{}\t{}",
-            unsound_nodes.len(),
-            self.active_nodes(),
-            self.nodes.len()
-        );
+        debug!("UNSOUND\t{}\t{}", unsound_nodes.len(), self.nodes.len());
         let mut is_ok_to_remove = HashSet::new();
         let mut retain_edges = HashSet::new();
         for (index, node) in self.nodes() {
             // If the estimation of the copy number is is poor, do not remove edges.
             if unsound_nodes.contains(&index) {
-                retain_edges.extend(node.edges.iter().map(format_edge));
+                retain_edges.extend(node.edges.iter().map(|e| e.norm_key()));
                 continue;
             }
             for position in [Position::Head, Position::Tail] {
@@ -907,21 +912,28 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 let max = edges.clone().map(|e| e.occ).max().unwrap_or(0);
                 for edge in edges {
                     if matches!(edge.copy_number, Some(0)) && edge.occ as f64 / (max as f64) < thr {
-                        is_ok_to_remove.insert(format_edge(edge));
+                        is_ok_to_remove.insert(edge.norm_key());
                     } else {
-                        retain_edges.insert(format_edge(edge));
+                        retain_edges.insert(edge.norm_key());
                     }
                 }
             }
         }
-        let (mut max_removed_weight, mut removed_num) = (0, 0);
+        let (mut max_removed_weight, mut argmax, mut removed_num) = (0, None, 0);
         for &(f, t) in is_ok_to_remove.difference(&retain_edges) {
             if let Some(removed) = self.remove_edge_between(f, t) {
+                assert_eq!(removed.copy_number, Some(0), "{}", removed);
                 removed_num += 1;
-                max_removed_weight = max_removed_weight.max(removed.occ);
+                if max_removed_weight < removed.occ {
+                    max_removed_weight = removed.occ;
+                    argmax = Some(removed.clone());
+                }
             }
         }
-        debug!("REMOVED\t{removed_num}\t{max_removed_weight}");
+        if let Some(e) = argmax {
+            debug!("REMOVED\t{removed_num}\t{max_removed_weight}");
+            trace!("MAX_EDGE\t{e}");
+        }
         self.modify_by(|node| {
             if matches!(node.copy_number, Some(0)) && node.edges.is_empty() {
                 node.is_deleted = true;
@@ -1051,13 +1063,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
 
     /// Zip up overclustered regions.
-    /// The graph should have estimeted repeat numbers on each node.
+    /// The graph should have estimeted repeat numbers on nodes.
     pub fn zip_up_overclustering(&mut self, len: usize) {
         let mut to_remove = HashSet::new();
-        for (_index, node) in self.nodes() {
-            if node.copy_number.map(|cp| cp != 1).unwrap_or(true) {
-                continue;
-            }
+        let nodes = self.nodes().filter(|n| matches!(n.1.copy_number, Some(1)));
+        for (_index, node) in nodes {
             for &pos in &[Position::Head, Position::Tail] {
                 let edges = node
                     .edges
@@ -1070,9 +1080,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 let mut dests = edges.clone().map(|edge| self.destination(edge));
                 let first_dest = dests.next().unwrap();
                 let second_dest = dests.next().unwrap();
+                assert_eq!(dests.next(), None);
                 if first_dest == second_dest {
                     let from_edge = edges.clone().max_by_key(|e| e.occ).unwrap();
-                    // TODO:Should we increase the coverage(occ) of the nodes?
                     let path = self.simple_path_from(from_edge);
                     debug!("ZIPPINGUP\t{:?}\t{}\t{}", node.node, pos, path.len());
                     if path.len() <= len {
@@ -1342,7 +1352,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         dests.sort_unstable();
         (nodes, dests)
     }
-
     /// Remove small tips.
     /// In this function, for all node with the degree of zero,
     /// and its the copy number zero,
@@ -1388,17 +1397,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         total_cov as f64 / total_node as f64
     }
-    // Removing nodes and re-map all of the indices.
     fn remove_nodes(&mut self, to_remove: &HashSet<NodeIndex>) {
-        self.modify_by_with_index(|(index, node)| {
-            if to_remove.contains(&index) {
-                node.is_deleted = true;
-                node.edges.clear();
-            }
-            node.edges.retain(|edge| !to_remove.contains(&edge.to));
-        });
+        for &idx in to_remove {
+            self.delete(idx);
+        }
     }
-
     fn remove_edge_between(
         &mut self,
         (from, from_pos): (NodeIndex, Position),
@@ -1407,7 +1410,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let removed = self.node_mut(from).and_then(|node| {
             node.edges
                 .iter()
-                .find(|e| !(e.from_position == from_pos && e.to == to && e.to_position == to_pos))
+                .find(|e| (e.from_position == from_pos && e.to == to && e.to_position == to_pos))
                 .cloned()
         });
         if let Some(node) = self.node_mut(from) {
@@ -1911,10 +1914,10 @@ mod tests {
             .collect();
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / hap.len() / 2) as f64;
-        let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
+        // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
-        let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
+        let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
             let node = (i as u64, 0);
             let index = graph.nodes_index[&node];
@@ -1968,10 +1971,10 @@ mod tests {
         println!("(1,2)\t{}", count);
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
-        let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
+        // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
-        let (nodes, _) = graph.copy_number_estimation_gbs(cov, &lens);
+        let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
             let index = graph.nodes_index[&(i as u64, 0)];
             assert_eq!(cp, nodes[index]);

@@ -677,7 +677,8 @@ mod cpe_test {
         assert_eq!(nodes_cp, vec![2, 1, 1, 2]);
         assert_eq!(edges_cp, vec![1, 1, 1, 1]);
     }
-    fn dataset2() -> (Vec<(f64, usize)>, Vec<usize>, Vec<Edge>, Vec<usize>) {
+    type DataSet = (Vec<(f64, usize)>, Vec<usize>, Vec<Edge>, Vec<usize>);
+    fn dataset2() -> DataSet {
         let nodes = vec![(1f64, 1), (1f64, 1), (1f64, 1), (1f64, 1)];
         let nodes_answer = vec![1; 4];
         let edges = vec![
@@ -696,7 +697,7 @@ mod cpe_test {
         assert_eq!(nc, na);
         assert_eq!(ec, ea);
     }
-    fn dataset3() -> (Vec<(f64, usize)>, Vec<usize>, Vec<Edge>, Vec<usize>) {
+    fn dataset3() -> DataSet {
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(4324);
         let nodes_answer = vec![2, 1, 2, 1, 1, 2, 4, 2];
         let nodes: Vec<_> = nodes_answer

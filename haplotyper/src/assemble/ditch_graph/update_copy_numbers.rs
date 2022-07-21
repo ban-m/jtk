@@ -37,13 +37,23 @@ impl std::ops::Index<NodeIndex> for CopyNumbers {
 }
 
 impl<'a> DitchGraph<'a> {
-    /// Estimoate copy number of nodes and edges.
+    pub fn assign_copy_number<R: Rng>(&mut self, cov: f64, rng: &mut R) {
+        const COPYNUM_ALGORITHM: u8 = 4;
+        match COPYNUM_ALGORITHM {
+            0 => self.assign_copy_number_regress(cov),
+            1 => self.assign_copy_number_gbs(cov),
+            2 => self.assign_copy_number_mcmc(cov, rng),
+            3 => self.assign_copy_number_mst(cov, rng),
+            4 => self.assign_copy_number_flow(cov, rng),
+            _ => panic!(),
+        }
+    }
+    /// Estimoate copy number of nodes and edges by regression.
     /// *This function does not modify the graph content*. If you want
     /// to assign copy number to each node, call `assign_copy_number` instead.
-    pub fn copy_number_estimation(
+    pub fn copy_number_estimation_regress(
         &self,
         cov: f64,
-        _lens: &[usize],
     ) -> (CopyNumbers, HashMap<DitEdge, usize>) {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (terminals, mut edges) =
@@ -56,8 +66,8 @@ impl<'a> DitchGraph<'a> {
     }
 
     /// (Re-)estimate copy number on each node and edge.
-    pub fn assign_copy_number(&mut self, naive_cov: f64, lens: &[usize]) {
-        let (node_copy_number, edge_copy_number) = self.copy_number_estimation(naive_cov, lens);
+    pub fn assign_copy_number_regress(&mut self, naive_cov: f64) {
+        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_regress(naive_cov);
         self.modify_by_with_index(|(index, node)| {
             let cp = node_copy_number[index];
             node.copy_number = Some(cp);
@@ -69,11 +79,7 @@ impl<'a> DitchGraph<'a> {
     /// Estimoate copy number of nodes and edges by a gibbs sampler.
     /// *This function does not modify the graph content*.
     /// If you want to assign copy number to each node, call `assign_copy_number_gbs` instead.
-    pub fn copy_number_estimation_gbs(
-        &self,
-        cov: f64,
-        _lens: &[usize],
-    ) -> (CopyNumbers, HashMap<DitEdge, usize>) {
+    pub fn copy_number_estimation_gbs(&self, cov: f64) -> (CopyNumbers, HashMap<DitEdge, usize>) {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (terminals, edges) = self.convert_connecting_edges(&node_to_pathid, &connecting_edges);
         let nodes = self.convert_path_weight(&node_to_pathid);
@@ -92,8 +98,8 @@ impl<'a> DitchGraph<'a> {
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
     /// (Re-)estimate copy number on each node and edge.
-    pub fn assign_copy_number_gbs(&mut self, naive_cov: f64, lens: &[usize]) {
-        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_gbs(naive_cov, lens);
+    pub fn assign_copy_number_gbs(&mut self, naive_cov: f64) {
+        let (node_copy_number, edge_copy_number) = self.copy_number_estimation_gbs(naive_cov);
         self.modify_by_with_index(|(index, node)| {
             let cp = node_copy_number[index];
             node.copy_number = Some(cp);

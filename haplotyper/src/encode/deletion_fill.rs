@@ -977,7 +977,7 @@ fn fit_query_by_edlib<'a>(
     //     return None;
     // }
     let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-    let ops = edlib_op_to_kiley_op(&ops);
+    let ops = edlib_op_to_kiley_op(ops);
     // Align twice, to get an accurate alignment.
     let (_, ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
     let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);

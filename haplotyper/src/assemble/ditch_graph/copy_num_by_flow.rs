@@ -13,7 +13,7 @@ use crate::find_union::FindUnion;
 // 4i+1, 4i+2: Nodes connected internally.
 // Note that the reverse/forward edges can be decided by only see the indices.
 
-const LARGE_VALUE: f64 = 1_000_0000_000f64;
+const LARGE_VALUE: f64 = 10_000_000_000f64;
 type RawNode = (f64, usize);
 type RawEdge = (usize, bool, usize, bool, f64);
 
@@ -127,6 +127,16 @@ enum RawPointer {
     Node(usize),
     Edge(usize),
 }
+
+impl std::fmt::Display for RawPointer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RawPointer::Node(n) => write!(f, "N({n})"),
+            RawPointer::Edge(n) => write!(f, "E({n})"),
+        }
+    }
+}
+
 impl Graph {
     pub fn new(nodes: &[(f64, usize)], edges: &[RawEdge], hap_cov: f64) -> Self {
         let mut graph = Self {
@@ -178,6 +188,7 @@ impl Graph {
     }
     pub fn optimize<R: Rng>(&mut self, _: &mut R) {
         // Clear copy numbers.
+        trace!("FLOW\tSOURCES\t{}", self.source_sinks().len());
         self.node_copy_numbers.iter_mut().for_each(|n| *n = 0);
         self.edge_copy_numbers.iter_mut().for_each(|n| *n = 0);
         trace!("PENALTY\t{:.1}", self.penalty());
@@ -224,9 +235,6 @@ impl Graph {
                 }
             }
         }
-        // for edge in self.residual_graph.nodes.iter().flat_map(|n| n.0.iter()) {
-        //     println!("{edge:?}\t{:.1}", self.score(edge));
-        // }
         if source_sinks.is_empty() {
             use std::collections::BTreeMap;
             let mut clusters: BTreeMap<_, Vec<_>> = BTreeMap::new();
@@ -254,6 +262,10 @@ impl Graph {
         fu
     }
     fn update_between(&mut self, source: ResIndex, sink: ResIndex) -> bool {
+        // TODO: First mark the nodes reachable from source and to sink, then
+        // update only on these bi-directionally reachable nodes.
+        // It would speed up some...?
+        // TODO: Memoize the `self.score(edge)` function. It would make this function 2x faster?
         // Bellman Ford.
         let len = self.residual_graph.len();
         // Init.
@@ -261,26 +273,34 @@ impl Graph {
         let mut predv = vec![ResIndex(len + 1); len];
         let mut prede = vec![None; len];
         dists[source.0] = 0f64;
+        let edge_scores: Vec<Vec<_>> = self
+            .residual_graph
+            .nodes
+            .iter()
+            .map(|edges| edges.0.iter().map(|e| self.score(e)).collect())
+            .collect();
         // Loop.
         for _ in 0..len - 1 {
-            for (i, edges) in self.residual_graph.nodes.iter().enumerate() {
-                for edge in edges.0.iter() {
-                    let score = self.score(edge);
-                    if dists[edge.to.0] < LARGE_VALUE && dists[edge.to.0] + score < dists[i] {
-                        dists[i] = dists[edge.to.0] + score;
-                        predv[i] = edge.to;
-                        prede[i] = Some(edge.clone());
+            for (edges, scores) in self.residual_graph.nodes.iter().zip(edge_scores.iter()) {
+                assert_eq!(scores.len(), edges.len());
+                for (edge, score) in std::iter::zip(edges.0.iter(), scores.iter()) {
+                    let (from, to) = (edge.from.0, edge.to.0);
+                    if dists[from] < LARGE_VALUE && dists[from] + score < dists[to] {
+                        dists[to] = dists[from] + score;
+                        predv[to] = edge.from;
+                        prede[to] = Some(*edge);
                     }
                 }
             }
         }
         // Check Negative cycle.
-        for (i, edges) in self.residual_graph.nodes.iter().enumerate() {
-            for edge in edges.0.iter() {
-                let score = self.score(edge);
-                if dists[edge.to.0] < LARGE_VALUE && dists[edge.to.0] + score < dists[i] {
+        for (edges, scores) in std::iter::zip(&self.residual_graph.nodes, &edge_scores) {
+            assert_eq!(edges.len(), scores.len());
+            for (edge, score) in std::iter::zip(&edges.0, scores) {
+                if dists[edge.from.0] < LARGE_VALUE && dists[edge.from.0] + score < dists[edge.to.0]
+                {
                     // negative loop. Return if it indeed decrease the penalty.
-                    let cycle = Self::traverse_cycle(&predv, &prede, i);
+                    let cycle = Self::traverse_cycle(&predv, &prede, edge.from.0);
                     let score = self.eval(&cycle);
                     if score < 0f64 {
                         trace!("UPDATE\tCYCLE\t{score:.2}\t{}", cycle.len());
@@ -543,6 +563,25 @@ pub mod tests {
             (6, false, 1, true, 2f64 * cov),
         ];
         let edge_cp = vec![2, 2, 1, 1, 2, 1, 1, 2];
+        let mut graph = Graph::new(&nodes, &edges, cov);
+        graph.optimize(&mut rng);
+        let (pred, edge_pred) = graph.copy_numbers();
+        assert_eq!(pred, nodes_cp);
+        assert_eq!(edge_pred, edge_cp);
+    }
+    #[test]
+    fn mock_data_4() {
+        let nodes_cp = vec![2, 1, 1, 2];
+        let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(349823094);
+        let cov = 30f64;
+        let nodes = vec![(26.0, 1), (30.0, 1000), (30.0, 1000), (23.0, 1)];
+        let edges: Vec<_> = vec![
+            (0, false, 1, true, 26.0),
+            (0, false, 2, true, 20.0),
+            (1, false, 3, true, 25.0),
+            (2, false, 3, true, 10.0),
+        ];
+        let edge_cp = vec![1, 1, 1, 1];
         let mut graph = Graph::new(&nodes, &edges, cov);
         graph.optimize(&mut rng);
         let (pred, edge_pred) = graph.copy_numbers();
