@@ -177,41 +177,6 @@ fn subcommand_select_unit() -> Command<'static> {
         )
 }
 
-// fn subcommand_polish_unit() -> Command<'static> {
-//     Command::new("polish_unit")
-//         .version("0.1")
-//         .author("BanshoMasutani")
-//         .about("Polishing units by consuming encoded reads")
-//         .arg(
-//             Arg::new("verbose")
-//                 .short('v')
-//                 .multiple_occurrences(true)
-//                 .help("Debug mode"),
-//         )
-//         .arg(
-//             Arg::new("threads")
-//                 .short('t')
-//                 .long("threads")
-//                 .takes_value(true)
-//                 .default_value("1")
-//                 .help("number of threads"),
-//         )
-//         .arg(
-//             Arg::new("filter_size")
-//                 .long("filter_size")
-//                 .takes_value(true)
-//                 .default_value("10")
-//                 .help("Unit with coverage less than this value would be discarded."),
-//         )
-//         .arg(
-//             Arg::new("consensus_size")
-//                 .long("consensus_size")
-//                 .takes_value(true)
-//                 .default_value("20")
-//                 .help("The number of string to take consensus"),
-//         )
-// }
-
 fn subcommand_mask_repeats() -> Command<'static> {
     Command::new("mask_repeats")
         .version("0.1")
@@ -383,43 +348,6 @@ fn subcommand_estimate_multiplicity() -> Command<'static> {
         )
 }
 
-// fn subcommand_correct_multiplicity() -> Command<'static> {
-//     Command::new("correct_multiplicity")
-//         .version("0.1")
-//         .author("Bansho Masutani")
-//         .about("Fix multiplicities of units, re-clustering if needed.")
-//         .arg(Arg::new("verbose").short('v').multiple_occurrences(true))
-//         .arg(
-//             Arg::new("threads")
-//                 .short('t')
-//                 .long("threads")
-//                 .required(false)
-//                 .value_name("THREADS")
-//                 .help("Number of Threads")
-//                 .default_value("1")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("seed")
-//                 .short('s')
-//                 .long("seed")
-//                 .required(false)
-//                 .value_name("SEED")
-//                 .help("Seed for pseudorandon number generators.")
-//                 .default_value("24")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("draft_assembly")
-//                 .short('o')
-//                 .long("draft_assembly")
-//                 .required(false)
-//                 .value_name("PATH")
-//                 .help("If given, output draft GFA to PATH.")
-//                 .takes_value(true),
-//         )
-// }
-
 fn subcommand_partition_local() -> Command<'static> {
     Command::new("partition_local")
         .version("0.1")
@@ -442,39 +370,6 @@ fn subcommand_partition_local() -> Command<'static> {
                 .takes_value(true),
         )
 }
-
-// fn subcommand_squish() -> Command<'static> {
-//     Command::new("squish")
-//         .version("0.1")
-//         .author("BanshoMasutani")
-//         .about("Squish unreliable clusterings (Local).")
-//         .arg(
-//             Arg::new("verbose")
-//                 .short('v')
-//                 .multiple_occurrences(true)
-//                 .help("Debug mode"),
-//         )
-//         .arg(
-//             Arg::new("threads")
-//                 .short('t')
-//                 .long("threads")
-//                 .required(false)
-//                 .value_name("THREADS")
-//                 .help("Number of Threads")
-//                 .default_value("1")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("supress_level")
-//                 .short('s')
-//                 .long("supress")
-//                 .required(false)
-//                 .value_name("THR")
-//                 .help("Supression level from 0(=do not supress) to 1=(squish all the clusters).")
-//                 .default_value("0.4")
-//                 .takes_value(true),
-//         )
-// }
 
 fn subcommand_purge_diverged() -> Command<'static> {
     Command::new("purge_diverged")
@@ -528,127 +423,6 @@ fn subcommand_correct_deletion() -> Command<'static> {
                 .help("Re-calculate the posterior probability of newly encoded units."),
         )
 }
-
-// fn subcommand_partition_global() -> Command<'static> {
-//     Command::new("partition_global")
-//         .version("0.1")
-//         .author("BanshoMasutani")
-//         .about("Clustering reads (Global).")
-//         .arg(
-//             Arg::new("verbose")
-//                 .short('v')
-//                 .multiple_occurrences(true)
-//                 .help("Debug mode"),
-//         )
-//         .arg(
-//             Arg::new("graph")
-//                 .long("graph")
-//                 .help("Invoke graph-WhatsHap instead of de Bruijn."),
-//         )
-//         .arg(
-//             Arg::new("threads")
-//                 .short('t')
-//                 .long("threads")
-//                 .required(false)
-//                 .value_name("THREADS")
-//                 .help("Number of Threads")
-//                 .default_value("1")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("k")
-//                 .short('k')
-//                 .long("kmer_size")
-//                 .required(false)
-//                 .value_name("KMER_SIZE")
-//                 .help("The size of the kmer")
-//                 .default_value("4")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("min_cluster_size")
-//                 .short('m')
-//                 .long("min_cluster_size")
-//                 .required(false)
-//                 .value_name("MIN_CLUSTER_SIZE")
-//                 .help("The minimum size of a cluster")
-//                 .default_value("50")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("mat_score")
-//                 .short('p')
-//                 .long("match_score")
-//                 .required(false)
-//                 .value_name("MATCH_SCORE")
-//                 .help("The match score")
-//                 .default_value("1")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("mismat_score")
-//                 .short('q')
-//                 .long("mismatch_score")
-//                 .required(false)
-//                 .value_name("MISMATCH_SCORE")
-//                 .help("The mismatch score")
-//                 .default_value("1")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("gap_score")
-//                 .short('g')
-//                 .long("gap_score")
-//                 .required(false)
-//                 .value_name("GAP_SCORE")
-//                 .help("The gap penalty")
-//                 .default_value("2")
-//                 .takes_value(true),
-//         )
-// }
-
-// fn subcommand_resolve_tangle() -> Command<'static> {
-//     Command::new("resolve_tangle")
-//         .version("0.1")
-//         .author("BanshoMasutani")
-//         .about("Resolve tangle by re-estimate copy numbers.")
-//         .arg(
-//             Arg::new("verbose")
-//                 .short('v')
-//                 .multiple_occurrences(true)
-//                 .help("Debug mode"),
-//         )
-//         .arg(
-//             Arg::new("threads")
-//                 .short('t')
-//                 .long("threads")
-//                 .required(false)
-//                 .value_name("THREADS")
-//                 .help("Number of Threads")
-//                 .default_value("1")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("repeat_num")
-//                 .short('r')
-//                 .long("repeat_num")
-//                 .required(false)
-//                 .value_name("REPEAT_NUM")
-//                 .help("Do EM algorithm for REPEAT_NUM times.")
-//                 .default_value("7")
-//                 .takes_value(true),
-//         )
-//         .arg(
-//             Arg::new("coverage_threshold")
-//                 .short('x')
-//                 .long("threshold")
-//                 .required(false)
-//                 .value_name("THRESHOLD")
-//                 .help("Unit with less that this coverage would be ignored.")
-//                 .default_value("5")
-//                 .takes_value(true),
-//         )
-// }
 
 fn subcommand_correct_clustering() -> Command<'static> {
     Command::new("correct_clustering")
@@ -771,6 +545,14 @@ fn subcommand_assemble() -> Command<'static> {
                 .short('n')
                 .long("no_polish")
                 .help("If this flag is given, polishing stage would be skipped."),
+        )
+        .arg(
+            Arg::new("min_llr")
+                .long("min_llr")
+                .takes_value(true)
+                .value_name("LK Ratio")
+                .required(false)
+                .help("Minimum likelihood ratio"),
         )
         .arg(
             Arg::new("output")
@@ -1197,12 +979,13 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         .value_of("window_size")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let min_llr: Option<f64> = matches.value_of("min_llr").map(|num| num.parse().unwrap());
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
     let msr = dataset.read_type.min_span_reads();
-    let min_lk = dataset.read_type.min_llr_value();
+    let min_lk = min_llr.unwrap_or(dataset.read_type.min_llr_value());
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
     if !skip_polish {

@@ -94,7 +94,6 @@ impl FindUnion {
             Some(())
         }
     }
-    #[allow(dead_code)]
     /// Determine if the node1 and node2 resides in the same component.
     /// return None if either of index exceeds the range,
     pub fn same(&mut self, node1: usize, node2: usize) -> Option<bool> {

@@ -53,3 +53,30 @@ pub fn cramers_v(labels: &[(u32, u32)], (cl1, cl2): (usize, usize)) -> f64 {
     assert!(0 < denom, "{:?}", labels);
     (chi_sq / denom as f64).sqrt()
 }
+
+pub fn logsumexp(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.;
+    }
+    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
+    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
+    assert!(sum >= 0., "{:?}->{}", xs, sum);
+    max + sum
+}
+
+pub fn logsumexp_str<I: Iterator<Item = f64>>(xs: I) -> f64 {
+    let (mut max, mut accum, mut count) = (std::f64::NEG_INFINITY, 0f64, 0);
+    for x in xs {
+        count += 1;
+        if x <= max {
+            accum += (x - max).exp();
+        } else {
+            accum = (max - x).exp() * accum + 1f64;
+            max = x;
+        }
+    }
+    match count {
+        1 => max,
+        _ => accum.ln() + max,
+    }
+}

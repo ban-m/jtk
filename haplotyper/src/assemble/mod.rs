@@ -70,10 +70,8 @@ impl Graph {
 
 #[derive(Debug, Clone)]
 pub struct AssembleConfig {
-    #[allow(dead_code)]
     threads: usize,
     to_polish: bool,
-    #[allow(dead_code)]
     window_size: usize,
     to_resolve: bool,
     min_span_reads: usize,

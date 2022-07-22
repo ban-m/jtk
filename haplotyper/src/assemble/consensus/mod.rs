@@ -353,6 +353,7 @@ fn split(
     window_num: usize,
     contig_len: usize,
 ) -> (TipPos, Vec<Chunk>, TipPos) {
+    //TODO: this contains bug.
     let start_chunk_id = alignment.contig_start / window;
     let start_pos_in_contig = match alignment.contig_start % window == 0 {
         true => start_chunk_id * window,

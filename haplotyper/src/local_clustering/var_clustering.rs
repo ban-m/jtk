@@ -146,7 +146,7 @@ impl Model {
             .iter()
             .map(|datum| {
                 let lks = self.calc_lks(datum);
-                let total = logsumexp(&lks);
+                let total = crate::misc::logsumexp(&lks);
                 let weights: Vec<_> = lks.iter().map(|lk| (lk - total).exp()).collect();
                 assert!((1. - weights.iter().sum::<f64>()).abs() < 0.001);
                 weights
@@ -156,16 +156,8 @@ impl Model {
         self.fractions = Self::calc_fractions(&self.weights, self.cluster_num);
     }
     fn lk(&self, data: &[Vec<i8>]) -> f64 {
-        data.iter().map(|d| logsumexp(&self.calc_lks(d))).sum()
+        data.iter()
+            .map(|d| crate::misc::logsumexp(&self.calc_lks(d)))
+            .sum()
     }
-}
-
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }

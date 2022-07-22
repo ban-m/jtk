@@ -222,7 +222,7 @@ where
 // LK->LK-logsumexp(LK).
 fn to_posterior_probability(lks: &mut [Vec<f64>]) {
     for xs in lks.iter_mut() {
-        let total = logsumexp(xs);
+        let total = crate::misc::logsumexp(xs);
         xs.iter_mut().for_each(|x| *x -= total);
     }
 }
@@ -560,16 +560,6 @@ fn max_poisson_lk(x: usize, lambda: f64, c_start: usize, c_end: usize) -> f64 {
     (c_start.max(1)..=c_end)
         .map(|c| poisson_lk(x, lambda * c as f64))
         .fold(f64::NEG_INFINITY, |x, y| x.max(y))
-}
-
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }
 
 // Take dataset, the number of the cluster, the haploid coverage and seed generator,

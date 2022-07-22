@@ -646,9 +646,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.remove_tips(0.8, 4);
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
-        let llr_stream = (0..10)
+        let llr_stream = ((min_llr + 0.0).floor() as usize..(10.0 + min_llr).floor() as usize)
             .rev()
-            .map(|i| i as f64 + 0.01)
+            .map(|i| i as f64 + 0.00001)
             .take_while(|&x| min_llr < x)
             .enumerate();
         for (i, llr) in llr_stream {

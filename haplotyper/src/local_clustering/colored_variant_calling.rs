@@ -22,7 +22,7 @@ pub fn get_variants<F: Fn(u8, u8) -> i32 + std::marker::Sync, R: Rng>(
             bs.iter_mut().for_each(|b| *b = *b / sum)
         })
     });
-    let lk = logsumexp(&lks);
+    let lk = crate::misc::logsumexp(&lks);
     for bss in betas.iter() {
         for bs in bss.iter() {
             let line: Vec<_> = bs
@@ -88,7 +88,7 @@ where
                 .zip(ws.iter())
                 .map(|(chunks, w)| w.ln() + chunks.iter().sum::<f64>())
                 .collect();
-            logsumexp(&lks)
+            crate::misc::logsumexp(&lks)
         })
         .sum::<f64>();
     (lk_matrices, lk)
@@ -278,12 +278,6 @@ fn call_variants(i: usize, j: usize, matrices: &[Vec<f64>], column: usize) -> Ve
         Some(res) => res,
         None => vec![0.; column],
     }
-}
-fn logsumexp(xs: &[f64]) -> f64 {
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }
 
 fn select_variants(

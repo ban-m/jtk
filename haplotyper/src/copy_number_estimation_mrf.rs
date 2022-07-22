@@ -225,14 +225,6 @@ impl Graph {
             .collect();
         (node_cp, edge_cp)
     }
-    // This is not needed, especially the initial guess is **useful.**
-    // #[allow(dead_code)]
-    // fn estimate_mean_parameter(&self, node_cp: &[usize], hap_cov: f64) -> f64 {
-    //     let len = node_cp.len() as f64;
-    //     let mean_cp = node_cp.iter().sum::<usize>() as f64 / len;
-    //     let mean_cov = self.coverages.iter().sum::<u64>() as f64 / len;
-    //     (mean_cov + (hap_cov - 1f64) / len) / (mean_cp + 1f64 / len)
-    // }
     // Return vector of (MAP-estimated) copy numbers of nodes and those of edges.
     pub fn map_estimate_copy_numbers<R: Rng>(
         &self,
@@ -270,27 +262,6 @@ impl Graph {
             }
         }
         (argmin, minpot)
-        // mcmc_config.coverage = self.estimate_mean_parameter(&node_cp, hap_cov);
-        // let mut current_potential = self.total_energy(&node_cp, &edge_cp, &mcmc_config);
-        // let mut argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
-        // let mut min = current_potential;
-        // let loop_num = 2000 * self.coverages.len();
-        // for _ in 0..loop_num {
-        //     let (is_success, diff) =
-        //         self.update(&mut node_cp, &mut edge_cp, &mcmc_config, &mut rng);
-        //     if is_success {
-        //         current_potential += diff;
-        //         if current_potential < min {
-        //             min = current_potential;
-        //             argmin = (node_cp.clone(), edge_cp.clone(), mcmc_config.coverage);
-        //         }
-        //     }
-        // }
-        // mcmc_config.coverage = argmin.2;
-        // debug!("MCMC\tEnd");
-        // let potential = self.total_energy(&argmin.0, &argmin.1, &mcmc_config);
-        // assert!((potential - min).abs() < 0.001);
-        // ((argmin.0, argmin.1), min)
     }
     // return (if the proposal is accepted, the potential difference between now-prev.
     fn update<R: Rng>(
@@ -609,17 +580,6 @@ impl Graph {
 
 fn abs_diff(x: usize, y: usize) -> usize {
     x.max(y) - x.min(y)
-}
-
-#[allow(dead_code)]
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }
 
 #[cfg(test)]

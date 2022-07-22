@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+type NodeWithTraverseInfo = (usize, usize, usize, NodeIndex, Position);
 const ERROR_PROB: f64 = 0.05;
 use super::super::AssembleConfig;
 use super::DitchGraph;
@@ -11,17 +13,18 @@ use definitions::*;
 /// A focus from a node of a ditch graph.
 /// Here, we tag a node with its position, i.e., Position.
 #[derive(Debug, Clone)]
-pub struct Focus {
-    pub from: NodeIndex,
-    pub from_node: Node,
-    pub from_position: Position,
-    pub to: NodeIndex,
-    pub to_node: Node,
-    pub to_position: Position,
-    pub dist: usize,
-    /// Log Likelihood ratio between the alt hypothesis/null hypothesis.
-    pub log_likelihood_ratio: f64,
-    pub counts: Vec<usize>,
+struct Focus {
+    from: NodeIndex,
+    from_node: Node,
+    from_position: Position,
+    to: NodeIndex,
+    to_node: Node,
+    to_position: Position,
+    dist: usize,
+    // Log Likelihood ratio between the alt hypothesis/null hypothesis.
+    log_likelihood_ratio: f64,
+    counts: Vec<usize>,
+    path: Vec<(NodeIndex, Position)>,
 }
 
 impl std::fmt::Display for Focus {
@@ -51,12 +54,14 @@ impl Focus {
     fn llr(&self) -> f64 {
         self.log_likelihood_ratio
     }
-    fn new(
+
+    fn with_backpath(
         (from, from_node, from_position): (NodeIndex, Node, Position),
         (to, to_node, to_position): (NodeIndex, Node, Position),
         dist: usize,
         lk: f64,
         counts: Vec<usize>,
+        path: Vec<(NodeIndex, Position)>,
     ) -> Self {
         Self {
             from,
@@ -68,21 +73,18 @@ impl Focus {
             dist,
             log_likelihood_ratio: lk,
             counts,
+            path,
         }
     }
 }
 
 use std::collections::HashSet;
 impl<'b, 'a: 'b> DitchGraph<'a> {
-    /// Check the dynamic of foci.
     fn survey_foci(&'b mut self, foci: &[Focus]) -> usize {
         let mut solved = 0;
         let mut affected_nodes: HashSet<NodeIndex> = HashSet::new();
         for focus in foci {
-            if self.is_deleted(focus.from) || self.is_deleted(focus.to) {
-                continue;
-            }
-            if affected_nodes.contains(&focus.from) || affected_nodes.contains(&focus.to) {
+            if focus.path.iter().any(|n| affected_nodes.contains(&n.0)) {
                 continue;
             }
             // Check if the targets are present in the graph.
@@ -108,32 +110,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         solved
     }
-    // If resolveing successed, return Some(())
-    // othewise, it encountered a stronger focus, and return None.
-    fn survey_focus(&'b mut self, focus: &Focus, affected: &mut HashSet<NodeIndex>) -> Option<()> {
-        let path_to_focus = self.dfs_to_the_target(focus)?;
-        if path_to_focus.iter().any(|(n, _)| affected.contains(n)) {
-            return None;
-        }
-        // If this path is no-branching, it is no use.
-        if !self.is_path_branching(focus, &path_to_focus) {
-            return None;
-        }
-        for (i, &(index, pos)) in path_to_focus.iter().enumerate() {
-            let node = self.node(index).unwrap().node;
-            debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
-        }
-        let new_nodes = self.duplicate_along(focus, &path_to_focus);
-        affected.extend(new_nodes);
-        affected.extend(path_to_focus.iter().map(|x| x.0));
-        self.remove_along(focus, &path_to_focus);
-        Some(())
-    }
-    fn is_path_branching(&self, focus: &Focus, path: &[(NodeIndex, Position)]) -> bool {
-        let len = path.len();
+
+    fn is_path_branching(&self, focus: &Focus) -> bool {
+        let len = focus.path.len();
         let mut is_branching = false;
         is_branching |= 1 < self.count_edges(focus.from, focus.from_position);
-        let mut check_both = path.iter().take(len.saturating_sub(1));
+        let mut check_both = focus.path.iter().take(len.saturating_sub(1));
         is_branching |= check_both.any(|&(node, _)| {
             let edges = self.node(node).unwrap().edges.iter();
             let (head, tail) = edges.fold((0, 0), |(h, t), e| match e.from_position {
@@ -142,17 +124,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             });
             1 < head || 1 < tail
         });
-        if let Some(&(node, position)) = path.last() {
+        if let Some(&(node, position)) = focus.path.last() {
             is_branching |= 1 < self.count_edges(node, position);
         }
         is_branching
     }
     // Return nodes newly allocated.
-    fn duplicate_along(
-        &'b mut self,
-        focus: &Focus,
-        path_spaning: &[(NodeIndex, Position)],
-    ) -> Vec<NodeIndex> {
+    fn duplicate_along(&'b mut self, focus: &Focus) -> Vec<NodeIndex> {
+        let path_spaning = &focus.path;
         let (mut c_index, mut c_pos) = (focus.from, focus.from_position);
         let mut prev_id = focus.from;
         let mut newly_allocated = vec![];
@@ -195,11 +174,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         newly_allocated
     }
 
-    fn remove_along(&'b mut self, focus: &Focus, path_spaning: &[(NodeIndex, Position)]) {
-        // TODO: should return affected.
-        // TODO: should watch removed nodes.
+    fn remove_used_edges(&'b mut self, focus: &Focus) {
         let (mut prev, mut prev_pos) = (focus.from, focus.from_position);
-        for &(node, pos) in path_spaning {
+        for &(node, pos) in focus.path.iter() {
             let prev_node = self.node(prev).unwrap();
             let copy_num = prev_node
                 .edges
@@ -212,19 +189,19 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             prev = node;
             prev_pos = !pos;
         }
+    }
+    fn remove_neighbor_edges(&'b mut self, focus: &Focus) -> HashSet<NodeIndex> {
         // Removing other branching edges along the path.
         let mut remove = vec![];
-        {
-            let edges = self
-                .node(focus.from)
-                .unwrap()
-                .edges
-                .iter()
-                .filter(|e| e.from_position == focus.from_position);
-            let remove_edges = edges.filter(|e| e.copy_number == Some(0));
-            remove.extend(remove_edges.map(|e| e.norm_key()));
-        }
-        for &(node, _) in path_spaning {
+        let edges = self
+            .node(focus.from)
+            .unwrap()
+            .edges
+            .iter()
+            .filter(|e| e.from_position == focus.from_position);
+        let remove_edges = edges.filter(|e| e.copy_number == Some(0));
+        remove.extend(remove_edges.map(|e| e.norm_key()));
+        for &(node, _) in focus.path.iter() {
             let edges = self
                 .node(node)
                 .unwrap()
@@ -237,11 +214,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         for &(f, t) in remove.iter() {
             self.remove_edge_between(f, t);
         }
-        let affected: HashSet<_> = remove
-            .iter()
-            .flat_map(|(f, t)| [f.0, t.0])
-            .chain(path_spaning.iter().map(|n| n.0))
-            .collect();
+        remove.iter().flat_map(|(f, t)| [f.0, t.0]).collect()
+    }
+    fn clean_up(&'b mut self, focus: &Focus, mut affected: HashSet<NodeIndex>) {
+        affected.extend(focus.path.iter().map(|n| n.0));
         for node in affected {
             if !self.is_deleted(node) {
                 let edge_num = self.node(node).unwrap().edges.len();
@@ -251,96 +227,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
         }
     }
-    // From (start,pos) position to the focus target(start=focus.node, position=focus.position).
-    // Note that, the path would contain the (target,target pos) at the end of the path and
-    // not contain the (start,pos) position itself.
-    // TODO: Maybe this function failed to find the target focus,
-    // because of the removed nodes.
-    // If it happened, eigther this focus or previous
-    // branching is false. Maybe just dropping this focus would be better?
-    // Note that this function does not include any proxying nodes.
-    fn dfs_to_the_target(&self, focus: &Focus) -> Option<Vec<(NodeIndex, Position)>> {
-        // Breadth first search until get to the target.
-        // Just !pos to make code tidy.
-        let mut nodes_at = vec![vec![]; focus.dist + 1];
-        let mut parents = vec![vec![]; focus.dist + 1];
-        nodes_at[0].push((focus.from, !focus.from_position));
-        // (distance, index, copy number of edge)
-        parents[0].push((0, 0, 0));
-        for dist in 0..focus.dist + 1 {
-            // To avoid the borrow checker.
-            // TODO: Do not need filter...
-            let mut nodes_at_temp = vec![];
-            for (idx, &(index, pos)) in nodes_at[dist].iter().enumerate() {
-                let edges = self
-                    .edges_from(index, !pos)
-                    .into_iter()
-                    .map(|e| (e, dist + 1));
-                for (edge, d) in edges.filter(|&(_, d)| d <= focus.dist) {
-                    let cp = edge.copy_number.unwrap_or(0);
-                    nodes_at_temp.push((d, (edge.to, edge.to_position)));
-                    parents[d].push((dist, idx, cp));
-                }
-            }
-            for (d, elm) in nodes_at_temp {
-                nodes_at[d].push(elm);
-            }
-        }
-        assert_eq!(nodes_at.len(), parents.len());
-        nodes_at
-            .iter()
-            .zip(parents.iter())
-            .for_each(|(n, p)| assert_eq!(n.len(), p.len()));
-        // Back-track.
-        let mut target = (focus.to, focus.to_position);
-        let mut dist = focus.dist;
-        let mut back_track = vec![];
-        while 0 < dist {
-            back_track.push(target);
-            let hit_at = nodes_at[dist]
-                .iter()
-                .zip(parents[dist].iter())
-                .filter(|(&x, _)| x == target)
-                .max_by_key(|(_, (_, _, cp))| cp);
-            (target, dist) = match hit_at {
-                Some((_, &(pdist, pidx, _))) => (nodes_at[pdist][pidx], pdist),
-                None => {
-                    debug!("FOCUS\tFailedToFindTarget\t{}", focus);
-                    return None;
-                }
-            };
-        }
-        back_track.reverse();
-        Some(back_track)
+    fn remove_along(&'b mut self, focus: &Focus) {
+        self.remove_used_edges(focus);
+        let affected = self.remove_neighbor_edges(focus);
+        self.clean_up(focus, affected);
     }
-    // Spell along the given path,
-    // reducing the copy number of the nodes, the occs of the nodes, and the
-    // occs of the edges.
-    // fn spell_along_path(&'b mut self, focus: &Focus, path: &[(NodeIndex, Position)]) {
-    //     let (mut c_index, mut c_pos) = (focus.from, focus.from_position);
-    //     for &(to_id, to_pos) in path.iter() {
-    //         if c_index != focus.from {
-    //             self.node_mut(c_index)
-    //                 .map(|n| n.decrement_copy_number())
-    //                 .unwrap_or(0);
-    //         }
-    //         self.decrement_edge_copy_number((c_index, c_pos), (to_id, to_pos));
-    //         // Reduce the occ and copy number of the node, and occ of the edge.
-    //         c_index = to_id;
-    //         c_pos = !to_pos;
-    //     }
-    // }
 
-    /// Resolve repeats by "foci" algorithm.
-    /// The algorithm consists three step.
-    /// 1. For each branching node u, find another node v where reads outgoing from u are
-    /// "gathering". In other words, we check the likelihood ratio between "gathering"-model
-    /// and null-model and check whether or not the likelihood ration is larger than `thr`.
-    /// 2. Select an arbitrary path u -> v, make an new edge connecting u and v,
-    /// and remove all other edges from u and to v. By doing this, u and v would be in the same simple path(repeat resolved).
-    /// 3. Recursively remove nodes and their edges, whose in-degree are zero.
-    /// TODO: This code has bug when the graph contains loops?
-    /// TODO: This code has bug, which breaks up a continuous graph ...?
     pub fn resolve_repeats(
         &'b mut self,
         reads: &[&EncodedRead],
@@ -396,197 +288,49 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     None | Some(1) | Some(0) => continue,
                     _ => {}
                 }
-                if let Some(focus) = self.examine_focus(index, node, pos, reads, config) {
+                if let Some(focus) = self.examine_focus(index, pos, reads, config) {
                     foci.push(focus);
                 }
             }
         }
         foci
     }
-    // Return the focus if given node has a focus. Otherwise, return None.
-    fn examine_focus(
-        &self,
-        node_index: NodeIndex,
-        node: &DitchNode,
-        pos: Position,
-        reads: &[&EncodedRead],
-        config: &AssembleConfig,
-    ) -> Option<Focus> {
-        // TODO:Maybe we can faster this process by using reverse indexing.
-        let reads: Vec<_> = reads
-            .iter()
-            .filter(|r| r.contains(node.node))
-            .copied()
-            .collect();
-        let dist_nodes =
-            self.enumerate_candidate_nodes(&reads, config.min_span_reads, node_index, pos);
-        let mut focus: Option<Focus> = None;
-        for (dist, node_indices) in dist_nodes.iter().enumerate().filter(|(_, ns)| 1 < ns.len()) {
-            let nodes: Vec<_> = node_indices
-                .iter()
-                .map(|(n, _)| self.node(*n).unwrap())
-                .collect();
-            if nodes.iter().map(|n| n.occ).sum::<usize>() <= config.min_span_reads {
-                continue;
-            }
-            let dist = dist + 1;
-            let occs = Self::count_occurences((node, pos), dist, &nodes, &reads);
-            let nodes_with_lk = Self::max_lk_node(&occs, &nodes, node_indices);
-            if let Some((lk_ratio, to, (to_idx, to_pos))) = nodes_with_lk {
-                if focus.as_ref().map(|f| f.llr()).unwrap_or(0f64) < lk_ratio {
-                    let to = (to_idx, to.node, to_pos);
-                    let from = (node_index, node.node, pos);
-                    let f = Focus::new(from, to, dist, lk_ratio, occs);
-                    focus.replace(f);
-                }
-            }
-        }
-        focus
-    }
-    fn count_occurences(
-        (node, pos): (&DitchNode, Position),
-        dist: usize,
-        nodes: &[&DitchNode],
-        reads: &[&EncodedRead],
-    ) -> Vec<usize> {
-        let mut occs: Vec<_> = vec![0; nodes.len()];
-        for read in reads.iter() {
-            let start = read
-                .nodes
-                .iter()
-                .position(|n| (n.unit, n.cluster) == node.node)
-                .unwrap();
-            let check_node = match (read.nodes[start].is_forward, pos == Position::Tail) {
-                (true, true) | (false, false) if start + dist < read.nodes.len() => {
-                    &read.nodes[start + dist]
-                }
-                (false, true) | (true, false) if dist <= start => &read.nodes[start - dist],
-                _ => continue,
-            };
-            let check_node = (check_node.unit, check_node.cluster);
-            if let Some(hit_node) = nodes.iter().position(|n| n.node == check_node) {
-                occs[hit_node] += 1;
-            }
-        }
-        occs
-    }
-    #[allow(dead_code)]
-    fn max_lk_node_dev<'c>(
-        occs: &[usize],
-        nodes: &[&'c DitchNode<'a>],
-        node_indices: &[(NodeIndex, Position)],
-    ) -> Option<(f64, &'c DitchNode<'a>, (NodeIndex, Position))> {
-        let cov_total: f64 = nodes.iter().map(|n| n.occ as f64).sum();
-        let occ_total: f64 = occs.iter().map(|&occ| occ as f64).sum();
-        nodes
-            .iter()
-            .zip(node_indices.iter())
-            .zip(occs.iter())
-            .filter(|((n, _), &occ)| 0 < occ && matches!(n.copy_number, Some(1)))
-            .map(|((n, idx), &occ)| {
-                let occ = occ as f64;
-                let null_lk = Self::likelihood_with(occs, occ, n.occ as f64 / cov_total);
-                let alt_lk = Self::likelihood_with(occs, occ, occ / occ_total);
-                (alt_lk - null_lk, *n, *idx)
-            })
-            .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
-    }
-    fn likelihood_with(occs: &[usize], occ: f64, prob: f64) -> f64 {
-        assert!(prob <= 1f64);
-        assert!(0f64 <= prob);
-        // modify so that .ln() would not fail
-        let prob = prob.max(0.0001).min(0.999);
-        let lk: f64 = occs
-            .iter()
-            .map(|&occ| occ as f64 * (1f64 - prob).ln())
-            .sum();
-        lk + occ * prob.ln() - occ * (1f64 - prob).ln()
-    }
-    #[allow(dead_code)]
-    fn max_lk_node<'c>(
-        occs: &[usize],
-        nodes: &[&'c DitchNode<'a>],
-        node_indices: &[(NodeIndex, Position)],
-    ) -> Option<(f64, &'c DitchNode<'a>, (NodeIndex, Position))> {
-        let ith_ln = {
-            let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
-            let sum: f64 = probs.iter().sum();
-            probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
-            assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
-            probs
-        };
-        let null_prob: f64 = occs
-            .iter()
-            .zip(ith_ln.iter())
-            .map(|(&occ, ln)| match occ {
-                0 => 0f64,
-                _ => occ as f64 * ln,
-            })
-            .sum();
-        assert!(!null_prob.is_nan(), "{:?}\t{:?}", ith_ln, occs);
-        assert!(null_prob < std::f64::INFINITY, "{:?}\t{:?}", ith_ln, occs);
+
+    fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, (NodeIndex, Position))> {
+        let occs: Vec<_> = nodes.iter().map(|x| x.0).collect();
+        let raw_nodes: Vec<_> = nodes.iter().map(|x| self.node(x.3).unwrap()).collect();
+        let node_indices: Vec<_> = nodes.iter().map(|x| (x.3, x.4)).collect();
+        let null_distr = normalize_coverage_array(&raw_nodes);
+        let null_likelihood = lk_of_counts(&occs, &null_distr);
+        assert!(!null_likelihood.is_nan(), "{:?}\t{:?}", null_distr, occs);
+        assert!(null_likelihood.is_finite(), "{:?}\t{:?}", null_distr, occs);
         let (correct_lk, error_lk) = lk_pairs(nodes.len());
         assert_eq!(nodes.len(), node_indices.len());
-        nodes
+        raw_nodes
             .iter()
             .zip(node_indices.iter())
             .enumerate()
             .filter(|(_, (n, _))| n.copy_number == Some(1))
-            .map(|(k, (n, idx))| {
+            .map(|(k, (_, &idx))| {
                 let occs_with_idx = occs.iter().map(|&x| x as f64).enumerate();
                 let lk: f64 = occs_with_idx
                     .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
                     .sum();
                 assert!(!lk.is_nan());
-                (lk - null_prob, *n, *idx)
+                (lk - null_likelihood, idx)
             })
             .max_by(|x, y| (x.0).partial_cmp(&(y.0)).unwrap())
     }
-    fn enumerate_candidate_nodes(
+
+    fn count_dist_nodes(
         &self,
         reads: &[&EncodedRead],
-        min_span: usize,
         node_index: NodeIndex,
         pos: Position,
-    ) -> Vec<Vec<(NodeIndex, Position)>> {
+    ) -> Vec<HashMap<Node, usize>> {
+        let max_len: usize = reads.iter().map(|r| r.nodes.len()).max().unwrap();
+        let mut node_counts_at = vec![HashMap::new(); max_len + 1];
         let node = self.node(node_index).unwrap().node;
-        let max_reach = Self::max_reach(reads, min_span, node, pos);
-        let mut nodes_at: Vec<Vec<(NodeIndex, Position)>> = vec![];
-        let mut active_nodes = vec![(node_index, pos)];
-        for _ in 0..max_reach {
-            let mut found_nodes: Vec<(NodeIndex, Position)> = vec![];
-            for &(index, pos) in active_nodes.iter() {
-                for edge in self.edges_from(index, pos) {
-                    found_nodes.push((edge.to, edge.to_position));
-                }
-            }
-            found_nodes.sort_unstable();
-            found_nodes.dedup();
-            active_nodes.clear();
-            active_nodes.extend(found_nodes.iter().map(|&(i, p)| (i, !p)));
-            nodes_at.push(found_nodes);
-        }
-        // TODO: I remove duplicated nodes here, but it may cause some problems I do not know currently.
-        for nodes in nodes_at.iter_mut() {
-            let duplicated: Vec<_> = nodes
-                .iter()
-                .enumerate()
-                .map(|(i, &(n, _))| {
-                    nodes[i + 1..]
-                        .iter()
-                        .any(|&(m, _)| self.node(n).unwrap().node == self.node(m).unwrap().node)
-                })
-                .collect();
-            let mut idx = 0;
-            nodes.retain(|_| {
-                idx += 1;
-                !duplicated[idx - 1]
-            });
-        }
-        nodes_at
-    }
-    fn max_reach(reads: &[&EncodedRead], min_span: usize, node: Node, pos: Position) -> usize {
-        let mut dist_node: HashMap<_, _> = HashMap::new();
         for read in reads.iter() {
             let start = read
                 .nodes
@@ -597,28 +341,145 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 (true, Position::Tail) | (false, Position::Head) => {
                     // ---> (Here to start) -- <---> -- <---> .... Or
                     // <--- (Here to start) -- <---> -- <---> ....
-                    for (dist, node) in read.nodes.iter().skip(start).enumerate() {
-                        let node = (node.unit, node.cluster);
-                        *dist_node.entry((node, dist)).or_default() += 1;
+                    for (d, node) in read.nodes.iter().skip(start).enumerate() {
+                        *node_counts_at[d]
+                            .entry((node.unit, node.cluster))
+                            .or_default() += 1;
                     }
                 }
                 (true, Position::Head) | (false, Position::Tail) => {
                     let read = read.nodes.iter().take(start + 1).rev();
-                    for (dist, node) in read.enumerate() {
-                        let node = (node.unit, node.cluster);
-                        *dist_node.entry((node, dist)).or_default() += 1;
+                    for (d, node) in read.enumerate() {
+                        *node_counts_at[d]
+                            .entry((node.unit, node.cluster))
+                            .or_default() += 1;
                     }
                 }
             }
         }
-        dist_node
+        node_counts_at
+    }
+    fn next_nodes(&self, nodes: &[NodeWithTraverseInfo]) -> Vec<(NodeIndex, Position)> {
+        let mut found_nodes: Vec<_> = vec![];
+        for &(_, _, _, index, pos) in nodes {
+            for edge in self.edges_from(index, !pos) {
+                found_nodes.push((edge.to, edge.to_position));
+            }
+        }
+        found_nodes.sort_unstable();
+        found_nodes.dedup();
+        found_nodes
+    }
+    // Dist -> Vec<(count, max_so_far, parent, node_index, pos)>
+    fn traverse(
+        &self,
+        reads: &[&EncodedRead],
+        node_index: NodeIndex,
+        pos: Position,
+        min_span: usize,
+    ) -> Vec<Vec<NodeWithTraverseInfo>> {
+        let node_counts_at = self.count_dist_nodes(&reads, node_index, pos);
+        let mut dist_and_maxweight = vec![];
+        dist_and_maxweight.push(vec![(0, 0, 0, node_index, !pos)]);
+        for dist in 0.. {
+            let prev_nodes = &dist_and_maxweight[dist];
+            let found_nodes = self.next_nodes(&prev_nodes);
+            let map_to_idx = to_btree_map(&found_nodes);
+            let mut maxweight: Vec<_> = found_nodes
+                .iter()
+                .map(|&(idx, pos)| {
+                    let node = self.node(idx).unwrap().node;
+                    let count = *node_counts_at[dist + 1].get(&node).unwrap_or(&0);
+                    (count, count, 0, idx, pos)
+                })
+                .collect();
+            for (i, &(_, max, _, index, pos)) in prev_nodes.iter().enumerate() {
+                let edges = self.edges_from(index, !pos).into_iter();
+                let to_locations = edges.filter_map(|e| map_to_idx.get(&(e.to, e.to_position)));
+                for &to_location in to_locations {
+                    let old_max = maxweight.get_mut(to_location).unwrap();
+                    if old_max.1 < max + old_max.0 {
+                        *old_max = (old_max.0, old_max.0 + max, i, old_max.3, old_max.4);
+                    }
+                }
+            }
+            if maxweight.iter().map(|x| x.0).sum::<usize>() < min_span {
+                break;
+            }
+            dist_and_maxweight.push(maxweight);
+        }
+        dist_and_maxweight
+    }
+    fn trackback(
+        indices_and_parents: &[Vec<(usize, usize, usize, NodeIndex, Position)>],
+        mut dist: usize,
+        target: (NodeIndex, Position),
+    ) -> Vec<(NodeIndex, Position)> {
+        let mut backpath = vec![];
+        let (mut target, _) = indices_and_parents[dist]
             .iter()
-            .filter_map(|((_, d), &count)| (min_span <= count).then(|| *d))
-            .max()
-            .unwrap_or(0)
+            .enumerate()
+            .find(|&(_, &(_, _, _, n, p))| (n, p) == target)
+            .unwrap();
+        while 0 < dist {
+            let (_, _, _, n, p) = indices_and_parents[dist][target];
+            backpath.push((n, p));
+            target = indices_and_parents[dist][target].2;
+            dist -= 1;
+        }
+        backpath.reverse();
+        backpath
+    }
+    fn examine_focus(
+        &self,
+        node_index: NodeIndex,
+        pos: Position,
+        reads: &[&EncodedRead],
+        config: &AssembleConfig,
+    ) -> Option<Focus> {
+        let node = self.node(node_index).unwrap();
+        let min_span = config.min_span_reads;
+        let reads: Vec<_> = reads
+            .iter()
+            .filter(|r| r.contains(node.node))
+            .copied()
+            .collect();
+        let indices_and_parents = self.traverse(&reads, node_index, pos, min_span);
+        indices_and_parents
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter_map(|(d, nodes_with_pars)| {
+                self.max_lk_node(nodes_with_pars)
+                    .map(|(lk, target)| (lk, d, target))
+            })
+            .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+            .map(|(lk, d, (to_idx, to_pos))| {
+                let backpath = Self::trackback(&indices_and_parents, d, (to_idx, to_pos));
+                let nodes_with_pars = &indices_and_parents[d];
+                let counts: Vec<_> = nodes_with_pars.iter().map(|x| x.0).collect();
+                let to_node = self.node(to_idx).unwrap().node;
+                let from_tuple = (node_index, node.node, pos);
+                let to_tuple = (to_idx, to_node, to_pos);
+                Focus::with_backpath(from_tuple, to_tuple, d, lk, counts, backpath)
+            })
+    }
+    fn survey_focus(&'b mut self, focus: &Focus, affected: &mut HashSet<NodeIndex>) -> Option<()> {
+        if !self.is_path_branching(focus) {
+            return None;
+        }
+        for (i, &(index, pos)) in focus.path.iter().enumerate() {
+            let node = self.node(index).unwrap().node;
+            debug!("FOCUS\tTrace\t{}\t{:?}\t{}", i, node, pos);
+        }
+        let new_nodes = self.duplicate_along(focus);
+        affected.extend(new_nodes);
+        affected.extend(focus.path.iter().map(|x| x.0));
+        affected.insert(focus.from);
+        self.remove_along(focus);
+        Some(())
     }
 }
-
 fn lk_pairs(len: usize) -> (f64, f64) {
     let choice_num = len as f64;
     let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
@@ -631,4 +492,24 @@ fn lk_pairs(len: usize) -> (f64, f64) {
     assert!(!correct_lk.is_nan());
     assert!(!error_lk.is_nan());
     (correct_lk, error_lk)
+}
+
+fn to_btree_map(nodes: &[(NodeIndex, Position)]) -> BTreeMap<(NodeIndex, Position), usize> {
+    nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect()
+}
+
+fn normalize_coverage_array(nodes: &[&DitchNode]) -> Vec<f64> {
+    let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
+    let sum: f64 = probs.iter().sum();
+    probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
+    assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
+    probs
+}
+
+fn lk_of_counts(occs: &[usize], distr: &[f64]) -> f64 {
+    occs.iter()
+        .zip(distr)
+        .filter(|x| 0 < *x.0)
+        .map(|(&occ, ln)| occ as f64 * ln)
+        .sum()
 }

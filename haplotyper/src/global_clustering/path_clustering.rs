@@ -137,22 +137,12 @@ impl Graph {
     }
     pub fn lk(&self) -> f64 {
         (0..self.reads.len())
-            .map(|i| logsumexp(&self.lk_of_the_ith(i)))
+            .map(|i| crate::misc::logsumexp(&self.lk_of_the_ith(i)))
             .sum::<f64>()
     }
     pub fn assignments(&self) -> &[usize] {
         &self.assignments
     }
-}
-
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }
 
 impl std::fmt::Display for Graph {

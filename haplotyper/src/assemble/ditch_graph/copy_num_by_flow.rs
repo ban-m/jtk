@@ -1,6 +1,6 @@
-use rand::Rng;
-
 use crate::find_union::FindUnion;
+use rand::Rng;
+use std::collections::HashSet;
 
 // Four bit packing
 // 4i, 4i+1, 4i+2, 4i+3 as follows
@@ -13,7 +13,7 @@ use crate::find_union::FindUnion;
 // 4i+1, 4i+2: Nodes connected internally.
 // Note that the reverse/forward edges can be decided by only see the indices.
 
-const LARGE_VALUE: f64 = 10_000_000_000f64;
+const LARGE_VALUE: f64 = 100_000_000_000_000_000f64;
 type RawNode = (f64, usize);
 type RawEdge = (usize, bool, usize, bool, f64);
 
@@ -81,7 +81,7 @@ impl ResEdges {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ResIndex(usize);
 
 #[derive(Debug, Clone, Copy)]
@@ -137,6 +137,99 @@ impl std::fmt::Display for RawPointer {
     }
 }
 
+// Contains the result of the bellman ford algorithm.
+#[derive(Debug, Clone)]
+struct BellmanFord<'a, 'b> {
+    graph: &'a Graph,
+    edge_weights: &'b [Vec<f64>],
+    dists: Vec<f64>,
+    prede: Vec<Option<ResEdge>>,
+    predv: Vec<ResIndex>,
+    source: ResIndex,
+    sink: ResIndex,
+}
+
+impl<'a, 'b> BellmanFord<'a, 'b> {
+    fn cycles<'c>(&'c self) -> Cycles<'a, 'b, 'c> {
+        Cycles {
+            len: self.graph.residual_graph.len(),
+            inner: self,
+            pointer: 0,
+            checked_nodes: HashSet::new(),
+        }
+    }
+    fn path(&self) -> Option<Vec<ResEdge>> {
+        let dist = self.dists[self.sink.0];
+        (dist < 0f64).then(|| {
+            // Ftrace!("CAND\tPATH\t{}\t{}\t{dist:.2}", self.source.0, self.sink.0,);
+            // Recover shortest path from the source to the sink.
+            let mut current = self.sink;
+            let mut path = vec![self.prede[current.0].unwrap()];
+            current = self.predv[current.0];
+            while current != self.source {
+                path.push(self.prede[current.0].unwrap());
+                current = self.predv[current.0];
+                assert!(path.len() <= self.graph.residual_graph.len());
+            }
+            path.reverse();
+            path
+        })
+    }
+    fn traverse_cycle(&self, start: usize) -> Vec<ResEdge> {
+        // Trace back `V` times to get into the cycle.
+        let mut current = ResIndex(start);
+        for _ in 0..self.predv.len() + 3 {
+            current = self.predv[current.0];
+        }
+        // Trace back until re-entry `current.`
+        let root = current;
+        let mut edges = vec![self.prede[current.0].unwrap()];
+        current = self.predv[current.0];
+        while current != root {
+            edges.push(self.prede[current.0].unwrap());
+            current = self.predv[current.0];
+        }
+        edges.reverse();
+        edges
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Cycles<'a, 'b, 'c> {
+    len: usize,
+    inner: &'c BellmanFord<'a, 'b>,
+    pointer: usize,
+    checked_nodes: HashSet<ResIndex>,
+}
+
+impl<'a, 'b, 'c> std::iter::Iterator for Cycles<'a, 'b, 'c> {
+    type Item = Vec<ResEdge>;
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.pointer < self.len {
+            self.pointer += 1;
+            let idx = self.pointer - 1;
+            if self.checked_nodes.contains(&ResIndex(idx)) {
+                continue;
+            }
+            let edges = &self.inner.graph.residual_graph.nodes[idx];
+            let scores = &self.inner.edge_weights[idx];
+            assert_eq!(edges.len(), scores.len());
+            for (edge, score) in std::iter::zip(&edges.0, scores) {
+                let (from, to) = (edge.from.0, edge.to.0);
+                if self.inner.dists[from] < LARGE_VALUE
+                    && self.inner.dists[from] + score < self.inner.dists[to]
+                {
+                    let cycle = self.inner.traverse_cycle(edge.from.0);
+                    self.checked_nodes
+                        .extend(cycle.iter().flat_map(|c| [c.from, c.to]));
+                    return Some(cycle);
+                }
+            }
+        }
+        None
+    }
+}
+
 impl Graph {
     pub fn new(nodes: &[(f64, usize)], edges: &[RawEdge], hap_cov: f64) -> Self {
         let mut graph = Self {
@@ -188,16 +281,13 @@ impl Graph {
     }
     pub fn optimize<R: Rng>(&mut self, _: &mut R) {
         // Clear copy numbers.
-        trace!("FLOW\tSOURCES\t{}", self.source_sinks().len());
+        trace!("FLOW\tSOURCES\t{:?}", self.source_sinks());
         self.node_copy_numbers.iter_mut().for_each(|n| *n = 0);
         self.edge_copy_numbers.iter_mut().for_each(|n| *n = 0);
         trace!("PENALTY\t{:.1}", self.penalty());
-        while self.update() {
-            if log_enabled!(log::Level::Trace) {
-                trace!("PENALTY\t{:.1}", self.penalty());
-            }
+        while self.update_dev() {
+            trace!("PENALTY\t{:.1}", self.penalty());
         }
-        trace!("PENALTY\t{:.1}", self.penalty());
     }
     fn penalty(&self) -> f64 {
         let nodes: f64 = self
@@ -214,44 +304,180 @@ impl Graph {
             .sum();
         nodes + edges
     }
-    fn update(&mut self) -> bool {
-        // Here we have two way:
-        // 1. Do Warshal Floyd to get the minimum penalty of each pair of nodes,
-        // selecting the minimum pair of the nodes, and traceback.
-        // It requires O(V^3) exactly.
-        // 2. Do Bellman-Ford on each pair of the sources and sinks.
-        // Usually, # of sources and sinks are small. So it is roughly O(VE). I choose this.
+    fn source_sink_tuple(&self) -> Vec<(ResIndex, ResIndex)> {
         let mut fu = self.connected_components();
         let source_sinks = self.source_sinks();
-        // Maybe we need to pick the minimum one...
-        for &source in source_sinks.iter() {
-            for &sink in source_sinks.iter() {
-                if !fu.same(source.0, sink.0).unwrap() {
-                    continue;
-                }
-                // Bellman-Ford.
-                if self.update_between(source, sink) {
+        if !source_sinks.is_empty() {
+            source_sinks
+                .iter()
+                .flat_map(|&source| {
+                    source_sinks
+                        .iter()
+                        .map(|&sink| (source, sink))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|(source, sink)| source != sink)
+                .collect()
+        } else {
+            let cluster: Vec<_> = (0..self.residual_graph.len())
+                .filter(|&i| fu.find(i).unwrap() == i)
+                .collect();
+            cluster
+                .into_iter()
+                .filter_map(|cl| {
+                    let mut nodes =
+                        (0..self.residual_graph.len()).filter(|&i| fu.find(i).unwrap() == cl);
+                    Some((ResIndex(nodes.next()?), ResIndex(nodes.next()?)))
+                })
+                .collect()
+        }
+    }
+    fn update_dev(&mut self) -> bool {
+        let tuples = self.source_sink_tuple();
+        let edge_scores: Vec<Vec<_>> = self
+            .residual_graph
+            .nodes
+            .iter()
+            .map(|edges| edges.0.iter().map(|e| self.score(e)).collect())
+            .collect();
+        // Check cycle.
+        let (mut min, mut argmin) = (LARGE_VALUE, None);
+        for (source, sink) in tuples {
+            let bellman = self.min_dist(&edge_scores, source, sink);
+            let mut has_cycle = false;
+            for cycle in bellman.cycles() {
+                has_cycle |= true;
+                let score = self.eval(&cycle);
+                if score < 0f64 {
+                    let len = cycle.len();
+                    let (source, sink) = (cycle[0].from.0, cycle[0].to.0);
+                    trace!("UPDATE\tCYCLE\t{len}\t{source}\t{sink}\t{score:.0}");
+                    // Self::tracepath(&cycle);
+                    self.update_by(&cycle);
                     return true;
+                }
+            }
+            let path = match has_cycle {
+                false => bellman.path(),
+                true => self.bfs(&edge_scores, source, sink),
+            };
+            if let Some(path) = path {
+                let score = self.eval(&path);
+                if score < min {
+                    min = score;
+                    argmin = Some((path, source, sink));
                 }
             }
         }
-        if source_sinks.is_empty() {
-            use std::collections::BTreeMap;
-            let mut clusters: BTreeMap<_, Vec<_>> = BTreeMap::new();
-            for i in 0..self.residual_graph.len() {
-                clusters
-                    .entry(fu.find(i).unwrap())
-                    .or_default()
-                    .push(ResIndex(i));
-            }
-            for nodes in clusters.values().filter(|ns| ns.len() > 2) {
-                if self.update_between(nodes[0], nodes[1]) {
-                    return true;
-                }
-            }
+        if min < LARGE_VALUE {
+            let (path, ResIndex(source), ResIndex(sink)) = argmin.unwrap();
+            let len = path.len();
+            trace!("UPDATE\tPATH\t{len}\t{source}\t{sink}\t{min:.0}");
+            //  Self::tracepath(&path);
+            self.update_by(&path);
+            return true;
         }
         false
     }
+    fn bfs(
+        &self,
+        edge_scores: &[Vec<f64>],
+        source: ResIndex,
+        sink: ResIndex,
+    ) -> Option<Vec<ResEdge>> {
+        // Breadth first search. One distance at each time.
+        let len = self.residual_graph.len();
+        let mut dists = vec![LARGE_VALUE; len];
+        let mut predv = vec![ResIndex(len + 1); len];
+        let mut prede = vec![None; len];
+        let mut is_arrived = vec![false; len];
+        dists[source.0] = 0f64;
+        is_arrived[source.0] = true;
+        let mut queue = vec![source];
+        // Loop.
+        'bfs: while !queue.is_empty() {
+            let mut newly_arrived = vec![];
+            for &node in queue.iter() {
+                assert!(is_arrived[node.0], "{}", dists[node.0]);
+                if node == sink {
+                    break 'bfs;
+                }
+                let scores = &edge_scores[node.0];
+                let edges = &self.residual_graph[node].0;
+                assert_eq!(scores.len(), edges.len());
+                for (edge, score) in std::iter::zip(edges, scores) {
+                    if is_arrived[edge.to.0] {
+                        continue;
+                    }
+                    assert_eq!(edge.from, node);
+                    dists[edge.to.0] = dists[edge.from.0] + score;
+                    predv[edge.to.0] = edge.from;
+                    prede[edge.to.0] = Some(*edge);
+                    is_arrived[edge.to.0] = true;
+                    newly_arrived.push(edge.to);
+                }
+            }
+            queue = newly_arrived;
+        }
+        trace!("CAND\tBFS\t{}\t{}\t{}", source.0, sink.0, dists[sink.0]);
+        (dists[sink.0] < 0f64).then(|| {
+            let mut current = sink;
+            let mut path = vec![prede[current.0].unwrap()];
+            current = predv[current.0];
+            while current != source {
+                path.push(prede[current.0].unwrap());
+                current = predv[current.0];
+                assert!(path.len() <= self.residual_graph.len());
+            }
+            path.reverse();
+            path
+        })
+    }
+    // fn tracepath(path: &[ResEdge]) {
+    //     let dump: Vec<_> = path
+    //         .iter()
+    //         .map(|e| format!("{}-({},{})->", e.from.0, e.target, e.is_back() as usize))
+    //         .collect();
+    //     trace!("DUMP\t{}", dump.join(""));
+    // }
+    // fn update(&mut self) -> bool {
+    //     // Here we have two way:
+    //     // 1. Do Warshal Floyd to get the minimum penalty of each pair of nodes,
+    //     // selecting the minimum pair of the nodes, and traceback.
+    //     // It requires O(V^3) exactly.
+    //     // 2. Do Bellman-Ford on each pair of the sources and sinks.
+    //     // Usually, # of sources and sinks are small. So it is roughly O(VE). I choose this.
+    //     let mut fu = self.connected_components();
+    //     let source_sinks = self.source_sinks();
+    //     // Maybe we need to pick the minimum one...
+    //     for &source in source_sinks.iter() {
+    //         for &sink in source_sinks.iter().filter(|&&s| s != source) {
+    //             if !fu.same(source.0, sink.0).unwrap() {
+    //                 continue;
+    //             }
+    //             // Bellman-Ford.
+    //             if self.update_between(source, sink) {
+    //                 return true;
+    //             }
+    //         }
+    //     }
+    //     if source_sinks.is_empty() {
+    //         use std::collections::BTreeMap;
+    //         let mut clusters: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    //         for i in 0..self.residual_graph.len() {
+    //             clusters
+    //                 .entry(fu.find(i).unwrap())
+    //                 .or_default()
+    //                 .push(ResIndex(i));
+    //         }
+    //         for nodes in clusters.values().filter(|ns| ns.len() > 2) {
+    //             if self.update_between(nodes[0], nodes[1]) {
+    //                 return true;
+    //             }
+    //         }
+    //     }
+    //     false
+    // }
     fn connected_components(&self) -> crate::find_union::FindUnion {
         let mut fu = FindUnion::new(self.residual_graph.len());
         for edges in self.residual_graph.nodes.iter() {
@@ -261,24 +487,17 @@ impl Graph {
         }
         fu
     }
-    fn update_between(&mut self, source: ResIndex, sink: ResIndex) -> bool {
-        // TODO: First mark the nodes reachable from source and to sink, then
-        // update only on these bi-directionally reachable nodes.
-        // It would speed up some...?
-        // TODO: Memoize the `self.score(edge)` function. It would make this function 2x faster?
-        // Bellman Ford.
+    fn min_dist<'a, 'b>(
+        &'a self,
+        edge_scores: &'b [Vec<f64>],
+        source: ResIndex,
+        sink: ResIndex,
+    ) -> BellmanFord<'a, 'b> {
         let len = self.residual_graph.len();
-        // Init.
         let mut dists = vec![LARGE_VALUE; len];
         let mut predv = vec![ResIndex(len + 1); len];
         let mut prede = vec![None; len];
         dists[source.0] = 0f64;
-        let edge_scores: Vec<Vec<_>> = self
-            .residual_graph
-            .nodes
-            .iter()
-            .map(|edges| edges.0.iter().map(|e| self.score(e)).collect())
-            .collect();
         // Loop.
         for _ in 0..len - 1 {
             for (edges, scores) in self.residual_graph.nodes.iter().zip(edge_scores.iter()) {
@@ -293,42 +512,92 @@ impl Graph {
                 }
             }
         }
-        // Check Negative cycle.
-        for (edges, scores) in std::iter::zip(&self.residual_graph.nodes, &edge_scores) {
-            assert_eq!(edges.len(), scores.len());
-            for (edge, score) in std::iter::zip(&edges.0, scores) {
-                if dists[edge.from.0] < LARGE_VALUE && dists[edge.from.0] + score < dists[edge.to.0]
-                {
-                    // negative loop. Return if it indeed decrease the penalty.
-                    let cycle = Self::traverse_cycle(&predv, &prede, edge.from.0);
-                    let score = self.eval(&cycle);
-                    if score < 0f64 {
-                        trace!("UPDATE\tCYCLE\t{score:.2}\t{}", cycle.len());
-                        self.update_by(&cycle);
-                        return true;
-                    }
-                }
-            }
+        BellmanFord {
+            graph: self,
+            edge_weights: edge_scores,
+            dists,
+            prede,
+            predv,
+            source,
+            sink,
         }
-        if dists[sink.0] < 0f64 {
-            // Recover shortest path from the source to the sink.
-            let mut current = sink;
-            let mut path = vec![prede[current.0].unwrap()];
-            current = predv[current.0];
-            while current != source {
-                path.push(prede[current.0].unwrap());
-                current = predv[current.0];
-            }
-            path.reverse();
-            let score = self.eval(&path);
-            if score < 0f64 {
-                trace!("UPDATE\tPATH\t{score:.2}\t{}", path.len());
-                self.update_by(&path);
-                return true;
-            }
-        }
-        false
     }
+    // fn update_between(&mut self, source: ResIndex, sink: ResIndex) -> bool {
+    //     let len = self.residual_graph.len();
+    //     // Init.
+    //     // Bellman-Ford.
+    //     let mut dists = vec![LARGE_VALUE; len];
+    //     let mut predv = vec![ResIndex(len + 1); len];
+    //     let mut prede = vec![None; len];
+    //     dists[source.0] = 0f64;
+    //     let edge_scores: Vec<Vec<_>> = self
+    //         .residual_graph
+    //         .nodes
+    //         .iter()
+    //         .map(|edges| edges.0.iter().map(|e| self.score(e)).collect())
+    //         .collect();
+    //     // Loop.
+    //     for _ in 0..len - 1 {
+    //         for (edges, scores) in self.residual_graph.nodes.iter().zip(edge_scores.iter()) {
+    //             assert_eq!(scores.len(), edges.len());
+    //             for (edge, score) in std::iter::zip(edges.0.iter(), scores.iter()) {
+    //                 let (from, to) = (edge.from.0, edge.to.0);
+    //                 if dists[from] < LARGE_VALUE && dists[from] + score < dists[to] {
+    //                     dists[to] = dists[from] + score;
+    //                     predv[to] = edge.from;
+    //                     prede[to] = Some(*edge);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     // Check Negative cycle.
+    //     let mut checked_loop = HashSet::new();
+    //     for (edges, scores) in std::iter::zip(&self.residual_graph.nodes, &edge_scores) {
+    //         assert_eq!(edges.len(), scores.len());
+    //         for (edge, score) in std::iter::zip(&edges.0, scores) {
+    //             if checked_loop.contains(&edge.from.0) {
+    //                 continue;
+    //             }
+    //             let (from, to) = (edge.from.0, edge.to.0);
+    //             if dists[from] < LARGE_VALUE && dists[from] + score < dists[to] {
+    //                 let cycle = Self::traverse_cycle(&predv, &prede, edge.from.0);
+    //                 let score = self.eval(&cycle);
+    //                 if score < 0f64 {
+    //                     trace!("UPDATE\tCYCLE\t{score:.2}\t{}", cycle.len());
+    //                     self.update_by(&cycle);
+    //                     return true;
+    //                 } else {
+    //                     checked_loop.extend(cycle.iter().flat_map(|c| [c.from.0, c.to.0]));
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     // If there is a negative *pseudo* cycle, it rewinded into loops.
+    //     if !checked_loop.is_empty() {
+    //         debug!("All negative cycles can not be verified.");
+    //         debug!("Maybe the copy number estimates is bad....");
+    //         debug!("Should we implement DFS search from the source to the sink?");
+    //     } else if dists[sink.0] < 0f64 {
+    //         trace!("CAND\tPATH\t{}\t{}\t{:.2}", source.0, sink.0, dists[sink.0]);
+    //         // Recover shortest path from the source to the sink.
+    //         let mut current = sink;
+    //         let mut path = vec![prede[current.0].unwrap()];
+    //         current = predv[current.0];
+    //         while current != source {
+    //             path.push(prede[current.0].unwrap());
+    //             current = predv[current.0];
+    //             assert!(path.len() <= self.residual_graph.len());
+    //         }
+    //         path.reverse();
+    //         let score = self.eval(&path);
+    //         if score < 0f64 {
+    //             trace!("UPDATE\tPATH\t{score:.2}\t{}", path.len());
+    //             self.update_by(&path);
+    //             return true;
+    //         }
+    //     }
+    //     false
+    // }
     fn eval(&self, path: &[ResEdge]) -> f64 {
         let mut node_diff = vec![0; self.nodes.len()];
         let mut edge_diff = vec![0; self.edges.len()];
@@ -390,23 +659,23 @@ impl Graph {
     }
     // Extract cycle from `pred`. Assume there is at least one.
     // The returned cycle does not always start from `start` node.
-    fn traverse_cycle(predv: &[ResIndex], prede: &[Option<ResEdge>], start: usize) -> Vec<ResEdge> {
-        // Trace back `V` times to get into the cycle.
-        let mut current = ResIndex(start);
-        for _ in 0..predv.len() + 3 {
-            current = predv[current.0];
-        }
-        // Trace back until re-entry `current.`
-        let root = current;
-        let mut edges = vec![prede[current.0].unwrap()];
-        current = predv[current.0];
-        while current != root {
-            edges.push(prede[current.0].unwrap());
-            current = predv[current.0];
-        }
-        edges.reverse();
-        edges
-    }
+    // fn traverse_cycle(predv: &[ResIndex], prede: &[Option<ResEdge>], start: usize) -> Vec<ResEdge> {
+    //     // Trace back `V` times to get into the cycle.
+    //     let mut current = ResIndex(start);
+    //     for _ in 0..predv.len() + 3 {
+    //         current = predv[current.0];
+    //     }
+    //     // Trace back until re-entry `current.`
+    //     let root = current;
+    //     let mut edges = vec![prede[current.0].unwrap()];
+    //     current = predv[current.0];
+    //     while current != root {
+    //         edges.push(prede[current.0].unwrap());
+    //         current = predv[current.0];
+    //     }
+    //     edges.reverse();
+    //     edges
+    // }
     fn source_sinks(&self) -> Vec<ResIndex> {
         // If a node is connected only inner edge, it is a source/sink node.
         self.residual_graph
@@ -582,6 +851,27 @@ pub mod tests {
             (2, false, 3, true, 10.0),
         ];
         let edge_cp = vec![1, 1, 1, 1];
+        let mut graph = Graph::new(&nodes, &edges, cov);
+        graph.optimize(&mut rng);
+        let (pred, edge_pred) = graph.copy_numbers();
+        assert_eq!(pred, nodes_cp);
+        assert_eq!(edge_pred, edge_cp);
+    }
+    #[test]
+    fn mock_data_5() {
+        let nodes_cp = vec![2, 4, 2, 4, 2];
+        let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(349823094);
+        let cov = 30f64;
+        let nodes = vec![(60.0, 50), (120.0, 2), (60.0, 10), (120.0, 2), (60f64, 50)];
+        let edges: Vec<_> = vec![
+            (0, false, 1, true, 60f64),
+            (1, false, 1, false, 60f64),
+            (1, true, 2, true, 60f64),
+            (2, false, 3, true, 60f64),
+            (3, false, 3, false, 60f64),
+            (3, true, 4, false, 60f64),
+        ];
+        let edge_cp = vec![2, 2, 2, 2, 2, 2];
         let mut graph = Graph::new(&nodes, &edges, cov);
         graph.optimize(&mut rng);
         let (pred, edge_pred) = graph.copy_numbers();

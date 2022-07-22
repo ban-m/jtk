@@ -218,7 +218,7 @@ fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
             .iter()
             .map(|&x| {
                 let lks: Vec<_> = gaussian.iter().map(|g| g.lk(x)).collect();
-                let sum = logsumexp(&lks);
+                let sum = crate::misc::logsumexp(&lks);
                 lks.iter().map(|x| (x - sum).exp()).collect::<Vec<_>>()
             })
             .inspect(|x| assert!((1. - x.iter().sum::<f64>()).abs() < 0.01))
@@ -227,7 +227,7 @@ fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
             .iter()
             .map(|&x| {
                 let lks: Vec<_> = gaussian.iter().map(|g| g.lk(x)).collect();
-                logsumexp(&lks)
+                crate::misc::logsumexp(&lks)
             })
             .sum::<f64>();
         diff = likelihood - lk;
@@ -253,20 +253,10 @@ fn clustering(xs: &[f64], seed: u64, k: usize) -> (Vec<usize>, f64) {
         .iter()
         .map(|&x| {
             let lks: Vec<_> = gaussian.iter().map(|g| g.lk(x)).collect();
-            logsumexp(&lks)
+            crate::misc::logsumexp(&lks)
         })
         .sum::<f64>();
     (result, likelihood)
-}
-
-fn logsumexp(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.;
-    }
-    let max = xs.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-    let sum = xs.iter().map(|x| (x - max).exp()).sum::<f64>().ln();
-    assert!(sum >= 0., "{:?}->{}", xs, sum);
-    max + sum
 }
 
 fn select_variants(
