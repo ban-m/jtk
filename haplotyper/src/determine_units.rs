@@ -578,6 +578,7 @@ fn fill_gap(
     let identity = mat_num as f64 / ops.len() as f64;
     (1f64 - identity < readtype.sim_thr()).then(|| {
         let cigar = crate::encode::compress_kiley_ops(&ops);
+        let seq = seq.to_vec();
         Node::new(unit.id, direction, seq, cigar, position_from_start, 2)
     })
 }

@@ -582,7 +582,7 @@ impl Node {
     pub fn new(
         unit: u64,
         is_forward: bool,
-        seq: &[u8],
+        seq: Vec<u8>,
         cigar: Vec<Op>,
         position_from_start: usize,
         cluster_num: usize,
@@ -594,7 +594,7 @@ impl Node {
             position_from_start,
             unit,
             cluster: 0,
-            seq: seq.to_vec().into(),
+            seq: seq.into(),
             is_forward,
             cigar: cigar.into(),
             posterior: vec![post_prob; cluster_num],

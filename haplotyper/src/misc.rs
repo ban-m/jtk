@@ -80,3 +80,13 @@ pub fn logsumexp_str<I: Iterator<Item = f64>>(xs: I) -> f64 {
         _ => accum.ln() + max,
     }
 }
+
+const EDLIB2KILEY: [kiley::Op; 4] = [
+    kiley::Op::Match,
+    kiley::Op::Ins,
+    kiley::Op::Del,
+    kiley::Op::Mismatch,
+];
+pub fn edlib_to_kiley(edlib: &[u8]) -> Vec<kiley::Op> {
+    edlib.iter().map(|&op| EDLIB2KILEY[op as usize]).collect()
+}

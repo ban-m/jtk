@@ -123,8 +123,7 @@ impl PolishUnit for DataSet {
                     let mode = edlib_sys::AlignMode::Global;
                     let task = edlib_sys::AlignTask::Alignment;
                     let aln = edlib_sys::align(node.seq(), &draft, mode, task);
-                    let aln = aln.operations().unwrap();
-                    let k_ops: Vec<_> = aln.iter().map(|&op| ED_OPS[op as usize]).collect();
+                    let k_ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
                     node.cigar = crate::encode::compress_kiley_ops(&k_ops).into();
                 });
                 (id, draft)
@@ -138,10 +137,3 @@ impl PolishUnit for DataSet {
         self.polish_unit(c);
     }
 }
-
-const ED_OPS: [kiley::Op; 4] = [
-    kiley::Op::Match,
-    kiley::Op::Ins,
-    kiley::Op::Del,
-    kiley::Op::Mismatch,
-];

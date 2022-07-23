@@ -537,6 +537,37 @@ fn get_reverse_d_edge_from_window(w: &[Node]) -> DEdge {
     (from, to)
 }
 
+fn merge_units(units: &[Unit]) -> (Vec<u8>, Vec<usize>) {
+    let contig: Vec<_> = units.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
+        x.extend(y);
+        x
+    });
+    let (break_points, _): (Vec<_>, _) =
+        units
+            .iter()
+            .map(|x| x.seq().len())
+            .fold((Vec::new(), 0), |(mut acc, x), y| {
+                acc.push(x + y);
+                (acc, x + y)
+            });
+    (contig, break_points)
+}
+
+fn remove_leading_insertions(ops: &mut Vec<kiley::Op>) -> usize {
+    let mut head_ins = 0;
+    ops.reverse();
+    while let Some(&kiley::Op::Ins) = ops.last() {
+        ops.pop().unwrap();
+        head_ins += 1;
+    }
+    ops.reverse();
+    head_ins
+}
+
+fn alignment_identity(ops: &[kiley::Op]) -> f64 {
+    let mat = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
+    mat as f64 / ops.len() as f64
+}
 // Note that the seq[start..end] can be much longer than the contig itself....
 fn encode_edge(
     seq: &[u8],
@@ -546,24 +577,11 @@ fn encode_edge(
     units: &[Unit],
     read_type: &definitions::ReadType,
 ) -> Vec<definitions::Node> {
-    let contig: Vec<_> = units.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
-        x.extend(y);
-        x
-    });
-    let ctg_orig_len = contig.len();
+    let (contig, break_points) = merge_units(units);
     // seq is equal to seq[start..end], revcmped if is_forward is false.
     let band = read_type.band_width(contig.len());
     let ((start, end, seq), (ctg_start, ctg_end, _), mut ops) =
         tune_position(start, end, seq, is_forward, &contig, band);
-    let (break_points, _): (Vec<_>, _) =
-        units
-            .iter()
-            .map(|x| x.seq().len())
-            .fold((Vec::new(), 0), |(mut acc, x), y| {
-                acc.push(x + y);
-                (acc, x + y)
-            });
-    // Current position on the contg
     let mut xpos = ctg_start;
     // Nearest break;
     let mut target_idx = match break_points.iter().position(|&x| ctg_start < x) {
@@ -576,19 +594,10 @@ fn encode_edge(
         i => vec![kiley::Op::Del; ctg_start - break_points[i - 1]],
     };
     // Push deletion operations up to the last base.
-    ops.extend(std::iter::repeat(kiley::Op::Del).take(ctg_orig_len - ctg_end));
+    ops.extend(std::iter::repeat(kiley::Op::Del).take(contig.len() - ctg_end));
     // Split the alignment into encoded nodes.
     // Current position of the query.
-    let mut ypos = {
-        let mut head_ins = 0;
-        ops.reverse();
-        while let Some(&kiley::Op::Ins) = ops.last() {
-            ops.pop().unwrap();
-            head_ins += 1;
-        }
-        ops.reverse();
-        head_ins
-    };
+    let mut ypos = remove_leading_insertions(&mut ops);
     // Encoded nodes.
     let mut nodes = vec![];
     let sim_thr = read_type.sim_thr();
@@ -598,36 +607,23 @@ fn encode_edge(
                 xpos += 1;
                 ypos += 1;
             }
-            kiley::Op::Del => {
-                xpos += 1;
-            }
-            kiley::Op::Ins => {
-                ypos += 1;
-            }
+            kiley::Op::Del => xpos += 1,
+            kiley::Op::Ins => ypos += 1,
         }
         alignments.push(op);
         if xpos == break_points[target_idx] {
             // Reached the boundary.
-            let unit = &units[target_idx];
-            let (uid, _unitlen) = (unit.id, unit.seq().len());
-            let ylen = alignments.iter().filter(|&&x| x != kiley::Op::Del).count();
-            let cigar = crate::encode::compress_kiley_ops(&alignments);
-            let percent_identity = {
-                let (aln, mat) = alignments.iter().fold((0, 0), |(aln, mat), &op| match op {
-                    kiley::Op::Match => (aln + 1, mat + 1),
-                    _ => (aln + 1, mat),
-                });
-                mat as f64 / aln as f64
-            };
-            //if max_indel < gap_thr && 1f64 - sim_thr < percent_identity {
-            if 1f64 - sim_thr < percent_identity {
+            if 1f64 - sim_thr < alignment_identity(&alignments) {
+                let unit = &units[target_idx];
+                let ylen = alignments.iter().filter(|&&x| x != kiley::Op::Del).count();
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,
                     false => end - ypos,
                 };
-                let seq = &seq[ypos - ylen..ypos];
+                let seq = seq[ypos - ylen..ypos].to_vec();
                 let cl = unit.cluster_num;
-                let node = Node::new(uid, is_forward, seq, cigar, position_from_start, cl);
+                let cigar = crate::encode::compress_kiley_ops(&alignments);
+                let node = Node::new(unit.id, is_forward, seq, cigar, position_from_start, cl);
                 nodes.push(node);
             }
             // Refresh.

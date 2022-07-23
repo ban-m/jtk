@@ -295,17 +295,29 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         foci
     }
-
+    fn split_node_info(
+        &self,
+        nodes: &[NodeWithTraverseInfo],
+    ) -> (Vec<usize>, Vec<&DitchNode>, Vec<(NodeIndex, Position)>) {
+        let (mut occs, mut raw_nodes, mut node_indices) = (vec![], vec![], vec![]);
+        for (count, _, _, index, pos) in nodes.iter() {
+            let raw_node = self.node(*index).unwrap();
+            if 0 < raw_node.occ {
+                occs.push(*count);
+                raw_nodes.push(raw_node);
+                node_indices.push((*index, *pos));
+            }
+        }
+        (occs, raw_nodes, node_indices)
+    }
     fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, (NodeIndex, Position))> {
-        let occs: Vec<_> = nodes.iter().map(|x| x.0).collect();
-        let raw_nodes: Vec<_> = nodes.iter().map(|x| self.node(x.3).unwrap()).collect();
-        let node_indices: Vec<_> = nodes.iter().map(|x| (x.3, x.4)).collect();
+        let (occs, raw_nodes, node_indices) = self.split_node_info(nodes);
         let null_distr = normalize_coverage_array(&raw_nodes);
         let null_likelihood = lk_of_counts(&occs, &null_distr);
         assert!(!null_likelihood.is_nan(), "{:?}\t{:?}", null_distr, occs);
         assert!(null_likelihood.is_finite(), "{:?}\t{:?}", null_distr, occs);
-        let (correct_lk, error_lk) = lk_pairs(nodes.len());
-        assert_eq!(nodes.len(), node_indices.len());
+        let (correct_lk, error_lk) = lk_pairs(occs.len());
+        assert_eq!(occs.len(), node_indices.len());
         raw_nodes
             .iter()
             .zip(node_indices.iter())
@@ -501,6 +513,7 @@ fn to_btree_map(nodes: &[(NodeIndex, Position)]) -> BTreeMap<(NodeIndex, Positio
 fn normalize_coverage_array(nodes: &[&DitchNode]) -> Vec<f64> {
     let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
     let sum: f64 = probs.iter().sum();
+    probs.iter_mut().for_each(|x| *x /= sum);
     probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
     assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
     probs

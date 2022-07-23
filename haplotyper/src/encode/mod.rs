@@ -141,11 +141,8 @@ fn encode_read_to_nodes_by_paf(
     })
 }
 
-fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
-    use bio_utils::sam;
-    let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
-    // It is padded sequence. Should be adjusted.
-    let (mut leading, aligned, mut trailing) = if aln.relstrand {
+fn split_query(seq: &[u8], aln: &bio_utils::paf::PAF) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    if aln.relstrand {
         let aligned = seq[aln.qstart..aln.qend].to_vec();
         let start = aln.qstart.saturating_sub(2 * aln.tstart);
         let end = (aln.qend + 2 * (aln.tlen - aln.tend)).min(seq.len());
@@ -159,100 +156,102 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node
         let leading = bio_utils::revcmp(&seq[aln.qend..end]);
         let trailing = bio_utils::revcmp(&seq[start..aln.qstart]);
         (leading, aligned, trailing)
-    };
+    }
+}
+
+fn leading_alignment(refr: &[u8], mut leading: Vec<u8>) -> (Vec<Op>, Vec<u8>) {
+    let mut lops = semiglobal(refr, &leading);
+    lops.reverse();
+    leading.reverse();
+    while lops.last() == Some(&kiley::Op::Ins) {
+        assert!(leading.pop().is_some());
+        assert!(lops.pop().is_some());
+    }
+    lops.reverse();
+    leading.reverse();
+    (compress_kiley_ops(&lops), leading)
+}
+
+fn trailing_alignment(refr: &[u8], mut trailing: Vec<u8>) -> (Vec<Op>, Vec<u8>) {
+    let mut tops = semiglobal(refr, &trailing);
+    while tops.last() == Some(&kiley::Op::Ins) {
+        assert!(tops.pop().is_some());
+        assert!(trailing.pop().is_some());
+    }
+    (compress_kiley_ops(&tops), trailing)
+}
+
+fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
+    use bio_utils::sam;
+    let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
+    let (leading, aligned, trailing) = split_query(seq, aln);
     let mut ops = vec![];
-    if aln.tstart > 0 {
-        let mut lops = semiglobal(&unit.seq()[..aln.tstart], &leading);
-        while lops[0] == kiley::Op::Ins {
-            leading.remove(0);
-            lops.remove(0);
-        }
-        // We should have some element, as there are `aln.tstart` reference sequences, and this value is positive.
-        assert!(!lops.is_empty());
-        ops.extend(compress_kiley_ops(&lops));
-    } else {
-        // If the alignment is propery starts from unit begining,
-        // we do not need leading sequence.
-        assert!(leading.is_empty());
-    }
-    // Main alignment.
-    for op in cigar {
-        let op = match op {
-            sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
-            sam::Op::Insertion(l) => Op::Ins(l),
-            sam::Op::Deletion(l) => Op::Del(l),
-            _ => panic!("{:?}", op),
-        };
-        ops.push(op);
-    }
-    if aln.tlen != aln.tend {
-        // Trailing operations
-        let mut tops = semiglobal(&unit.seq()[aln.tend..], &trailing);
-        // Remove while trailing insertions.
-        while tops.last() == Some(&kiley::Op::Ins) {
-            tops.pop();
-            trailing.pop();
-        }
-        // We shoulud have remaining alignment.
-        assert!(!tops.is_empty());
-        ops.extend(compress_kiley_ops(&tops));
-    } else {
-        // Likewise, if the alignment propery stopped at the end of the units,
-        // we do not need trailing sequence.
-        assert!(trailing.is_empty());
-    }
-    let position_from_start = if aln.relstrand {
-        aln.qstart - leading.len()
-    } else {
-        aln.qstart - trailing.len()
+    assert!(0 < aln.tstart || leading.is_empty());
+    let (leading_aln, leading) = leading_alignment(&unit.seq()[..aln.tstart], leading);
+    ops.extend(leading_aln);
+    let cigar = cigar.iter().map(|&op| match op {
+        sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
+        sam::Op::Insertion(l) => Op::Ins(l),
+        sam::Op::Deletion(l) => Op::Del(l),
+        _ => panic!("{:?}", op),
+    });
+    ops.extend(cigar);
+    assert!(aln.tlen != aln.tend || trailing.is_empty());
+    let (trailing_aln, trailing) = trailing_alignment(&unit.seq()[aln.tend..], trailing);
+    ops.extend(trailing_aln);
+    let position_from_start = match aln.relstrand {
+        true => aln.qstart - leading.len(),
+        false => aln.qstart - trailing.len(),
     };
-    // Combine leading, aligned, and trailing sequences into one.
-    leading.extend(aligned);
-    leading.extend(trailing);
-    let query_length = ops
-        .iter()
-        .map(|op| match op {
-            Op::Ins(l) | Op::Match(l) => *l,
-            _ => 0,
-        })
-        .sum::<usize>();
-    assert_eq!(query_length, leading.len());
+    let seq = vec![leading, aligned, trailing].concat();
+    check_length(&ops, seq.len(), unit.seq().len());
     let cl = unit.cluster_num;
-    let node = Node::new(
-        unit.id,
-        aln.relstrand,
-        &leading,
-        ops,
-        position_from_start,
-        cl,
-    );
+    let node = Node::new(unit.id, aln.relstrand, seq, ops, position_from_start, cl);
     Some(node)
 }
 
-fn semiglobal(xs: &[u8], ys: &[u8]) -> Vec<kiley::Op> {
-    if xs.is_empty() {
-        return vec![kiley::Op::Ins; ys.len()];
-    } else if ys.is_empty() {
-        return vec![kiley::Op::Del; xs.len()];
+fn check_length(ops: &[Op], query_len: usize, unit_len: usize) {
+    let (mut query_length, mut unit_length) = (0, 0);
+    for op in ops.iter() {
+        match op {
+            Op::Match(x) => {
+                query_length += x;
+                unit_length += x;
+            }
+            Op::Del(x) => unit_length += x,
+            Op::Ins(x) => query_length += x,
+        }
+    }
+    assert_eq!(query_length, query_len);
+    assert_eq!(unit_length, unit_len);
+}
+
+// Usually, the query is *longer* than the reference.
+fn semiglobal(refr: &[u8], query: &[u8]) -> Vec<kiley::Op> {
+    if refr.is_empty() {
+        return vec![kiley::Op::Ins; query.len()];
+    } else if query.is_empty() {
+        return vec![kiley::Op::Del; refr.len()];
     }
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
-    let aln = edlib_sys::align(xs, ys, mode, task);
+    // This is *reverse*. So we should fix it later.
+    let aln = edlib_sys::align(refr, query, mode, task);
     let (start, end) = aln.location().unwrap();
     let end = end + 1;
-    let mut ops = vec![kiley::Op::Ins; start];
-    ops.extend(aln.operations().unwrap().iter().map(|op| match op {
-        0 => kiley::Op::Match,
-        1 => kiley::Op::Del,
-        2 => kiley::Op::Ins,
-        3 => kiley::Op::Mismatch,
-        _ => unreachable!(),
-    }));
-    ops.extend(std::iter::repeat(kiley::Op::Ins).take(ys.len() - end));
-    ops
+    let leading = std::iter::repeat(kiley::Op::Ins).take(start);
+    let aln = aln.operations().unwrap().iter();
+    use kiley::Op;
+    const OPS: [kiley::Op; 4] = [Op::Match, Op::Del, Op::Ins, Op::Mismatch];
+    let aln = aln.map(|&op| OPS[op as usize]);
+    let trailing = std::iter::repeat(kiley::Op::Ins).take(query.len() - end);
+    leading.chain(aln).chain(trailing).collect()
 }
 
 pub fn compress_kiley_ops(k_ops: &[kiley::Op]) -> Vec<Op> {
+    if k_ops.is_empty() {
+        return Vec::new();
+    }
     fn is_the_same(op1: kiley::Op, op2: kiley::Op) -> bool {
         match (op1, op2) {
             (kiley::Op::Match, kiley::Op::Mismatch) | (kiley::Op::Mismatch, kiley::Op::Match) => {

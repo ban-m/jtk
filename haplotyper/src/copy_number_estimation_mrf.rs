@@ -770,7 +770,7 @@ mod test {
             .map(|(idx, &unit)| {
                 let position = idx as usize * 2_000;
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, &seq, cigar, position, 2)
+                definitions::Node::new(unit, true, seq.clone(), cigar, position, 2)
             })
             .collect();
         let edges = nodes

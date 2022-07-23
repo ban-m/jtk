@@ -10,6 +10,27 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 
+pub trait Polish: private::Sealed {
+    fn polish_segment(
+        &self,
+        segments: &[Segment],
+        encs: &[ContigEncoding],
+        config: &PolishConfig,
+    ) -> Vec<Segment>;
+    fn distribute_to_contig(
+        &self,
+        segments: &[Segment],
+        encs: &[ContigEncoding],
+        config: &PolishConfig,
+    ) -> BTreeMap<String, Vec<Alignment>>;
+}
+
+use std::collections::BTreeMap;
+mod private {
+    pub trait Sealed {}
+    impl Sealed for definitions::DataSet {}
+}
+
 #[derive(Debug, Clone)]
 pub struct PolishConfig {
     seed: u64,
@@ -49,99 +70,59 @@ impl std::default::Default for PolishConfig {
 }
 
 use rayon::prelude::*;
-pub fn polish_segment(
-    ds: &DataSet,
-    segments: &[Segment],
-    encs: &[ContigEncoding],
-    config: &PolishConfig,
-) -> Vec<Segment> {
-    let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    // for seg in segments.iter() {
-    //     log::debug!("LEN\t{}\t{}", seg.sid, seg.slen);
-    // }
-    // for enc in encs.iter().filter(|e| e.id == "tig_0000") {
-    //     let id = &enc.id;
-    //     for tile in enc.tiles() {
-    //         let (start, end) = tile.contig_range();
-    //         let (dir, ustart, uend) = tile.unit_range();
-    //         debug!("ENCODING\t{id}\t{start}\t{end}\t{dir}\t{ustart}\t{uend}");
-    //     }
-    // }
-    let alignments: Vec<_> = reads
-        .par_iter()
-        .enumerate()
-        .map(|(i, read)| {
-            let seed = config.seed + i as u64;
-            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
-            let mut raw_read = read.recover_raw_read();
-            raw_read.iter_mut().for_each(u8::make_ascii_uppercase);
-            align_to_contigs(read, &raw_read, encs, segments, &mut rng)
-        })
-        .collect();
-    use std::collections::BTreeMap;
-    let mut alignments_on_contigs: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    for aln in alignments.into_iter().flatten() {
-        alignments_on_contigs
-            .entry(aln.contig.clone())
-            .or_default()
-            .push(aln);
+impl Polish for DataSet {
+    fn polish_segment(
+        &self,
+        segments: &[Segment],
+        encs: &[ContigEncoding],
+        config: &PolishConfig,
+    ) -> Vec<Segment> {
+        let mut alignments_on_contigs = self.distribute_to_contig(segments, encs, config);
+        let hmm = get_model(self).unwrap();
+        let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
+            log::debug!("POLISH\t{sid}");
+            let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
+            let seg = seg.sequence.as_ref().unwrap().as_bytes();
+            let seq = polish(sid, seg, alignments, &hmm, config);
+            (sid.clone(), seq)
+        });
+        polished
+            .into_iter()
+            .map(|(sid, seq)| {
+                let slen = seq.len();
+                let sequence = String::from_utf8(seq).ok();
+                Segment::from(sid, slen, sequence)
+            })
+            .collect()
     }
-    // if log_enabled!(log::Level::Debug) {
-    //     let id2name: BTreeMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, &r.name)).collect();
-    //     for (sid, alns) in alignments_on_contigs.iter() {
-    //         for aln in alns.iter() {
-    //             debug!("ALNDUMP\t{sid}\t{}", id2name[&aln.read_id]);
-    //         }
-    //     }
-    // }
-    let hmm = get_model(ds).unwrap();
-    // let old = alignments_on_contigs.clone();
-    //    let polished: Vec<_> = alignments_on_contigs
-    let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
-        log::debug!("POLISH\t{sid}");
-        let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
-        let seg = seg.sequence.as_ref().unwrap().as_bytes();
-        let seq = polish(sid, seg, alignments, &hmm, config);
-        (sid.clone(), seq)
-    });
-    // for (sid, alns) in alignments_on_contigs.iter() {
-    //     let old_alns = old.get(sid).unwrap();
-    //     for (old, aln) in old_alns.iter().zip(alns.iter()) {
-    //         let old_score = old.ops.iter().filter(|&&op| op == Op::Match).count();
-    //         let score = aln.ops.iter().filter(|&&op| op == Op::Match).count();
-    //         if score + 300 < old_score {
-    //             log::debug!("SCORE\t{score}\t{old_score}\t{}", aln.ops.len());
-    //             let refr = polished
-    //                 .iter()
-    //                 .find(|(id, _)| id == &aln.contig)
-    //                 .map(|(_, seq)| seq.as_slice())
-    //                 .unwrap();
-    //             let refr = &refr[aln.contig_start..aln.contig_end];
-    //             debug!("Q{}\tR{}", aln.query.len(), refr.len());
-    //             let (refr, ops, query) = kiley::recover(refr, &aln.query, &aln.ops);
-    //             for ((refr, ops), query) in
-    //                 refr.chunks(200).zip(ops.chunks(200)).zip(query.chunks(200))
-    //             {
-    //                 eprintln!("{}", std::str::from_utf8(refr).unwrap());
-    //                 eprintln!("{}", std::str::from_utf8(ops).unwrap());
-    //                 eprintln!("{}", std::str::from_utf8(query).unwrap());
-    //             }
-    //             eprintln!("----------------");
-    //         }
-    //     }
-    // }
-    polished
-        .into_iter()
-        .map(|(sid, seq)| {
-            let slen = seq.len() as u64;
-            let sequence = String::from_utf8(seq).ok();
-            Segment {
-                sid,
-                slen,
-                sequence,
-            }
-        })
-        .collect()
+
+    fn distribute_to_contig(
+        &self,
+        segments: &[Segment],
+        encs: &[ContigEncoding],
+        config: &PolishConfig,
+    ) -> BTreeMap<String, Vec<Alignment>> {
+        let alignments: Vec<_> = self
+            .encoded_reads
+            .par_iter()
+            .enumerate()
+            .map(|(i, read)| {
+                let seed = config.seed + i as u64;
+                let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
+                let mut raw_read = read.recover_raw_read();
+                raw_read.iter_mut().for_each(u8::make_ascii_uppercase);
+                align_to_contigs(read, &raw_read, encs, segments, &mut rng)
+            })
+            .collect();
+        let mut alignments_on_contigs: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for aln in alignments.into_iter().flatten() {
+            alignments_on_contigs
+                .entry(aln.contig.clone())
+                .or_default()
+                .push(aln);
+        }
+        alignments_on_contigs
+    }
 }
 
 fn log_identity(sid: &str, alignments: &[Alignment]) {
@@ -187,9 +168,9 @@ fn polish(
                 (start, put_position, end)
             })
             .collect();
-        for (i, pu) in pileup_seq.iter().enumerate() {
-            debug!("PILEUP\t{i}\t{}", pu.len());
-        }
+        // for (i, pu) in pileup_seq.iter().enumerate() {
+        //     debug!("PILEUP\t{i}\t{}", pu.len());
+        // }
         //  Polish
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
@@ -286,8 +267,7 @@ fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
     let task = edlib_sys::AlignTask::Alignment;
     let aln = edlib_sys::align(query, seg, mode, task);
     let (start, end) = aln.location().unwrap();
-    let ops = aln.operations().unwrap();
-    let ops: Vec<_> = ops.iter().map(|&op| EDLIB2KILEY[op as usize]).collect();
+    let ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
     (start, ops, end + 1)
 }
 
@@ -306,12 +286,7 @@ fn align_leading(query: &[u8], seg: &[u8]) -> (Vec<Op>, usize) {
         let aln = edlib_sys::align(query, seg, mode, task);
         let (_, end) = aln.location().unwrap();
         let end = end + 1;
-        let mut ops: Vec<_> = aln
-            .operations()
-            .unwrap()
-            .iter()
-            .map(|&op| EDLIB2KILEY[op as usize])
-            .collect();
+        let mut ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
         let rem_len = seg.len() - end;
         ops.extend(std::iter::repeat(Op::Del).take(rem_len));
         let seg_len = ops.iter().filter(|&&op| op != Op::Ins).count();
@@ -333,12 +308,7 @@ fn align_trailing(query: &[u8], seg: &[u8]) -> (Vec<Op>, usize) {
         let task = edlib_sys::AlignTask::Alignment;
         let aln = edlib_sys::align(query, seg, mode, task);
         let (_, end) = aln.location().unwrap();
-        let ops: Vec<_> = aln
-            .operations()
-            .unwrap()
-            .iter()
-            .map(|&op| EDLIB2KILEY[op as usize])
-            .collect();
+        let ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
         (ops, end + 1)
     }
 }
@@ -353,7 +323,10 @@ fn split(
     window_num: usize,
     contig_len: usize,
 ) -> (TipPos, Vec<Chunk>, TipPos) {
-    //TODO: this contains bug.
+    let len = alignment.ops.iter().filter(|&&op| op != Op::Del).count();
+    assert_eq!(len, alignment.query.len());
+    let refr = alignment.ops.iter().filter(|&&op| op != Op::Ins).count();
+    assert_eq!(refr, alignment.contig_end - alignment.contig_start);
     let start_chunk_id = alignment.contig_start / window;
     let start_pos_in_contig = match alignment.contig_start % window == 0 {
         true => start_chunk_id * window,
@@ -431,14 +404,6 @@ fn align_to_contigs<R: Rng>(
     rng: &mut R,
 ) -> Vec<Alignment> {
     let mut chains = enumerate_chain(read, encs);
-    // if read.nodes.iter().any(|n| n.unit == 20) {
-    // let nodes: Vec<_> = read.nodes.iter().map(|n| (n.unit, n.cluster)).collect();
-    // debug!("Read\t{nodes:?}");
-    //     debug!("Chains\t{}", chains.len());
-    //     for c in chains.iter() {
-    //         debug!("\t{c:?}");
-    //     }
-    // }
     let mut alns = vec![];
     while !chains.is_empty() {
         let choises: Vec<_> = (0..chains.len()).collect();
@@ -762,10 +727,6 @@ impl Chain {
         let ovlp = end.min(othere).saturating_sub(start.max(others));
         assert!(ovlp <= len);
         ovlp as f64 / len as f64
-        //     let ovlp = (self.query_end_idx.min(other.query_end_idx))
-        //         .saturating_sub(self.query_start_idx.max(other.query_start_idx));
-        //     assert!(ovlp <= len);
-        //     ovlp as f64 / len as f64
     }
     fn new(
         id: String,
@@ -788,9 +749,6 @@ impl Chain {
     }
 }
 
-const EDLIB2KILEY: [Op; 4] = [Op::Match, Op::Ins, Op::Del, Op::Mismatch];
-// I do not know it is ok or not.
-
 fn base_pair_alignment(
     read: &EncodedRead,
     seq: &[u8],
@@ -800,79 +758,95 @@ fn base_pair_alignment(
 ) -> Alignment {
     let seg_seq = seg.sequence.as_ref().unwrap().as_bytes();
     let tiles = convert_into_tiles(read, chain, encs);
-    // if seg.sid == "tig_0000" {
-    //     for ((s, t), _) in tiles.iter() {
-    //         let (read_start, contig_start) = s;
-    //         let (read_end, contig_end) = t;
-    //         debug!("Tile\t{read_start}\t{read_end}\t{contig_start}\t{contig_end}");
-    //     }
-    // }
     let (mut query, mut ops, tip_len) = match chain.contig_start_idx {
         0 => align_tip(seq, seg, chain, tiles.first().unwrap()),
         _ => (vec![], vec![], 0),
     };
     for w in tiles.windows(2) {
-        let ((start, end), (node, enc)) = &w[0];
-        append_range(&mut query, &mut ops, node, enc, (start.0, end.0));
-        // log::debug!("QUERY\t{}\t{}", start.0, end.0);
-        let seg_start = w.get(0).map(|((_, p), _)| p.1).unwrap();
-        let seg_end = w.get(1).map(|((p, _), _)| p.1).unwrap();
+        append_range(&mut query, &mut ops, &w[0]);
+        let seg_start = w[0].ctg_end;
+        let seg_end = w[1].ctg_start;
         assert!(seg_start <= seg_end);
         let seg_bet = &seg_seq[seg_start..seg_end];
         if chain.is_forward {
-            let r_start = w.get(0).map(|((_, p), _)| p.0).unwrap();
-            let r_end = w.get(1).map(|((p, _), _)| p.0).unwrap();
+            let r_start = w[0].read_end;
+            let r_end = w[1].read_start;
             assert!(r_start <= r_end);
             let read_bet = &seq[r_start..r_end];
-            // log::debug!("QUERY\t{r_start}\t{r_end}");
             extend_between(&mut query, &mut ops, read_bet, seg_bet);
         } else {
-            let r_start = w.get(1).map(|((_, p), _)| p.0).unwrap();
-            let r_end = w.get(0).map(|((p, _), _)| p.0).unwrap();
+            let r_start = w[1].read_end;
+            let r_end = w[0].read_start;
             assert!(r_start <= r_end);
             let read_bet = bio_utils::revcmp(&seq[r_start..r_end]);
-            // log::debug!("QUERY\t{r_start}\t{r_end}");
             extend_between(&mut query, &mut ops, &read_bet, seg_bet);
         }
     }
-    let ((start, end), (node, enc)) = tiles.last().unwrap();
-    // log::debug!("QUERY\t{}\t{}", start.0, end.0,);
-    append_range(&mut query, &mut ops, node, enc, (start.0, end.0));
+    append_range(&mut query, &mut ops, tiles.last().unwrap());
     let (tail, tail_ops, tail_len) = match chain.contig_end_idx == encs.tiles().len() {
         true => align_tail(seq, seg, chain, tiles.last().unwrap()),
         false => (Vec::new(), Vec::new(), 0),
     };
     query.extend(tail);
     ops.extend(tail_ops);
-    let contig_start = *tiles.first().map(|(((_, start), _), _)| start).unwrap();
-    let contig_end = *tiles.last().map(|((_, (_, end)), _)| end).unwrap();
-    // let op_len: usize = ops.iter().filter(|&&op| op != Op::Ins).count();
-    // let len = contig_end - contig_start;
-    // log::debug!("RANGE\t{contig_start}\t{contig_end}\t{len}\t{op_len}");
-    // let len = query.len();
-    // let op_len = ops.iter().filter(|&&op| op != Op::Del).count();
-    // log::debug!("RANGE\t{len}\t{op_len}");
-    // {
-    //     eprintln!("Slow checking....");
-    //     let rev = bio_utils::revcmp(seq);
-    //     let forward = seq.windows(seq.len()).any(|w| {
-    //         assert_eq!(w.len(), seq.len());
-    //         w == seq
-    //     });
-    //     let reverse = rev.windows(seq.len()).any(|w| {
-    //         assert_eq!(w.len(), seq.len());
-    //         w == seq
-    //     });
-    //     assert!(forward || reverse);
-    // }
+    let contig_start = tiles.first().map(|t| t.ctg_start).unwrap() - tip_len;
+    let contig_end = tiles.last().map(|t| t.ctg_end).unwrap() + tail_len;
+    if log_enabled!(log::Level::Trace) {
+        let op_len: usize = ops.iter().filter(|&&op| op != Op::Ins).count();
+        let len = contig_end - contig_start;
+        assert_eq!(len, op_len, "R\t{}\t{}", contig_start, contig_end);
+        let len = query.len();
+        let op_len = ops.iter().filter(|&&op| op != Op::Del).count();
+        assert_eq!(len, op_len, "Q");
+        check(&query, &seq, chain.is_forward);
+    }
     Alignment {
         read_id: read.id,
         contig: encs.id.to_string(),
-        contig_start: contig_start - tip_len,
-        contig_end: contig_end + tail_len,
+        contig_start,
+        contig_end,
         query,
         ops,
         is_forward: chain.is_forward,
+    }
+}
+
+fn check(query: &[u8], seq: &[u8], is_forward: bool) {
+    let task = edlib_sys::AlignTask::Alignment;
+    let mode = edlib_sys::AlignMode::Infix;
+    assert!(query.iter().all(u8::is_ascii_uppercase));
+    assert!(seq.iter().all(u8::is_ascii_uppercase));
+    if is_forward {
+        let contains = seq.windows(query.len()).any(|w| w == query);
+        if !contains {
+            let aln = edlib_sys::align(query, seq, mode, task);
+            let (start, end) = aln.location().unwrap();
+            let ops: Vec<_> = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+            let refr = &seq[start..end + 1];
+            let (r, a, q) = kiley::recover(refr, &query, &ops);
+            for ((r, a), q) in r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200)) {
+                eprintln!("{}", std::str::from_utf8(r).unwrap());
+                eprintln!("{}", std::str::from_utf8(a).unwrap());
+                eprintln!("{}", std::str::from_utf8(q).unwrap());
+            }
+        }
+        assert!(contains);
+    } else {
+        let rev = bio_utils::revcmp(seq);
+        let contains = rev.windows(query.len()).any(|w| w == query);
+        if !contains {
+            let aln = edlib_sys::align(query, &rev, mode, task);
+            let (start, end) = aln.location().unwrap();
+            let ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+            let refr = &rev[start..end + 1];
+            let (r, a, q) = kiley::recover(refr, &query, &ops);
+            for ((r, a), q) in r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200)) {
+                eprintln!("{}", std::str::from_utf8(r).unwrap());
+                eprintln!("{}", std::str::from_utf8(a).unwrap());
+                eprintln!("{}", std::str::from_utf8(q).unwrap());
+            }
+        }
+        assert!(contains);
     }
 }
 
@@ -882,19 +856,19 @@ fn align_tail(
     chain: &Chain,
     tile: &Tile,
 ) -> (Vec<u8>, Vec<Op>, usize) {
-    let (_, (_, seg_start)) = tile.0;
+    let seg_start = tile.ctg_end;
     let seg = seg.sequence.as_ref().unwrap().as_bytes();
     if seg_start == seg.len() {
         return (Vec::new(), Vec::new(), 0);
     }
     let seg_seq = &seg[seg_start..];
     let (query, ops) = if chain.is_forward {
-        let (_, (read_start, _)) = tile.0;
+        let read_start = tile.read_end;
         let read_end = (read_start + 2 * seg_seq.len()).min(seq.len());
         let trailing_seq = &seq[read_start..read_end];
         align_tail_inner(seg_seq, trailing_seq)
     } else {
-        let ((read_end, _), _) = tile.0;
+        let read_end = tile.read_start;
         let read_start = read_end.saturating_sub(seg_seq.len() * 2);
         let trailing_seq = bio_utils::revcmp(&seq[read_start..read_end]);
         align_tail_inner(seg_seq, &trailing_seq)
@@ -909,7 +883,7 @@ fn align_tip(
     chain: &Chain,
     tile: &Tile,
 ) -> (Vec<u8>, Vec<Op>, usize) {
-    let ((_, seg_end), _) = tile.0;
+    let seg_end = tile.ctg_start;
     if seg_end == 0 {
         return (vec![], vec![], 0);
     }
@@ -917,13 +891,13 @@ fn align_tip(
     // TODO:Maybe we should constraint the length ... ?
     let seg_seq = &seg.sequence.as_ref().unwrap().as_bytes()[..seg_end];
     let (query, ops) = if chain.is_forward {
-        let ((read_end, _), _) = tile.0;
+        let read_end = tile.read_start;
         let read_start = read_end.saturating_sub(2 * seg_end);
         // log::debug!("QUERY\t?\t{read_end}");
         let leading_seq = &seq[read_start..read_end];
         align_tip_inner(seg_seq, leading_seq)
     } else {
-        let (_, (read_start, _)) = tile.0;
+        let read_start = tile.read_end;
         let read_end = (read_start + 2 * seg_end).min(seq.len());
         // log::debug!("QUERY\t{read_start}\t?");
         let leading_seq = bio_utils::revcmp(&seq[read_start..read_end]);
@@ -957,8 +931,7 @@ fn align_tip_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         let aln = edlib_sys::align(query, seg, mode, task);
         let (_, end) = aln.location().unwrap();
         let end = end + 1;
-        let ops = aln.operations().unwrap();
-        let mut ops: Vec<_> = ops.iter().map(|&op| EDLIB2KILEY[op as usize]).collect();
+        let mut ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
         ops.extend(std::iter::repeat(Op::Del).take(seg.len() - end));
         // Pop leading insertions.
         ops.reverse();
@@ -994,9 +967,8 @@ fn align_tail_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         // Query:   -------|->
         let aln = edlib_sys::align(query, seg, mode, task);
         let (start, _) = aln.location().unwrap();
-        let aln = aln.operations().unwrap();
         let mut ops = vec![Op::Del; start];
-        ops.extend(aln.iter().map(|&op| EDLIB2KILEY[op as usize]));
+        ops.extend(crate::misc::edlib_to_kiley(&aln.operations().unwrap()));
         let mut poped = 0;
         while ops.last() == Some(&Op::Ins) {
             poped += ops.pop().is_some() as usize;
@@ -1015,17 +987,41 @@ fn extend_between(query: &mut Vec<u8>, ops: &mut Vec<Op>, read: &[u8], seg: &[u8
     } else {
         let mode = edlib_sys::AlignMode::Global;
         let task = edlib_sys::AlignTask::Alignment;
-        let aln = edlib_sys::align(seg, read, mode, task);
-        let ops_bet = aln.operations().unwrap();
+        let aln = edlib_sys::align(read, seg, mode, task);
         query.extend(read);
-        ops.extend(ops_bet.iter().map(|&op| EDLIB2KILEY[op as usize]));
+        ops.extend(crate::misc::edlib_to_kiley(&aln.operations().unwrap()));
     }
 }
 
-type Tile<'a, 'b> = (
-    ((usize, usize), (usize, usize)),
-    (&'a definitions::Node, &'b UnitAlignmentInfo),
-);
+struct Tile<'a, 'b> {
+    ctg_start: usize,
+    ctg_end: usize,
+    read_start: usize,
+    read_end: usize,
+    node: &'a definitions::Node,
+    encoding: &'b UnitAlignmentInfo,
+}
+
+impl<'a, 'b> Tile<'a, 'b> {
+    fn new(
+        ctg_start: usize,
+        ctg_end: usize,
+        read_start: usize,
+        read_end: usize,
+        node: &'a definitions::Node,
+        encoding: &'b UnitAlignmentInfo,
+    ) -> Self {
+        Self {
+            ctg_start,
+            ctg_end,
+            read_start,
+            read_end,
+            node,
+            encoding,
+        }
+    }
+}
+
 fn convert_into_tiles<'a, 'b>(
     read: &'a EncodedRead,
     chain: &Chain,
@@ -1061,8 +1057,10 @@ fn convert_into_tiles<'a, 'b>(
                 );
                 prev_r_pos = Some((read_start, read_end));
                 let (seg_start, seg_end) = seg_node.contig_range();
-                let match_region = ((read_start, seg_start), (read_end, seg_end));
-                tiles.push((match_region, (read_node, seg_node)));
+                let tile = Tile::new(
+                    seg_start, seg_end, read_start, read_end, read_node, seg_node,
+                );
+                tiles.push(tile);
                 read_idx += 1;
                 seg_idx += 1;
             }
@@ -1141,32 +1139,30 @@ fn defop2kileyop(ops: &definitions::Ops) -> Vec<Op> {
         .collect()
 }
 
-fn append_range(
-    query: &mut Vec<u8>,
-    ops: &mut Vec<Op>,
-    node: &definitions::Node,
-    enc: &UnitAlignmentInfo,
-    (r_start, r_end): (usize, usize),
-) {
-    let offset = node.position_from_start;
+fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
+    let (r_start, r_end) = (tile.read_start, tile.read_end);
+    let offset = tile.node.position_from_start;
     assert!(offset <= r_start);
     assert!(r_start <= r_end);
     // (r_start - offset, r_end - offset);
-    let seqlen = node.seq().len();
-    let (r_start, r_end) = match node.is_forward {
+    let seqlen = tile.node.seq().len();
+    let (r_start, r_end) = match tile.node.is_forward {
         true => (r_start - offset, r_end - offset),
         false => (seqlen + offset - r_end, seqlen + offset - r_start),
     };
-    assert!(r_end <= node.seq().len());
-    let (start, end) = match enc.unit_range() {
+    assert!(r_end <= tile.node.seq().len());
+    let (start, end) = match tile.encoding.unit_range() {
         (true, start, end) => (start, end),
-        (false, start, end) => (enc.unit_len() - end, enc.unit_len() - start),
+        (false, start, end) => (
+            tile.encoding.unit_len() - end,
+            tile.encoding.unit_len() - start,
+        ),
     };
-    let alignment = defop2kileyop(&node.cigar);
+    let alignment = defop2kileyop(&tile.node.cigar);
     let r_len = alignment.iter().filter(|&&op| op != Op::Del).count();
     let u_len = alignment.iter().filter(|&&op| op != Op::Ins).count();
-    assert_eq!(u_len, enc.unit_len());
-    assert_eq!(r_len, node.seq().len());
+    assert_eq!(u_len, tile.encoding.unit_len());
+    assert_eq!(r_len, tile.node.seq().len());
     let (mut r_pos, mut u_pos) = (0, 0);
     // log::debug!("SEG\t{start}-{end}");
     // log::debug!("QUE\t{r_start}-{r_end}");
@@ -1188,12 +1184,12 @@ fn append_range(
             Op::Del => u_pos += 1,
         }
     }
-    let aligned_seq = &node.seq()[r_start..r_end];
+    let aligned_seq = &tile.node.seq()[r_start..r_end];
     let r_len = temp_o.iter().filter(|&&op| op != Op::Del).count();
     let u_len = temp_o.iter().filter(|&&op| op != Op::Ins).count();
     assert_eq!(r_len, r_end - r_start);
     assert_eq!(u_len, end - start);
-    if enc.unit_range().0 {
+    if tile.encoding.unit_range().0 {
         query.extend(aligned_seq);
         ops.extend(temp_o);
     } else {
@@ -1204,7 +1200,7 @@ fn append_range(
 }
 
 #[derive(Debug, Clone)]
-struct Alignment {
+pub struct Alignment {
     #[allow(dead_code)]
     read_id: u64,
     contig: String,

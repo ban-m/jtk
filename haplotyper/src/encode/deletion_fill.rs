@@ -911,6 +911,7 @@ fn encode_node(
     // as 1. if the alignment gives the certaintly, then we can impute the clustering by the alignment,
     // 2. if `cluster` assignment is just by chance,
     // then we just should not introduce any bias into the likelihood gain.
+    let seq = seq.to_vec();
     let mut node = Node::new(unit.id, is_forward, seq, ops, position_from_start, cl);
     node.cluster = cluster;
     Some((node, score))
@@ -971,14 +972,9 @@ fn fit_query_by_edlib<'a>(
     let task = edlib_sys::AlignTask::Alignment;
     let alignment = edlib_sys::align(unitseq, orig_query, mode, task);
     let ops = alignment.operations().unwrap();
-    // let diff = ops.split(|&x| x == 0).filter(|x| !x.is_empty()).count();
-    // let dissim = diff as f64 / ops.len() as f64;
-    // if sim_thr + EDLIB_OFS < dissim {
-    //     return None;
-    // }
-    let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
     let ops = edlib_op_to_kiley_op(ops);
     // Align twice, to get an accurate alignment.
+    let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
     let (_, ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
     let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
     // Reverse ops
