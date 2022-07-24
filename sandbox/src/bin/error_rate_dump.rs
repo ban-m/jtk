@@ -1,15 +1,6 @@
-#![allow(unused_imports)]
 use definitions::*;
-
-use haplotyper::determine_units::DetermineUnit;
-use haplotyper::encode::Encode;
 // use haplotyper::DetermineUnit;
-use haplotyper::assemble::*;
-use haplotyper::local_clustering::{local_clustering_selected, LocalClustering};
-use kiley::recover;
-use rand::SeedableRng;
-use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::*;
 fn error(node: &definitions::Node, ref_unit: &Unit) -> f64 {
     let (_, aln, _) = node.recover(ref_unit);
@@ -46,7 +37,6 @@ fn main() -> std::io::Result<()> {
     let (read_error_rate, unit_error_rate, median_of_var) =
         haplotyper::encode::deletion_fill::estimate_error_rate_dev(&ds, sim_thr);
     eprintln!("SD\t{median_of_var}");
-    use std::io::BufWriter;
     if let Ok(mut wtr) = std::fs::File::create("dump.log").map(BufWriter::new) {
         for read in ds.encoded_reads.iter() {
             let error = read_error_rate[read.id as usize];

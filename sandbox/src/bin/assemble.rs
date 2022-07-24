@@ -1,12 +1,8 @@
-#![allow(unused_imports)]
 use definitions::*;
-use haplotyper::determine_units::DetermineUnit;
-use haplotyper::encode::Encode;
-// use haplotyper::DetermineUnit;
 use haplotyper::assemble::*;
 use rand::SeedableRng;
-use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256Plus};
-use std::collections::{HashMap, HashSet};
+use rand_xoshiro::Xoshiro256Plus;
+use std::collections::HashMap;
 use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();

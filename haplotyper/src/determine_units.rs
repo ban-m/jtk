@@ -13,7 +13,6 @@ use std::hash::Hash;
 #[derive(Debug, Clone)]
 pub struct UnitConfig {
     pub chunk_len: usize,
-    pub skip_len: usize,
     pub unit_num: usize,
     pub margin: usize,
     pub threads: usize,
@@ -27,11 +26,9 @@ const FIRST_RELAX: f64 = 2f64;
 
 pub const TAKE_THR: f64 = 0.999;
 impl UnitConfig {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_ccs(
+    pub fn new(
         chunk_len: usize,
         unit_num: usize,
-        skip_len: usize,
         margin: usize,
         threads: usize,
         exclude_repeats: f64,
@@ -40,53 +37,6 @@ impl UnitConfig {
     ) -> Self {
         Self {
             chunk_len,
-            skip_len,
-            margin,
-            unit_num,
-            threads,
-            min_cluster: 2,
-            exclude_repeats,
-            upper_count,
-            lower_count,
-        }
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_clr(
-        chunk_len: usize,
-        unit_num: usize,
-        skip_len: usize,
-        margin: usize,
-        threads: usize,
-        exclude_repeats: f64,
-        upper_count: usize,
-        lower_count: usize,
-    ) -> Self {
-        Self {
-            chunk_len,
-            skip_len,
-            margin,
-            unit_num,
-            threads,
-            min_cluster: 2,
-            exclude_repeats,
-            upper_count,
-            lower_count,
-        }
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_ont(
-        chunk_len: usize,
-        unit_num: usize,
-        skip_len: usize,
-        margin: usize,
-        threads: usize,
-        exclude_repeats: f64,
-        upper_count: usize,
-        lower_count: usize,
-    ) -> Self {
-        Self {
-            chunk_len,
-            skip_len,
             margin,
             unit_num,
             threads,

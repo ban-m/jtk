@@ -1,13 +1,6 @@
-#![allow(unused_imports)]
 use definitions::*;
-use haplotyper::assemble::*;
-use haplotyper::determine_units::DetermineUnit;
-use nalgebra::RealField;
-use rand::SeedableRng;
-use rand_distr::CauchyError;
-use rand_xoshiro::Xoshiro256StarStar;
-use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader};
+use std::collections::HashMap;
+use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();

@@ -114,14 +114,6 @@ fn subcommand_select_unit() -> Command<'static> {
                 .help("Length of a chunk"),
         )
         .arg(
-            Arg::new("skip_len")
-                .short('s')
-                .long("skip_len")
-                .takes_value(true)
-                .default_value("2000")
-                .help("Margin between units"),
-        )
-        .arg(
             Arg::new("take_num")
                 .short('n')
                 .long("take_num")
@@ -646,10 +638,6 @@ fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("margin")
         .and_then(|e| e.parse().ok())
         .expect("Margin");
-    let skip_len: usize = matches
-        .value_of("skip_len")
-        .and_then(|e| e.parse().ok())
-        .expect("Skip Len");
     let take_num: usize = matches
         .value_of("take_num")
         .and_then(|e| e.parse().ok())
@@ -672,13 +660,8 @@ fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .unwrap();
     set_threads(matches);
     use haplotyper::determine_units::{DetermineUnit, UnitConfig};
-    use ReadType::*;
     let (cl, tn) = (chunk_len, take_num);
-    let config = match dataset.read_type {
-        CCS => UnitConfig::new_ccs(cl, tn, skip_len, margin, thrds, filter, upper, lower),
-        CLR => UnitConfig::new_clr(cl, tn, skip_len, margin, thrds, filter, upper, lower),
-        _ => UnitConfig::new_ont(cl, tn, skip_len, margin, thrds, filter, upper, lower),
-    };
+    let config = UnitConfig::new(cl, tn, margin, thrds, filter, upper, lower);
     dataset.select_chunks(&config);
 }
 
