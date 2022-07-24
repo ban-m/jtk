@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use definitions::ReadType;
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
@@ -97,57 +96,3 @@ pub const DEFAULT_ALN: AlignmentParameters<fn(u8, u8) -> i32> = AlignmentParamet
     del: -4,
     score,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Op {
-    Match,
-    Mism,
-    Del,
-    In,
-}
-
-fn to_ops(node: &definitions::Node, unit: &definitions::Unit) -> Vec<Op> {
-    assert!(node.unit == unit.id);
-    let (mut r, mut q) = (0, 0);
-    let refr = unit.seq();
-    let query = node.seq();
-    node.cigar
-        .iter()
-        .flat_map(|op| match op {
-            definitions::Op::Match(l) => {
-                let ops: Vec<_> = refr[r..r + l]
-                    .iter()
-                    .zip(query[q..q + l].iter())
-                    .map(|(a, b)| if a == b { Op::Match } else { Op::Mism })
-                    .collect();
-                r += l;
-                q += l;
-                ops
-            }
-            definitions::Op::Ins(l) => {
-                q += l;
-                vec![Op::In; *l]
-            }
-            definitions::Op::Del(l) => {
-                r += l;
-                vec![Op::Del; *l]
-            }
-        })
-        .collect()
-}
-
-fn base_freq(rs: &[definitions::RawRead]) -> [f64; 4] {
-    let tot = rs.iter().map(|read| read.seq().len()).sum::<usize>() as f64;
-    let mut base_count = [0.; 4];
-    for base in rs.iter().flat_map(|e| e.seq().iter()) {
-        match base {
-            b'A' => base_count[0] += 1.,
-            b'C' => base_count[1] += 1.,
-            b'G' => base_count[2] += 1.,
-            b'T' => base_count[3] += 1.,
-            _ => {}
-        }
-    }
-    base_count.iter_mut().for_each(|e| *e /= tot);
-    base_count
-}

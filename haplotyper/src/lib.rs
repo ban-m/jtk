@@ -22,13 +22,6 @@ pub mod repeat_masking;
 pub mod seq;
 pub mod stats;
 pub mod view;
-// pub mod unit_correlation;
-// pub mod polish_clustering;
-// pub mod global_clustering;
-// pub mod hapcut;
-// pub mod dirichlet_mixture;
-// pub mod em_correction;
-// pub mod squish_erroneous_clusters;
 
 #[macro_use]
 extern crate log;

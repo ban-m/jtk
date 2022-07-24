@@ -6,7 +6,6 @@ use kiley::hmm::guided::NUM_ROW;
 use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct ClusteringConfig {
     band_width: usize,
     // Minimum required Likelihood gain.
@@ -148,30 +147,10 @@ fn get_lk_of_coverage(asn: &[usize], cov: f64, k: usize) -> f64 {
     cluster.iter().map(|&n| max_poisson_lk(n, cov, 1, k)).sum()
 }
 
-#[allow(dead_code)]
 fn get_read_thr(cov: f64, sigma: f64) -> usize {
     (cov - sigma * cov.sqrt()).floor() as usize
 }
 
-// fn get_homopolymer_length(seq: &[u8]) -> Vec<usize> {
-//     if seq.is_empty() {
-//         return vec![];
-//     }
-//     let mut length = Vec::with_capacity(seq.len());
-//     let mut seq = seq.iter();
-//     let (mut current, mut len) = (seq.next().unwrap(), 1);
-//     for base in seq {
-//         if base == current {
-//             len += 1;
-//         } else {
-//             length.extend(std::iter::repeat(len).take(len));
-//             current = base;
-//             len = 1;
-//         }
-//     }
-//     length.extend(std::iter::repeat(len).take(len));
-//     length
-// }
 // Make this function faster?
 fn is_explainable_by_strandedness<I, R: Rng>(
     profiles: I,
@@ -226,24 +205,6 @@ fn to_posterior_probability(lks: &mut [Vec<f64>]) {
         xs.iter_mut().for_each(|x| *x -= total);
     }
 }
-
-// fn number_of_improved_read(variants: &[Vec<f64>], assignments: &[usize], k: usize) -> usize {
-//     let dim = variants[0].len();
-//     let mut counts = vec![0; k];
-//     let mut lks: Vec<_> = vec![vec![0f64; dim]; k];
-//     for (&asn, xs) in assignments.iter().zip(variants.iter()) {
-//         counts[asn] += 1;
-//         lks[asn]
-//             .iter_mut()
-//             .zip(xs.iter())
-//             .for_each(|(x, y)| *x += y);
-//     }
-//     counts
-//         .iter()
-//         .zip(lks)
-//         .filter_map(|(count, sums)| sums.iter().any(|x| x.is_sign_positive()).then(|| count))
-//         .sum()
-// }
 
 // i->k->the likelihood gain of the i-th read when clustered in the k-th cluster.
 // `copy_num` is the copy number of this unit, not the *cluster number*.
@@ -315,60 +276,6 @@ fn get_read_lk_gains(variants: &[Vec<f64>], assignments: &[usize], k: usize) -> 
 // These values are critical.
 const POS_FRAC: f64 = 0.70;
 const IN_POS_RATIO: f64 = 3f64;
-// fn filter_suspicious_variants(variants: &[Vec<f64>], assignments: &[usize]) -> Vec<Vec<f64>> {
-//     let max_asn = *assignments.iter().max().unwrap() + 1;
-//     let dim = variants[0].len();
-//     // Assignment -> variant position -> (total #, # of positive element, likelihood sum).
-//     // TODO: maybe x.is_sign_poitive() is not so good. We need to do
-//     // THR < x, where THR is mean gain / 2 or so.
-//     let mut var_summary = vec![vec![(0, 0, 0f64); dim]; max_asn];
-//     for (&asn, xs) in assignments.iter().zip(variants.iter()) {
-//         assert_eq!(var_summary[asn].len(), xs.len());
-//         for (slot, x) in var_summary[asn].iter_mut().zip(xs.iter()) {
-//             slot.0 += 1;
-//             slot.1 += x.is_sign_positive() as u32;
-//             slot.2 += x;
-//         }
-//     }
-//     // We cound the # of the positive elements used and # of positive elm not used.
-//     let scattered_vars: Vec<_> = (0..dim)
-//         .map(|d| {
-//             let (in_pos, in_neg) = var_summary.iter().map(|vars| &vars[d]).fold(
-//                 (0, 0),
-//                 |(pos, neg), &(_, numpos, sum)| match sum.is_sign_positive() {
-//                     true => (pos + numpos, neg),
-//                     false => (pos, neg + numpos),
-//                 },
-//             );
-//             in_neg as f64 * IN_POS_RATIO < in_pos as f64
-//         })
-//         .collect();
-//     let used_pos = var_summary
-//         .iter()
-//         .fold(vec![false; dim], |mut used_pos, cs| {
-//             for (pos, &(total, num_pos, lksum)) in used_pos.iter_mut().zip(cs) {
-//                 *pos |= (0f64 < lksum) & (total as f64 * POS_FRAC < num_pos as f64);
-//             }
-//             used_pos
-//         });
-//     let bits: Vec<_> = used_pos
-//         .iter()
-//         .zip(scattered_vars.iter())
-//         .map(|(&b, &c)| (b & c) as usize)
-//         .collect();
-//     let now: usize = bits.iter().sum();
-//     trace!("FILTER\t{}\t{}\t{bits:?}", dim, now);
-//     variants
-//         .iter()
-//         .map(|xs| {
-//             xs.iter()
-//                 .zip(used_pos.iter())
-//                 .zip(scattered_vars.iter())
-//                 .filter_map(|((&x, &u), &s)| (s & u).then(|| x))
-//                 .collect()
-//         })
-//         .collect()
-// }
 
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
@@ -596,7 +503,6 @@ fn mcmc_clustering<R: Rng>(
     (assignment, score - cluster_lk, lk_gains)
 }
 
-#[allow(dead_code)]
 fn kmeans<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
     assert!(1 < k);
     fn update_assignments<D: std::borrow::Borrow<[f64]> + std::fmt::Debug>(
@@ -692,125 +598,6 @@ fn kmeans<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
     }
     assignments
 }
-
-// fn update<R: Rng>(
-//     data: &[Vec<f64>],
-//     assign: &mut [usize],
-//     k: usize,
-//     lks: &mut [Vec<f64>],
-//     clusters: &mut [usize],
-//     (partition_lks, temperature): (&[f64], f64),
-//     rng: &mut R,
-// ) -> (bool, f64) {
-//     let (idx, new) = (rng.gen_range(0..data.len()), rng.gen_range(0..k));
-//     let (old, xs) = (assign[idx], &data[idx]);
-//     if old == new {
-//         return (false, 0f64);
-//     }
-//     let prev_data_lk = lks[old]
-//         .iter()
-//         .chain(lks[new].iter())
-//         .fold(0f64, |x, y| x + y.max(0f64));
-//     let prev_part_lk = partition_lks[clusters[old]] + partition_lks[clusters[new]];
-//     let prev_lk = prev_data_lk + prev_part_lk;
-//     // Change the assignment.
-//     assign[idx] = new;
-//     clusters[old] -= 1;
-//     clusters[new] += 1;
-//     for (lk, x) in lks[old].iter_mut().zip(xs.iter()) {
-//         *lk -= x;
-//     }
-//     for (lk, x) in lks[new].iter_mut().zip(xs.iter()) {
-//         *lk += x;
-//     }
-//     let prop_data_lk = lks[old]
-//         .iter()
-//         .chain(lks[new].iter())
-//         .fold(0f64, |x, y| x + y.max(0f64));
-//     let prop_part_lk = partition_lks[clusters[old]] + partition_lks[clusters[new]];
-//     let prop_lk = prop_data_lk + prop_part_lk;
-//     let diff = prop_lk - prev_lk;
-//     // Calc likelihoods.
-//     if 0f64 < diff || rng.gen_bool((diff / temperature).exp()) {
-//         (true, diff)
-//     } else {
-//         assign[idx] = old;
-//         clusters[old] += 1;
-//         clusters[new] -= 1;
-//         for (lk, x) in lks[old].iter_mut().zip(xs.iter()) {
-//             *lk += x;
-//         }
-//         for (lk, x) in lks[new].iter_mut().zip(xs.iter()) {
-//             *lk -= x;
-//         }
-//         (false, diff)
-//     }
-// }
-
-// Return the maximum likelihood.
-// In this function, we sample the assignemnts of the data, then evaluate the
-// likelihood of the probability, P(X|Z) = max_O P(X|Z,O). Here, the parameters O can be analytically resolvable,
-// and we can get the maximum.
-// Since we have P(Z|X,O) = P(X|Z,O) * P(Z|O) / P(X|O) ~ P(X|Z,O) * P(Z|O), (not precise?)
-// We can flip Z->Z' by comparing P(Z'|X)/P(Z|X).
-// // Finally, the retuned value would be P(Z,X) = P(Z) P(X|Z).
-// #[allow(dead_code)]
-// fn mcmc<R: Rng>(data: &[Vec<f64>], assign: &mut [usize], k: usize, cov: f64, rng: &mut R) -> f64 {
-//     let partition_lks: Vec<_> = (0..=data.len())
-//         .map(|x| max_poisson_lk(x, cov, 1, k))
-//         .collect();
-//     assert!(
-//         partition_lks.iter().all(|x| !x.is_nan()),
-//         "{:?}\t{}",
-//         partition_lks,
-//         cov
-//     );
-//     // how many instance in a cluster.
-//     let mut clusters = vec![0; k];
-//     // Current (un-modified) likelihoods.
-//     let mut lks = vec![vec![0f64; data[0].len()]; k];
-//     for (xs, &asn) in data.iter().zip(assign.iter()) {
-//         clusters[asn] += 1;
-//         for (lk, x) in lks[asn].iter_mut().zip(xs) {
-//             *lk += x;
-//         }
-//     }
-//     // Current Likelihood of the data.
-//     let data_lk: f64 = lks.iter().flatten().fold(0f64, |x, y| x + y.max(0f64));
-//     let partition_lk = clusters.iter().map(|&x| partition_lks[x]).sum::<f64>();
-//     let mut lk = data_lk + partition_lk;
-//     // MAP estimation.
-//     let (mut max, mut argmax) = (lk, assign.to_vec());
-//     let total = 2000 * data.len();
-//     for _ in 1..total {
-//         let temperature = 1f64;
-//         let params = (partition_lks.as_slice(), temperature);
-//         let (is_success, diff) = update(data, assign, k, &mut lks, &mut clusters, params, rng);
-//         if is_success {
-//             lk += diff;
-//             if max < lk {
-//                 max = lk;
-//                 argmax
-//                     .iter_mut()
-//                     .zip(assign.iter())
-//                     .for_each(|(x, &y)| *x = y);
-//             }
-//         }
-//     }
-//     // get max value.
-//     clusters.iter_mut().for_each(|c| *c = 0);
-//     lks.iter_mut().flatten().for_each(|x| *x = 0f64);
-//     assign.iter_mut().zip(argmax).for_each(|(x, y)| *x = y);
-//     for (xs, &asn) in data.iter().zip(assign.iter()) {
-//         clusters[asn] += 1;
-//         for (lk, x) in lks[asn].iter_mut().zip(xs) {
-//             *lk += x;
-//         }
-//     }
-//     let data_lk = lks.iter().flatten().fold(0f64, |x, y| x + y.max(0f64));
-//     let partition_lk = clusters.iter().map(|&x| partition_lks[x]).sum::<f64>();
-//     data_lk + partition_lk
-// }
 
 // Return the maximum likelihood.
 // In this function, we sample the assignemnts of the data, then evaluate the
@@ -913,7 +700,6 @@ fn flip(
 fn get_lk(lks: &[Vec<(f64, usize)>], clusters: &[usize], _size_to_lk: &[f64]) -> f64 {
     // If true, then that column would not be used.
     let use_columns = get_used_columns(lks, clusters);
-    // let mut lk = 0f64;
     let mut lk: f64 = clusters.iter().map(|&size| _size_to_lk[size]).sum();
     for lks in lks.iter() {
         for ((total, _), _) in lks.iter().zip(use_columns.iter()).filter(|x| *x.1) {
@@ -946,271 +732,10 @@ fn get_used_columns(lks: &[Vec<(f64, usize)>], clusters: &[usize]) -> Vec<bool> 
     to_uses
 }
 
-// #[derive(Clone, Debug)]
-// struct IndNormal {
-//     models: Vec<Center>,
-//     fracs: Vec<f64>,
-//     #[allow(dead_code)]
-//     cluster: usize,
-//     #[allow(dead_code)]
-//     dim: usize,
-// }
-
-// impl std::fmt::Display for IndNormal {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         for (fr, m) in self.fracs.iter().zip(self.models.iter()) {
-//             writeln!(f, "{fr}\t{}", m)?;
-//         }
-//         Ok(())
-//     }
-// }
-
-// const SMALL_VAL: f64 = 0.0000000000000000000000000000000000000000001;
-
-// impl IndNormal {
-//     fn new(data: &[Vec<f64>], weights: &[Vec<f64>], cluster: usize) -> Self {
-//         let dim = data[0].len();
-//         // Cacl fractions.
-//         let mut counts = vec![0f64; cluster];
-//         for ws in weights.iter() {
-//             counts.iter_mut().zip(ws.iter()).for_each(|(x, w)| *x += w);
-//         }
-//         let mut models: Vec<_> = (0..cluster).map(|_| Center::new(dim)).collect();
-//         // Compute mean.
-//         for (xs, ws) in data.iter().zip(weights.iter()) {
-//             assert_eq!(ws.len(), models.len());
-//             models
-//                 .iter_mut()
-//                 .zip(ws.iter())
-//                 .for_each(|(model, &w)| model.add_mean(xs, w));
-//         }
-//         for (model, &count) in models.iter_mut().zip(counts.iter()) {
-//             model.div_mean(count);
-//         }
-//         // Compute var
-//         for (xs, ws) in data.iter().zip(weights.iter()) {
-//             assert_eq!(models.len(), ws.len());
-//             models
-//                 .iter_mut()
-//                 .zip(ws.iter())
-//                 .for_each(|(model, &w)| model.add_var(xs, w));
-//         }
-//         for (model, &count) in models.iter_mut().zip(counts.iter()) {
-//             model.div_var(count);
-//         }
-//         let mut fracs = counts;
-//         let sum: f64 = fracs.iter().sum();
-//         fracs.iter_mut().for_each(|f| *f = f.max(SMALL_VAL) / sum);
-//         Self {
-//             models,
-//             fracs,
-//             cluster,
-//             dim,
-//         }
-//     }
-//     fn lk(&self, data: &[f64], buffer: &mut [f64]) -> f64 {
-//         let models = self.fracs.iter().zip(self.models.iter());
-//         for (temp, (f, model)) in buffer.iter_mut().zip(models) {
-//             *temp = f.ln() + model.lk(data);
-//         }
-//         logsumexp(buffer)
-//     }
-//     fn update_weights(&self, xs: &[f64], weights: &mut [f64]) {
-//         for ((f, model), w) in self
-//             .fracs
-//             .iter()
-//             .zip(self.models.iter())
-//             .zip(weights.iter_mut())
-//         {
-//             *w = f.ln() + model.lk(xs);
-//         }
-//         let total = logsumexp(weights);
-//         weights.iter_mut().for_each(|w| *w = (*w - total).exp());
-//         let sum: f64 = weights.iter().sum();
-//         assert!((1f64 - sum).abs() < 0.00001, "{:?}", weights);
-//     }
-//     fn update_parameters(&mut self, data: &[Vec<f64>], weights: &[Vec<f64>]) {
-//         // Reset count.
-//         self.fracs.iter_mut().for_each(|x| *x = 0f64);
-//         for ws in weights.iter() {
-//             assert_eq!(ws.len(), self.fracs.len());
-//             for (slot, w) in self.fracs.iter_mut().zip(ws.iter()) {
-//                 *slot += w;
-//             }
-//         }
-//         // Reset centers.
-//         self.models.iter_mut().for_each(|m| m.clear());
-//         // Calc mean.
-//         for (xs, ws) in data.iter().zip(weights.iter()) {
-//             self.models
-//                 .iter_mut()
-//                 .zip(ws.iter())
-//                 .for_each(|(model, &w)| model.add_mean(xs, w));
-//         }
-//         for (model, &count) in self.models.iter_mut().zip(self.fracs.iter()) {
-//             model.div_mean(count);
-//         }
-//         // Calc var
-//         for (xs, ws) in data.iter().zip(weights.iter()) {
-//             self.models
-//                 .iter_mut()
-//                 .zip(ws.iter())
-//                 .for_each(|(model, &w)| model.add_var(xs, w));
-//         }
-//         for (model, &count) in self.models.iter_mut().zip(self.fracs.iter()) {
-//             model.div_var(count);
-//         }
-//         // Caclc frac
-//         let sum: f64 = self.fracs.iter().sum();
-//         self.fracs.iter_mut().for_each(|f| *f /= sum.max(SMALL_VAL));
-//     }
-//     // fn set_min_var(&mut self, var: f64) {
-//     //     self.models
-//     //         .iter_mut()
-//     //         .for_each(|model| model.vars.iter_mut().for_each(|v| *v = v.max(var)));
-//     // }
-//     // fn set_var(&mut self, var: f64) {
-//     //     self.models
-//     //         .iter_mut()
-//     //         .for_each(|model| model.vars.iter_mut().for_each(|v| *v = var));
-//     // }
-// }
-
-// #[derive(Debug, Clone)]
-// struct Center {
-//     means: Vec<f64>,
-//     vars: Vec<f64>,
-// }
-
-// impl std::fmt::Display for Center {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let mean: Vec<_> = self.means.iter().map(|x| format!("{x:.3}")).collect();
-//         let vars: Vec<_> = self.vars.iter().map(|x| format!("{x:.3}")).collect();
-//         write!(f, "[{}]/[{}]", mean.join(","), vars.join(","))
-//     }
-// }
-
-// impl Center {
-//     fn new(dim: usize) -> Self {
-//         Self {
-//             means: vec![0f64; dim],
-//             vars: vec![0f64; dim],
-//         }
-//     }
-//     fn lk(&self, xs: &[f64]) -> f64 {
-//         let diff: f64 = xs
-//             .iter()
-//             .zip(self.means.iter())
-//             .zip(self.vars.iter())
-//             .map(|((x, m), v)| (x - m).powi(2) / 2f64 / v)
-//             .sum();
-//         let coef: f64 = self
-//             .vars
-//             .iter()
-//             .map(|v| (2f64 * std::f64::consts::PI * v).ln())
-//             .sum();
-//         -coef / 2f64 - diff
-//     }
-//     fn clear(&mut self) {
-//         self.means.iter_mut().for_each(|x| *x = 0f64);
-//         self.vars.iter_mut().for_each(|x| *x = 0f64);
-//     }
-//     fn add_mean(&mut self, xs: &[f64], w: f64) {
-//         assert_eq!(self.means.len(), xs.len());
-//         for (s, x) in self.means.iter_mut().zip(xs) {
-//             *s += x * w;
-//         }
-//     }
-//     fn div_mean(&mut self, count: f64) {
-//         self.means
-//             .iter_mut()
-//             .for_each(|s| *s /= count.max(SMALL_VAL));
-//     }
-//     fn add_var(&mut self, xs: &[f64], w: f64) {
-//         assert_eq!(self.vars.len(), xs.len());
-//         for ((s, m), x) in self.vars.iter_mut().zip(self.means.iter()).zip(xs) {
-//             *s += (m - x).powi(2) * w;
-//         }
-//     }
-//     fn div_var(&mut self, count: f64) {
-//         self.vars
-//             .iter_mut()
-//             .for_each(|s| *s /= count.max(SMALL_VAL));
-//     }
-// }
-
-// #[allow(dead_code)]
-// fn em_clustering<R: Rng>(data: &[Vec<f64>], k: usize, rng: &mut R) -> Vec<usize> {
-//     assert!(1 < k);
-//     let dim = data[0].len();
-//     assert!(0 < dim);
-//     let mut weights: Vec<_> = (0..data.len())
-//         .map(|_| {
-//             let mut weight = vec![0f64; k];
-//             weight[rng.gen_range(0..k)] += 1f64;
-//             weight
-//         })
-//         .collect();
-//     let mut model = IndNormal::new(data, &weights, k);
-//     let mut buffer = vec![0f64; k];
-//     let mut lk: f64 = data.iter().map(|x| model.lk(x, &mut buffer)).sum();
-//     assert!(lk.is_finite());
-//     for _t in 1.. {
-//         // Update
-//         // trace!("{_t}\t{lk:.3}");
-//         for (xs, weight) in data.iter().zip(weights.iter_mut()) {
-//             model.update_weights(xs, weight);
-//         }
-//         model.update_parameters(data, &weights);
-//         let new_lk: f64 = data.iter().map(|x| model.lk(x, &mut buffer)).sum();
-//         assert!(lk < new_lk + 0.00001, "{}->{},{},{}", lk, new_lk, _t, model);
-//         if new_lk - lk < 0.0000000000001 {
-//             trace!("Break\t{k}\t{_t}\t{lk}");
-//             break;
-//         } else {
-//             lk = new_lk;
-//         }
-//         assert!(lk.is_finite());
-//     }
-//     // for ws in weights.iter() {
-//     //     debug!("{ws:?}");
-//     // }
-//     let choices: Vec<_> = (0..k).collect();
-//     // trace!("\n{model}");
-//     weights
-//         .iter()
-//         .map(|weight| *choices.choose_weighted(rng, |&i| weight[i]).unwrap())
-//         .collect()
-// }
-
 #[cfg(test)]
 mod kmeans_test {
-    // use rand::SeedableRng;
-    // use rand_distr::Distribution;
 
     use super::*;
-    // #[test]
-    // fn em_test() {
-    //     use rand::Rng;
-    //     use rand_distr::Normal;
-    //     use rand_xoshiro::Xoroshiro128PlusPlus;
-    //     let normal = Normal::new(0f64, 0.1f64).unwrap();
-    //     let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(342890);
-    //     let means: Vec<_> = vec![vec![1f64, -1f64], vec![-1f64, 1f64]];
-    //     let answer: Vec<_> = (0..100).map(|_| rng.gen_bool(0.5) as usize).collect();
-    //     let data: Vec<Vec<_>> = answer
-    //         .iter()
-    //         .map(|&k| {
-    //             means[k]
-    //                 .iter()
-    //                 .map(|x| x + normal.sample(&mut rng))
-    //                 .collect()
-    //         })
-    //         .collect();
-    //     let pred = em_clustering(&data, 2, &mut rng);
-    //     assert_eq!(pred, answer);
-    //     // panic!("{:?}\n{:?}", pred, answer);
-    // }
     #[test]
     fn cosine_similarity_test() {
         {
@@ -1234,19 +759,4 @@ mod kmeans_test {
             );
         }
     }
-    // #[test]
-    // fn cacl_homopolymer_length() {
-    //     let seq = b"AC";
-    //     let homop = get_homopolymer_length(seq);
-    //     assert_eq!(homop, vec![1, 1]);
-    //     let seq = b"ACC";
-    //     let homop = get_homopolymer_length(seq);
-    //     assert_eq!(homop, vec![1, 2, 2]);
-    //     let seq = b"ACCA";
-    //     let homop = get_homopolymer_length(seq);
-    //     assert_eq!(homop, vec![1, 2, 2, 1]);
-    //     let seq = b"AAACAAAGC";
-    //     let homop = get_homopolymer_length(seq);
-    //     assert_eq!(homop, vec![3, 3, 3, 1, 3, 3, 3, 1, 1]);
-    // }
 }

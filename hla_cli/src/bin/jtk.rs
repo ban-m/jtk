@@ -32,13 +32,6 @@ fn subcommand_entry() -> Command<'static> {
                 .possible_values(&["CCS", "CLR", "ONT"])
                 .help("Read type. CCS, CLR, or ONT."),
         )
-        // .arg(
-        //     Arg::new("slag")
-        //         .long("slag")
-        //         .takes_value(true)
-        //         .value_name("PATH")
-        //         .help("Dump low-quality reads into PATH"),
-        // )
         .arg(
             Arg::new("threads")
                 .short('t')
@@ -784,17 +777,6 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     dataset.local_clustering();
 }
 
-// fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
-//     set_threads(matches);
-//     let supress: f64 = matches
-//         .value_of("supress_level")
-//         .and_then(|e| e.parse().ok())
-//         .unwrap();
-//     use haplotyper::squish_erroneous_clusters::*;
-//     let config = SquishConfig::new(supress, 5);
-//     dataset.squish_erroneous_clusters(&config);
-// }
-
 fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tPurge diverged clusters");
     let threads: usize = matches
@@ -820,102 +802,6 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     dataset.correct_deletion(&config);
 }
 
-// fn correct_multiplicity(matches: &clap::ArgMatches, dataset: &mut DataSet) {
-//     debug!("START\tmultiplicity estimation");
-//     let threads: usize = matches
-//         .value_of("threads")
-//         .and_then(|e| e.parse().ok())
-//         .unwrap();
-//     let seed: u64 = matches
-//         .value_of("seed")
-//         .and_then(|e| e.parse().ok())
-//         .unwrap();
-//     let path = matches.value_of("draft_assembly");
-//     if let Err(why) = rayon::ThreadPoolBuilder::new()
-//         .num_threads(threads)
-//         .build_global()
-//     {
-//         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
-//     }
-//     // Re-estimate the copy number, retry if needed.
-//     use std::collections::{HashMap, HashSet};
-//     let selection: HashSet<_> = {
-//         let re_estimated_cluster_num: HashMap<_, _> = {
-//             // TODO: This is very inefficient.
-//             let mut ds: DataSet = dataset.clone();
-//             use haplotyper::dirichlet_mixture::{ClusteringConfig, DirichletMixtureCorrection};
-//             use haplotyper::multiplicity_estimation::*;
-//             let config = ClusteringConfig::new(5, 10, 5);
-//             ds.correct_clustering(&config);
-//             let config = MultiplicityEstimationConfig::new(threads, seed, ds.coverage, path);
-//             ds.estimate_multiplicity(&config);
-//             ds.selected_chunks
-//                 .iter()
-//                 .map(|c| (c.id, c.copy_num))
-//                 .collect()
-//         };
-//         dataset
-//             .selected_chunks
-//             .iter_mut()
-//             .filter_map(|chunk| match re_estimated_cluster_num.get(&chunk.id) {
-//                 Some(&new) if new != chunk.copy_num => {
-//                     debug!("FIXMULTP\t{}\t{}\t{}", chunk.id, chunk.copy_num, new);
-//                     chunk.copy_num = new;
-//                     Some(chunk.id)
-//                 }
-//                 _ => None,
-//             })
-//             .collect()
-//     };
-//     // Re clustering.
-//     debug!("FIXMULTP\tTargetNum\t{}", selection.len());
-//     use haplotyper::local_clustering::*;
-//     local_clustering_selected(dataset, &selection);
-// }
-
-// fn global_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
-//     debug!("START\tGlobal Clustering step");
-//     let threads: usize = matches
-//         .value_of("threads")
-//         .and_then(|num| num.parse().ok())
-//         .unwrap();
-//     let kmer: usize = matches
-//         .value_of("k")
-//         .and_then(|num| num.parse().ok())
-//         .unwrap();
-//     let min_cluster_size = matches
-//         .value_of("min_cluster_size")
-//         .and_then(|num| num.parse().ok())
-//         .unwrap();
-//     let mat_score: i32 = matches
-//         .value_of("mat_score")
-//         .and_then(|num| num.parse().ok())
-//         .unwrap();
-//     // Minus.
-//     let mismat_score: i32 = -matches
-//         .value_of("mismat_score")
-//         .and_then(|num| num.parse::<i32>().ok())
-//         .unwrap();
-//     let gap_score: i32 = -matches
-//         .value_of("gap_score")
-//         .and_then(|num| num.parse::<i32>().ok())
-//         .unwrap();
-//     if let Err(why) = rayon::ThreadPoolBuilder::new()
-//         .num_threads(threads)
-//         .build_global()
-//     {
-//         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
-//     }
-//     use haplotyper::global_clustering::*;
-//     let config =
-//         GlobalClusteringConfig::new(kmer, min_cluster_size, mat_score, mismat_score, gap_score);
-//     if matches.is_present("graph") {
-//         dataset.global_clustering_graph(&config);
-//     } else {
-//         dataset.global_clustering(&config);
-//     }
-// }
-
 fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tClustering Correction step");
     let _repeat_num: usize = matches
@@ -931,29 +817,6 @@ fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let config = CorrectionConfig::default();
     dataset.correct_clustering(&config);
 }
-
-// fn resolve_tangle(matches: &clap::ArgMatches, _dataset: &mut DataSet) {
-//     debug!("START\tClustering Correction step");
-//     let threads: usize = matches
-//         .value_of("threads")
-//         .and_then(|num| num.parse().ok())
-//         .unwrap();
-//     let _repeat_num: usize = matches
-//         .value_of("repeat_num")
-//         .and_then(|num| num.parse::<usize>().ok())
-//         .unwrap();
-//     let _threshold: usize = matches
-//         .value_of("coverage_threshold")
-//         .and_then(|num| num.parse().ok())
-//         .unwrap();
-//     if let Err(why) = rayon::ThreadPoolBuilder::new()
-//         .num_threads(threads)
-//         .build_global()
-//     {
-//         debug!("{:?} If you run `pipeline` module, this is Harmless.", why);
-//     }
-//     todo!()
-// }
 
 fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tEncode densely");
