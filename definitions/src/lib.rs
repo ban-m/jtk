@@ -30,7 +30,7 @@ pub struct DataSet {
     pub assignments: Vec<Assignment>,
     /// The type of the reads.
     pub read_type: ReadType,
-    /// Estimated Hidden Markov model. TODO:Maybe we need the direct implementation here....
+    /// Estimated Hidden Markov model.
     pub model_param: Option<HMMParam>,
     /// Estimated error rate.
     pub error_rate: ErrorRate,
@@ -556,8 +556,6 @@ pub struct Node {
     pub seq: DNASeq,
     pub is_forward: bool,
     pub cigar: Ops,
-    // TODO: This member should have a different name, such as
-    // `likelihood gain` or something.
     pub posterior: Vec<f64>,
 }
 

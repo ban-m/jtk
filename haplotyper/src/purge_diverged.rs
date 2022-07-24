@@ -26,9 +26,6 @@ impl PurgeDivergent for DataSet {
         let mut purged_cluster = HashSet::new();
         purged_cluster.extend(purge_diverged_nodes(self, THR, config));
         debug!("PD\tEncodedRead\t{}\t{}\t0", prev, self.encoded_reads.len());
-        // TODO: Do we need this? Maybe.
-        // purged_cluster.extend(purge_erroneous_nodes(self, config));
-        debug!("PD\tEncodedRead\t{}\t{}\t1", prev, self.encoded_reads.len());
         re_cluster(self, config.threads, &purged_cluster);
     }
 }

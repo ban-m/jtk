@@ -703,7 +703,6 @@ struct Chain {
 
 impl Chain {
     fn apporox_score(&self) -> i64 {
-        // TODO: ????
         self.ops
             .iter()
             .map(|&op| match op {
@@ -1132,17 +1131,6 @@ fn convert_to_map_range(node: &definitions::Node, (start, end): (usize, usize)) 
     (read_start, readpos.min(node.seq().len()))
 }
 
-// TODO:Make this as an iterator, not allocating a vector!
-fn defop2kileyop(ops: &definitions::Ops) -> Vec<Op> {
-    ops.iter()
-        .flat_map(|&op| match op {
-            definitions::Op::Match(l) => std::iter::repeat(Op::Match).take(l),
-            definitions::Op::Del(l) => std::iter::repeat(Op::Del).take(l),
-            definitions::Op::Ins(l) => std::iter::repeat(Op::Ins).take(l),
-        })
-        .collect()
-}
-
 fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
     let (r_start, r_end) = (tile.read_start, tile.read_end);
     let offset = tile.node.position_from_start;
@@ -1162,7 +1150,7 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
             tile.encoding.unit_len() - start,
         ),
     };
-    let alignment = defop2kileyop(&tile.node.cigar);
+    let alignment = crate::misc::ops_to_kiley(&tile.node.cigar);
     let r_len = alignment.iter().filter(|&&op| op != Op::Del).count();
     let u_len = alignment.iter().filter(|&&op| op != Op::Ins).count();
     assert_eq!(u_len, tile.encoding.unit_len());

@@ -260,20 +260,12 @@ fn clustering(
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128PlusPlus;
     let mut rng = Xoroshiro128PlusPlus::seed_from_u64(id * k as u64);
-    // TODO:Maybe we can tune the number of the cluster here, again?
     let cluster_num = k.min(pick_k);
     let asn = (0..10)
         .map(|_| kmeans(&eigens, cluster_num, &mut rng))
         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .map(|x| x.0)
         .unwrap();
-    // for k in k..=_upper_k {
-    //     let (_, dist) = (0..10)
-    //         .map(|_| kmeans(&eigens, k, &mut rng))
-    //         .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-    //         .unwrap();
-    //     debug!("KMEANS\t{id}\t{k}\t{dist}");
-    // }
     if log_enabled!(log::Level::Trace) {
         for (i, sm) in eigens.iter().enumerate() {
             let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
@@ -508,88 +500,6 @@ fn align_swg<'a>(
         .unwrap()
 }
 
-// fn align<'a>(
-//     arm1: &[(u64, &'a [f64])],
-//     arm2: &[(u64, &'a [f64])],
-//     copy_numbers: &[Vec<f64>],
-// ) -> f64 {
-//     // Allow gap with small penalty.
-//     // To treat the deletion error, or "encoding error" due to the
-//     // errors in the sequnece,
-//     // we treat one-length deletion with small penalty,
-//     // and deletion longer than one with high penalty.
-//     // To do this, we, currently, evaluate the alignemnt in post-hoc.
-//     // I know it is not optimal, nor correct algorithm, but it works (should we hoep more?)
-//     // TODO: implement NWG algorithm
-//     const MISM: f64 = -10000f64;
-//     const GAP: f64 = -0.5f64;
-//     let mut dp = vec![vec![0f64; arm2.len() + 1]; arm1.len() + 1];
-//     for (i, _) in arm1.iter().enumerate() {
-//         dp[i + 1][0] = dp[i][0] + GAP;
-//     }
-//     for (j, _) in arm2.iter().enumerate() {
-//         dp[0][j + 1] = dp[0][j] + GAP;
-//     }
-//     for (i, (u1, p1)) in arm1.iter().enumerate() {
-//         let i = i + 1;
-//         for (j, (u2, p2)) in arm2.iter().enumerate() {
-//             let j = j + 1;
-//             let match_score = match u1 == u2 {
-//                 true => sim(p1, p2, &copy_numbers[*u1 as usize]),
-//                 false => MISM,
-//             };
-//             dp[i][j] = (dp[i - 1][j - 1] + match_score)
-//                 .max(dp[i - 1][j] + GAP)
-//                 .max(dp[i][j - 1] + GAP);
-//         }
-//     }
-//     let last_row = dp
-//         .last()
-//         .unwrap()
-//         .iter()
-//         .enumerate()
-//         .map(|(j, s)| (arm1.len(), j, s));
-//     let last_column = dp
-//         .iter()
-//         .filter_map(|x| x.last())
-//         .enumerate()
-//         .map(|(i, s)| (i, arm2.len(), s));
-//     let (mut i, mut j, score) = last_row
-//         .chain(last_column)
-//         .max_by(|x, y| x.2.partial_cmp(y.2).unwrap())
-//         .unwrap();
-//     // 0->Deletion or insertion,1->Match
-//     let mut ops = vec![];
-//     while 0 < i && 0 < j {
-//         let current = dp[i][j];
-//         let (u1, p1) = arm1[i - 1];
-//         let (u2, p2) = arm2[j - 1];
-//         let match_score = match u1 == u2 {
-//             true => sim(p1, p2, &copy_numbers[u1 as usize]),
-//             false => MISM,
-//         };
-//         assert!(!match_score.is_nan());
-//         if (dp[i - 1][j - 1] + match_score - current).abs() < 0.00001 {
-//             ops.push(1);
-//             i -= 1;
-//             j -= 1;
-//         } else if (dp[i - 1][j] + GAP - current).abs() < 0.000001 {
-//             ops.push(0);
-//             i -= 1;
-//         } else {
-//             assert!((dp[i][j - 1] + GAP - current).abs() < 0.000001);
-//             ops.push(0);
-//             j -= 1;
-//         }
-//     }
-//     const LONG_GAP: f64 = -80f64;
-//     let gap_pens: f64 = ops
-//         .split(|&x| x == 1)
-//         .map(|gaps| (gaps.len().max(1) - 1) as f64 * LONG_GAP)
-//         .sum();
-//     *score + gap_pens
-// }
-
 const MOCK_CP: f64 = 1.5;
 pub fn sim(xs: &[f64], ys: &[f64], cps: &[f64]) -> f64 {
     assert_eq!(xs.len(), cps.len());
@@ -610,7 +520,6 @@ pub fn sim(xs: &[f64], ys: &[f64], cps: &[f64]) -> f64 {
 }
 
 // log(p) -> log(p) - log(1-p)
-// TODO:Is this OK?
 fn logit_from_lnp(lnp: f64) -> f64 {
     assert!(lnp <= 0f64);
     const LOWER_CUT: f64 = -80f64;

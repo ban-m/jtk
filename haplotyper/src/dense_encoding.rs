@@ -26,8 +26,24 @@ pub trait DenseEncoding {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig);
 }
 
+fn check_raw_read_consistency(ds: &DataSet) {
+    let raw_seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r)).collect();
+    let is_ok = ds.encoded_reads.par_iter().all(|read| {
+        let orig = read.recover_raw_read();
+        assert!(orig.iter().all(u8::is_ascii_uppercase));
+        let raw: Vec<_> = raw_seq[&read.id]
+            .seq()
+            .iter()
+            .map(|x| x.to_ascii_uppercase())
+            .collect();
+        orig == raw
+    });
+    assert!(is_ok);
+}
+
 impl DenseEncoding for DataSet {
     fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
+        check_raw_read_consistency(self);
         let original_cluster_num: HashMap<_, _> = self
             .selected_chunks
             .iter()
@@ -64,12 +80,10 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
         }
         tip_units
     };
-    let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
-    ds.encoded_reads.par_iter_mut().for_each(|read| {
-        let rawseq = &rawseq[&read.id];
-        edge_encode(read, rawseq, &edge_units, &tip_units, readtype, config)
-    });
+    ds.encoded_reads
+        .par_iter_mut()
+        .for_each(|read| edge_encode(read, &edge_units, &tip_units, readtype, config));
     let unit_ids: HashSet<_> = edge_units
         .values()
         .flat_map(|x| x.iter().map(|x| x.id))
@@ -102,23 +116,22 @@ fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> Has
     unit_ids
 }
 
-// TODO: we do not need raw seq `seq`. But I'm afraid read.rawseq() might be broken.
 fn edge_encode(
     read: &mut EncodedRead,
-    seq: &[u8],
     edges: &EdgeAndUnit,
     tips: &TipAndUnit,
     read_type: definitions::ReadType,
     _config: &DenseEncodingConfig,
 ) {
-    let inserts = fill_edges_by_new_units(read, seq, edges, tips, &read_type);
+    let seq = read.recover_raw_read();
+    let inserts = fill_edges_by_new_units(read, &seq, edges, tips, &read_type);
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
         match idx + accum_inserts {
             pos if pos < read.nodes.len() => read.nodes.insert(idx + accum_inserts, node),
             _ => read.nodes.push(node),
         }
     }
-    re_encode_read(read, seq);
+    re_encode_read(read, &seq);
 }
 
 fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {

@@ -213,11 +213,12 @@ impl<'a, 'b, 'c> std::iter::Iterator for Cycles<'a, 'b, 'c> {
             let edges = &self.inner.graph.residual_graph.nodes[idx];
             let scores = &self.inner.edge_weights[idx];
             assert_eq!(edges.len(), scores.len());
-            for (edge, score) in std::iter::zip(&edges.0, scores) {
+            for (edge, &score) in std::iter::zip(&edges.0, scores) {
                 let (from, to) = (edge.from.0, edge.to.0);
-                if self.inner.dists[from] < LARGE_VALUE
-                    && self.inner.dists[from] + score < self.inner.dists[to]
-                {
+                if LARGE_VALUE <= score || LARGE_VALUE <= self.inner.dists[from] {
+                    continue;
+                }
+                if self.inner.dists[from] + score < self.inner.dists[to] {
                     let cycle = self.inner.traverse_cycle(edge.from.0);
                     self.checked_nodes
                         .extend(cycle.iter().flat_map(|c| [c.from, c.to]));
@@ -347,7 +348,6 @@ impl Graph {
             .map(|edges| edges.0.iter().map(|e| self.score(e)).collect())
             .collect();
         // Check cycle.
-        // TODO: If the penalty is more than or equal to LARGE VALUE, the edge should not exists.
         let (mut min, mut argmin) = (LARGE_VALUE, None);
         for (source, sink) in tuples {
             let bellman = self.min_dist(&edge_scores, source, sink);

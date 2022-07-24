@@ -68,7 +68,6 @@ pub fn update_model(ds: &mut DataSet) {
     });
 }
 
-use crate::local_clustering::ops_to_kiley_ops;
 fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     read_type: ReadType,
     pileups: &HashMap<(u64, u64), Vec<N>>,
@@ -93,7 +92,7 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
             let band_width = read_type.band_width(ref_unit.seq().len());
             let ops: Vec<Vec<_>> = nodes
                 .iter()
-                .map(|n| ops_to_kiley_ops(&n.borrow().cigar))
+                .map(|n| crate::misc::ops_to_kiley(&n.borrow().cigar))
                 .collect();
             let seqs: Vec<_> = nodes.iter().map(|n| n.borrow().seq()).collect();
             (ref_unit.seq().to_vec(), seqs, ops, band_width)

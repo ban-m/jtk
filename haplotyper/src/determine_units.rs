@@ -331,21 +331,20 @@ fn remove_overlapping_units(
             let identity = paf.matchnum as f64 / paf.blocklen as f64;
             overlap_thr < identity && overlap_len < paf.blocklen
         });
-    // TODO: FIXME.
-    let mut edges: Vec<_> = (0..unit_len).map(|i| vec![0; i]).collect();
+    let mut graph = vec![vec![]; unit_len];
     for aln in alignments {
-        let node_unit: usize = aln.tname.parse().unwrap();
-        let mode_unit: usize = aln.qname.parse().unwrap();
-        let (i, j) = (node_unit.max(mode_unit), node_unit.min(mode_unit));
-        if i != j {
-            edges[i as usize][j as usize] += 1;
+        let unit1: usize = aln.tname.parse().unwrap();
+        let unit2: usize = aln.qname.parse().unwrap();
+        if unit1 != unit2 {
+            graph[unit1].push(unit2);
+            graph[unit2].push(unit1);
         }
     }
-    let edges: Vec<Vec<_>> = edges
-        .iter()
-        .map(|xs| xs.iter().map(|&x| MIN_OCC < x).collect())
-        .collect();
-    let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
+    for edges in graph.iter_mut() {
+        edges.sort_unstable();
+        edges.dedup();
+    }
+    let to_be_removed = approx_vertex_cover(graph, ds.selected_chunks.len());
     ds.selected_chunks
         .retain(|unit| !to_be_removed[unit.id as usize]);
     ds.encoded_reads.par_iter_mut().for_each(|read| {
@@ -373,8 +372,6 @@ fn dump_histogram(ds: &DataSet) {
     let hist = histgram_viz::Histgram::new(&counts[..end_pos]);
     debug!("Histgrapm\n{}", hist.format(40, 20));
 }
-
-const MIN_OCC: usize = 5;
 
 type NormedEdge = ((u64, bool), (u64, bool));
 fn normalize_edge(w: &[Node]) -> (NormedEdge, bool) {
@@ -575,53 +572,6 @@ fn fill_sparse_region_dev(
     len
 }
 
-// fn fill_sparse_region(ds: &mut DataSet, config: &UnitConfig) {
-//     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
-//     for edge in ds.encoded_reads.iter().flat_map(|r| r.edges.iter()) {
-//         let key = (edge.from.min(edge.to), edge.from.max(edge.to));
-//         edge_count.entry(key).or_default().push(edge);
-//     }
-//     // We fill units for each sparsed region.
-//     let count_thr = {
-//         let mut count: HashMap<_, usize> = HashMap::new();
-//         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-//             *count.entry(node.unit).or_default() += 1;
-//         }
-//         let mut count: Vec<_> = count.into_values().collect();
-//         let median = count.len() / 2;
-//         *count.select_nth_unstable(median).1 / 4
-//     };
-//     let mut picked_units = vec![];
-//     for (_, edges) in edge_count {
-//         let total_len: i64 = edges
-//             .iter()
-//             .map(|edge| match edge.label.is_empty() {
-//                 true => edge.offset,
-//                 false => edge.label().len() as i64,
-//             })
-//             .sum();
-//         let mean_len = total_len / edges.len() as i64;
-//         if (config.chunk_len as i64) < mean_len && count_thr < edges.len() {
-//             let edge = edges.iter().max_by_key(|e| e.label().len()).unwrap();
-//             let seq = edge.label();
-//             let new_units = (0..)
-//                 .map(|i| (config.chunk_len * i, (i + 1) * config.chunk_len))
-//                 .take_while(|&(_, y)| y < seq.len())
-//                 .map(|(s, t)| &seq[s..t])
-//                 .filter(|u| !is_repetitive(u, config));
-//             picked_units.extend(new_units);
-//         }
-//     }
-//     debug!("FillSparse\t{}", picked_units.len());
-//     let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
-//     ds.selected_chunks
-//         .extend(picked_units.iter().enumerate().map(|(i, seq)| {
-//             let id = i as u64 + last_unit + 1;
-//             // let seq = String::from_utf8_lossy(seq).to_string();
-//             Unit::new(id, seq.to_vec(), config.min_cluster)
-//         }));
-// }
-
 type FilledTips = HashMap<(u64, bool), Unit>;
 fn fill_tips_dev(
     ds: &mut DataSet,
@@ -746,65 +696,12 @@ fn fill_tip(
     }
 }
 
-// fn fill_tail_end(ds: &mut DataSet, config: &UnitConfig) {
-//     let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
-//     for read in ds.encoded_reads.iter() {
-//         if let Some(head) = read.nodes.first() {
-//             tail_counts
-//                 .entry((head.unit, head.is_forward))
-//                 .or_default()
-//                 .push(&read.leading_gap);
-//         }
-//         if let Some(tail) = read.nodes.last() {
-//             tail_counts
-//                 .entry((tail.unit, !tail.is_forward))
-//                 .or_default()
-//                 .push(&read.trailing_gap);
-//         }
-//     }
-//     tail_counts.values_mut().for_each(|tips| {
-//         tips.retain(|label| config.chunk_len < label.len());
-//     });
-//     // We fill units for each sparsed region.
-//     let count_thr = {
-//         let mut count: HashMap<_, usize> = HashMap::new();
-//         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-//             *count.entry(node.unit).or_default() += 1;
-//         }
-//         let mut count: Vec<_> = count.into_values().collect();
-//         let median = count.len() / 2;
-//         *count.select_nth_unstable(median).1 / 8
-//     };
-//     let mut picked_units = vec![];
-//     for ((unit, direction), labels) in tail_counts
-//         .into_iter()
-//         .filter(|(_, labels)| labels.len() > count_thr.max(1))
-//     {
-//         let seq = labels.iter().max_by_key(|xs| xs.len()).unwrap();
-//         trace!("FillSparse\t{}\t{}\t{}", unit, direction, labels.len());
-//         let new_units = seq
-//             .as_slice()
-//             .chunks_exact(config.chunk_len)
-//             .filter(|u| !is_repetitive(u, config));
-//         picked_units.extend(new_units);
-//     }
-//     debug!("FillSparse\t{}\t{}", picked_units.len(), count_thr);
-//     let last_unit = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
-//     ds.selected_chunks
-//         .extend(picked_units.iter().enumerate().map(|(i, seq)| {
-//             let id = i as u64 + last_unit + 1;
-//             // let seq = String::from_utf8_lossy(seq).to_string();
-//             Unit::new(id, seq.to_vec(), config.min_cluster)
-//         }));
-// }
-
 fn is_repetitive(unit: &[u8], config: &UnitConfig) -> bool {
     let tot = unit.len();
     let lowercase = unit.iter().filter(|c| c.is_ascii_lowercase()).count();
     lowercase as f64 / tot as f64 > config.exclude_repeats
 }
 
-// TODO: I opt-out the stride parameter, is it OK?
 // Or, something went wrong? Please check it out.
 fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
     let seq = r.seq();
@@ -817,14 +714,6 @@ fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
             .take_while(|&(_, end)| end <= bound)
             .map(|(s, e)| &seq[s..e])
             .collect()
-        // let end = seq.len() - c.margin;
-        // let stride = c.chunk_len + c.skip_len;
-        // (0..)
-        //     .map(|i| (stride * i, stride * i + c.chunk_len))
-        //     .map(|(x, y)| (x + c.margin, y + c.margin))
-        //     .take_while(|&(_, y)| y < end)
-        //     .map(|(s, t)| &seq[s..t])
-        //     .collect()
     }
 }
 
@@ -838,25 +727,42 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     let unit_len = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
     let unit_len = unit_len as usize + 1;
     assert!(ds.selected_chunks.len() <= unit_len);
-    // TODO: FIXME
-    // Maybe it became infeasible due to O(N^2) allcation would be occured.
-    let mut edges: Vec<_> = (0..unit_len).map(|i| vec![false; i]).collect();
+    let mut graph = vec![vec![]; unit_len];
     for read in ds.encoded_reads.iter() {
-        for (i, node) in read.nodes.iter().enumerate() {
-            for mode in read.nodes.iter().skip(i + 1) {
-                let node_end = node.position_from_start + node.seq.as_slice().len();
-                let mode_start = mode.position_from_start;
+        for (i, node1) in read.nodes.iter().enumerate() {
+            for node2 in read.nodes.iter().skip(i + 1) {
+                let node_end = node1.position_from_start + node1.seq.as_slice().len();
+                let mode_start = node2.position_from_start;
                 let ovlp_len = node_end.max(mode_start) - mode_start;
                 if overlap_thr < ovlp_len {
-                    let (i, j) = (node.unit.max(mode.unit), node.unit.min(mode.unit));
-                    if i != j {
-                        edges[i as usize][j as usize] = true;
+                    let (node1, node2) = (node1.unit as usize, node2.unit as usize);
+                    if !graph[node1].contains(&node2) {
+                        assert!(!graph[node2].contains(&node1));
+                        graph[node1].push(node2);
+                        graph[node2].push(node1);
                     }
                 }
             }
         }
     }
-    let to_be_removed = approx_vertex_cover(edges, unit_len);
+    // Maybe it became infeasible due to O(N^2) allcation would be occured.
+    // let mut edges: Vec<_> = (0..unit_len).map(|i| vec![false; i]).collect();
+    // for read in ds.encoded_reads.iter() {
+    //     for (i, node) in read.nodes.iter().enumerate() {
+    //         for mode in read.nodes.iter().skip(i + 1) {
+    //             let node_end = node.position_from_start + node.seq.as_slice().len();
+    //             let mode_start = mode.position_from_start;
+    //             let ovlp_len = node_end.max(mode_start) - mode_start;
+    //             if overlap_thr < ovlp_len {
+    //                 let (i, j) = (node.unit.max(mode.unit), node.unit.min(mode.unit));
+    //                 if i != j {
+    //                     edges[i as usize][j as usize] = true;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    let to_be_removed = approx_vertex_cover(graph, unit_len);
     ds.selected_chunks
         .retain(|unit| !to_be_removed[unit.id as usize]);
     debug!("UNITNUM\t{}\tVertexCovering", ds.selected_chunks.len());
@@ -872,15 +778,8 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     });
 }
 
-// TODO: Make this not adjacency matrix, list.
-fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
-    let mut degrees = vec![0; nodes];
-    for (i, es) in edges.iter().enumerate() {
-        for (j, _) in es.iter().enumerate().filter(|&(_, &b)| b) {
-            degrees[i] += 1;
-            degrees[j] += 1;
-        }
-    }
+fn approx_vertex_cover(mut edges: Vec<Vec<usize>>, nodes: usize) -> Vec<bool> {
+    let mut degrees: Vec<_> = edges.iter().map(|n| n.len()).collect();
     let mut to_be_removed = vec![false; nodes];
     loop {
         let (argmax, &max) = degrees.iter().enumerate().max_by_key(|x| x.1).unwrap();
@@ -888,24 +787,50 @@ fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
             break;
         }
         to_be_removed[argmax] = true;
-        edges[argmax].iter_mut().enumerate().for_each(|(i, b)| {
-            degrees[i] -= *b as usize;
-            *b = false;
-        });
-        degrees[argmax] = 0;
-        if argmax < nodes {
-            edges
-                .iter_mut()
-                .enumerate()
-                .skip(argmax + 1)
-                .for_each(|(i, es)| {
-                    degrees[i] -= es[argmax] as usize;
-                    es[argmax] = false;
-                });
+        let removed: Vec<_> = edges[argmax].clone();
+        edges[argmax].clear();
+        for &to in removed.iter() {
+            degrees[to] = degrees[to].saturating_sub(1);
+            edges[to].retain(|&n| n != argmax);
         }
+        degrees[argmax] = 0;
     }
     to_be_removed
 }
+
+// fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
+//     let mut degrees = vec![0; nodes];
+//     for (i, es) in edges.iter().enumerate() {
+//         for (j, _) in es.iter().enumerate().filter(|&(_, &b)| b) {
+//             degrees[i] += 1;
+//             degrees[j] += 1;
+//         }
+//     }
+//     let mut to_be_removed = vec![false; nodes];
+//     loop {
+//         let (argmax, &max) = degrees.iter().enumerate().max_by_key(|x| x.1).unwrap();
+//         if max == 0 {
+//             break;
+//         }
+//         to_be_removed[argmax] = true;
+//         edges[argmax].iter_mut().enumerate().for_each(|(i, b)| {
+//             degrees[i] -= *b as usize;
+//             *b = false;
+//         });
+//         degrees[argmax] = 0;
+//         if argmax < nodes {
+//             edges
+//                 .iter_mut()
+//                 .enumerate()
+//                 .skip(argmax + 1)
+//                 .for_each(|(i, es)| {
+//                     degrees[i] -= es[argmax] as usize;
+//                     es[argmax] = false;
+//                 });
+//         }
+//     }
+//     to_be_removed
+// }
 
 fn error(node: &definitions::Node, ref_unit: &Unit) -> f64 {
     let (query, aln, refr) = node.recover(ref_unit);

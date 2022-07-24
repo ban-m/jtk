@@ -968,7 +968,6 @@ fn fit_query_by_edlib<'a>(
     orig_query: &'a [u8],
     sim_thr: f64,
 ) -> Option<FitQuery<'a>> {
-    // TODO:Is this correct?
     let mode = edlib_sys::AlignMode::Global;
     let task = edlib_sys::AlignTask::Alignment;
     let alignment = edlib_sys::align(unitseq, orig_query, mode, task);

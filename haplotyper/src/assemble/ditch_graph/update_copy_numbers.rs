@@ -132,7 +132,6 @@ impl<'a> DitchGraph<'a> {
         }
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
-    // TODO:Fasten this function.
     /// (Re-)estimate copy number on each node and edge.
     pub fn assign_copy_number_mcmc<R: Rng>(&mut self, naive_cov: f64, rng: &mut R) {
         let (node_copy_number, edge_copy_number) = self.copy_number_estimation_mcmc(naive_cov, rng);

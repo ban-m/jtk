@@ -90,3 +90,14 @@ const EDLIB2KILEY: [kiley::Op; 4] = [
 pub fn edlib_to_kiley(edlib: &[u8]) -> Vec<kiley::Op> {
     edlib.iter().map(|&op| EDLIB2KILEY[op as usize]).collect()
 }
+
+pub fn ops_to_kiley(ops: &definitions::Ops) -> Vec<kiley::Op> {
+    use definitions::Op;
+    ops.iter()
+        .flat_map(|op| match op {
+            Op::Match(l) => std::iter::repeat(kiley::Op::Match).take(*l),
+            Op::Del(l) => std::iter::repeat(kiley::Op::Del).take(*l),
+            Op::Ins(l) => std::iter::repeat(kiley::Op::Ins).take(*l),
+        })
+        .collect()
+}

@@ -9,7 +9,6 @@ pub struct PolishUnitConfig {
     consensus_size: usize,
 }
 
-// TODO: Remove Readtype from the argument.
 impl PolishUnitConfig {
     pub fn new(read_type: ReadType, filter_size: usize, consensus_size: usize) -> Self {
         Self {
@@ -52,14 +51,14 @@ impl PolishUnit for DataSet {
             .filter(|x| c.filter_size < x.1.len())
             .map(|(id, mut pileup)| {
                 let unit = unit_seqs.get(&id).unwrap();
-                let radius = c.read_type.band_width(unit.seq().len());
+                let radius = c.read_type().band_width(unit.seq().len());
                 pileup.sort_by_cached_key(|node| {
                     let (_, aln, _) = node.recover(unit);
                     aln.iter().filter(|&&x| x != b'|').count()
                 });
                 let (seqs, mut ops): (Vec<_>, Vec<_>) = pileup
                     .iter()
-                    .map(|n| (n.seq(), crate::local_clustering::ops_to_kiley_ops(&n.cigar)))
+                    .map(|n| (n.seq(), crate::misc::ops_to_kiley(&n.cigar)))
                     .unzip();
                 use kiley::bialignment::guided::polish_until_converge_with;
                 let cons = polish_until_converge_with(unit.seq(), &seqs, &mut ops, radius);
@@ -116,7 +115,7 @@ impl PolishUnit for DataSet {
                         .take(c.consensus_size)
                         .collect();
                     let median_len: usize = seqs[0].len();
-                    let radius = c.read_type.band_width(median_len);
+                    let radius = c.read_type().band_width(median_len);
                     kiley::ternary_consensus_by_chunk(&seqs, radius)
                 };
                 pileup.iter_mut().for_each(|node| {

@@ -120,7 +120,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 3490);
             let (seqs, mut ops): (Vec<_>, Vec<_>) = units
                 .iter()
-                .map(|node| (node.seq(), ops_to_kiley_ops(&node.cigar)))
+                .map(|node| (node.seq(), crate::misc::ops_to_kiley(&node.cigar)))
                 .unzip();
             let band_width = read_type.band_width(ref_unit.seq().len());
             let start = std::time::Instant::now();
@@ -170,8 +170,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     normalize::normalize_local_clustering(ds);
 }
 
-// _error_rate: ErrorRate,
-
 pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 23908;
     const SAMPLE_NUM: usize = 1000;
@@ -206,116 +204,6 @@ pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) ->
     debug!("MIN_GAIN\t{:?}", &medians[..6]);
     (medians[2]).max(MIN_REQ)
 }
-
-// pub fn estimate_imum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
-//     const SEED: u64 = 23908;
-//     const SAMPLE_NUM: usize = 500;
-//     const TAKE_POS: usize = 1;
-//     const LEN: usize = 100;
-//     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED);
-//     let mut lks: Vec<_> = (0..SAMPLE_NUM)
-//         .map(|i| {
-//             let template = kiley::gen_seq::generate_seq(&mut rng, LEN);
-//             let query = match i % 2 == 0 {
-//                 true => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 0, 1),
-//                 false => kiley::gen_seq::introduce_errors(&template, &mut rng, 0, 1, 0),
-//             };
-//             let lk_base = hmm.likelihood(&template, &template, 10);
-//             let lk_diff = hmm.likelihood(&template, &query, 10);
-//             lk_base - lk_diff
-//         })
-//         .collect();
-//     lks.sort_by(|x, y| x.partial_cmp(y).unwrap());
-//     lks[TAKE_POS]
-// }
-
-// use kiley::gphmm::Cond;
-// pub fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
-//     read_type: ReadType,
-//     pileups: &HashMap<u64, Vec<N>>,
-//     chunks: &HashMap<u64, &Unit>,
-// ) -> kiley::gphmm::GPHMM<Cond> {
-//     let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
-//     let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
-//     let seqs_and_ref_units: Vec<_> = pileups
-//         .iter()
-//         .filter(|(_, us)| (cov.max(1) - 1..cov + 2).contains(&us.len()))
-//         .map(|(id, us)| {
-//             let seqs: Vec<_> = us.iter().map(|n| n.borrow().seq()).take(100).collect();
-//             let ref_unit = chunks.get(id).unwrap();
-//             (ref_unit, seqs)
-//         })
-//         .take(2)
-//         .collect();
-//     for (chunk, units) in seqs_and_ref_units.iter() {
-//         debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
-//     }
-//     use kiley::gphmm::*;
-//     let mut hmm = match read_type {
-//         ReadType::CCS => kiley::gphmm::GPHMM::<Cond>::ccs(),
-//         ReadType::None | ReadType::CLR => kiley::gphmm::GPHMM::<Cond>::clr(),
-//         ReadType::ONT => kiley::gphmm::GPHMM::<Cond>::ont(),
-//     };
-//     for _ in 0..2 {
-//         for (ref_unit, seqs) in seqs_and_ref_units.iter() {
-//             let band_width = read_type.band_width(ref_unit.seq().len()) * 2;
-//             let consensus = take_consensus(ref_unit, seqs, band_width, &hmm);
-//             hmm = hmm.fit_banded(&consensus, seqs, band_width);
-//         }
-//     }
-//     debug!("HMM\t{}", hmm);
-//     hmm
-// }
-
-// pub fn take_consensus<T: std::borrow::Borrow<[u8]>>(
-//     unit: &Unit,
-//     reads: &[T],
-//     band_width: usize,
-//     hmm: &kiley::gphmm::GPHMM<kiley::gphmm::Cond>,
-// ) -> Vec<u8> {
-//     let max_len = reads
-//         .iter()
-//         .map(|x| x.borrow().len())
-//         .max()
-//         .unwrap_or_else(|| panic!("{},{}", unit.seq, unit.id));
-//     match 200 < max_len {
-//         true => {
-//             use kiley::polish_chunk_by_parts;
-//             use kiley::PolishConfig;
-//             let config =
-//                 PolishConfig::with_model(band_width, 0, reads.len(), unit.id, 0, hmm.clone());
-//             polish_chunk_by_parts(unit.seq(), reads, &config)
-//         }
-//         false => unit.seq().to_vec(),
-//     }
-// }
-
-pub fn ops_to_kiley_ops(ops: &definitions::Ops) -> Vec<kiley::Op> {
-    ops.iter()
-        .flat_map(|op| match op {
-            Op::Match(l) => std::iter::repeat(kiley::Op::Match).take(*l),
-            Op::Del(l) => std::iter::repeat(kiley::Op::Del).take(*l),
-            Op::Ins(l) => std::iter::repeat(kiley::Op::Ins).take(*l),
-        })
-        .collect()
-}
-
-// This is used to fix the alignment ... which is not needed anymore!
-// fn re_encode_reads(ds: &mut DataSet, consensus: &HashMap<u64, (Vec<u8>, f64, u8)>) {
-//     ds.encoded_reads
-//         .par_iter_mut()
-//         .flat_map(|r| r.nodes.par_iter_mut())
-//         .for_each(|node| {
-//             let cons = match consensus.get(&node.unit) {
-//                 Some((cons, _, _)) => cons,
-//                 None => return,
-//             };
-//             let band_size = (cons.len() / 10).max(5);
-//             let ops =
-//                 kiley::bialignment::global_banded(cons, node.seq(), 2, -5, -6, -1, band_size).1;
-//             node.cigar = crate::encode::compress_kiley_ops(&ops);
-//         });
-// }
 
 #[cfg(test)]
 mod test {

@@ -709,7 +709,6 @@ fn encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("threads")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
-    // TODO:Branching by read type.
     use haplotyper::encode::Encode;
     dataset.encode(threads, dataset.read_type.sim_thr())
 }

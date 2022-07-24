@@ -214,9 +214,6 @@ impl Graph {
         }
     }
     const LOOPTIMES: usize = 500;
-    // TODO:Which is better, minimum penalty vs mcmc posterior prob?
-    // I think this is not proper MCMC (as proposed distribution does not satisfy
-    // detailed balanced condition), so I would like to retin the minimum penalty assignment.
     pub fn update_copy_numbers<R: Rng>(&mut self, rng: &mut R, config: &MSTConfig) {
         let (min, argmin) = (0..10)
             .map(|_| self.update_copy_numbers_inner(rng, config))
@@ -412,7 +409,7 @@ impl Graph {
             .unwrap_or((LARGE_VALUE, vec![]));
         let mut stack = vec![];
         let mut status = vec![Status::Undiscovered; self.graph.len()];
-        // TODO:If there are too many one-degree nodes, the inference gets slower and slower.
+        // If there are too many one-degree nodes, the inference gets slower and slower.
         // (from,to) should be resides in the same connected components....
         // Use find union tree to check if two node is in the same ....
         // No, we should first enumerate reachable one-degree nodes at first.

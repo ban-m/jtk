@@ -719,7 +719,6 @@ fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {
         .collect()
 }
 
-// TODO:there are some bugs.
 /// Return the co-occurence of the reads.
 /// [i][j] -> # of reads shared by summaries[i] and summaries[j].
 fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<u32>> {
