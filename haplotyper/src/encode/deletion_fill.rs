@@ -962,11 +962,12 @@ fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
         .collect()
 }
 
+type FitQuery<'a> = (&'a [u8], usize, usize, Vec<kiley::op::Op>, usize);
 fn fit_query_by_edlib<'a>(
     unitseq: &[u8],
     orig_query: &'a [u8],
     sim_thr: f64,
-) -> Option<(&'a [u8], usize, usize, Vec<kiley::op::Op>, usize)> {
+) -> Option<FitQuery<'a>> {
     // TODO:Is this correct?
     let mode = edlib_sys::AlignMode::Global;
     let task = edlib_sys::AlignTask::Alignment;

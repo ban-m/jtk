@@ -18,6 +18,8 @@ pub mod dg_test;
 type Node = (u64, u64);
 type DitEdge = ((NodeIndex, Position), (NodeIndex, Position));
 type EdgeBetweenSimplePath = (usize, bool, usize, bool, f64);
+type GraphNode = (NodeIndex, Position);
+type GraphBoundary = Vec<GraphNode>;
 
 /// Type to index nodes in the graph.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -822,7 +824,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     // For example, if there is no edge from Position::Tail at the first node,
     // then, (0, Position::Head) would be included.
     // Also, it returns the list of the node whose parent has two or more children.
-    fn enumerate_candidates(&self) -> Vec<(NodeIndex, Position)> {
+    fn enumerate_candidates(&self) -> GraphBoundary {
         let mut selected = vec![false; self.nodes.len()];
         let mut primary_candidates = vec![];
         for (idx, node) in self.nodes() {
@@ -1194,12 +1196,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     // S(k) = {(n,p) connected to P(k-1)}
     // And the reflex parent is define as P(\infty) and S(\infty).
     // In practice, for efficiency issue, we use P(cut) and S(cut).
+
     pub fn get_reflex_nodes(
         &self,
         node: NodeIndex,
         position: Position,
         cut: usize,
-    ) -> (Vec<(NodeIndex, Position)>, Vec<(NodeIndex, Position)>) {
+    ) -> (GraphBoundary, GraphBoundary) {
         let mut sibs = vec![(node, position)];
         let mut parents: Vec<_> = vec![];
         for _ in 0..cut {

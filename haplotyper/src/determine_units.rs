@@ -375,57 +375,6 @@ fn dump_histogram(ds: &DataSet) {
 }
 
 const MIN_OCC: usize = 5;
-// fn remove_overlapping_units(ds: &DataSet, thr: usize) -> std::io::Result<Vec<Unit>> {
-//     const ALLOWED_END_GAP: usize = 50;
-//     let mm2 = crate::encode::mm2_alignment(ds, thr)?;
-//     let alignments: Vec<_> = String::from_utf8_lossy(&mm2)
-//         .lines()
-//         .filter_map(bio_utils::paf::PAF::new)
-//         .filter(|aln| aln.tstart < ALLOWED_END_GAP && aln.tlen - aln.tend < ALLOWED_END_GAP)
-//         .collect();
-//     let mut buckets: HashMap<_, Vec<_>> = HashMap::new();
-//     for aln in alignments.iter() {
-//         buckets.entry(aln.qname.clone()).or_default().push(aln);
-//     }
-//     buckets
-//         .values_mut()
-//         .for_each(|xs| xs.sort_by_key(|aln| aln.qstart));
-//     let unit_len = ds.selected_chunks.len();
-//     let mut edges: Vec<_> = (0..unit_len).map(|i| vec![0; i]).collect();
-//     let overlap_thr: usize = match ds.read_type {
-//         ReadType::CCS => 150,
-//         ReadType::CLR => 500,
-//         ReadType::ONT => 400,
-//         ReadType::None => 500,
-//     };
-
-//     for alns in buckets.values() {
-//         for (i, node) in alns.iter().enumerate() {
-//             for mode in alns.iter().skip(i + 1) {
-//                 let node_unit: usize = node.tname.parse().unwrap();
-//                 let mode_unit: usize = mode.tname.parse().unwrap();
-//                 let ovlp_len = node.qend.saturating_sub(mode.qstart);
-//                 if 2 * overlap_thr < ovlp_len {
-//                     let (i, j) = (node_unit.max(mode_unit), node_unit.min(mode_unit));
-//                     if i != j {
-//                         edges[i as usize][j as usize] += 1;
-//                     }
-//                 }
-//             }
-//         }
-//     }
-//     let edges: Vec<Vec<_>> = edges
-//         .iter()
-//         .map(|xs| xs.iter().map(|&x| MIN_OCC < x).collect())
-//         .collect();
-//     let to_be_removed = approx_vertex_cover(edges, ds.selected_chunks.len());
-//     let mut chunks = ds.selected_chunks.clone();
-//     chunks.retain(|unit| !to_be_removed[unit.id as usize]);
-//     for (idx, unit) in chunks.iter_mut().enumerate() {
-//         unit.id = idx as u64;
-//     }
-//     Ok(chunks)
-// }
 
 type NormedEdge = ((u64, bool), (u64, bool));
 fn normalize_edge(w: &[Node]) -> (NormedEdge, bool) {
@@ -528,6 +477,9 @@ fn fill_sparse_edges_in_read(
         let (edge, is_forward) = normalize_edge(w);
         let start = w[0].position_from_start + w[0].seq().len();
         let end = w[1].position_from_start;
+        if end <= start {
+            continue;
+        }
         if let Some(unit) = edge_units.get(&edge) {
             if let Some(node) = fill_gap(seq, start, end, is_forward, unit, readtype) {
                 inserts.push((idx + 1, node))
@@ -920,6 +872,7 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
     });
 }
 
+// TODO: Make this not adjacency matrix, list.
 fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
     let mut degrees = vec![0; nodes];
     for (i, es) in edges.iter().enumerate() {

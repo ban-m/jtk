@@ -267,7 +267,7 @@ fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
     let task = edlib_sys::AlignTask::Alignment;
     let aln = edlib_sys::align(query, seg, mode, task);
     let (start, end) = aln.location().unwrap();
-    let ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+    let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
     (start, ops, end + 1)
 }
 
@@ -286,7 +286,7 @@ fn align_leading(query: &[u8], seg: &[u8]) -> (Vec<Op>, usize) {
         let aln = edlib_sys::align(query, seg, mode, task);
         let (_, end) = aln.location().unwrap();
         let end = end + 1;
-        let mut ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+        let mut ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
         let rem_len = seg.len() - end;
         ops.extend(std::iter::repeat(Op::Del).take(rem_len));
         let seg_len = ops.iter().filter(|&&op| op != Op::Ins).count();
@@ -308,7 +308,7 @@ fn align_trailing(query: &[u8], seg: &[u8]) -> (Vec<Op>, usize) {
         let task = edlib_sys::AlignTask::Alignment;
         let aln = edlib_sys::align(query, seg, mode, task);
         let (_, end) = aln.location().unwrap();
-        let ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+        let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
         (ops, end + 1)
     }
 }
@@ -798,7 +798,7 @@ fn base_pair_alignment(
         let len = query.len();
         let op_len = ops.iter().filter(|&&op| op != Op::Del).count();
         assert_eq!(len, op_len, "Q");
-        check(&query, &seq, chain.is_forward);
+        check(&query, seq, chain.is_forward);
     }
     Alignment {
         read_id: read.id,
@@ -821,9 +821,9 @@ fn check(query: &[u8], seq: &[u8], is_forward: bool) {
         if !contains {
             let aln = edlib_sys::align(query, seq, mode, task);
             let (start, end) = aln.location().unwrap();
-            let ops: Vec<_> = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+            let ops: Vec<_> = crate::misc::edlib_to_kiley(aln.operations().unwrap());
             let refr = &seq[start..end + 1];
-            let (r, a, q) = kiley::recover(refr, &query, &ops);
+            let (r, a, q) = kiley::recover(refr, query, &ops);
             for ((r, a), q) in r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200)) {
                 eprintln!("{}", std::str::from_utf8(r).unwrap());
                 eprintln!("{}", std::str::from_utf8(a).unwrap());
@@ -837,9 +837,9 @@ fn check(query: &[u8], seq: &[u8], is_forward: bool) {
         if !contains {
             let aln = edlib_sys::align(query, &rev, mode, task);
             let (start, end) = aln.location().unwrap();
-            let ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+            let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
             let refr = &rev[start..end + 1];
-            let (r, a, q) = kiley::recover(refr, &query, &ops);
+            let (r, a, q) = kiley::recover(refr, query, &ops);
             for ((r, a), q) in r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200)) {
                 eprintln!("{}", std::str::from_utf8(r).unwrap());
                 eprintln!("{}", std::str::from_utf8(a).unwrap());
@@ -931,7 +931,7 @@ fn align_tip_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         let aln = edlib_sys::align(query, seg, mode, task);
         let (_, end) = aln.location().unwrap();
         let end = end + 1;
-        let mut ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+        let mut ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
         ops.extend(std::iter::repeat(Op::Del).take(seg.len() - end));
         // Pop leading insertions.
         ops.reverse();
@@ -968,7 +968,7 @@ fn align_tail_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
         let aln = edlib_sys::align(query, seg, mode, task);
         let (start, _) = aln.location().unwrap();
         let mut ops = vec![Op::Del; start];
-        ops.extend(crate::misc::edlib_to_kiley(&aln.operations().unwrap()));
+        ops.extend(crate::misc::edlib_to_kiley(aln.operations().unwrap()));
         let mut poped = 0;
         while ops.last() == Some(&Op::Ins) {
             poped += ops.pop().is_some() as usize;
@@ -989,7 +989,7 @@ fn extend_between(query: &mut Vec<u8>, ops: &mut Vec<Op>, read: &[u8], seg: &[u8
         let task = edlib_sys::AlignTask::Alignment;
         let aln = edlib_sys::align(read, seg, mode, task);
         query.extend(read);
-        ops.extend(crate::misc::edlib_to_kiley(&aln.operations().unwrap()));
+        ops.extend(crate::misc::edlib_to_kiley(aln.operations().unwrap()));
     }
 }
 

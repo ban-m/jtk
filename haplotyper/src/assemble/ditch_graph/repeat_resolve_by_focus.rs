@@ -312,6 +312,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
     fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, (NodeIndex, Position))> {
         let (occs, raw_nodes, node_indices) = self.split_node_info(nodes);
+        if occs.len() < 2 {
+            return None;
+        }
         let null_distr = normalize_coverage_array(&raw_nodes);
         let null_likelihood = lk_of_counts(&occs, &null_distr);
         assert!(!null_likelihood.is_nan(), "{:?}\t{:?}", null_distr, occs);
@@ -374,7 +377,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     fn next_nodes(&self, nodes: &[NodeWithTraverseInfo]) -> Vec<(NodeIndex, Position)> {
         let mut found_nodes: Vec<_> = vec![];
         for &(_, _, _, index, pos) in nodes {
-            for edge in self.edges_from(index, !pos) {
+            let edges = self.edges_from(index, !pos).into_iter();
+            let edges = edges.filter(|e| matches!(e.copy_number,Some(cp) if cp > 0));
+            for edge in edges {
                 found_nodes.push((edge.to, edge.to_position));
             }
         }
@@ -390,12 +395,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         pos: Position,
         min_span: usize,
     ) -> Vec<Vec<NodeWithTraverseInfo>> {
-        let node_counts_at = self.count_dist_nodes(&reads, node_index, pos);
-        let mut dist_and_maxweight = vec![];
-        dist_and_maxweight.push(vec![(0, 0, 0, node_index, !pos)]);
+        let node_counts_at = self.count_dist_nodes(reads, node_index, pos);
+        let mut dist_and_maxweight = vec![vec![(0, 0, 0, node_index, !pos)]];
         for dist in 0.. {
             let prev_nodes = &dist_and_maxweight[dist];
-            let found_nodes = self.next_nodes(&prev_nodes);
+            let found_nodes = self.next_nodes(prev_nodes);
             let map_to_idx = to_btree_map(&found_nodes);
             let mut maxweight: Vec<_> = found_nodes
                 .iter()
@@ -407,6 +411,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .collect();
             for (i, &(_, max, _, index, pos)) in prev_nodes.iter().enumerate() {
                 let edges = self.edges_from(index, !pos).into_iter();
+                let edges = edges.filter(|e| matches!(e.copy_number,Some(cp) if cp > 0));
                 let to_locations = edges.filter_map(|e| map_to_idx.get(&(e.to, e.to_position)));
                 for &to_location in to_locations {
                     let old_max = maxweight.get_mut(to_location).unwrap();
@@ -423,7 +428,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         dist_and_maxweight
     }
     fn trackback(
-        indices_and_parents: &[Vec<(usize, usize, usize, NodeIndex, Position)>],
+        indices_and_parents: &[Vec<NodeWithTraverseInfo>],
         mut dist: usize,
         target: (NodeIndex, Position),
     ) -> Vec<(NodeIndex, Position)> {
@@ -501,8 +506,8 @@ fn lk_pairs(len: usize) -> (f64, f64) {
             ERROR_PROB / choice_num * ERROR_PROB * (choice_num - 1f64) / choice_num;
         (correct_to_error + error_to_error).ln()
     };
-    assert!(!correct_lk.is_nan());
-    assert!(!error_lk.is_nan());
+    assert!(!correct_lk.is_nan(), "{}", len);
+    assert!(!error_lk.is_nan(), "{}", len);
     (correct_lk, error_lk)
 }
 
@@ -513,7 +518,6 @@ fn to_btree_map(nodes: &[(NodeIndex, Position)]) -> BTreeMap<(NodeIndex, Positio
 fn normalize_coverage_array(nodes: &[&DitchNode]) -> Vec<f64> {
     let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
     let sum: f64 = probs.iter().sum();
-    probs.iter_mut().for_each(|x| *x /= sum);
     probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
     assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
     probs

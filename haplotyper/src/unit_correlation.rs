@@ -124,21 +124,6 @@ pub fn calc_p_value(clusters: &[(u64, u64)], seed: u64) -> f64 {
                 .sum::<f64>()
         })
         .sum::<f64>();
-    // let chi_squared = (0..k1 as usize)
-    //     .map(|c1| {
-    //         (0..k2 as usize)
-    //             .map(|c2| {
-    //                 let c_12 = clusters
-    //                     .iter()
-    //                     .filter(|&&(x, y)| x == c1 as u64 && y == c2 as u64)
-    //                     .count();
-    //                 let expected = k1_fraction[c1] * k2_fraction[c2];
-    //                 let expected = expected as f64 / len;
-    //                 (c_12 as f64 - expected).powi(2i32) / expected
-    //             })
-    //             .sum::<f64>()
-    //     })
-    //     .sum::<f64>();
     let sample_num = 100_000;
     let distr = ChiSquared::new(degree_of_freedom as f64).unwrap();
     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
@@ -147,7 +132,6 @@ pub fn calc_p_value(clusters: &[(u64, u64)], seed: u64) -> f64 {
         .take(sample_num)
         .filter(|&x| x > chi_squared)
         .count();
-    // trace!("CHI\t{}\t{:.2}", hit, chi_squared);
     hit as f64 / sample_num as f64
 }
 

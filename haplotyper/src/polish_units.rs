@@ -123,7 +123,7 @@ impl PolishUnit for DataSet {
                     let mode = edlib_sys::AlignMode::Global;
                     let task = edlib_sys::AlignTask::Alignment;
                     let aln = edlib_sys::align(node.seq(), &draft, mode, task);
-                    let k_ops = crate::misc::edlib_to_kiley(&aln.operations().unwrap());
+                    let k_ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
                     node.cigar = crate::encode::compress_kiley_ops(&k_ops).into();
                 });
                 (id, draft)

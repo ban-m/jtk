@@ -985,7 +985,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
     let msr = dataset.read_type.min_span_reads();
-    let min_lk = min_llr.unwrap_or(dataset.read_type.min_llr_value());
+    let min_lk = min_llr.unwrap_or_else(|| dataset.read_type.min_llr_value());
     let config = AssembleConfig::new(threads, window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
     if !skip_polish {
