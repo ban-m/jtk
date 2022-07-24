@@ -625,12 +625,3 @@ fn logit_from_lnp(lnp: f64) -> f64 {
         lnp - f64::ln_1p(-lnp.exp())
     }
 }
-
-#[allow(dead_code)]
-fn argmax(xs: &[f64]) -> usize {
-    xs.iter()
-        .enumerate()
-        .max_by(|x, y| (x.1).partial_cmp(y.1).unwrap())
-        .unwrap()
-        .0
-}

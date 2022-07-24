@@ -991,7 +991,6 @@ fn fit_query_by_edlib<'a>(
     Some((query, trim_head, trim_tail, ops, band))
 }
 
-#[allow(dead_code)]
 fn edge_identity(unit: &[u8], _: &[u8], ops: &[kiley::Op], len: usize) -> (f64, f64) {
     let (mut head_aln_len, mut head_match) = (0, 0);
     let (mut tail_aln_len, mut tail_match) = (0, 0);

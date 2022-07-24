@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct FindUnion {
     /// The vector of parents. If parents[i] = j, the j-th node represnets

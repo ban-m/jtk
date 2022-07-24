@@ -297,7 +297,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
     use crate::assemble::*;
     let msr = ds.read_type.min_span_reads();
     let min_lk = ds.read_type.min_llr_value();
-    let config = AssembleConfig::new(1, 1000, false, true, msr, min_lk);
+    let config = AssembleConfig::new(1000, false, true, msr, min_lk);
     let (records, summaries) = assemble(ds, &config);
     write_to_file(&records, &summaries, de_config);
     let multicopy_contigs: HashMap<_, _> = summaries

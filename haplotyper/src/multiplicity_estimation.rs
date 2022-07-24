@@ -45,7 +45,7 @@ impl MultiplicityEstimation for DataSet {
         debug!("MULTP\tCOVERAGE\t{}\tHAPLOID", cov);
         self.coverage = Some(cov);
         let reads: Vec<_> = self.encoded_reads.iter().collect();
-        let assemble_config = AssembleConfig::new(config.thread, 100, false, false, 4, 0f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 4, 0f64);
         let rt = self.read_type;
         let mut graph =
             ditch_graph::DitchGraph::new(&reads, &self.selected_chunks, rt, &assemble_config);

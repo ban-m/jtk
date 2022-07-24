@@ -93,8 +93,7 @@ struct ResEdge {
     to: ResIndex,
     // Currently this is not needed, because the capacity/penalty is
     // stored in the `target`
-    #[allow(dead_code)]
-    rev_idx: EdgeIndex,
+    _rev_idx: EdgeIndex,
     target: RawPointer,
 }
 
@@ -103,7 +102,7 @@ impl ResEdge {
         Self {
             from,
             to,
-            rev_idx,
+            _rev_idx: rev_idx,
             target,
         }
     }

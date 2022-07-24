@@ -68,8 +68,6 @@ impl Graph {
 
 #[derive(Debug, Clone)]
 pub struct AssembleConfig {
-    #[allow(dead_code)]
-    threads: usize,
     to_polish: bool,
     window_size: usize,
     to_resolve: bool,
@@ -80,7 +78,6 @@ pub struct AssembleConfig {
 impl std::default::Default for AssembleConfig {
     fn default() -> Self {
         Self {
-            threads: 1,
             to_polish: false,
             window_size: 100,
             to_resolve: false,
@@ -91,7 +88,6 @@ impl std::default::Default for AssembleConfig {
 }
 impl AssembleConfig {
     pub fn new(
-        threads: usize,
         window_size: usize,
         to_polish: bool,
         to_resolve: bool,
@@ -100,7 +96,6 @@ impl AssembleConfig {
     ) -> Self {
         Self {
             window_size,
-            threads,
             to_polish,
             to_resolve,
             min_span_reads,

@@ -1021,7 +1021,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
     }
     /// Remove transitive edge if the copy_number of that edge is zero.
-    #[allow(dead_code)]
     pub fn transitive_edge_reduction(&mut self) {
         let mut removed_edges: HashMap<_, Vec<_>> =
             self.nodes().map(|(index, _)| (index, vec![])).collect();
@@ -1800,52 +1799,51 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
 }
 
-#[allow(dead_code)]
-fn get_bridge(nodes: usize, edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
-    warn!("Have you tested this code? I think not.");
-    let mut is_arrived = vec![false; nodes];
-    let mut bridges = vec![vec![]; nodes];
-    let mut order = vec![-1; nodes];
-    let mut low = vec![-1; nodes];
-    let mut parent = vec![0; nodes];
-    let mut count = 0;
-    for i in 0..nodes {
-        if is_arrived[i] {
-            continue;
-        }
-        let mut stack = vec![i];
-        'dfs: while !stack.is_empty() {
-            let last = *stack.last().unwrap();
-            if !is_arrived[last] {
-                is_arrived[last] = true;
-                order[last] = count as i64;
-                count += 1;
-            }
-            for &to in edges[last].iter() {
-                if !is_arrived[to] {
-                    parent[to] = last;
-                    stack.push(to);
-                    continue 'dfs;
-                }
-            }
-            // Postorder, we have arrived all the nodes below this node.
-            let last = stack.pop().unwrap();
-            for &to in edges[last].iter() {
-                if parent[to] == last {
-                    low[last] = low[last].min(low[to]);
-                    if order[last] < low[to] {
-                        bridges[last].push(to);
-                        bridges[to].push(last);
-                    }
-                } else {
-                    // This is a back edge.
-                    low[last] = low[last].min(order[to]);
-                }
-            }
-        }
-    }
-    bridges
-}
+// fn get_bridge(nodes: usize, edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+//     warn!("Have you tested this code? I think not.");
+//     let mut is_arrived = vec![false; nodes];
+//     let mut bridges = vec![vec![]; nodes];
+//     let mut order = vec![-1; nodes];
+//     let mut low = vec![-1; nodes];
+//     let mut parent = vec![0; nodes];
+//     let mut count = 0;
+//     for i in 0..nodes {
+//         if is_arrived[i] {
+//             continue;
+//         }
+//         let mut stack = vec![i];
+//         'dfs: while !stack.is_empty() {
+//             let last = *stack.last().unwrap();
+//             if !is_arrived[last] {
+//                 is_arrived[last] = true;
+//                 order[last] = count as i64;
+//                 count += 1;
+//             }
+//             for &to in edges[last].iter() {
+//                 if !is_arrived[to] {
+//                     parent[to] = last;
+//                     stack.push(to);
+//                     continue 'dfs;
+//                 }
+//             }
+//             // Postorder, we have arrived all the nodes below this node.
+//             let last = stack.pop().unwrap();
+//             for &to in edges[last].iter() {
+//                 if parent[to] == last {
+//                     low[last] = low[last].min(low[to]);
+//                     if order[last] < low[to] {
+//                         bridges[last].push(to);
+//                         bridges[to].push(last);
+//                     }
+//                 } else {
+//                     // This is a back edge.
+//                     low[last] = low[last].min(order[to]);
+//                 }
+//             }
+//         }
+//     }
+//     bridges
+// }
 
 #[cfg(test)]
 mod tests {
@@ -1918,7 +1916,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / hap.len() / 2) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -1975,7 +1973,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -2030,7 +2028,7 @@ mod tests {
         println!("(1,2)\t{}", count);
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
-        let assemble_config = AssembleConfig::new(1, 100, false, false, 6, 1f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64);
         let mut graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         assert!(graph.sanity_check());
         println!("graph:{graph:?}");

@@ -834,10 +834,6 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
     debug!("START\tAssembly step");
     set_threads(matches);
-    let threads: usize = matches
-        .value_of("threads")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
     let window_size: usize = matches
         .value_of("window_size")
         .and_then(|num| num.parse().ok())
@@ -849,7 +845,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     use haplotyper::assemble::*;
     let msr = dataset.read_type.min_span_reads();
     let min_lk = min_llr.unwrap_or_else(|| dataset.read_type.min_llr_value());
-    let config = AssembleConfig::new(threads, window_size, !skip_polish, true, msr, min_lk);
+    let config = AssembleConfig::new(window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
     if !skip_polish {
         use haplotyper::model_tune::update_model;

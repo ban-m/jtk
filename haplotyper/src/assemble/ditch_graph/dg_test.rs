@@ -1,6 +1,5 @@
 // #[cfg(test)]
 // mod tests {
-//     #![allow(dead_code)]
 //     use super::super::*;
 //     use definitions::ReadType;
 //     use definitions::{Edge, Node};

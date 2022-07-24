@@ -324,9 +324,14 @@ fn split(
     contig_len: usize,
 ) -> (TipPos, Vec<Chunk>, TipPos) {
     let len = alignment.ops.iter().filter(|&&op| op != Op::Del).count();
-    assert_eq!(len, alignment.query.len());
+    assert_eq!(len, alignment.query.len(), "{:?}", alignment);
     let refr = alignment.ops.iter().filter(|&&op| op != Op::Ins).count();
-    assert_eq!(refr, alignment.contig_end - alignment.contig_start);
+    let ref_len = alignment.contig_end - alignment.contig_start;
+    assert_eq!(
+        refr, ref_len,
+        "{},{}",
+        alignment.is_forward, alignment.read_id
+    );
     let start_chunk_id = alignment.contig_start / window;
     let start_pos_in_contig = match alignment.contig_start % window == 0 {
         true => start_chunk_id * window,
@@ -687,7 +692,6 @@ impl ChainNode {
 struct Chain {
     id: String,
     contig_start_idx: usize,
-    #[allow(dead_code)]
     contig_end_idx: usize,
     // If false, query indices are after rev-comped.
     is_forward: bool,
@@ -1201,14 +1205,12 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
 
 #[derive(Debug, Clone)]
 pub struct Alignment {
-    #[allow(dead_code)]
     read_id: u64,
     contig: String,
     contig_start: usize,
     contig_end: usize,
     query: Vec<u8>,
     ops: Vec<Op>,
-    #[allow(dead_code)]
     is_forward: bool,
 }
 
