@@ -160,15 +160,18 @@ impl<'a, 'b> BellmanFord<'a, 'b> {
     fn path(&self) -> Option<Vec<ResEdge>> {
         let dist = self.dists[self.sink.0];
         (dist < 0f64).then(|| {
-            // Ftrace!("CAND\tPATH\t{}\t{}\t{dist:.2}", self.source.0, self.sink.0,);
-            // Recover shortest path from the source to the sink.
             let mut current = self.sink;
             let mut path = vec![self.prede[current.0].unwrap()];
             current = self.predv[current.0];
             while current != self.source {
                 path.push(self.prede[current.0].unwrap());
                 current = self.predv[current.0];
-                assert!(path.len() <= self.graph.residual_graph.len());
+                assert!(
+                    path.len() <= self.graph.residual_graph.len(),
+                    "{},{}",
+                    self.source.0,
+                    self.sink.0
+                );
             }
             path.reverse();
             path

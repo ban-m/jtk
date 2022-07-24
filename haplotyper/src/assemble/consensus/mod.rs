@@ -106,7 +106,7 @@ impl Polish for DataSet {
             .encoded_reads
             .par_iter()
             .enumerate()
-            .map(|(i, read)| {
+            .flat_map(|(i, read)| {
                 let seed = config.seed + i as u64;
                 let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
                 let mut raw_read = read.recover_raw_read();
@@ -115,7 +115,7 @@ impl Polish for DataSet {
             })
             .collect();
         let mut alignments_on_contigs: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        for aln in alignments.into_iter().flatten() {
+        for aln in alignments {
             alignments_on_contigs
                 .entry(aln.contig.clone())
                 .or_default()
@@ -168,10 +168,6 @@ fn polish(
                 (start, put_position, end)
             })
             .collect();
-        // for (i, pu) in pileup_seq.iter().enumerate() {
-        //     debug!("PILEUP\t{i}\t{}", pu.len());
-        // }
-        //  Polish
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
             .zip(pileup_seq.par_iter())
@@ -202,25 +198,113 @@ fn polish(
     polished
 }
 
+fn length_median(seqs: &[&[u8]]) -> usize {
+    let mut len: Vec<_> = seqs.iter().map(|x| x.len()).collect();
+    let idx = seqs.len() / 2;
+    // +1 to avoid underflow.
+    *len.select_nth_unstable(idx).1
+}
+
+fn within_range(median: usize, len: usize, frac: f64) -> bool {
+    let diff = median.max(len) - median.min(len);
+    (diff as f64 / median as f64) < frac
+}
+
+fn remove_refernece(ops: &mut Vec<Vec<Op>>, seqs: &[&[u8]]) {
+    for (seq, op) in std::iter::zip(seqs, ops.iter_mut()) {
+        let qlen = op.iter().filter(|&&op| op != Op::Del).count();
+        assert_eq!(seq.len(), qlen);
+        op.clear();
+        op.extend(std::iter::repeat(Op::Ins).take(qlen));
+    }
+}
+
+fn split_sequences<'a>(
+    seqs: &[&'a [u8]],
+    ops: &mut Vec<Vec<Op>>,
+    length_median: usize,
+) -> (Vec<&'a [u8]>, Vec<Vec<Op>>, Vec<&'a [u8]>, Vec<bool>) {
+    let (mut use_seqs, mut use_ops) = (vec![], vec![]);
+    let mut remainings = vec![];
+    let mut ops_order = vec![];
+    assert_eq!(seqs.len(), ops.len());
+    for &seq in seqs.iter().rev() {
+        let ops = ops.pop().unwrap();
+        if within_range(length_median, seq.len(), 0.2) {
+            use_seqs.push(seq);
+            use_ops.push(ops);
+            ops_order.push(true);
+        } else {
+            remainings.push(seq);
+            ops_order.push(false);
+        }
+    }
+    (use_seqs, use_ops, remainings, ops_order)
+}
+
+fn global_align(query: &[u8], target: &[u8]) -> Vec<Op> {
+    if query.is_empty() {
+        vec![Op::Del; target.len()]
+    } else if target.is_empty() {
+        vec![Op::Ins; query.len()]
+    } else {
+        let mode = edlib_sys::AlignMode::Global;
+        let task = edlib_sys::AlignTask::Alignment;
+        let align = edlib_sys::align(query, target, mode, task);
+        crate::misc::edlib_to_kiley(align.operations().unwrap())
+    }
+}
+
+fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut Vec<Vec<Op>>, radius: usize) -> Vec<u8> {
+    let draft = kiley::ternary_consensus_by_chunk(&seqs, radius);
+    for (seq, ops) in std::iter::zip(seqs, ops.iter_mut()) {
+        *ops = global_align(seq, &draft);
+    }
+    kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, ops, radius)
+}
+
 fn polish_seg(
     hmm: &PairHiddenMarkovModel,
     draft: &[u8],
     seqs: &[&[u8]],
-    ops: &mut [Vec<Op>],
+    ops: &mut Vec<Vec<Op>>,
     radius: usize,
 ) -> Vec<u8> {
-    use kiley::bialignment::guided::polish_until_converge_with;
-    let draft = polish_until_converge_with(draft, seqs, ops, radius);
-    // Check validity.
-    let has_large_del = seqs.iter().zip(ops.iter()).any(|(seq, op)| {
-        let lk_pre = hmm.likelihood_guided(&draft, seq, op, radius);
-        let lk_pos = hmm.likelihood_guided_post(&draft, seq, op, radius);
-        lk_pre.is_nan() || lk_pos.is_nan()
-    });
-    match has_large_del {
-        true => draft,
-        false => hmm.polish_until_converge_with(&draft, seqs, ops, radius),
+    let length_median = length_median(seqs);
+    if length_median == 0 {
+        remove_refernece(ops, seqs);
+        return Vec::new();
     }
+    let (use_seqs, mut use_ops, purged_seq, ops_order) = split_sequences(seqs, ops, length_median);
+    assert!(ops.is_empty());
+    assert_eq!(seqs.len(), ops_order.len());
+    assert_eq!(seqs.len(), use_seqs.len() + purged_seq.len());
+    use kiley::bialignment::guided::polish_until_converge_with;
+    let draft = match within_range(draft.len(), length_median, 0.2) {
+        true => polish_until_converge_with(draft, &use_seqs, &mut use_ops, radius),
+        false => bootstrap_consensus(&use_seqs, &mut use_ops, radius),
+    };
+    let polished = hmm.polish_until_converge_with(&draft, &use_seqs, &mut use_ops, radius);
+    let (mut use_seqs, mut purged_seq, mut ops_order) = (use_seqs, purged_seq, ops_order);
+    let mut idx = 0;
+    while let Some(is_used) = ops_order.pop() {
+        match is_used {
+            true => {
+                let seq = use_seqs.pop().unwrap();
+                assert_eq!(seq, seqs[idx]);
+                ops.push(use_ops.pop().unwrap());
+            }
+            false => {
+                let seq = purged_seq.pop().unwrap();
+                assert_eq!(seq, seqs[idx]);
+                ops.push(global_align(seq, &draft));
+            }
+        }
+        idx += 1;
+    }
+    assert!(use_seqs.is_empty() && purged_seq.is_empty() && ops_order.is_empty());
+    assert_eq!(ops.len(), seqs.len());
+    polished
 }
 
 fn fix_alignment(
@@ -263,6 +347,8 @@ fn fix_alignment(
 }
 
 fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
+    assert!(!query.is_empty());
+    assert!(!seg.is_empty());
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
     let aln = edlib_sys::align(query, seg, mode, task);
@@ -409,6 +495,7 @@ fn align_to_contigs<R: Rng>(
     rng: &mut R,
 ) -> Vec<Alignment> {
     let mut chains = enumerate_chain(read, encs);
+    let chain_len = chains.len();
     let mut alns = vec![];
     while !chains.is_empty() {
         let choises: Vec<_> = (0..chains.len()).collect();
@@ -426,8 +513,14 @@ fn align_to_contigs<R: Rng>(
         chains.retain(|c| c.overlap_frac(&chain) < 0.5);
         let seg = segs.iter().find(|seg| seg.sid == chain.id).unwrap();
         let enc = encs.iter().find(|enc| enc.id == chain.id).unwrap();
-        alns.push(base_pair_alignment(read, seq, &chain, seg, enc));
+        alns.push(base_pair_alignment(read, seq, &chain, seg, enc, alns.len()));
     }
+    debug!(
+        "ALN\t{}\t{}\t{}\t{chain_len}",
+        read.id,
+        seq.len(),
+        alns.len()
+    );
     alns
 }
 
@@ -549,10 +642,6 @@ fn align_in_chunk_space(
     let query = &nodes[first.read_index..last.read_index + 1];
     let refr = &enc.tiles()[first.contig_index..last.contig_index + 1];
     let mut ops = alignment(query, refr);
-    // if nodes.iter().any(|n| n.node.0 == 20) {
-    //     debug!("{first:?}\t{ops:?}\t{:?}", &nodes[first.read_index]);
-    // }
-    // Removing head/tail...
     let (start_position, end_position) = get_range(first, &mut ops);
     Chain::new(
         enc.id.clone(),
@@ -758,6 +847,7 @@ fn base_pair_alignment(
     chain: &Chain,
     seg: &gfa::Segment,
     encs: &crate::assemble::ditch_graph::ContigEncoding,
+    _id: usize,
 ) -> Alignment {
     let seg_seq = seg.sequence.as_ref().unwrap().as_bytes();
     let tiles = convert_into_tiles(read, chain, encs);
@@ -765,7 +855,7 @@ fn base_pair_alignment(
         0 => align_tip(seq, seg, chain, tiles.first().unwrap()),
         _ => (vec![], vec![], 0),
     };
-    for w in tiles.windows(2) {
+    for (_, w) in tiles.windows(2).enumerate() {
         append_range(&mut query, &mut ops, &w[0]);
         let seg_start = w[0].ctg_end;
         let seg_end = w[1].ctg_start;
@@ -867,13 +957,11 @@ fn align_tail(
     let seg_seq = &seg[seg_start..];
     let (query, ops) = if chain.is_forward {
         let read_start = tile.read_end;
-        let read_end = (read_start + 2 * seg_seq.len()).min(seq.len());
-        let trailing_seq = &seq[read_start..read_end];
+        let trailing_seq = &seq[read_start..];
         align_tail_inner(seg_seq, trailing_seq)
     } else {
         let read_end = tile.read_start;
-        let read_start = read_end.saturating_sub(seg_seq.len() * 2);
-        let trailing_seq = bio_utils::revcmp(&seq[read_start..read_end]);
+        let trailing_seq = bio_utils::revcmp(&seq[..read_end]);
         align_tail_inner(seg_seq, &trailing_seq)
     };
     let len_seg = ops.iter().filter(|&&op| op != Op::Ins).count();
@@ -890,95 +978,78 @@ fn align_tip(
     if seg_end == 0 {
         return (vec![], vec![], 0);
     }
-    // log::debug!("SegEnd\t{seg_end}");
-    // TODO:Maybe we should constraint the length ... ?
     let seg_seq = &seg.sequence.as_ref().unwrap().as_bytes()[..seg_end];
     let (query, ops) = if chain.is_forward {
         let read_end = tile.read_start;
-        let read_start = read_end.saturating_sub(2 * seg_end);
-        // log::debug!("QUERY\t?\t{read_end}");
-        let leading_seq = &seq[read_start..read_end];
+        let leading_seq = &seq[..read_end];
         align_tip_inner(seg_seq, leading_seq)
     } else {
         let read_start = tile.read_end;
-        let read_end = (read_start + 2 * seg_end).min(seq.len());
-        // log::debug!("QUERY\t{read_start}\t?");
-        let leading_seq = bio_utils::revcmp(&seq[read_start..read_end]);
+        let leading_seq = bio_utils::revcmp(&seq[read_start..]);
         align_tip_inner(seg_seq, &leading_seq)
     };
     let len_seg = ops.iter().filter(|&&op| op != Op::Ins).count();
     (query, ops, len_seg)
 }
 
+use crate::ALN_PARAMETER;
+const BAND: usize = 20;
 fn align_tip_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
-    // log::debug!("{}VS{}", seg.len(), query.len());
-    let mode = edlib_sys::AlignMode::Infix;
+    let mode = edlib_sys::AlignMode::Global;
     let task = edlib_sys::AlignTask::Alignment;
-    if seg.len() < query.len() {
-        // Seg:         --------->
-        // Que:  ------------------->
-        //              |         |
-        let aln = edlib_sys::align(seg, query, mode, task);
-        let (start, end) = aln.location().unwrap();
-        let end = end + 1;
-        let ops_table = [Op::Match, Op::Del, Op::Ins, Op::Mismatch];
-        let ops = aln.operations().unwrap();
-        let mut ops: Vec<_> = ops.iter().map(|&op| ops_table[op as usize]).collect();
-        assert!(end <= query.len());
-        ops.extend(std::iter::repeat(Op::Ins).take(query.len() - end));
-        let query = query[start..].to_vec();
-        (query, ops)
-    } else {
-        // Seg: ------------------->
-        // Query:          -------->
-        let aln = edlib_sys::align(query, seg, mode, task);
-        let (_, end) = aln.location().unwrap();
-        let end = end + 1;
-        let mut ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
-        ops.extend(std::iter::repeat(Op::Del).take(seg.len() - end));
-        // Pop leading insertions.
-        ops.reverse();
-        let mut start = 0;
-        while ops.last() == Some(&Op::Ins) {
-            start += ops.pop().is_some() as usize;
-        }
-        ops.reverse();
-        let query = query[start..].to_vec();
-        (query, ops)
+    let len = seg.len().min(query.len());
+    if len == 0 {
+        return (Vec::new(), Vec::new());
     }
+    let seg = &seg[seg.len() - len..];
+    let query = &query[query.len() - len..];
+    let aln = edlib_sys::align(query, seg, mode, task);
+    let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
+    let ops = kiley::bialignment::guided::global_guided(seg, query, &ops, BAND, ALN_PARAMETER).1;
+    let mut ops =
+        kiley::bialignment::guided::global_guided(seg, query, &ops, BAND, ALN_PARAMETER).1;
+    ops.reverse();
+    let mut start = 0;
+    loop {
+        match ops.last() {
+            Some(&Op::Del) => assert!(ops.pop().is_some()),
+            Some(&Op::Ins) => {
+                start += 1;
+                ops.pop();
+            }
+            _ => break,
+        }
+    }
+    ops.reverse();
+    (query[start..].to_vec(), ops)
 }
 
 fn align_tail_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
-    let mode = edlib_sys::AlignMode::Infix;
+    let mode = edlib_sys::AlignMode::Global;
     let task = edlib_sys::AlignTask::Alignment;
-    if seg.len() < query.len() {
-        // Seg:  --------->
-        // Que:  ------------------->
-        //         |      |
-        let aln = edlib_sys::align(seg, query, mode, task);
-        let (start, end) = aln.location().unwrap();
-        let end = end + 1;
-        let ops_table = [Op::Match, Op::Del, Op::Ins, Op::Mismatch];
-        let aln = aln.operations().unwrap();
-        let mut ops = vec![Op::Ins; start];
-        ops.extend(aln.iter().map(|&op| ops_table[op as usize]));
-        let query = query[..end].to_vec();
-        (query, ops)
-    } else {
-        //          |      |
-        // Seg:   ------------------->
-        // Query:   -------|->
-        let aln = edlib_sys::align(query, seg, mode, task);
-        let (start, _) = aln.location().unwrap();
-        let mut ops = vec![Op::Del; start];
-        ops.extend(crate::misc::edlib_to_kiley(aln.operations().unwrap()));
-        let mut poped = 0;
-        while ops.last() == Some(&Op::Ins) {
-            poped += ops.pop().is_some() as usize;
-        }
-        let query = query[..query.len() - poped].to_vec();
-        (query, ops)
+    let len = seg.len().min(query.len());
+    if len == 0 {
+        return (Vec::new(), Vec::new());
     }
+    let seg = &seg[..len];
+    let query = &query[..len];
+    let aln = edlib_sys::align(query, seg, mode, task);
+    let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
+    let ops = kiley::bialignment::guided::global_guided(seg, query, &ops, BAND, ALN_PARAMETER).1;
+    let (_, mut ops) =
+        kiley::bialignment::guided::global_guided(seg, query, &ops, BAND, ALN_PARAMETER);
+    let mut poped = 0;
+    loop {
+        match ops.last() {
+            Some(&Op::Del) => assert!(ops.pop().is_some()),
+            Some(&Op::Ins) => {
+                poped += 1;
+                ops.pop();
+            }
+            _ => break,
+        }
+    }
+    (query[..query.len() - poped].to_vec(), ops)
 }
 
 fn extend_between(query: &mut Vec<u8>, ops: &mut Vec<Op>, read: &[u8], seg: &[u8]) {
@@ -996,6 +1067,7 @@ fn extend_between(query: &mut Vec<u8>, ops: &mut Vec<Op>, read: &[u8], seg: &[u8
     }
 }
 
+#[derive(Debug, Clone)]
 struct Tile<'a, 'b> {
     ctg_start: usize,
     ctg_end: usize,
@@ -1156,8 +1228,6 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
     assert_eq!(u_len, tile.encoding.unit_len());
     assert_eq!(r_len, tile.node.seq().len());
     let (mut r_pos, mut u_pos) = (0, 0);
-    // log::debug!("SEG\t{start}-{end}");
-    // log::debug!("QUE\t{r_start}-{r_end}");
     let mut temp_o = vec![];
     for op in alignment {
         if (start..end).contains(&u_pos) && (r_start..r_end).contains(&r_pos) {
