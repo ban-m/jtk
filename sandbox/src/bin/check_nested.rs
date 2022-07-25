@@ -31,12 +31,9 @@ fn main() -> std::io::Result<()> {
     log::debug!("{}\t{}", seed, test_num);
     {
         let start = std::time::Instant::now();
-        let coverage = (test_num / 4) as f64;
         let clusters = 4;
-        use haplotyper::local_clustering::kmeans::ClusteringConfig;
-        let config = ClusteringConfig::new(100, clusters, coverage, 1.8);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
+        let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, clusters, 100).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

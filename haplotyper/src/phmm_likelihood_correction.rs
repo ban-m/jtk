@@ -81,7 +81,7 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
     }
     let hmm = crate::model_tune::get_model(ds).unwrap();
     // ds.error_rate()
-    let gain = crate::local_clustering::estimate_minimum_gain(&hmm);
+    let gain = crate::likelihood_gains::estimate_minimum_gain(&hmm);
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
         .iter()
@@ -328,9 +328,12 @@ fn get_eigenvalues(matrix: &[Vec<f64>], _k: usize, id: u64) -> (Vec<Vec<f64>>, u
     let pick_k = opt_k;
     if pick_k == 0 {
         for row in matrix.row_iter() {
-            eprintln!("{row:?}");
+            let sum: f64 = row.iter().sum();
+            let row: Vec<_> = row.iter().map(|x| format!("{:.2}", x)).collect();
+            eprintln!("{sum}\t{}", row.join("\t"));
         }
-        panic!("{}", opt_k);
+        let eigens: Vec<_> = eigen_and_eigenvec.iter().take(4).map(|x| x.1).collect();
+        panic!("{:?},{},{}", eigens, id, opt_k);
     }
     let features: Vec<Vec<_>> = (0..datalen)
         .map(|i| (0..pick_k).map(|j| eigen_and_eigenvec[j].0[i]).collect())

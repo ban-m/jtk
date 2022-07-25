@@ -51,8 +51,9 @@ fn main() -> std::io::Result<()> {
     let template = reference.seq();
     let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(command_arg.seed);
     let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 3429, 100, 20, 5);
     let radius = template.len() / 50;
-    let config = ClusteringConfig::new(radius, clusters, coverage, 1.8);
+    let config = ClusteringConfig::new(radius, clusters, coverage, &gains);
     let strand: Vec<_> = (0..seqs.len()).map(|x| x % 2 == 0).collect();
     let mut ops: Vec<_> = seqs
         .iter()

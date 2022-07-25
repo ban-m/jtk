@@ -75,29 +75,19 @@ fn set_coverage(ds: &mut DataSet) {
     ds.coverage = Some(cov);
 }
 
-/// Selection: HashSet of the chunk ID to be clustered on.
-pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
-    if selection.is_empty() {
-        return;
-    }
-    if ds.coverage.is_none() {
-        set_coverage(ds);
-    }
-    if ds.model_param.is_none() {
-        crate::model_tune::update_model(ds);
-    }
-    let hmm = crate::model_tune::get_model(ds).unwrap();
-    // use crate::stats::Stats;
-    let gain = estimate_minimum_gain(&hmm); //ds.error_rate()
-    debug!("MinGain\t{:.3}", gain);
-    let mut pileups: HashMap<u64, Vec<&mut Node>> =
-        selection.iter().map(|&id| (id, vec![])).collect();
+fn pileup_nodes<'a>(
+    ds: &'a mut DataSet,
+    selection: &HashSet<u64>,
+) -> (HashMap<u64, Vec<&'a mut Node>>, HashMap<u64, &'a Unit>) {
     let chunks: HashMap<u64, _> = ds
         .selected_chunks
         .iter()
         .filter(|c| selection.contains(&c.id))
         .map(|c| (c.id, c))
         .collect();
+    let mut pileups: HashMap<u64, Vec<&mut Node>> =
+        selection.iter().map(|&id| (id, vec![])).collect();
+
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         if let Some(bucket) = pileups.get_mut(&node.unit) {
             bucket.push(node);
@@ -110,8 +100,32 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             aln.iter().filter(|&&x| x != b'|').count()
         });
     });
+    (pileups, chunks)
+}
+
+const SEED: u64 = 309423;
+const SEQ_LEN: usize = 100;
+const BAND: usize = 20;
+const HOMOP_LEN: usize = 5;
+/// Selection: HashSet of the chunk ID to be clustered on.
+pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
+    use kiley::bialignment::guided::polish_until_converge_with;
+    use kmeans::*;
+    if selection.is_empty() {
+        return;
+    }
+    if ds.coverage.is_none() {
+        set_coverage(ds);
+    }
+    if ds.model_param.is_none() {
+        crate::model_tune::update_model(ds);
+    }
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
+    let hmm = crate::model_tune::get_model(ds).unwrap();
+    let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
+    debug!("GAINS:{gains}");
+    let (mut pileups, chunks) = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
         .filter(|(_, units)| !units.is_empty())
@@ -124,14 +138,11 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 .unzip();
             let band_width = read_type.band_width(ref_unit.seq().len());
             let start = std::time::Instant::now();
-            use kmeans::ClusteringConfig;
             let copy_num = ref_unit.copy_num as u8;
             let refseq = ref_unit.seq();
-            use kiley::bialignment::guided::polish_until_converge_with;
             let cons = polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
             let cons = hmm.polish_until_converge_with(&cons, &seqs, &mut ops, band_width);
-            let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, gain);
-            use kmeans::*;
+            let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, &gains);
             let polished = std::time::Instant::now();
             let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
             let (asn, pss, score, k) = if 1 < ref_unit.copy_num {
@@ -168,41 +179,6 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         }
     }
     normalize::normalize_local_clustering(ds);
-}
-
-pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
-    const SEED: u64 = 23908;
-    const SAMPLE_NUM: usize = 1000;
-    const SEQ_NUM: usize = 500;
-    const LEN: usize = 100;
-    const BAND: usize = 25;
-    // const FRAC: f64 = 0.01;
-    const MIN_REQ: f64 = 1f64;
-    let mut medians: Vec<_> = (0..SAMPLE_NUM)
-        .into_par_iter()
-        .map(|seed| {
-            let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED + seed as u64);
-            let hap1 = kiley::gen_seq::generate_seq(&mut rng, LEN);
-            let hap2 = match seed % 2 == 0 {
-                true => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 0, 1),
-                false => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 1, 0),
-            };
-            use kiley::gen_seq::Generate;
-            let mut lks: Vec<_> = (0..SEQ_NUM)
-                .map(|_| {
-                    let read = hmm.gen(&hap1, &mut rng);
-                    let lk_base = hmm.likelihood(&hap1, &read, BAND);
-                    let lk_diff = hmm.likelihood(&hap2, &read, BAND);
-                    lk_base - lk_diff
-                })
-                .collect();
-            *lks.select_nth_unstable_by(SEQ_NUM / 2, |x, y| x.partial_cmp(y).unwrap())
-                .1
-        })
-        .collect();
-    medians.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    debug!("MIN_GAIN\t{:?}", &medians[..6]);
-    (medians[2]).max(MIN_REQ)
 }
 
 #[cfg(test)]

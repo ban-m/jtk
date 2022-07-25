@@ -122,14 +122,15 @@ Auto-tune the similarity threshold.
 pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
+    let consensi = take_consensus_sequence(ds);
     for t in 0..OUTER_LOOP {
         ds.encoded_reads.retain(|r| !r.nodes.is_empty());
         remove_weak_edges(ds);
-        let (read_error_rate, unit_error_rate, standard_dev) =
-            estimate_error_rate_dev(ds, fallback);
+        use crate::estimate_error_rate::estimate_error_rate;
+        let errors = estimate_error_rate(ds, fallback);
+        let standard_dev = errors.median_of_sqrt_err;
         debug!("ErrorRateSTDDev\t{}\t{}", t, standard_dev);
-        let (new_nodes, is_updated) =
-            filling_until_stable(ds, (&read_error_rate, &unit_error_rate, standard_dev));
+        let (new_nodes, is_updated) = filling_until(ds, &consensi, &errors);
         find_new_node.extend(new_nodes);
         if !is_updated {
             break;
@@ -138,7 +139,7 @@ pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
     find_new_node
 }
 
-pub fn remove_weak_edges(ds: &mut DataSet) {
+fn remove_weak_edges(ds: &mut DataSet) {
     let edge_counts = {
         let mut counts: HashMap<_, u32> = HashMap::new();
         for read in ds.encoded_reads.iter() {
@@ -325,10 +326,12 @@ fn try_remove_tail(
     }
 }
 
-fn filling_until_stable(
+fn filling_until(
     ds: &mut DataSet,
-    (read_error_rate, unit_error_rate, stddev): (&[f64], &[Vec<f64>], f64),
+    consensi: &HashMap<(u64, u64), Vec<u8>>,
+    error_rates: &crate::estimate_error_rate::ErrorRate,
 ) -> (HashSet<u64>, bool) {
+    let stddev = error_rates.median_of_sqrt_err;
     let raw_seq: HashMap<_, _> = ds
         .raw_reads
         .iter()
@@ -337,52 +340,32 @@ fn filling_until_stable(
     const INNER_LOOP: usize = 15;
     let mut find_new_node = HashSet::new();
     let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-    let representative = take_consensus_sequence(ds);
     // i->vector of failed index and units.
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
     let mut is_updated = vec![true; ds.encoded_reads.len()];
     for i in 0..INNER_LOOP {
+        let alive = is_updated.iter().filter(|&&x| x).count();
+        debug!("Reads\t{}\t{}", alive, is_updated.len());
         let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
         assert_eq!(ds.encoded_reads.len(), failed_trials.len());
         assert_eq!(ds.encoded_reads.len(), is_updated.len());
-        let newly_encoded_units: Vec<_> = if log_enabled!(log::Level::Trace) {
-            trace!("Tracing. Single thread mode.");
-            let reads = ds
-                .encoded_reads
-                .iter_mut()
-                .zip(failed_trials.iter_mut())
-                .zip(is_updated.iter_mut())
-                .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated);
-            reads
-                .flat_map(|((read, fails), is_updated)| {
-                    let error_rate = read_error_rate[read.id as usize];
-                    let seq = raw_seq[&read.id];
-                    let read = (read, seq, error_rate, is_updated);
-                    let units = (&units, unit_error_rate, &representative);
-                    correct_deletion_error(read, fails, units, stddev, &read_skeltons)
-                })
-                .collect()
-        } else {
-            let reads = ds
-                .encoded_reads
-                .par_iter_mut()
-                .zip(failed_trials.par_iter_mut())
-                .zip(is_updated.par_iter_mut())
-                .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated);
-            reads
-                .flat_map(|((read, fails), is_updated)| {
-                    let error_rate = read_error_rate[read.id as usize];
-                    let seq = raw_seq[&read.id];
-                    let read = (read, seq, error_rate, is_updated);
-                    let units = (&units, unit_error_rate, &representative);
-                    correct_deletion_error(read, fails, units, stddev, &read_skeltons)
-                })
-                .collect()
-        };
+        let newly_encoded_units: Vec<_> = ds
+            .encoded_reads
+            .par_iter_mut()
+            .zip(failed_trials.par_iter_mut())
+            .zip(is_updated.par_iter_mut())
+            .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
+            .flat_map(|((read, fails), is_updated)| {
+                let seq = raw_seq[&read.id];
+                let read = (read, seq, is_updated);
+                let units = (&units, error_rates, consensi);
+                correct_deletion_error(read, fails, units, stddev, &read_skeltons)
+            })
+            .collect();
         find_new_node.extend(newly_encoded_units);
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        debug!("Filled:{}\t{}", current, after);
+        debug!("Filled\t{}\t{}", current, after);
         if after == current && i == 0 {
             debug!("Filled\tBREAK\tOuter");
             return (find_new_node, false);
@@ -396,306 +379,32 @@ fn filling_until_stable(
     (find_new_node, true)
 }
 
-// Error Rate of the reads, error rate of the units, and the sqrt of the median of the squared error.
-pub fn estimate_error_rate_dev(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<Vec<f64>>, f64) {
-    type Read = (usize, Vec<(usize, usize, f64)>);
-    fn residual(errors: &[Read], reads: &[f64], units: &[Vec<f64>]) -> f64 {
-        let residual: f64 = errors
-            .iter()
-            .map(|&(readid, ref errors)| -> f64 {
-                let read = reads[readid];
-                let data_error: f64 = errors
-                    .iter()
-                    .map(|&(unit, cluster, error)| (error - read - units[unit][cluster]).powi(2))
-                    .sum();
-                data_error
-            })
-            .sum();
-        let reg_term: f64 = units.iter().flatten().map(|x| x * x).sum();
-        residual + reg_term
-    }
-    let max_read_id = ds.raw_reads.iter().map(|r| r.id).max().unwrap() as usize;
-    let max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap() as usize;
-    let (mut unit_error_rate, unit_counts) = {
-        let mut cluster_num = vec![0; max_unit_id + 1];
-        for u in ds.selected_chunks.iter() {
-            cluster_num[u.id as usize] = u.cluster_num;
-        }
-        let unit_errors: Vec<_> = cluster_num.iter().map(|&x| vec![0f64; x]).collect();
-        let mut counts: Vec<_> = cluster_num.iter().map(|&x| vec![0; x]).collect();
-        for read in ds.encoded_reads.iter() {
-            for node in read.nodes.iter() {
-                let (unit, cluster) = (node.unit as usize, node.cluster as usize);
-                counts[unit][cluster] += 1;
-            }
-        }
-        (unit_errors, counts)
-    };
-    let mut read_error_rate = vec![0f64; max_read_id + 1];
-    for read in ds.encoded_reads.iter() {
-        read_error_rate[read.id as usize] = fallback;
-    }
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    let errors: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .map(|read| {
-            let errors: Vec<_> = read
-                .nodes
-                .iter()
-                .map(|node| {
-                    let aln = node.recover(units[&node.unit]).1;
-                    let errors = aln.iter().filter(|&&x| x != b'|').count();
-                    let error = errors as f64 / aln.len() as f64;
-                    (node.unit as usize, node.cluster as usize, error)
-                })
-                .collect::<Vec<_>>();
-            (read.id as usize, errors)
-        })
-        .collect();
-    let mut current_resid = residual(&errors, &read_error_rate, &unit_error_rate);
-    loop {
-        // Re-estimation of unit error rate
-        unit_error_rate.iter_mut().flatten().for_each(|x| *x = 0f64);
-        for &(readid, ref errors) in errors.iter() {
-            let read_error = read_error_rate[readid];
-            for &(unit, cluster, error) in errors.iter() {
-                unit_error_rate[unit][cluster] += error - read_error;
-            }
-        }
-        for (resid, counts) in unit_error_rate.iter_mut().zip(unit_counts.iter()) {
-            for (err, count) in resid.iter_mut().zip(counts) {
-                *err = err.max(0f64) / (*count as f64 + 0.1f64);
-            }
-        }
-        // Re-estimate read error rate
-        for &(readid, ref errors) in errors.iter() {
-            let residual: f64 = errors
-                .iter()
-                .map(|&(unit, cluster, error)| error - unit_error_rate[unit][cluster])
-                .sum();
-            read_error_rate[readid] = residual / errors.len() as f64;
-            // let len = errors.len() as f64 + 1f64;
-            // read_error_rate[readid] = (residual + fallback) / len;
-        }
-        let resid = residual(&errors, &read_error_rate, &unit_error_rate);
-        if (current_resid - resid).abs() < 0.001 {
-            break;
-        }
-        current_resid = resid;
-    }
-    let mut residuals: Vec<f64> = errors
-        .iter()
-        .flat_map(|(readid, errors)| {
-            let readerror = read_error_rate[*readid as usize];
-            errors
-                .iter()
-                .map(|&(unit, cluster, error)| {
-                    let expect = unit_error_rate[unit][cluster] + readerror;
-                    error - expect
-                })
-                .map(|residual| residual.powi(2))
-                .collect::<Vec<f64>>()
-        })
-        .collect();
-    let idx = residuals.len() / 2;
-    let median = residuals
-        .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
-        .1
-        .sqrt();
-    (read_error_rate, unit_error_rate, median)
-}
-
-pub fn estimate_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, f64) {
-    fn residual(errors: &[(u64, Vec<(u64, f64)>)], reads: &[f64], units: &[f64]) -> f64 {
-        let residual: f64 = errors
-            .iter()
-            .map(|(readid, errors)| -> f64 {
-                let read = reads[*readid as usize];
-                let data_error: f64 = errors
-                    .iter()
-                    .map(|(unitid, error)| (error - read - units[*unitid as usize]).powi(2))
-                    .sum();
-                data_error
-            })
-            .sum();
-        let reg_term: f64 = units.iter().map(|x| x * x).sum();
-        residual + reg_term
-    }
-    let max_read_id = ds.raw_reads.iter().map(|r| r.id).max().unwrap() as usize;
-    let max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap() as usize;
-    let mut read_error_rate = vec![0f64; max_read_id + 1];
-    let mut unit_error_rate = vec![0f64; max_unit_id + 1];
-    for read in ds.encoded_reads.iter() {
-        read_error_rate[read.id as usize] = fallback;
-    }
-    let unit_counts: Vec<_> = {
-        let mut counts = vec![0; max_unit_id + 1];
-        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            counts[node.unit as usize] += 1;
-        }
-        counts
-    };
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    let errors: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .map(|read| {
-            let errors: Vec<_> = read
-                .nodes
-                .iter()
-                .map(|node| {
-                    let aln = node.recover(units[&node.unit]).1;
-                    let errors = aln.iter().filter(|&&x| x != b'|').count();
-                    let error = errors as f64 / aln.len() as f64;
-                    (node.unit, error)
-                })
-                .collect::<Vec<_>>();
-            (read.id, errors)
-        })
-        .collect();
-    let mut current_resid = residual(&errors, &read_error_rate, &unit_error_rate);
-    loop {
-        // Re-estimate read error rate
-        for (readid, errors) in errors.iter() {
-            let residual: f64 = errors
-                .iter()
-                .map(|&(unitid, error)| error - unit_error_rate[unitid as usize])
-                .sum();
-            read_error_rate[*readid as usize] = residual / errors.len() as f64;
-        }
-        // Re-estimation of unit error rate
-        unit_error_rate.iter_mut().for_each(|x| *x = 0f64);
-        for (readid, errors) in errors.iter() {
-            let read_error = read_error_rate[*readid as usize];
-            for &(unitid, error) in errors.iter() {
-                unit_error_rate[unitid as usize] += error - read_error;
-            }
-        }
-        unit_error_rate
-            .iter_mut()
-            .zip(unit_counts.iter())
-            .filter(|&(_, &count)| 0 < count)
-            .for_each(|(x, c)| {
-                *x /= *c as f64 + 1f64;
-            });
-        let resid = residual(&errors, &read_error_rate, &unit_error_rate);
-        if (current_resid - resid).abs() < 0.001 {
-            break;
-        }
-        current_resid = resid;
-    }
-    let mut residuals: Vec<f64> = errors
-        .iter()
-        .flat_map(|(readid, errors)| {
-            let readerror = read_error_rate[*readid as usize];
-            errors
-                .iter()
-                .map(|(unitid, error)| {
-                    let expect = unit_error_rate[*unitid as usize] + readerror;
-                    error - expect
-                })
-                .map(|residual| residual.powi(2))
-                .collect::<Vec<f64>>()
-        })
-        .collect();
-    let idx = residuals.len() / 2;
-    let median = residuals
-        .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
-        .1
-        .sqrt();
-    // Fix read error rate
-    for (&readid, len) in errors.iter().map(|(id, es)| (id, es.len() as f64)) {
-        let error = read_error_rate[readid as usize];
-        read_error_rate[readid as usize] = (error * len + fallback) / (len + 1f64);
-    }
-    (read_error_rate, unit_error_rate, median)
-}
-
-// fn estimate_upper_error_rate(ds: &DataSet, fallback: f64) -> (Vec<f64>, Vec<f64>, f64) {
-//     let ref_chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-//     let error_rates: Vec<Vec<_>> = ds
-//         .encoded_reads
-//         .par_iter()
-//         .map(|r| {
-//             r.nodes
-//                 .iter()
-//                 .map(|n| {
-//                     let (_, aln, _) = n.recover(ref_chunks[&n.unit]);
-//                     let error = aln.iter().filter(|&&b| b != b'|').count();
-//                     error as f64 / aln.len() as f64
-//                 })
-//                 .collect()
-//         })
-//         .collect();
-//     let (sd_sum, sd_num) = error_rates
-//         .iter()
-//         .filter(|errs| errs.len() > 2)
-//         .map(|errs| {
-//             let (sum, sumsq) = errs
-//                 .iter()
-//                 .fold((0f64, 0f64), |(sum, sumsq), x| (sum + x, sumsq + x * x));
-//             let mean = sum / errs.len() as f64;
-//             let var = sumsq / errs.len() as f64 - mean * mean;
-//             assert!(0f64 <= var);
-//             var.sqrt()
-//         })
-//         .fold((0f64, 0), |(sdsum, num), sd| (sdsum + sd, num + 1));
-//     let sd_mean = sd_sum / sd_num as f64;
-//     debug!("MEAN of SD\t{:.3}", sd_mean);
-//     let error_rate: Vec<_> = error_rates
-//         .into_par_iter()
-//         .map(|mut errors| match errors.len() {
-//             0..=2 => fallback,
-//             x => {
-//                 let median = errors
-//                     .select_nth_unstable_by(x / 2, |x, y| x.partial_cmp(y).unwrap())
-//                     .1;
-//                 *median + 4f64 * sd_mean
-//             }
-//         })
-//         .collect();
-//     (error_rate, vec![], 0f64)
-// }
-
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
-fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
+// fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
+fn take_consensus_sequence(ds: &DataSet) -> HashMap<(u64, u64), Vec<u8>> {
     fn polish(xs: &[&[u8]], unit: &Unit, band: usize) -> Vec<u8> {
         kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
     }
     let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
-    let mut bucket: HashMap<u64, Vec<_>> = HashMap::new();
+    let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         bucket
-            .entry(node.unit)
+            .entry((node.unit, node.cluster))
             .or_default()
-            .push((node.cluster, node.seq()));
+            .push(node.seq());
     }
     bucket
         .par_iter()
-        .filter(|&(_, xs)| !xs.is_empty())
-        .map(|(&unit, bucket)| {
-            let ref_unit = &ref_units[&unit];
-            let mut clusters: HashMap<_, Vec<&[u8]>> = HashMap::new();
-            for (cl, seq) in bucket {
-                clusters.entry(*cl).or_default().push(seq);
-            }
+        .filter(|(_, seq)| !seq.is_empty())
+        .map(|(key, seqs)| {
+            let ref_unit = &ref_units[&key.0];
             let band = ds.read_type.band_width(ref_unit.seq().len());
-            assert!(!clusters.is_empty());
-            let representative: Vec<_> = if clusters.len() == 1 {
-                clusters
-                    .iter()
-                    .map(|(&cl, _)| (cl, ref_unit.seq().to_vec()))
-                    .collect()
-            } else {
-                clusters
-                    .iter()
-                    .filter(|(_, xs)| !xs.is_empty())
-                    .map(|(&cl, xs)| (cl, polish(xs, ref_unit, band)))
-                    .collect()
+            let representative: Vec<_> = match key.1 {
+                0 => ref_unit.seq().to_vec(),
+                _ => polish(seqs, ref_unit, band),
             };
-            (unit, representative)
+            (*key, representative)
         })
         .collect()
 }
@@ -712,16 +421,18 @@ const OFFSET_FACTOR: f64 = 0.1;
 // Maybe each (unit,cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
     &'a HashMap<u64, &'a Unit>,
-    &'a [Vec<f64>],
-    &'a HashMap<u64, Vec<(u64, Vec<u8>)>>,
+    &'a crate::estimate_error_rate::ErrorRate,
+    &'a HashMap<(u64, u64), Vec<u8>>,
 );
-pub fn correct_deletion_error(
-    (read, seq, read_error, is_changed): (&mut EncodedRead, &[u8], f64, &mut bool),
+fn correct_deletion_error(
+    (read, seq, is_changed): (&mut EncodedRead, &[u8], &mut bool),
     failed_trials: &mut Vec<(usize, LightNode)>,
     unitinfo: UnitInfo,
     stddev: f64,
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
+    *is_changed = false;
+    let read_error = unitinfo.1.read(read.id);
     let pileups = get_pileup(read, reads);
     let nodes = &read.nodes;
     let mut inserts = vec![];
@@ -744,9 +455,9 @@ pub fn correct_deletion_error(
             None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
         }
     }
-    *is_changed = !inserts.is_empty();
     let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.unit).collect();
     if !inserts.is_empty() {
+        *is_changed = true;
         failed_trials.clear();
         for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
             read.nodes.insert(idx + accum_inserts, node);
@@ -777,18 +488,8 @@ fn remove_highly_erroneous(
         let (_, aln, _) = node.recover(units[&node.unit]);
         let diff = aln.iter().filter(|&&x| x != b'|').count();
         let error_rate = diff as f64 / aln.len() as f64;
-        let expected = read_error + unit_error_rate[node.unit as usize][node.cluster as usize];
+        let expected = read_error + unit_error_rate.unit((node.unit, node.cluster));
         let threshold = (expected + THR * stddev).max(0f64);
-        // if threshold < error_rate {
-        //     let unit_error = unit_error_rate[node.unit as usize][node.cluster as usize];
-        //     let (unit,cluster) = (node.unit,node.cluster);
-        //     let (xr,ar,yr) = node.recover(&units[&node.unit]);
-        //     for ((xr,ar),yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)){
-        //         eprintln!("{}",std::str::from_utf8(xr).unwrap());
-        //         eprintln!("{}",std::str::from_utf8(ar).unwrap());
-        //         eprintln!("{}\n",std::str::from_utf8(yr).unwrap());
-        //     }
-        // }
         error_rate < threshold
     });
     read.nodes.len() != orig_len
@@ -810,11 +511,10 @@ fn try_encoding_head(
         .filter_map(|(node, &start_position)| {
             let (uid, cluster) = (node.unit, node.cluster);
             let unit = *units.get(&uid)?;
-            let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
+            let cons = consensi.get(&(uid, cluster))?;
             let offset = (OFFSET_FACTOR * cons.len() as f64).ceil() as usize;
             let end_position = (start_position + cons.len() + offset).min(seq.len());
             let start_position = start_position.saturating_sub(offset);
-            // let end_position = (start_position + cons.len() + 2 * OFFSET).min(seq.len());
             let is_the_same_encode = match nodes.get(idx) {
                 Some(node) => {
                     node.unit == uid && abs(node.position_from_start, start_position) < cons.len()
@@ -825,7 +525,7 @@ fn try_encoding_head(
             if is_the_same_encode {
                 return None;
             }
-            let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
+            let expected = read_error + unit_error_rate.unit((uid, cluster));
             let error_rate_bound = expected + THR * stddev;
             let position = (start_position, end_position, node.is_forward);
             let unit_info = (unit, cluster, cons.as_slice());
@@ -848,7 +548,8 @@ fn try_encoding_tail(
         .filter_map(|(node, &end_position)| {
             let (uid, cluster) = (node.unit, node.cluster);
             let unit = *units.get(&uid)?;
-            let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
+            let cons = consensi.get(&(uid, cluster))?;
+            // let (_, cons) = consensi.get(&uid)?.iter().find(|&&(cl, _)| cl == cluster)?;
             let offset = (OFFSET_FACTOR * cons.len() as f64).ceil() as usize;
             let start_position = end_position
                 .min(seq.len())
@@ -867,7 +568,7 @@ fn try_encoding_tail(
             assert!(start_position < end_position);
             let positions = (start_position, end_position, node.is_forward);
             let unit_info = (unit, cluster, cons.as_slice());
-            let expected = read_error + unit_error_rate[uid as usize][cluster as usize];
+            let expected = read_error + unit_error_rate.unit((uid, cluster));
             let error_rate_bound = expected + THR * stddev;
             encode_node(seq, positions, unit_info, error_rate_bound)
         })
@@ -1064,7 +765,7 @@ fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton)
 // Align read skeltons to read, return the pileup sumamries.
 // i-> insertions before the i-th nodes.
 // The coverage of the last slot is always zero.
-pub fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
+fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
     assert!(!read.nodes.is_empty());
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     let skelton = ReadSkelton::new(read);
@@ -1143,16 +844,6 @@ fn alignment(_: u64, read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Opti
     };
     let match_num = get_match_units(&ops);
     let min_match = MIN_MATCH.min(read.nodes.len()).min(query.nodes.len());
-    // let que: Vec<_> = query
-    //     .nodes
-    //     .iter()
-    //     .map(|x| format!("{}-{}", x.unit, x.cluster))
-    //     .collect();
-    // println!(
-    //     "QUE\t{match_num}\t{score}\t{dir}\t{}\t{}",
-    //     query.id,
-    //     que.join("\t")
-    // );
     (min_match <= match_num && SCORE_THR <= score && is_proper(&ops)).then(|| ops)
 }
 
@@ -1305,7 +996,7 @@ fn get_match_units(ops: &[Op]) -> usize {
 }
 
 #[derive(Debug, Clone)]
-pub struct Pileup {
+struct Pileup {
     // insertion at the beggining of this node
     head_inserted: Vec<LightNode>,
     // insertion at the last of this node
@@ -1367,7 +1058,7 @@ impl Pileup {
     fn add_tail(&mut self, node: LightNode) {
         self.tail_inserted.push(node);
     }
-    pub fn check_insertion_head(
+    fn check_insertion_head(
         &self,
         nodes: &[Node],
         threshold: usize,
@@ -1388,7 +1079,7 @@ impl Pileup {
         });
         inserts
     }
-    pub fn check_insertion_tail(
+    fn check_insertion_tail(
         &self,
         nodes: &[Node],
         threshold: usize,
@@ -1412,7 +1103,7 @@ impl Pileup {
 }
 
 #[derive(Clone)]
-pub struct ReadSkelton {
+struct ReadSkelton {
     id: u64,
     nodes: Vec<LightNode>,
 }
@@ -1427,10 +1118,10 @@ impl std::fmt::Debug for ReadSkelton {
 }
 
 impl ReadSkelton {
-    pub fn new(read: &EncodedRead) -> Self {
+    fn new(read: &EncodedRead) -> Self {
         Self::from_rich_nodes(read.id, &read.nodes)
     }
-    pub fn from_rich_nodes(id: u64, nodes: &[Node]) -> Self {
+    fn from_rich_nodes(id: u64, nodes: &[Node]) -> Self {
         // Convert the nodes into (start_position, end_position)s
         let summaries: Vec<_> = nodes
             .iter()
@@ -1465,7 +1156,7 @@ impl ReadSkelton {
 }
 
 #[derive(Clone, Copy)]
-pub struct LightNode {
+struct LightNode {
     // How long should be add to the last position of the previous node to
     // get the start position of this node.
     // None if this is the first node.

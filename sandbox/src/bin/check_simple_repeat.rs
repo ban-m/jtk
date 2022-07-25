@@ -4,7 +4,6 @@ use log::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 use std::collections::HashMap;
-const LK: f64 = 1.8;
 
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -54,12 +53,8 @@ fn main() -> std::io::Result<()> {
     }
     {
         let start = std::time::Instant::now();
-        let coverage = (dataset.len() / clusters) as f64;
-        let clusters = clusters as u8;
-        use haplotyper::local_clustering::kmeans::ClusteringConfig;
-        let config = ClusteringConfig::new(100, clusters, coverage, LK);
         use haplotyper::local_clustering::kmeans;
-        let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
+        let (preds, _, _, _) = kmeans::clustering(&dataset, &mut rng, clusters, 100).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

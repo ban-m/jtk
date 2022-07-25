@@ -34,15 +34,16 @@ impl PurgeDivergent for DataSet {
 pub fn purge_erroneous_nodes(ds: &mut DataSet, _config: &PurgeDivConfig) -> HashSet<u64> {
     const SAFE_MARGIN: f64 = 5f64;
     let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
-    use crate::encode::deletion_fill::estimate_error_rate_dev;
-    let (read_erorr_rate, unit_error_rate, sigma_of_er) = estimate_error_rate_dev(ds, fallback);
-    debug!("PD\tPurgeErroneousNode\t{SAFE_MARGIN}\t{sigma_of_er}");
+    use crate::estimate_error_rate::estimate_error_rate;
+    let errors = estimate_error_rate(ds, fallback);
+    let sigma_of_er = errors.median_of_sqrt_err;
+    debug!("PD\tPurgeErroneousNode\t{SAFE_MARGIN}\t{sigma_of_er}",);
     let mut units_of_removed_nodes = HashSet::new();
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     for read in ds.encoded_reads.iter_mut() {
-        let read_error = read_erorr_rate[read.id as usize];
+        let read_error = errors.read(read.id);
         read.nodes.retain(|node| {
-            let unit_error = unit_error_rate[node.unit as usize][node.cluster as usize];
+            let unit_error = errors.unit((node.unit, node.cluster));
             let aln = node.recover(units[&node.unit]).1;
             let errors = aln.iter().filter(|&&x| x != b'|').count();
             let error = errors as f64 / aln.len() as f64;
@@ -249,13 +250,14 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
 
 // Unit -> Cluster -> If the cluster is very diverged.
 pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
-    use crate::encode::deletion_fill::estimate_error_rate_dev;
+    use crate::estimate_error_rate::estimate_error_rate;
     // let error_rate = ds.error_rate();
     // let fallback = error_rate.total + SD_SIGMA * error_rate.total_sd;
     let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
     debug!("PD\tFallback\t{fallback}");
-    let (_, unit_error_rate, _) = estimate_error_rate_dev(ds, fallback);
-    unit_error_rate
+    let error_rates = estimate_error_rate(ds, fallback);
+    error_rates
+        .unit_error_rate
         .iter()
         .map(|es| es.iter().map(|&x| thr < x).collect())
         .collect()

@@ -6,8 +6,10 @@ pub mod dense_encoding;
 pub mod determine_units;
 pub mod encode;
 pub mod entry;
+pub mod estimate_error_rate;
 pub mod extract;
 pub mod find_union;
+pub mod likelihood_gains;
 pub mod local_clustering;
 pub mod minimap2;
 pub mod misc;
@@ -22,7 +24,6 @@ pub mod repeat_masking;
 pub mod seq;
 pub mod stats;
 pub mod view;
-
 #[macro_use]
 extern crate log;
 #[cfg(test)]

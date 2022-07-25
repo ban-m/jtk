@@ -1,7 +1,6 @@
 use haplotyper::local_clustering::ClusteringConfig;
 use kiley::gen_seq;
 use log::*;
-const LK: f64 = 1.8;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
 use std::collections::HashMap;
@@ -65,12 +64,8 @@ fn main() -> std::io::Result<()> {
     }
     {
         let start = std::time::Instant::now();
-        let coverage = (dataset.len() / clusters) as f64;
-        let clusters = clusters as u8;
-        use haplotyper::local_clustering::kmeans::ClusteringConfig;
-        let config = ClusteringConfig::new(100, clusters, coverage, LK);
         use haplotyper::local_clustering::kmeans;
-        let (preds, gains, _, _) = kmeans::clustering(&dataset, &mut rng, &config).unwrap();
+        let (preds, gains, _, _) = kmeans::clustering(&dataset, &mut rng, clusters, 100).unwrap();
         let end = std::time::Instant::now();
         let score = haplotyper::local_clustering::rand_index(&preds, &answer);
         let time = (end - start).as_millis();

@@ -4,20 +4,14 @@ use std::io::*;
 fn main() -> std::io::Result<()> {
     env_logger::init();
     let args: Vec<_> = std::env::args().collect();
-    let ds: DataSet =
+    let mut ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    use std::collections::HashMap;
-    let raw_seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r)).collect();
-    for read in ds.encoded_reads.iter() {
-        let orig = read.recover_raw_read();
-        assert!(orig.iter().all(u8::is_ascii_uppercase));
-        let raw: Vec<_> = raw_seq[&read.id]
-            .seq()
-            .iter()
-            .map(|x| x.to_ascii_uppercase())
-            .collect();
-        assert_eq!(orig, raw);
-    }
+    let hmm = haplotyper::model_tune::get_model(&ds).unwrap();
+    let gain = haplotyper::likelihood_gains::estimate_gain(&hmm, 238019, 100, 20, 5);
+    println!("{gain}");
+    use std::collections::HashSet;
+    let selection: HashSet<u64> = args[2..].iter().filter_map(|x| x.parse().ok()).collect();
+    haplotyper::local_clustering::local_clustering_selected(&mut ds, &selection);
     Ok(())
 }
