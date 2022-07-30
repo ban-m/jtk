@@ -14,6 +14,7 @@ use std::collections::HashSet;
 // Note that the reverse/forward edges can be decided by only see the indices.
 
 const LARGE_VALUE: f64 = 100_000_000_000_000_000f64;
+const MIN_IMPROVE: f64 = 0.00000000001;
 type RawNode = (f64, usize);
 type RawEdge = (usize, bool, usize, bool, f64);
 
@@ -166,12 +167,22 @@ impl<'a, 'b> BellmanFord<'a, 'b> {
             while current != self.source {
                 path.push(self.prede[current.0].unwrap());
                 current = self.predv[current.0];
-                assert!(
-                    path.len() <= self.graph.residual_graph.len(),
-                    "{},{}",
-                    self.source.0,
-                    self.sink.0
-                );
+                if self.graph.residual_graph.len() < path.len() {
+                    let nodes: Vec<_> = path.iter().map(|e| e.from.0).collect();
+                    let num_cycles = self.cycles().count();
+                    error!("{:?}", nodes);
+                    error!("{num_cycles}\t{dist:.3}");
+                    for edge in path.iter().take(500) {
+                        let (fscore, tscore) = (self.dists[edge.from.0], self.dists[edge.to.0]);
+                        let scores = self.edge_weights[edge.from.0].iter();
+                        let edges = self.graph.residual_graph[edge.from].0.iter();
+                        let (score, _) = scores.zip(edges).find(|(_, e)| e.to == edge.to).unwrap();
+                        let resid = fscore + score == tscore;
+                        error!("{:.3}\t{:.3}\t{:.3}\t{}", fscore, score, tscore, resid);
+                        assert!(tscore <= fscore + score);
+                    }
+                    panic!("{}=>{}", self.source.0, self.sink.0);
+                }
             }
             path.reverse();
             path
@@ -221,7 +232,7 @@ impl<'a, 'b, 'c> std::iter::Iterator for Cycles<'a, 'b, 'c> {
                 if LARGE_VALUE <= score || LARGE_VALUE <= self.inner.dists[from] {
                     continue;
                 }
-                if self.inner.dists[from] + score < self.inner.dists[to] {
+                if self.inner.dists[from] + score + MIN_IMPROVE < self.inner.dists[to] {
                     let cycle = self.inner.traverse_cycle(edge.from.0);
                     self.checked_nodes
                         .extend(cycle.iter().flat_map(|c| [c.from, c.to]));
@@ -342,6 +353,26 @@ impl Graph {
                 .collect()
         }
     }
+    // True if source can reach sink
+    fn reachable(&self, source: ResIndex, sink: ResIndex) -> bool {
+        let mut stack = vec![source];
+        let mut is_arrived = vec![false; self.residual_graph.len()];
+        'dfs: while !stack.is_empty() {
+            let last = *stack.last().unwrap();
+            if last == sink {
+                return true;
+            }
+            is_arrived[last.0] = true;
+            for edge in self.residual_graph[last].0.iter() {
+                if !is_arrived[edge.to.0] {
+                    stack.push(edge.to);
+                    continue 'dfs;
+                }
+            }
+            stack.pop().unwrap();
+        }
+        false
+    }
     fn update_dev(&mut self) -> bool {
         let tuples = self.source_sink_tuple();
         let edge_scores: Vec<Vec<_>> = self
@@ -353,12 +384,16 @@ impl Graph {
         // Check cycle.
         let (mut min, mut argmin) = (LARGE_VALUE, None);
         for (source, sink) in tuples {
+            if !self.reachable(source, sink) {
+                trace!("UNREACHABLE\t{}\t{}", source.0, sink.0);
+                continue;
+            }
             let bellman = self.min_dist(&edge_scores, source, sink);
             let mut has_cycle = false;
             for cycle in bellman.cycles() {
                 has_cycle |= true;
-                let score = self.eval(&cycle);
-                if score < 0f64 {
+                let score = self.eval(&cycle).filter(|&x| x < 0f64);
+                if let Some(score) = score {
                     let len = cycle.len();
                     let (source, sink) = (cycle[0].from.0, cycle[0].to.0);
                     trace!("UPDATE\tCYCLE\t{len}\t{source}\t{sink}\t{score:.0}");
@@ -366,16 +401,19 @@ impl Graph {
                     return true;
                 }
             }
-            let path = match has_cycle {
-                false => bellman.path(),
-                true => self.bfs(&edge_scores, source, sink),
-            };
-            if let Some(path) = path {
-                let score = self.eval(&path);
-                if score < min {
-                    min = score;
-                    argmin = Some((path, source, sink));
-                }
+            let bfs = self
+                .bfs(&edge_scores, source, sink)
+                .and_then(|path| self.eval(&path).map(|score| (path, score)))
+                .filter(|&(_, score)| score < min);
+            let path = (!has_cycle)
+                .then(|| ())
+                .and_then(|_| bellman.path())
+                .and_then(|path| self.eval(&path).map(|score| (path, score)))
+                .filter(|&(_, score)| score < min)
+                .or(bfs);
+            if let Some((path, score)) = path {
+                min = score;
+                argmin = Some((path, source, sink));
             }
         }
         if min < LARGE_VALUE {
@@ -407,6 +445,7 @@ impl Graph {
             let mut newly_arrived = vec![];
             for &node in queue.iter() {
                 assert!(is_arrived[node.0], "{}", dists[node.0]);
+                assert!(dists[node.0] < LARGE_VALUE);
                 if node == sink {
                     break 'bfs;
                 }
@@ -414,20 +453,28 @@ impl Graph {
                 let edges = &self.residual_graph[node].0;
                 assert_eq!(scores.len(), edges.len());
                 for (edge, &score) in std::iter::zip(edges, scores) {
+                    assert_eq!(edge.from, node);
                     if LARGE_VALUE <= score || is_arrived[edge.to.0] {
                         continue;
                     }
+                    assert!((dists[edge.to.0] - LARGE_VALUE).abs() < 0.0001);
                     assert_eq!(edge.from, node);
                     dists[edge.to.0] = dists[edge.from.0] + score;
                     predv[edge.to.0] = edge.from;
                     prede[edge.to.0] = Some(*edge);
                     is_arrived[edge.to.0] = true;
                     newly_arrived.push(edge.to);
+                    assert!(
+                        dists[edge.to.0] < LARGE_VALUE,
+                        "{},{}",
+                        score,
+                        dists[edge.to.0]
+                    );
                 }
             }
             queue = newly_arrived;
         }
-        trace!("CAND\tBFS\t{}\t{}\t{}", source.0, sink.0, dists[sink.0]);
+        //         trace!("CAND\tBFS\t{}\t{}\t{}", source.0, sink.0, dists[sink.0]);
         (dists[sink.0] < 0f64).then(|| {
             let mut current = sink;
             let mut path = vec![prede[current.0].unwrap()];
@@ -462,7 +509,7 @@ impl Graph {
         let mut prede = vec![None; len];
         dists[source.0] = 0f64;
         // Loop.
-        for _ in 0..len - 1 {
+        for _ in 0..len {
             for (edges, scores) in self.residual_graph.nodes.iter().zip(edge_scores.iter()) {
                 assert_eq!(scores.len(), edges.len());
                 for (edge, &score) in std::iter::zip(edges.0.iter(), scores.iter()) {
@@ -470,7 +517,7 @@ impl Graph {
                     if LARGE_VALUE <= dists[from] || LARGE_VALUE <= score {
                         continue;
                     }
-                    if dists[from] + score < dists[to] {
+                    if dists[from] + score + MIN_IMPROVE < dists[to] {
                         dists[to] = dists[from] + score;
                         predv[to] = edge.from;
                         prede[to] = Some(*edge);
@@ -488,7 +535,7 @@ impl Graph {
             sink,
         }
     }
-    fn eval(&self, path: &[ResEdge]) -> f64 {
+    fn eval(&self, path: &[ResEdge]) -> Option<f64> {
         let mut node_diff = vec![0; self.nodes.len()];
         let mut edge_diff = vec![0; self.edges.len()];
         for edge in path.iter() {
@@ -501,38 +548,37 @@ impl Graph {
                 RawPointer::Edge(idx) => edge_diff[idx] += cp_diff,
             }
         }
-        let node_score: f64 = node_diff
+        let mut score = 0f64;
+        for ((diff, &current), &(target, len)) in node_diff
             .iter()
             .zip(self.node_copy_numbers.iter())
             .zip(self.nodes.iter())
             .filter(|&((&diff, _), _)| diff != 0)
-            .map(|((diff, &current), &(target, len))| {
-                let old_penalty = (target - current as f64 * self.hap_cov).powi(2);
-                let cp = current as i64 + diff;
-                let new_pen = match 0 <= cp {
-                    true => (target - cp as f64 * self.hap_cov).powi(2),
-                    false => LARGE_VALUE,
-                };
-                (new_pen - old_penalty) * len as f64
-            })
-            .sum();
-        let edge_score: f64 = edge_diff
+        {
+            let old_penalty = (target - current as f64 * self.hap_cov).powi(2);
+            let cp = current as i64 + diff;
+            let new_pen = match 0 <= cp {
+                true => (target - cp as f64 * self.hap_cov).powi(2),
+                false => return None,
+            };
+            score += (new_pen - old_penalty) * len as f64;
+        }
+        for ((diff, &current), target) in edge_diff
             .iter()
             .zip(self.edge_copy_numbers.iter())
             .zip(self.edges.iter())
             .filter(|&((&diff, _), _)| diff != 0)
-            .map(|((diff, &current), target)| {
-                let target = target.4;
-                let old_pen = (target - current as f64 * self.hap_cov).powi(2);
-                let cp = current as i64 + diff;
-                let new_pen = match 0 <= cp {
-                    true => (target - cp as f64 * self.hap_cov).powi(2),
-                    false => LARGE_VALUE,
-                };
-                new_pen - old_pen
-            })
-            .sum();
-        node_score + edge_score
+        {
+            let target = target.4;
+            let old_pen = (target - current as f64 * self.hap_cov).powi(2);
+            let cp = current as i64 + diff;
+            let new_pen = match 0 <= cp {
+                true => (target - cp as f64 * self.hap_cov).powi(2),
+                false => return None,
+            };
+            score += new_pen - old_pen
+        }
+        Some(score)
     }
     fn update_by(&mut self, path: &[ResEdge]) {
         for edge in path {
@@ -573,7 +619,7 @@ impl Graph {
         let old_error = (target - cp as f64 * self.hap_cov).powi(2);
         let new_error = match to_decrease {
             false => (target - (cp + 1) as f64 * self.hap_cov).powi(2),
-            true if cp == 0 => LARGE_VALUE,
+            true if cp == 0 => return LARGE_VALUE,
             true => (target - (cp - 1) as f64 * self.hap_cov).powi(2),
         };
         (new_error - old_error) * len as f64
@@ -584,7 +630,7 @@ impl Graph {
         let old_error = (target - cp as f64 * self.hap_cov).powi(2);
         let new_error = match to_decrease {
             false => (target - (cp + 1) as f64 * self.hap_cov).powi(2),
-            true if cp == 0 => LARGE_VALUE,
+            true if cp == 0 => return LARGE_VALUE,
             true => (target - (cp - 1) as f64 * self.hap_cov).powi(2),
         };
         new_error - old_error
@@ -743,6 +789,25 @@ pub mod tests {
             (3, true, 4, false, 60f64),
         ];
         let edge_cp = vec![2, 2, 2, 2, 2, 2];
+        let mut graph = Graph::new(&nodes, &edges, cov);
+        graph.optimize(&mut rng);
+        let (pred, edge_pred) = graph.copy_numbers();
+        assert_eq!(pred, nodes_cp);
+        assert_eq!(edge_pred, edge_cp);
+    }
+    #[test]
+    fn mock_data_6() {
+        let nodes_cp = vec![2, 4, 2, 2];
+        let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(349823094);
+        let cov = 30f64;
+        let nodes = vec![(60.0, 50), (120.0, 2), (60.0, 10), (60f64, 50)];
+        let edges: Vec<_> = vec![
+            (0, false, 1, true, 60f64),
+            (1, false, 2, true, 60.0),
+            (2, false, 1, false, 60f64),
+            (1, true, 3, false, 60f64),
+        ];
+        let edge_cp = vec![2, 2, 2, 2];
         let mut graph = Graph::new(&nodes, &edges, cov);
         graph.optimize(&mut rng);
         let (pred, edge_pred) = graph.copy_numbers();

@@ -152,25 +152,6 @@ fn to_idx(w: &[u8]) -> u64 {
             .rev()
             .fold(0, |cum, &x| (cum << 2) | BASE2BITCMP[x as usize])
     }
-    // let adder = |sum, &c| match c {
-    //     b'A' | b'a' => sum << 2,
-    //     b'C' | b'c' => (sum << 2) | 1u64,
-    //     b'G' | b'g' => (sum << 2) | 2u64,
-    //     b'T' | b't' => (sum << 2) | 3u64,
-    //     _ => (sum << 2),
-    // };
-    // let adder_rev = |sum, &c| match c {
-    //     b'A' | b'a' => (sum << 2) | 3u64,
-    //     b'C' | b'c' => (sum << 2) | 2u64,
-    //     b'G' | b'g' => (sum << 2) | 1u64,
-    //     b'T' | b't' => sum << 2,
-    //     _ => (sum << 2),
-    // };
-    // if is_canonical {
-    //     w.iter().fold(0, adder)
-    // } else {
-    //     w.iter().rev().fold(0, adder_rev)
-    // }
 }
 
 const BASE2BITCMP: [u64; 256] = base2bitcmp();

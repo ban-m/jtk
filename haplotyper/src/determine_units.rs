@@ -379,11 +379,21 @@ fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
         .par_iter()
         .map(|(key, seqs)| {
             let radius = read_type.band_width(config.chunk_len);
-            let cons = kiley::ternary_consensus_by_chunk(seqs, radius);
-            let consensus = kiley::bialignment::guided::polish_until_converge(&cons, seqs, radius);
+            let mut draft = pick_median_length(seqs.as_slice());
+            for _ in 0..2 {
+                draft = kiley::polish_by_pileup(&draft, seqs);
+            }
+            let consensus = kiley::bialignment::guided::polish_until_converge(&draft, seqs, radius);
             (key.clone(), consensus)
         })
         .collect()
+}
+
+fn pick_median_length(xs: &[Vec<u8>]) -> Vec<u8> {
+    let mut lens: Vec<_> = xs.iter().map(|x| x.len()).collect();
+    let len = xs.len() / 2;
+    let (_, &mut median, _) = lens.select_nth_unstable(len);
+    xs.iter().find(|x| x.len() == median).unwrap().clone()
 }
 
 fn get_count_thr(ds: &DataSet, _config: &UnitConfig) -> usize {
@@ -695,23 +705,7 @@ fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
             }
         }
     }
-    // Maybe it became infeasible due to O(N^2) allcation would be occured.
-    // let mut edges: Vec<_> = (0..unit_len).map(|i| vec![false; i]).collect();
-    // for read in ds.encoded_reads.iter() {
-    //     for (i, node) in read.nodes.iter().enumerate() {
-    //         for mode in read.nodes.iter().skip(i + 1) {
-    //             let node_end = node.position_from_start + node.seq.as_slice().len();
-    //             let mode_start = mode.position_from_start;
-    //             let ovlp_len = node_end.max(mode_start) - mode_start;
-    //             if overlap_thr < ovlp_len {
-    //                 let (i, j) = (node.unit.max(mode.unit), node.unit.min(mode.unit));
-    //                 if i != j {
-    //                     edges[i as usize][j as usize] = true;
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+
     let to_be_removed = approx_vertex_cover(graph, unit_len);
     ds.selected_chunks
         .retain(|unit| !to_be_removed[unit.id as usize]);
@@ -747,40 +741,6 @@ fn approx_vertex_cover(mut edges: Vec<Vec<usize>>, nodes: usize) -> Vec<bool> {
     }
     to_be_removed
 }
-
-// fn approx_vertex_cover(mut edges: Vec<Vec<bool>>, nodes: usize) -> Vec<bool> {
-//     let mut degrees = vec![0; nodes];
-//     for (i, es) in edges.iter().enumerate() {
-//         for (j, _) in es.iter().enumerate().filter(|&(_, &b)| b) {
-//             degrees[i] += 1;
-//             degrees[j] += 1;
-//         }
-//     }
-//     let mut to_be_removed = vec![false; nodes];
-//     loop {
-//         let (argmax, &max) = degrees.iter().enumerate().max_by_key(|x| x.1).unwrap();
-//         if max == 0 {
-//             break;
-//         }
-//         to_be_removed[argmax] = true;
-//         edges[argmax].iter_mut().enumerate().for_each(|(i, b)| {
-//             degrees[i] -= *b as usize;
-//             *b = false;
-//         });
-//         degrees[argmax] = 0;
-//         if argmax < nodes {
-//             edges
-//                 .iter_mut()
-//                 .enumerate()
-//                 .skip(argmax + 1)
-//                 .for_each(|(i, es)| {
-//                     degrees[i] -= es[argmax] as usize;
-//                     es[argmax] = false;
-//                 });
-//         }
-//     }
-//     to_be_removed
-// }
 
 fn error(node: &definitions::Node, ref_unit: &Unit) -> f64 {
     let (query, aln, refr) = node.recover(ref_unit);

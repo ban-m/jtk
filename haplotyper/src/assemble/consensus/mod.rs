@@ -78,6 +78,11 @@ impl Polish for DataSet {
         config: &PolishConfig,
     ) -> Vec<Segment> {
         let mut alignments_on_contigs = self.distribute_to_contig(segments, encs, config);
+        for (ctg, alns) in alignments_on_contigs.iter() {
+            for aln in alns.iter() {
+                debug!("ALN\t{ctg}\t{}\t{}", aln.read_id, aln.query.len());
+            }
+        }
         let hmm = get_model(self).unwrap();
         let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
             log::debug!("POLISH\t{sid}");
@@ -95,7 +100,6 @@ impl Polish for DataSet {
             })
             .collect()
     }
-
     fn distribute_to_contig(
         &self,
         segments: &[Segment],
@@ -210,7 +214,7 @@ fn within_range(median: usize, len: usize, frac: f64) -> bool {
     (diff as f64 / median as f64) < frac
 }
 
-fn remove_refernece(ops: &mut Vec<Vec<Op>>, seqs: &[&[u8]]) {
+fn remove_refernece(ops: &mut [Vec<Op>], seqs: &[&[u8]]) {
     for (seq, op) in std::iter::zip(seqs, ops.iter_mut()) {
         let qlen = op.iter().filter(|&&op| op != Op::Del).count();
         assert_eq!(seq.len(), qlen);
@@ -219,11 +223,12 @@ fn remove_refernece(ops: &mut Vec<Vec<Op>>, seqs: &[&[u8]]) {
     }
 }
 
+type SplitQuery<'a> = (Vec<&'a [u8]>, Vec<Vec<Op>>, Vec<&'a [u8]>, Vec<bool>);
 fn split_sequences<'a>(
     seqs: &[&'a [u8]],
     ops: &mut Vec<Vec<Op>>,
     length_median: usize,
-) -> (Vec<&'a [u8]>, Vec<Vec<Op>>, Vec<&'a [u8]>, Vec<bool>) {
+) -> SplitQuery<'a> {
     let (mut use_seqs, mut use_ops) = (vec![], vec![]);
     let mut remainings = vec![];
     let mut ops_order = vec![];
@@ -255,12 +260,12 @@ fn global_align(query: &[u8], target: &[u8]) -> Vec<Op> {
     }
 }
 
-fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut Vec<Vec<Op>>, radius: usize) -> Vec<u8> {
-    let draft = kiley::ternary_consensus_by_chunk(&seqs, radius);
+fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Vec<u8> {
+    let draft = kiley::ternary_consensus_by_chunk(seqs, radius);
     for (seq, ops) in std::iter::zip(seqs, ops.iter_mut()) {
         *ops = global_align(seq, &draft);
     }
-    kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, ops, radius)
+    kiley::bialignment::guided::polish_until_converge_with(&draft, seqs, ops, radius)
 }
 
 fn polish_seg(
@@ -284,9 +289,18 @@ fn polish_seg(
         true => polish_until_converge_with(draft, &use_seqs, &mut use_ops, radius),
         false => bootstrap_consensus(&use_seqs, &mut use_ops, radius),
     };
+    for ops in use_ops.iter() {
+        let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+        assert_eq!(reflen, draft.len());
+    }
     let polished = hmm.polish_until_converge_with(&draft, &use_seqs, &mut use_ops, radius);
+    drop(draft);
     let (mut use_seqs, mut purged_seq, mut ops_order) = (use_seqs, purged_seq, ops_order);
     let mut idx = 0;
+    for ops in use_ops.iter() {
+        let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+        assert_eq!(reflen, polished.len());
+    }
     while let Some(is_used) = ops_order.pop() {
         match is_used {
             true => {
@@ -297,13 +311,17 @@ fn polish_seg(
             false => {
                 let seq = purged_seq.pop().unwrap();
                 assert_eq!(seq, seqs[idx]);
-                ops.push(global_align(seq, &draft));
+                ops.push(global_align(seq, &polished));
             }
         }
         idx += 1;
     }
     assert!(use_seqs.is_empty() && purged_seq.is_empty() && ops_order.is_empty());
     assert_eq!(ops.len(), seqs.len());
+    for ops in ops.iter() {
+        let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+        assert_eq!(reflen, polished.len());
+    }
     polished
 }
 
@@ -344,6 +362,20 @@ fn fix_alignment(
     } else {
         aln.contig_end = acc_len[last_pos];
     }
+    let reflen = aln.ops.iter().filter(|&&op| op != Op::Ins).count();
+    assert_eq!(
+        reflen,
+        aln.contig_end - aln.contig_start,
+        "{},{},{},{},{},{},{},{}",
+        start,
+        first_pos,
+        end,
+        last_pos,
+        aln.query.len(),
+        aln.contig_start,
+        aln.contig_end,
+        acc_len[first_pos + 1]
+    )
 }
 
 fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
@@ -495,7 +527,7 @@ fn align_to_contigs<R: Rng>(
     rng: &mut R,
 ) -> Vec<Alignment> {
     let mut chains = enumerate_chain(read, encs);
-    let chain_len = chains.len();
+    // let chain_len = chains.len();
     let mut alns = vec![];
     while !chains.is_empty() {
         let choises: Vec<_> = (0..chains.len()).collect();
@@ -515,12 +547,6 @@ fn align_to_contigs<R: Rng>(
         let enc = encs.iter().find(|enc| enc.id == chain.id).unwrap();
         alns.push(base_pair_alignment(read, seq, &chain, seg, enc, alns.len()));
     }
-    debug!(
-        "ALN\t{}\t{}\t{}\t{chain_len}",
-        read.id,
-        seq.len(),
-        alns.len()
-    );
     alns
 }
 
@@ -893,15 +919,9 @@ fn base_pair_alignment(
         assert_eq!(len, op_len, "Q");
         check(&query, seq, chain.is_forward);
     }
-    Alignment {
-        read_id: read.id,
-        contig: encs.id.to_string(),
-        contig_start,
-        contig_end,
-        query,
-        ops,
-        is_forward: chain.is_forward,
-    }
+    let contig_range = (contig_start, contig_end);
+    let id = encs.id.to_string();
+    Alignment::new(read.id, id, contig_range, query, ops, chain.is_forward)
 }
 
 fn check(query: &[u8], seq: &[u8], is_forward: bool) {
@@ -1272,7 +1292,56 @@ pub struct Alignment {
     is_forward: bool,
 }
 
-impl Alignment {}
+impl Alignment {
+    fn new(
+        read_id: u64,
+        contig: String,
+        (mut contig_start, mut contig_end): (usize, usize),
+        mut query: Vec<u8>,
+        mut ops: Vec<Op>,
+        is_forward: bool,
+    ) -> Alignment {
+        // Remove the last ins/dels
+        loop {
+            match ops.last() {
+                Some(&Op::Del) => contig_end -= ops.pop().is_some() as usize,
+                Some(&Op::Ins) => {
+                    assert!(ops.pop().is_some());
+                    assert!(query.pop().is_some());
+                }
+                _ => break,
+            }
+        }
+        // Remove the leading ins/dels.
+        ops.reverse();
+        query.reverse();
+        loop {
+            match ops.last() {
+                Some(&Op::Del) => contig_start += ops.pop().is_some() as usize,
+                Some(&Op::Ins) => {
+                    assert!(ops.pop().is_some());
+                    assert!(query.pop().is_some());
+                }
+                _ => break,
+            }
+        }
+        ops.reverse();
+        query.reverse();
+        let q_len = ops.iter().filter(|&&op| op != Op::Del).count();
+        let r_len = ops.iter().filter(|&&op| op != Op::Ins).count();
+        assert_eq!(q_len, query.len());
+        assert_eq!(r_len, contig_end - contig_start);
+        Self {
+            read_id,
+            contig,
+            contig_start,
+            contig_end,
+            query,
+            ops,
+            is_forward,
+        }
+    }
+}
 
 #[cfg(test)]
 mod align_test {

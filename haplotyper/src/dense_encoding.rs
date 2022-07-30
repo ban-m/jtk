@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{assemble::ditch_graph::ContigSummary, ALN_PARAMETER};
 const CONS_MIN_LENGTH: usize = 400;
+const CONS_MAX_LENGTH: usize = 10_000;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 // (unit,cluster,direction, if it is `from` part)
@@ -258,15 +259,6 @@ pub fn fill_edges_by_new_units(
     inserts
 }
 
-// fn weak_resolve(read_type: definitions::ReadType) -> (usize, f64) {
-//     match read_type {
-//         ReadType::CCS => (3, 2f64),
-//         ReadType::CLR => (4, 5f64),
-//         ReadType::ONT => (4, 4f64),
-//         ReadType::None => (4, 4f64),
-//     }
-// }
-
 fn write_to_file(
     records: &[gfa::Record],
     summaries: &[ContigSummary],
@@ -356,7 +348,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         })
         .collect();
     debug!("DE\t{}\tEDGES", edges.len());
-    let cov_thr = ds.coverage.unwrap().ceil() as usize / 4;
+    let cov_thr = ds.coverage.unwrap().ceil() as usize / 5;
     let mean_chunk_len = {
         let sum: usize = ds.selected_chunks.iter().map(|x| x.seq().len()).sum();
         sum / ds.selected_chunks.len()
@@ -443,6 +435,7 @@ fn take_consensus_on_multitig(
             cons
         })
         .collect();
+    debug!("DE\tCons\t{}", consensi.len());
     consensi.sort_unstable_by_key(|x| x.0);
     consensi
 }
@@ -523,16 +516,31 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
     let pos = seqs.len() / 2;
     let median = seqs.select_nth_unstable_by_key(pos, |x| x.len()).1.len();
     let (upper, lower) = (2 * median, median.max(CONS_MIN_LENGTH) / 2);
+    if upper <= lower || CONS_MAX_LENGTH < median {
+        return None;
+    }
     let idx = seqs.iter().position(|x| x.len() == median).unwrap();
     seqs.swap(0, idx);
     seqs.retain(|x| (lower..upper).contains(&x.len()));
     if seqs.len() <= cov_thr {
         return None;
     }
+    let draft = kiley::polish_by_pileup(&seqs[0], &seqs[1..]);
+    let task = edlib_sys::AlignTask::Alignment;
+    let mode = edlib_sys::AlignMode::Global;
+    let mut ops: Vec<_> = seqs
+        .iter()
+        .map(|x| {
+            let aln = edlib_sys::align(x, &draft, mode, task);
+            crate::misc::edlib_to_kiley(&aln.operations().unwrap())
+        })
+        .collect();
     let mean_len = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
-    let band_width = (mean_len / 20).max(50);
-    let rough_contig = kiley::ternary_consensus_by_chunk(&seqs, band_width);
-    let cons = kiley::bialignment::guided::polish_until_converge(&rough_contig, &seqs, band_width);
+    let band_width = (mean_len / 20).max(10).min(50);
+    let draft =
+        kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, &mut ops, band_width);
+    let cons =
+        kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, &mut ops, band_width);
     (CONS_MIN_LENGTH < cons.len()).then(|| cons)
 }
 

@@ -186,7 +186,7 @@ fn subcommand_mask_repeats() -> Command<'static> {
                 .short('k')
                 .help("K-mer size(<32)")
                 .takes_value(true)
-                .default_value("17"),
+                .default_value("20"),
         )
         .arg(
             Arg::new("freq")

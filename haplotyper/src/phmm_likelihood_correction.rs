@@ -131,9 +131,6 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
                     .unwrap();
                 est_cp[idx] += 1f64;
             }
-            // let obs: Vec<_> = obs_cp.iter().map(|x| format!("{x:.1}")).collect();
-            // let est: Vec<_> = est_cp.iter().map(|x| format!("{x:.0}")).collect();
-            // debug!("[{}]\t[{}]\t{total_cp}", obs.join(","), est.join(","));
             est_cp
         })
         .collect()
@@ -147,7 +144,6 @@ fn correct_unit(
     copy_numbers: &[Vec<f64>],
     config: &CorrectionConfig,
 ) -> CorrectionResult {
-    //) -> Vec<(u64, usize, Vec<f64>)> {
     let mut reads = vec![];
     for read in ds.encoded_reads.iter() {
         for (idx, node) in read.nodes.iter().enumerate() {
@@ -210,10 +206,6 @@ fn clustering(
             (up, center, tail)
         })
         .collect();
-    // for (i, ctx) in contexts.iter().enumerate() {
-    //     let cl = argmax(&ctx.1.posterior);
-    //     trace!("DUMP\t{}\t{}\t{cl}", i, ctx.1.cluster);
-    // }
     let sims: Vec<Vec<_>> = contexts
         .iter()
         .enumerate()
@@ -236,35 +228,18 @@ fn clustering(
             trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
         }
     }
-    let laplacian = get_graph_laplacian(&sims);
-    let (mut eigens, pick_k) = get_eigenvalues(&laplacian, k, id);
-    for (eigen, (idx, read)) in eigens.iter_mut().zip(reads.iter()) {
-        assert_eq!(eigen.len(), pick_k);
-        let post = &read.nodes[*idx].posterior;
-        let total = crate::misc::logsumexp(post);
-        eigen.extend(post.iter().map(|x| (x - total).exp()));
-    }
-    {
-        let mut sums: Vec<_> = eigens[0][pick_k..].iter().map(|x| x * x).collect();
-        for eig in eigens.iter().skip(1) {
-            sums.iter_mut()
-                .zip(eig[pick_k..].iter())
-                .for_each(|(s, e)| *s += e * e);
-        }
-        sums.iter_mut().for_each(|x| *x = x.sqrt());
-        for eigen in eigens.iter_mut() {
-            let posts = eigen.iter_mut().skip(pick_k).zip(sums.iter());
-            posts.for_each(|(e, s)| *e /= s);
-        }
-    }
+    let (rowsum, laplacian) = get_graph_laplacian(&sims);
+    let (mut eigens, pick_k) = get_eigenvalues(&laplacian, &rowsum, id);
+    append_posterior_probability(&mut eigens, pick_k, reads);
+    normalize_columns(&mut eigens);
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128PlusPlus;
     let mut rng = Xoroshiro128PlusPlus::seed_from_u64(id * k as u64);
     let cluster_num = k.min(pick_k);
-    let asn = (0..10)
-        .map(|_| kmeans(&eigens, cluster_num, &mut rng))
-        .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-        .map(|x| x.0)
+    let asn = (0..20)
+        .map(|_| crate::misc::kmeans(&eigens, cluster_num, &mut rng))
+        .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+        .map(|x| x.1)
         .unwrap();
     if log_enabled!(log::Level::Trace) {
         for (i, sm) in eigens.iter().enumerate() {
@@ -277,24 +252,75 @@ fn clustering(
     (asn, cluster_num)
 }
 
+fn append_posterior_probability(
+    eigens: &mut [Vec<f64>],
+    k: usize,
+    reads: &[(usize, &EncodedRead)],
+) {
+    for (eigen, (idx, read)) in eigens.iter_mut().zip(reads.iter()) {
+        assert_eq!(eigen.len(), k);
+        let post = &read.nodes[*idx].posterior;
+        let total = crate::misc::logsumexp(post);
+        eigen.extend(post.iter().map(|x| (x - total).exp()));
+    }
+}
+
+fn normalize_columns(eigens: &mut [Vec<f64>]) {
+    let mut sums = vec![0f64; eigens[0].len()];
+    for eig in eigens.iter() {
+        sums.iter_mut()
+            .zip(eig.iter())
+            .for_each(|(s, e)| *s += e * e);
+    }
+    sums.iter_mut().for_each(|x| *x = x.sqrt());
+    for eigen in eigens.iter_mut() {
+        let posts = eigen.iter_mut().zip(sums.iter());
+        posts.for_each(|(e, s)| *e /= s);
+    }
+}
+
+// Return the *normalized* graph lap, which is I - D^{-1/2}WD^{-1/2}
+// also return D.
+fn get_graph_laplacian(sims: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
+    let rowsum: Vec<f64> = sims.iter().map(|xs| xs.iter().sum()).collect();
+    let sq_inv: Vec<_> = rowsum.iter().map(|xs| xs.recip().sqrt()).collect();
+    let lap: Vec<Vec<_>> = sims
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            row.iter()
+                .enumerate()
+                .map(|(j, w)| match j == i {
+                    true => 1f64,
+                    false => -w * sq_inv[i] * sq_inv[j],
+                })
+                .collect()
+        })
+        .collect();
+    (rowsum, lap)
+}
+
 // Return the *normalized* graph lap.
 // I - D^{-1}W, where I is identity matrix, D is the diagonal "summed" matrix and
 // W is the similarity matrix itself..
-fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    sims.iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let div: f64 = row.iter().sum::<f64>().recip();
-            row.iter()
-                .enumerate()
-                .map(|(t, w)| if t == i { 1f64 - w * div } else { -w * div })
-                .collect()
-        })
-        .collect()
-}
+// fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
+//     sims.iter()
+//         .enumerate()
+//         .map(|(i, row)| {
+//             let sum: f64 = row.iter().sum();
+//             assert!(0.000001 < sum);
+//             let div: f64 = row.iter().sum::<f64>().recip();
+//             row.iter()
+//                 .enumerate()
+//                 .map(|(t, w)| if t == i { 1f64 } else { -w * div })
+//                 .collect()
+//         })
+//         .collect()
+// }
 
-const EIGEN_THR: f64 = 0.25;
-fn get_eigenvalues(matrix: &[Vec<f64>], _k: usize, id: u64) -> (Vec<Vec<f64>>, usize) {
+// const EIGEN_THR: f64 = 0.25;
+const EIGEN_THR: f64 = 0.2;
+fn get_eigenvalues(matrix: &[Vec<f64>], rowsum: &[f64], id: u64) -> (Vec<Vec<f64>>, usize) {
     let datalen = matrix.len();
     if datalen == 0 {
         panic!("{}", id)
@@ -326,88 +352,33 @@ fn get_eigenvalues(matrix: &[Vec<f64>], _k: usize, id: u64) -> (Vec<Vec<f64>>, u
         .take_while(|&(_, &lam)| lam < EIGEN_THR)
         .count();
     let pick_k = opt_k;
+    if log_enabled!(log::Level::Trace) {
+        let eigs: Vec<_> = eigen_and_eigenvec
+            .iter()
+            .map(|x| format!("{:.3}", x.1))
+            .take(opt_k)
+            .collect();
+        trace!("EIGVALUE\t{id}\t{}", eigs.join("\t"));
+    }
     if pick_k == 0 {
         for row in matrix.row_iter() {
             let sum: f64 = row.iter().sum();
             let row: Vec<_> = row.iter().map(|x| format!("{:.2}", x)).collect();
-            eprintln!("{sum}\t{}", row.join("\t"));
+            error!("LAP\t{sum:.1}\t{}", row.join("\t"));
         }
         let eigens: Vec<_> = eigen_and_eigenvec.iter().take(4).map(|x| x.1).collect();
         panic!("{:?},{},{}", eigens, id, opt_k);
     }
+    let sqrt_inv = rowsum.iter().map(|x| x.recip().sqrt());
     let features: Vec<Vec<_>> = (0..datalen)
-        .map(|i| (0..pick_k).map(|j| eigen_and_eigenvec[j].0[i]).collect())
+        .zip(sqrt_inv)
+        .map(|(i, d)| {
+            (0..pick_k)
+                .map(|j| eigen_and_eigenvec[j].0[i] * d)
+                .collect()
+        })
         .collect();
-    (features, pick_k)
-}
-
-use rand::Rng;
-
-// use crate::stats::Stats;
-fn kmeans<R: Rng>(xs: &[Vec<f64>], k: usize, rng: &mut R) -> (Vec<usize>, f64) {
-    fn update_assignment(data: &[Vec<f64>], centers: &[Vec<f64>], asn: &mut [usize]) {
-        asn.iter_mut().zip(data).for_each(|(asn, datum)| {
-            *asn = centers
-                .iter()
-                .enumerate()
-                .map(|(idx, center)| {
-                    let dist: f64 = datum
-                        .iter()
-                        .zip(center)
-                        .map(|(d, c)| (d - c) * (d - c))
-                        .sum();
-                    (idx, dist)
-                })
-                .min_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
-                .map(|x| x.0)
-                .unwrap();
-        });
-    }
-    fn update_centers(data: &[Vec<f64>], centers: &mut [Vec<f64>], asn: &[usize], k: usize) {
-        let mut counts = vec![0; k];
-        centers.iter_mut().flatten().for_each(|x| *x = 0f64);
-        for (datum, &asn) in data.iter().zip(asn.iter()) {
-            counts[asn] += 1;
-            centers[asn]
-                .iter_mut()
-                .zip(datum)
-                .for_each(|(c, d)| *c += d);
-        }
-        centers
-            .iter_mut()
-            .zip(counts.iter())
-            .filter(|&(_, &count)| count > 0)
-            .for_each(|(center, count)| {
-                center.iter_mut().for_each(|c| *c /= *count as f64);
-            });
-    }
-    fn compute_distance(data: &[Vec<f64>], centers: &[Vec<f64>], asn: &[usize]) -> f64 {
-        data.iter()
-            .zip(asn.iter())
-            .map(|(datum, &asn)| -> f64 {
-                centers[asn]
-                    .iter()
-                    .zip(datum.iter())
-                    .map(|(c, d)| (c - d) * (c - d))
-                    .sum()
-            })
-            .sum()
-    }
-    let mut assignments: Vec<_> = xs.iter().map(|_| rng.gen_range(0..k)).collect();
-    let dim = xs[0].len();
-    let mut centers = vec![vec![0f64; dim]; k];
-    let mut dist = compute_distance(xs, &centers, &assignments);
-    loop {
-        update_centers(xs, &mut centers, &assignments, k);
-        update_assignment(xs, &centers, &mut assignments);
-        let new_dist = compute_distance(xs, &centers, &assignments);
-        if dist - new_dist < 0.0001 {
-            break;
-        } else {
-            dist = new_dist;
-        }
-    }
-    (assignments, dist)
+    (features, opt_k)
 }
 
 type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
@@ -426,29 +397,11 @@ fn alignment<'a>(
     // likelihood ratio of the identity-by-haplotype. Exp(ln(From the same Hap) - ln(1-From the same hap)).
     // However, likelihood ratio test is usually goes to extreme and we want to examine the difference between exp(150) vs exp(151) into
     // similarity matrix.
-    // Anyway, use Max(0, log likleihood ratio) instead.
     let likelihood_ratio = up_aln + down_aln + center;
     match likelihood_ratio <= LK_CAP {
         true => likelihood_ratio.exp(),
-        false => LK_CAP.exp() + (likelihood_ratio - LK_CAP),
+        false => LK_CAP.exp() + LK_CAP.exp() * (likelihood_ratio - LK_CAP),
     }
-    // let similarity = (up_aln + down_aln + center).min(LK_CAP).exp();
-    // assert!(0f64 <= similarity);
-    // if log_enabled!(log::Level::Trace) {
-    //     fn to_line<'a>(vector: &[(u64, &'a [f64])]) -> Vec<String> {
-    //         vector
-    //             .iter()
-    //             .map(|(u, p)| format!("{u}-{}", argmax(p)))
-    //             .collect()
-    //     }
-    //     trace!("ALN\t\t{}", to_line(up1).join(" "));
-    //     trace!("ALN\t\t{}", to_line(up2).join(" "));
-    //     trace!("ALN\t\t{}", to_line(down1).join(" "));
-    //     trace!("ALN\t\t{}", to_line(down2).join(" "));
-    //     let (cl1, cl2) = (argmax(&center1.posterior), argmax(&center2.posterior));
-    //     trace!("ALN\t{up_aln:.3}\t{center:.3}\t{down_aln:.3}\t{similarity:.3}\t{cl1}\t{cl2}");
-    // }
-    // similarity
 }
 
 // Align by SWG.

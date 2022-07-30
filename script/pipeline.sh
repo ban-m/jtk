@@ -13,6 +13,7 @@ LOG=${2}.log
 STAT=${2}.stat
 READTYPE=${3}
 THREADS=56
+UPPER_COPY_NUM=6
 
 ### Take number.
 if [ $# -ge 4 ]; then
@@ -37,13 +38,11 @@ else
     jtk entry -vv -t56 --input ${TARGET} --read_type $READTYPE |\
         jtk mask_repeats -k 15 -t ${THREADS} -vv |\
         jtk select_unit -vv -t ${THREADS} --take_num ${UNIT_GUESS} |\
-        tee ${2}.temp.json |\
         jtk pick_components -vv -c1 -t${THREADS}|\
         jtk correct_deletion -vv --threads ${THREADS} > ${2}.entry.json
 fi
 
 
-UPPER_COPY_NUM=6
 if [ -f ${CLUSTERED} ]
 then
     echo "Clustered file found.Skip clustering proc."

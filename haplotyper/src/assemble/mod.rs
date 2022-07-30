@@ -344,14 +344,12 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
                         .iter()
                         .filter_map(|elm| elm.copy_number)
                         .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                    let copynum = (cp as f64 / cpnum.max(1) as f64).round() as usize;
                     let mut tags = vec![coverage];
                     if cpnum != 0 {
-                        tags.push(gfa::SamTag::new(format!("cp:i:{}", cp / cpnum)));
+                        tags.push(gfa::SamTag::new(format!("cp:i:{copynum}")));
                     }
-                    groups
-                        .entry(cp / cpnum.max(1))
-                        .or_default()
-                        .push(node.sid.clone());
+                    groups.entry(copynum).or_default().push(node.sid.clone());
                     tags
                 })
                 .unwrap_or_else(Vec::new);

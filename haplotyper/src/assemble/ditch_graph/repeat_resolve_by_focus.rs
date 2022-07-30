@@ -219,12 +219,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     fn clean_up(&'b mut self, focus: &Focus, mut affected: HashSet<NodeIndex>) {
         affected.extend(focus.path.iter().map(|n| n.0));
         for node in affected {
-            if !self.is_deleted(node) {
-                let edge_num = self.node(node).unwrap().edges.len();
-                if edge_num == 0 {
-                    self.delete(node);
-                }
-            }
+            self.remove_node_recursive(node);
         }
     }
     fn remove_along(&'b mut self, focus: &Focus) {
@@ -238,12 +233,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         reads: &[&EncodedRead],
         config: &AssembleConfig,
         thr: f64,
+        use_branch: bool,
     ) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
         warn!("Please fix lk computation!");
         let mut count = 1;
         while count != 0 {
-            let mut foci = self.get_foci(reads, config);
+            let mut foci = self.get_foci(reads, use_branch, config);
             let prev = foci.len();
             foci.retain(|val| thr < val.llr());
             foci.retain(|val| val.llr() != std::f64::INFINITY);
@@ -259,39 +255,66 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             debug!("FOCI\tTryAndSuccess\t{}\t{}", foci.len(), count);
         }
     }
-
+    fn to_multi_copy(&self, node: &DitchNode, pos: Position) -> bool {
+        let edge_num = node.edges.iter().filter(|e| e.from_position == pos).count();
+        if edge_num != 1 {
+            return false;
+        }
+        let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
+        let siblings = self.count_edges(edge.to, edge.to_position);
+        assert!(1 <= siblings);
+        if siblings == 1 {
+            return false;
+        }
+        // If this edge does not flow into multi-copy contig, continue.
+        matches!(self.node(edge.to).unwrap().copy_number, Some(x) if 1 < x)
+    }
     /// Return a hash map containing all foci, thresholded by `config` parameter.
     /// For each (node, position), keep the strongest focus.
-    fn get_foci(&self, reads: &[&EncodedRead], config: &AssembleConfig) -> Vec<Focus> {
+    fn get_foci(
+        &self,
+        reads: &[&EncodedRead],
+        use_branch: bool,
+        config: &AssembleConfig,
+    ) -> Vec<Focus> {
         let mut foci = vec![];
-        for (index, node) in self
-            .nodes()
-            .filter(|(_, n)| matches!(n.copy_number, Some(1)))
-        {
+        for (index, node) in self.nodes() {
+            if !matches!(node.copy_number, Some(1)) {
+                continue;
+            }
+            for pos in [Position::Head, Position::Tail] {
+                let into_multi_copy = self.to_multi_copy(node, pos);
+                let is_branching = 1 < node.edges.iter().filter(|e| e.from_position == pos).count();
+                if into_multi_copy || (use_branch && is_branching) {
+                    if let Some(focus) = self.examine_focus(index, pos, reads, config) {
+                        foci.push(focus);
+                    }
+                }
+            }
             // Find
             // --Node(Copy=1)--|
             //                 |--Node(Copy>1)--
             // --Node----------|
             //  (We are here now)
-            for pos in [Position::Head, Position::Tail] {
-                if self.count_edges(index, pos) != 1 {
-                    continue;
-                }
-                let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
-                let siblings = self.count_edges(edge.to, edge.to_position);
-                assert!(1 <= siblings);
-                if siblings == 1 {
-                    continue;
-                }
-                // If this edge does not flow into multi-copy contig, continue.
-                match self.node(edge.to).unwrap().copy_number {
-                    None | Some(1) | Some(0) => continue,
-                    _ => {}
-                }
-                if let Some(focus) = self.examine_focus(index, pos, reads, config) {
-                    foci.push(focus);
-                }
-            }
+            // for pos in [Position::Head, Position::Tail] {
+            //     if self.count_edges(index, pos) != 1 {
+            //         continue;
+            //     }
+            //     let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
+            //     let siblings = self.count_edges(edge.to, edge.to_position);
+            //     assert!(1 <= siblings);
+            //     if siblings == 1 {
+            //         continue;
+            //     }
+            //     // If this edge does not flow into multi-copy contig, continue.
+            //     match self.node(edge.to).unwrap().copy_number {
+            //         None | Some(1) | Some(0) => continue,
+            //         _ => {}
+            //     }
+            //     if let Some(focus) = self.examine_focus(index, pos, reads, config) {
+            //         foci.push(focus);
+            //     }
+            // }
         }
         foci
     }
@@ -378,7 +401,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let mut found_nodes: Vec<_> = vec![];
         for &(_, _, _, index, pos) in nodes {
             let edges = self.edges_from(index, !pos).into_iter();
-            let edges = edges.filter(|e| matches!(e.copy_number,Some(cp) if cp > 0));
+            let edges = edges.filter(|e| matches!(e.copy_number,Some(cp) if 0 < cp ));
             for edge in edges {
                 found_nodes.push((edge.to, edge.to_position));
             }
@@ -411,7 +434,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .collect();
             for (i, &(_, max, _, index, pos)) in prev_nodes.iter().enumerate() {
                 let edges = self.edges_from(index, !pos).into_iter();
-                let edges = edges.filter(|e| matches!(e.copy_number,Some(cp) if cp > 0));
+                let edges = edges.filter(|e| matches!(e.copy_number,Some(cp) if 0 < cp));
                 let to_locations = edges.filter_map(|e| map_to_idx.get(&(e.to, e.to_position)));
                 for &to_location in to_locations {
                     let old_max = maxweight.get_mut(to_location).unwrap();

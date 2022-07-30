@@ -381,12 +381,18 @@ pub struct EncodedRead {
 
 impl std::fmt::Display for EncodedRead {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "{}({}bp)", self.id, self.original_length)?;
-        write!(f, "{}bp gap|", self.leading_gap.len())?;
-        for e in self.edges.iter() {
-            write!(f, "{} ", e)?;
+        writeln!(f, "{} ({}bp)", self.id, self.original_length)?;
+        write!(f, "{}bp gap | ", self.leading_gap.len())?;
+        for (node, edge) in std::iter::zip(self.nodes.iter(), self.edges.iter()) {
+            write!(
+                f,
+                "{}-{} ({}) ",
+                node.unit,
+                node.cluster,
+                edge.label().len()
+            )?;
         }
-        write!(f, "|{} bp gap", self.trailing_gap.len())
+        write!(f, " | {} bp gap", self.trailing_gap.len())
     }
 }
 

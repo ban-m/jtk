@@ -638,13 +638,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let seed = self.nodes.len() as u64 * 7329;
         let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(seed);
         debug!("CC\tBFASN\t{}", self.cc());
+        if log_enabled!(log::Level::Trace) {
+            dump(self, 0, c);
+        }
         self.assign_copy_number(cov, &mut rng);
         self.remove_tips(0.8, 4);
         assert!(self.sanity_check());
         debug!("CC\tRMZERO\t{}", self.cc());
-        if log_enabled!(log::Level::Trace) {
-            dump(self, 0, c);
-        }
         self.remove_tips(0.8, 4);
         // From good Likelihood ratio focus, to weaker ones.
         let min_llr = c.span_likelihood_ratio;
@@ -658,7 +658,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.remove_zero_copy_path(0.1);
-            self.resolve_repeats(reads, c, llr as f64);
+            self.resolve_repeats(reads, c, llr as f64, false);
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if i == 5 {
@@ -682,9 +682,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.squish_small_net(3);
         self.assign_copy_number(cov, &mut rng);
         self.zip_up_overclustering_dev();
-        self.resolve_repeats(reads, c, min_llr);
-        self.z_edge_selection();
-        self.remove_zero_copy_path(0.2);
+        self.resolve_repeats(reads, c, min_llr, true);
+        self.remove_zero_copy_elements(100f64);
+        // self.z_edge_selection();
+        // self.remove_zero_copy_path(0.2);
     }
     pub fn cc(&self) -> usize {
         // Connected component.
@@ -721,17 +722,14 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
                         .iter()
                         .filter_map(|elm| elm.copy_number)
                         .fold((0, 0), |(cp, num), x| (cp + x, num + 1));
+                    let copynum = (cp as f64 / cpnum.max(1) as f64).round() as usize;
                     log::debug!(
-                        "ASMDUMP\t{i}\t{}\t{}\t{}",
+                        "ASMDUMP\t{i}\t{}\t{copynum}\t{}",
                         contigsummary.id,
-                        cp / cpnum.max(1),
                         ids.join("\t")
                     );
-                    groups
-                        .entry(cp / cpnum.max(1))
-                        .or_default()
-                        .push(node.sid.clone());
-                    let cp = gfa::SamTag::new(format!("cp:i:{}", cp / cpnum.max(1)));
+                    groups.entry(copynum).or_default().push(node.sid.clone());
+                    let cp = gfa::SamTag::new(format!("cp:i:{copynum}"));
                     vec![coverage, cp]
                 }
                 None => Vec::new(),
@@ -815,7 +813,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 num += 1;
             }
         }
-        total / num
+        total / num.max(1)
     }
     // Return tuples of node and their position from which
     // we can start simple-path-reduction.
@@ -1195,7 +1193,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     // S(k) = {(n,p) connected to P(k-1)}
     // And the reflex parent is define as P(\infty) and S(\infty).
     // In practice, for efficiency issue, we use P(cut) and S(cut).
-
     pub fn get_reflex_nodes(
         &self,
         node: NodeIndex,
@@ -1428,6 +1425,30 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         removed
     }
+    // Removing `from` node if the copy number is zero, and the copy numbers
+    // of the edges from this node are also zero.
+    // Then, recursively call this function to all (previously) connected edges.
+    fn remove_node_recursive(&'b mut self, from: NodeIndex) {
+        if !self.is_deleted(from) {
+            let node = self.node(from).unwrap();
+            if matches!(node.copy_number, Some(0)) {
+                let all_zero = node.edges.iter().all(|e| matches!(e.copy_number, Some(0)));
+                if all_zero {
+                    let mut affected: Vec<_> = node.edges.iter().map(|e| e.to).collect();
+                    affected.sort_unstable();
+                    affected.dedup();
+                    let remove_edges: Vec<_> = node.edges.iter().map(|e| e.key()).collect();
+                    for (f, t) in remove_edges {
+                        self.remove_edge_between(f, t);
+                    }
+                    for node in affected {
+                        self.remove_node_recursive(node);
+                    }
+                    self.delete(from);
+                }
+            }
+        }
+    }
     // Removing (from,from_pos)-(to,to_pos) edge.
     // Then, recursively removing the edges in the opposite position and `to` node itself
     // if the degree of `(to,to_pos)` is zero after removing.
@@ -1436,9 +1457,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         (from, from_pos): (NodeIndex, Position),
         (to, to_pos): (NodeIndex, Position),
     ) {
-        let from_node = self.node(from).unwrap().node;
-        let to_node = self.node(to).unwrap().node;
-        debug!("Removing ({from_node:?},{from_pos})-({to_node:?},{to_pos})",);
         self.remove_edge_between((from, from_pos), (to, to_pos));
         // If the degree became zero and this node and the copy number is zero, remove recursively
         let removed_all_edges = self
@@ -1734,6 +1752,80 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .retain(|edge| !removed_edges.contains(&format_edge(edge)));
         });
     }
+    // fn share_units(&self, boundary: &GraphBoundary) -> bool {
+    //     let boundary: Vec<_> = boundary
+    //         .iter()
+    //         .map(|(n, pos)| (self.node(*n).unwrap().node.0, pos))
+    //         .collect();
+    //     if boundary.is_empty() {
+    //         false
+    //     } else {
+    //         boundary.iter().all(|&elm| elm == boundary[0])
+    //     }
+    // }
+    // fn z_edge_squish(&mut self) {
+    //     let mut keys: Vec<_> = self.nodes().map(|n| n.0).collect();
+    //     keys.sort_unstable();
+    //     for node in keys {
+    //         if self.is_deleted(node) || self.has_self_loop(node) {
+    //             continue;
+    //         }
+    //         for position in [Position::Head, Position::Tail] {
+    //             if self.count_edges(node, position) <= 1 {
+    //                 continue;
+    //             }
+    //             let (parents, sibs) = self.get_reflex_nodes(node, position, 6);
+    //             let par_copy = parents
+    //                 .iter()
+    //                 .filter_map(|&(n, _)| self.node(n).and_then(|n| n.copy_number))
+    //                 .all(|cp| cp == 1);
+    //             let sib_copy = sibs
+    //                 .iter()
+    //                 .filter_map(|&(n, _)| self.node(n).and_then(|n| n.copy_number))
+    //                 .all(|cp| cp == 1);
+    //             if !(par_copy && sib_copy) {
+    //                 continue;
+    //             }
+    //             if !(self.share_units(&parents) && self.share_units(&sibs)) {
+    //                 continue;
+    //             }
+    //             let sibs: Vec<_> = sibs.into_iter().filter(|&x| x.0 != node).collect();
+    //             let retain = node;
+    //             drop(node);
+    //             // Make all the edges into sibs to retain.
+    //             let (edges, increase_occ, increase_copy_num) = {
+    //                 let (mut edges, mut occ, mut cp) = (vec![], 0, 0);
+    //                 for &(node, _) in sibs.iter() {
+    //                     let removed = self.node(node).unwrap();
+    //                     edges.extend(removed.edges.clone());
+    //                     occ += removed.occ;
+    //                     cp += removed.copy_number.unwrap_or(0);
+    //                     self.delete(node);
+    //                 }
+    //                 let retain_node = self.node(retain).unwrap().node;
+    //                 for edge in edges.iter_mut() {
+    //                     edge.from = retain;
+    //                     edge.from_node = retain_node;
+    //                 }
+    //                 (edges, occ, cp)
+    //             };
+    //             {
+    //                 let retain_node = self.node_mut(retain).unwrap();
+    //                 retain_node.occ += increase_occ;
+    //                 if let Some(cp) = retain_node.copy_number.as_mut() {
+    //                     *cp += increase_copy_num;
+    //                 }
+    //             };
+    //             for edge in edges {
+    //                 if self.has_edge(edge.key()) {
+    //                     self.merge_edge(&edge);
+    //                 } else {
+    //                     self.add_edge(edge);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
     /// Check if we can select this edge when we need to select an edge for each
     /// node while preserving the connectiviy of the graph.
     /// true if we could select this edge.

@@ -187,7 +187,7 @@ pub enum DiffType {
     Ins,
 }
 
-const BASES: &'static [u8] = b"ACGT";
+const BASES: &[u8] = b"ACGT";
 use rand::Rng;
 fn sample_triple<R: Rng>(rng: &mut R) -> (u8, u8, u8) {
     let homop = *BASES.choose(rng).unwrap();

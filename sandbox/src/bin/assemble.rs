@@ -35,8 +35,6 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     graph.remove_lightweight_edges(2, true);
     let cov = ds.coverage.unwrap_or(30.0);
     let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
-    // graph.assign_copy_number_mcmc(cov, &mut rng);
-    // graph.assign_copy_number_mst(cov, &mut rng);
     graph.assign_copy_number_flow(cov, &mut rng);
     eprintln!("{graph}");
     eprintln!("CC:{}", graph.cc());

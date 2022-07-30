@@ -124,7 +124,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     let read_type = ds.read_type;
     let hmm = crate::model_tune::get_model(ds).unwrap();
     let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
-    debug!("GAINS:{gains}");
+    debug!("GAINS\n{gains}");
     let (mut pileups, chunks) = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()

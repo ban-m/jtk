@@ -101,3 +101,118 @@ pub fn ops_to_kiley(ops: &definitions::Ops) -> Vec<kiley::Op> {
         })
         .collect()
 }
+
+use rand::Rng;
+const UPDATE_THR: f64 = 0.00000001;
+/// kmenas++. Returns the residual and the assginemtns.
+pub fn kmeans<R: Rng, D: std::borrow::Borrow<[f64]>>(
+    data: &[D],
+    k: usize,
+    rng: &mut R,
+) -> (f64, Vec<usize>) {
+    assert!(1 <= k);
+    let dim = data[0].borrow().len();
+    assert!(0 < dim);
+    let mut assignments = match rng.gen_bool(0.5) {
+        true => (0..data.len()).map(|_| rng.gen_range(0..k)).collect(),
+        false => suggest_first(data, k, rng),
+    };
+    let (mut centers, mut counts) = (vec![vec![0f64; dim]; k], vec![0; k]);
+    let mut dist = get_dist(data, &centers, &assignments);
+    loop {
+        // Update
+        update_centers(data, &mut centers, &mut counts, &assignments);
+        update_assignments(data, &centers, &mut assignments);
+        let new_dist = get_dist(data, &centers, &assignments);
+        assert!(new_dist <= dist);
+        assert!(0f64 <= dist - new_dist);
+        if dist - new_dist < UPDATE_THR {
+            break;
+        } else {
+            dist = new_dist;
+        }
+    }
+    (dist, assignments)
+}
+
+fn update_assignments<D: std::borrow::Borrow<[f64]>, C: std::borrow::Borrow<[f64]>>(
+    data: &[D],
+    centers: &[C],
+    assignments: &mut [usize],
+) {
+    assert_eq!(data.len(), assignments.len());
+    data.iter().zip(assignments.iter_mut()).for_each(|(xs, c)| {
+        let (new_center, _) = centers
+            .iter()
+            .map(|cs| dist(xs.borrow(), cs.borrow()))
+            .enumerate()
+            .min_by(|x, y| (x.1.partial_cmp(&(y.1)).unwrap()))
+            .unwrap();
+        *c = new_center;
+    });
+}
+fn update_centers<D: std::borrow::Borrow<[f64]>>(
+    data: &[D],
+    centers: &mut [Vec<f64>],
+    counts: &mut [usize],
+    assignments: &[usize],
+) {
+    centers
+        .iter_mut()
+        .for_each(|cs| cs.iter_mut().for_each(|x| *x = 0f64));
+    counts.iter_mut().for_each(|c| *c = 0);
+    for (&asn, xs) in assignments.iter().zip(data.iter()) {
+        let xs = xs.borrow();
+        centers[asn].iter_mut().zip(xs).for_each(|(c, x)| *c += x);
+        counts[asn] += 1;
+    }
+    centers
+        .iter_mut()
+        .zip(counts.iter())
+        .filter(|&(_, &cou)| 0 < cou)
+        .for_each(|(cen, &cou)| cen.iter_mut().for_each(|x| *x /= cou as f64));
+}
+fn get_dist<D: std::borrow::Borrow<[f64]>>(
+    data: &[D],
+    centers: &[Vec<f64>],
+    assignments: &[usize],
+) -> f64 {
+    data.iter()
+        .zip(assignments)
+        .map(|(xs, &asn)| dist(xs.borrow(), &centers[asn]))
+        .sum()
+}
+fn dist(xs: &[f64], ys: &[f64]) -> f64 {
+    assert_eq!(xs.len(), ys.len());
+    std::iter::zip(xs.iter(), ys.iter())
+        .map(|(x, y)| (x - y).powi(2))
+        .sum()
+}
+
+fn suggest_first<R: Rng, D: std::borrow::Borrow<[f64]>>(
+    data: &[D],
+    k: usize,
+    rng: &mut R,
+) -> Vec<usize> {
+    use rand::seq::SliceRandom;
+    assert!(k <= data.len());
+    let mut centers: Vec<&[f64]> = vec![data.choose(rng).unwrap().borrow()];
+    let choices: Vec<_> = (0..data.len()).collect();
+    for _ in 0..k - 1 {
+        let dists: Vec<_> = data
+            .iter()
+            .map(|xs| {
+                centers
+                    .iter()
+                    .map(|cs| dist(xs.borrow(), cs))
+                    .min_by(|x, y| x.partial_cmp(y).unwrap())
+                    .unwrap()
+            })
+            .collect();
+        let idx = *choices.choose_weighted(rng, |&i| dists[i]).unwrap();
+        centers.push(data[idx].borrow());
+    }
+    let mut assignments = vec![0; data.len()];
+    update_assignments(data, &centers, &mut assignments);
+    assignments
+}
