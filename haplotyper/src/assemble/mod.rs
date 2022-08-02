@@ -1,4 +1,3 @@
-pub mod consensus;
 pub mod copy_number;
 pub mod ditch_graph;
 use definitions::*;
@@ -307,7 +306,8 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
     debug!("{} segments({} bp in total).", segments.len(), total_base);
     if c.to_polish {
-        use consensus::Polish;
+        use crate::consensus;
+        use crate::consensus::Polish;
         let seed = 394802;
         let radius = 100;
         let config = consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, 2);

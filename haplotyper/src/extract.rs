@@ -1,69 +1,21 @@
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub enum ExtractTarget {
-    RawReads,
-    HiCReads,
-    Units,
-    Assignments,
-}
-
 pub trait Extract {
-    fn extract_fasta(&self, target: ExtractTarget) -> Vec<fasta::Record>;
-    fn extract_assignments(&self) -> Vec<(usize, String, String)>;
+    fn extract<W: std::io::Write>(&self, file: &mut W) -> std::io::Result<()>;
 }
 
-use bio_utils::fasta;
 impl Extract for definitions::DataSet {
-    fn extract_assignments(&self) -> Vec<(usize, String, String)> {
-        use std::collections::HashMap;
-        let id2name: HashMap<_, _> = self
-            .raw_reads
-            .iter()
-            .map(|r| (r.id, (r.name.clone(), r.desc.clone())))
-            .collect();
-        self.assignments
-            .iter()
-            .filter_map(|asn| {
-                id2name
-                    .get(&asn.id)
-                    .map(|(n, d)| (asn.cluster, n.clone(), d.clone()))
-            })
-            .collect()
-    }
-    fn extract_fasta(&self, target: ExtractTarget) -> Vec<fasta::Record> {
-        match target {
-            ExtractTarget::RawReads => self
-                .raw_reads
-                .iter()
-                .map(|r| {
-                    let desc = if r.desc.is_empty() {
-                        None
-                    } else {
-                        Some(r.desc.clone())
-                    };
-                    let id = format!("{}_{}", r.name, r.id);
-                    fasta::Record::with_data(&id, &desc, r.seq())
-                })
-                .collect(),
-            ExtractTarget::HiCReads => self
-                .hic_pairs
-                .iter()
-                .flat_map(|hic| {
-                    let id1 = format!("{}_1", hic.pair_id);
-                    let seq1 = fasta::Record::with_data(&id1, &None, hic.seq1());
-                    let id2 = format!("{}_2", hic.pair_id);
-                    let seq2 = fasta::Record::with_data(&id2, &None, hic.seq2());
-                    vec![seq1, seq2]
-                })
-                .collect(),
-            ExtractTarget::Units => self
-                .selected_chunks
-                .iter()
-                .map(|u| {
-                    let id = format!("{}", u.id);
-                    fasta::Record::with_data(&id, &None, u.seq())
-                })
-                .collect(),
-            _ => unreachable!(),
+    fn extract<W: std::io::Write>(&self, file: &mut W) -> std::io::Result<()> {
+        for read in self.raw_reads.iter() {
+            let seq = std::str::from_utf8(read.seq()).unwrap();
+            let (name, desc, id) = (&read.name, &read.desc, read.id);
+            write!(file, "READ\t{name}\t{desc}\t{id}\t{seq}")?;
         }
+        for unit in self.selected_chunks.iter() {
+            let seq = std::str::from_utf8(unit.seq()).unwrap();
+            write!(file, "UNIT\t{}\t{}\t{}", unit.id, unit.copy_num, seq)?;
+        }
+        for _read in self.encoded_reads.iter() {
+            // todo!()
+        }
+        Ok(())
     }
 }

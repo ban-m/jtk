@@ -37,6 +37,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
 ) -> Option<ClusteringResult> {
     let mut template = kiley::ternary_consensus_by_chunk(reads, band);
     let mut hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    hmm.fit_naive(&template, reads, band);
     let gains = crate::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let cov = reads.len() as f64 / cluster_num as f64;
     let config = ClusteringConfig::new(band, cluster_num as u8, cov, &gains);
@@ -402,6 +403,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let cluster_num = config.copy_num as usize;
     let coverage = config.coverage;
     let gains = config.gains;
+    debug!("Gain\n{gains}");
     let pvalues = gains.pvalues(profiles.len());
     let homopolymer_length = homopolymer_length(template);
     let min_req: Vec<_> = (0..profiles[0].borrow().len())
@@ -417,7 +419,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     fn is_ins_del_subs(&(pos, _): &(usize, &(f64, usize))) -> bool {
         pos % NUM_ROW < 9 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE
     }
-
     let probes: Vec<(usize, f64)> = total_improvement
         .iter()
         .enumerate()
@@ -432,6 +433,10 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             let homop_len = *homopolymer_length.get(bp_pos).unwrap_or(&0);
             let pvalue = pvalues.pvalue(homop_len, diff_type, count);
             let expt = gains.expected(homop_len, diff_type) * EXPT_GAIN_FACTOR;
+            if 10 < count {
+                let is_lower = pvalue < PVALUE / template_len as f64;
+                trace!("PVALUE\t{pos}\t{gain:.3}\t{count}\t{expt:.3}\t{is_lower}");
+            }
             (count as f64) * expt < gain && pvalue < PVALUE / template_len as f64
         })
         .map(|(pos, &(maxgain, count))| {

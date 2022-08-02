@@ -272,7 +272,7 @@ fn remove_overlapping_units(
     // How long one overlap should be at least.
     let overlap_len = config.chunk_len / 2;
     let mm2 = mm2_unit_overlap(ds, config)?;
-    let alignments = String::from_utf8_lossy(&mm2);
+    let alignments = std::str::from_utf8(&mm2).unwrap();
     let alignments = alignments
         .lines()
         .filter_map(bio_utils::paf::PAF::new)

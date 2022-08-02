@@ -32,7 +32,6 @@ pub fn adjusted_rand_index(label: &[usize], pred: &[usize]) -> f64 {
     let mut cont_table = vec![vec![0; pred_max + 1]; lab_max + 1];
     let mut lab_sum = vec![0; lab_max + 1];
     let mut pred_sum = vec![0; pred_max + 1];
-
     for (&lab, &pred) in label.iter().zip(pred.iter()) {
         cont_table[lab][pred] += 1;
         lab_sum[lab] += 1;
@@ -45,8 +44,10 @@ pub fn adjusted_rand_index(label: &[usize], pred: &[usize]) -> f64 {
     let pred_match: usize = pred_sum.iter().map(choose).sum();
     let num_of_pairs = choose(&label.len());
     let both_match: usize = cont_table.iter().flatten().map(choose).sum();
-    let denom = num_of_pairs * (lab_match + pred_match) / 2 - lab_match * pred_match;
-    let numer = num_of_pairs * both_match - lab_match * pred_match;
+    assert!(both_match <= (lab_match + pred_match) / 2);
+    let match_prod = (lab_match * pred_match) as i64;
+    let denom = (num_of_pairs * (lab_match + pred_match) / 2) as i64 - match_prod;
+    let numer = (num_of_pairs * both_match) as i64 - match_prod;
     numer as f64 / denom as f64
 }
 

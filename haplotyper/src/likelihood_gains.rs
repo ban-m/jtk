@@ -272,7 +272,6 @@ fn gain_of(
         .collect();
     let len = medians.len() / 2;
     let (_, &mut gain, _) = medians.select_nth_unstable_by(len, |x, y| x.partial_cmp(y).unwrap());
-    // debug!("{diff_type:?}\t{probs:?}");
     let (_, &mut prob, _) = probs.select_nth_unstable_by(len, |x, y| x.partial_cmp(y).unwrap());
     GainProfile { gain, prob }
 }

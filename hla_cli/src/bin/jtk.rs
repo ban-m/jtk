@@ -42,26 +42,16 @@ fn subcommand_entry() -> Command<'static> {
         )
 }
 
-const TARGETS: [&str; 4] = ["raw_reads", "hic_reads", "units", "assignments"];
 fn subcommand_extract() -> Command<'static> {
     Command::new("extract")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Exit point. It extract fasta/q file from a HLA-class file.")
+        .about("Extract (unfold) all the information in the packed file into one tsv file")
         .arg(
             Arg::new("verbose")
                 .short('v')
                 .multiple_occurrences(true)
                 .help("Debug mode"),
-        )
-        .arg(
-            Arg::new("target")
-                .short('t')
-                .long("target")
-                .takes_value(true)
-                .value_name("TARGET")
-                .required(true)
-                .possible_values(&TARGETS),
         )
         .arg(
             Arg::new("output")
@@ -540,6 +530,14 @@ fn subcommand_assemble() -> Command<'static> {
                 .help("Minimum likelihood ratio"),
         )
         .arg(
+            Arg::new("min_span")
+                .long("min_span")
+                .takes_value(true)
+                .value_name("# of reads")
+                .required(false)
+                .help("Minimum required reads to span repeats"),
+        )
+        .arg(
             Arg::new("output")
                 .short('o')
                 .long("output")
@@ -547,6 +545,82 @@ fn subcommand_assemble() -> Command<'static> {
                 .value_name("PATH")
                 .help("Output file name")
                 .takes_value(true),
+        )
+}
+
+fn subcommand_polish() -> Command<'static> {
+    Command::new("polish")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Polish contigs.")
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value("1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("window_size")
+                .short('w')
+                .long("window_size")
+                .required(false)
+                .value_name("WINDOW_SIZE")
+                .help("Size of the window to take consensus sequences.")
+                .default_value("2000")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("reads")
+                .short('r')
+                .long("reads")
+                .takes_value(true)
+                .required(true)
+                .value_name("Reads<FASTA|FASTQ>")
+                .help("raw reads. The extension is used to decide format."),
+        )
+        .arg(
+            Arg::new("contigs")
+                .short('c')
+                .long("contigs")
+                .required(true)
+                .takes_value(true)
+                .value_name("Contig<GFA|FA>")
+                .help("Contigs to be polished. The extension is used to decide format"),
+        )
+        .arg(
+            Arg::new("alignments")
+                .short('a')
+                .long("alignments")
+                .takes_value(true)
+                .required(true)
+                .value_name("Alignments<PAF|SAM>")
+                .help("Alignments reads -> contigs. If -, read from the stdin."),
+        )
+        .arg(
+            Arg::new("format")
+                .short('f')
+                .long("format")
+                .takes_value(true)
+                .required(true)
+                .possible_values(&["sam", "paf"])
+                .help("Format of the alignments")
+                .default_value("sam"),
+        )
+        .arg(
+            Arg::new("seed")
+                .long("seed")
+                .takes_value(true)
+                .default_value("42"),
         )
 }
 
@@ -584,38 +658,12 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
-    use haplotyper::extract::{Extract, ExtractTarget};
+    use haplotyper::extract::Extract;
     debug!("START\tExtract");
     debug!("Target is {}", matches.value_of("target").unwrap());
     let file = std::fs::File::create(matches.value_of("output").unwrap())?;
-    match matches.value_of("target").unwrap() {
-        "raw_reads" => {
-            let mut wtr = bio_utils::fasta::Writer::new(file);
-            for seq in dataset.extract_fasta(ExtractTarget::RawReads) {
-                wtr.write_record(&seq)?;
-            }
-        }
-        "hic_reads" => {
-            let mut wtr = bio_utils::fasta::Writer::new(file);
-            for seq in dataset.extract_fasta(ExtractTarget::HiCReads) {
-                wtr.write_record(&seq)?;
-            }
-        }
-        "units" => {
-            let mut wtr = bio_utils::fasta::Writer::new(file);
-            for seq in dataset.extract_fasta(ExtractTarget::Units) {
-                wtr.write_record(&seq)?;
-            }
-        }
-        "assignments" => {
-            let asn_name_desc = dataset.extract_assignments();
-            let mut wtr = BufWriter::new(file);
-            for (asn, name, desc) in asn_name_desc {
-                writeln!(wtr, "{}\t{}\t{}", asn, name, desc)?;
-            }
-        }
-        &_ => unreachable!(),
-    };
+    let mut wtr = std::io::BufWriter::new(file);
+    dataset.extract(&mut wtr)?;
     Ok(())
 }
 
@@ -821,11 +869,12 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         .and_then(|num| num.parse().ok())
         .unwrap();
     let min_llr: Option<f64> = matches.value_of("min_llr").map(|num| num.parse().unwrap());
+    let min_span: Option<usize> = matches.value_of("min_span").map(|num| num.parse().unwrap());
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
-    let msr = dataset.read_type.min_span_reads();
+    let msr = min_span.unwrap_or_else(|| dataset.read_type.min_span_reads());
     let min_lk = min_llr.unwrap_or_else(|| dataset.read_type.min_llr_value());
     let config = AssembleConfig::new(window_size, !skip_polish, true, msr, min_lk);
     debug!("START\tFinal assembly");
@@ -836,6 +885,24 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     let gfa = dataset.assemble(&config);
     writeln!(file, "{}", gfa)?;
     Ok(())
+}
+
+fn polish(matches: &clap::ArgMatches) -> std::io::Result<()> {
+    set_threads(matches);
+    let window_size: usize = matches
+        .value_of("window_size")
+        .and_then(|x| x.parse().ok())
+        .unwrap();
+    let reads = matches.value_of("reads").unwrap();
+    let contig = matches.value_of("contigs").unwrap();
+    let alignments = matches.value_of("alignments").unwrap();
+    let format = matches.value_of("format").unwrap();
+    let seed: u64 = matches
+        .value_of("seed")
+        .and_then(|x| x.parse().ok())
+        .unwrap();
+    use haplotyper::polish_segments::polish_segmnents;
+    polish_segmnents(reads, contig, alignments, format, window_size, seed)
 }
 
 fn get_input_file() -> std::io::Result<DataSet> {
@@ -885,6 +952,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_assemble())
         .subcommand(subcommand_pick_components())
         .subcommand(subcommand_mask_repeats())
+        .subcommand(subcommand_polish())
         .get_matches();
     if let Some((_, sub_m)) = matches.subcommand() {
         let level = match sub_m.occurrences_of("verbose") {
@@ -897,6 +965,9 @@ fn main() -> std::io::Result<()> {
     }
     if let Some(("entry", sub_m)) = matches.subcommand() {
         return entry(sub_m).and_then(|x| flush_file(&x));
+    }
+    if let Some(("polish", sub_m)) = matches.subcommand() {
+        return polish(sub_m);
     }
     let mut ds = get_input_file()?;
     let ds = &mut ds;

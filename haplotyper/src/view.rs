@@ -30,9 +30,9 @@ impl View for definitions::DataSet {
             let unit = self.selected_chunks.iter().find(|u| u.id == node.unit)?;
             let (q, al, r) = node.recover(unit);
             for ((q, al), r) in q.chunks(50).zip(al.chunks(50)).zip(r.chunks(50)) {
-                let q = String::from_utf8_lossy(q);
-                let al = String::from_utf8_lossy(al);
-                let r = String::from_utf8_lossy(r);
+                let q = std::str::from_utf8(q).unwrap();
+                let al = std::str::from_utf8(al).unwrap();
+                let r = std::str::from_utf8(r).unwrap();
                 println!("{}\n{}\n{}\n", q, al, r);
             }
         }

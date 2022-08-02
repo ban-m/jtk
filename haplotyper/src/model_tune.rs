@@ -98,14 +98,6 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
             (ref_unit.seq().to_vec(), seqs, ops, band_width)
         })
         .collect();
-    // polishing_pairs
-    //     .par_iter_mut()
-    //     .for_each(|(consensus, seqs, ops, bw)| {
-    //         use kiley::bialignment::guided;
-    //         *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
-    //         *consensus = hmm.polish_until_converge_with(consensus, seqs, ops, *bw);
-    //     });
-    debug!("TUNING");
     for _ in 0..3 {
         for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
             use kiley::bialignment::guided;

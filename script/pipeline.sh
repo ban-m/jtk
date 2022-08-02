@@ -83,7 +83,7 @@ else
         jtk stats -vv -f ${STAT} > ${RESULT}
 fi
 
-cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} --no_polish > /dev/null
+cat ${RESULT} | jtk assemble -t ${THREADS} -vv --output ${GFA} > /dev/null
 cat ${GFA} |\
  awk 'BEGIN{OFS="\t"} ($1 ~ /^S$/){print $1,$2,$3,"A", $5,$6} ($1 !~ /^S$/){print $0}' \
  > ${GFA%.gfa}.noseq.gfa

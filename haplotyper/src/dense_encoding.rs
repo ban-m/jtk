@@ -532,7 +532,7 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
         .iter()
         .map(|x| {
             let aln = edlib_sys::align(x, &draft, mode, task);
-            crate::misc::edlib_to_kiley(&aln.operations().unwrap())
+            crate::misc::edlib_to_kiley(aln.operations().unwrap())
         })
         .collect();
     let mean_len = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();

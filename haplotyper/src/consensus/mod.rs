@@ -78,11 +78,11 @@ impl Polish for DataSet {
         config: &PolishConfig,
     ) -> Vec<Segment> {
         let mut alignments_on_contigs = self.distribute_to_contig(segments, encs, config);
-        for (ctg, alns) in alignments_on_contigs.iter() {
-            for aln in alns.iter() {
-                debug!("ALN\t{ctg}\t{}\t{}", aln.read_id, aln.query.len());
-            }
-        }
+        // for (ctg, alns) in alignments_on_contigs.iter() {
+        //     for aln in alns.iter() {
+        //         debug!("ALN\t{ctg}\t{}\t{}", aln.read_id, aln.query.len());
+        //     }
+        // }
         let hmm = get_model(self).unwrap();
         let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
             log::debug!("POLISH\t{sid}");
@@ -143,7 +143,7 @@ fn log_identity(sid: &str, alignments: &[Alignment]) {
     }
 }
 
-fn polish(
+pub fn polish(
     sid: &str,
     draft: &[u8],
     alignments: &mut [Alignment],
@@ -151,6 +151,9 @@ fn polish(
     config: &PolishConfig,
 ) -> Vec<u8> {
     let window = config.window_size;
+    let mut hmm = hmm.clone();
+    let hmm = &mut hmm;
+    let radius = config.radius;
     let mut polished = draft.to_vec();
     log_identity(sid, alignments);
     for _ in 0..config.round_num {
@@ -172,6 +175,7 @@ fn polish(
                 (start, put_position, end)
             })
             .collect();
+        train_hmm(hmm, &polished, window, &pileup_seq, &pileup_ops, radius);
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
             .zip(pileup_seq.par_iter())
@@ -179,7 +183,7 @@ fn polish(
             .map(
                 |((draft, seqs), ops)| match seqs.len() < config.min_coverage {
                     true => draft.to_vec(),
-                    false => polish_seg(hmm, draft, seqs, ops, config.radius),
+                    false => polish_seg(hmm, draft, seqs, ops, radius),
                 },
             )
             .collect();
@@ -200,6 +204,36 @@ fn polish(
         log_identity(sid, alignments);
     }
     polished
+}
+
+fn train_hmm(
+    hmm: &mut PairHiddenMarkovModel,
+    draft: &[u8],
+    window: usize,
+    pileup_seqs: &[Vec<&[u8]>],
+    pileup_ops: &[Vec<Vec<Op>>],
+    radius: usize,
+) {
+    let mut coverages: Vec<_> = pileup_seqs.iter().map(|xs| xs.len()).collect();
+    if coverages.is_empty() {
+        return;
+    }
+    let idx = coverages.len() / 2;
+    let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
+    let iterator = draft
+        .chunks(window)
+        .zip(pileup_seqs.iter())
+        .zip(pileup_ops.iter());
+    let range = 2 * window / 3..4 * window / 3;
+    let filter = iterator.filter(|((draft, _), _)| range.contains(&draft.len()));
+    let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
+    let filter = filter.filter(|(_, ops)| cov_range.contains(&ops.len()));
+    debug!("MEDIAN\t{med_cov}");
+    debug!("MODEL\tBEFORE\n{hmm}");
+    for ((template, seqs), ops) in filter.take(3) {
+        hmm.fit_naive_with_par(template, seqs, ops, radius)
+    }
+    debug!("MODEL\tAFTER\n{hmm}");
 }
 
 fn length_median(seqs: &[&[u8]]) -> usize {
@@ -1293,7 +1327,7 @@ pub struct Alignment {
 }
 
 impl Alignment {
-    fn new(
+    pub fn new(
         read_id: u64,
         contig: String,
         (mut contig_start, mut contig_end): (usize, usize),

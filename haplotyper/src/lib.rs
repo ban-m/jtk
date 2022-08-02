@@ -1,5 +1,6 @@
 #![feature(is_sorted)]
 pub mod assemble;
+pub mod consensus;
 pub mod copy_number_estimation;
 pub mod copy_number_estimation_mrf;
 pub mod dense_encoding;
@@ -17,6 +18,7 @@ pub mod model_tune;
 pub mod multiplicity_estimation;
 pub mod phmm_likelihood_correction;
 pub mod pick_component;
+pub mod polish_segments;
 pub mod polish_units;
 pub mod purge_diverged;
 pub mod remove_erroneous_nodes;
