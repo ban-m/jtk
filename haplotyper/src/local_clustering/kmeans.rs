@@ -2,7 +2,8 @@
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
 // Should be greater than the maximum length of kiley::hmm::guided::COPY_SIZE or DEL_SIZE.
 const MASK_LENGTH: usize = 7;
-use crate::likelihood_gains::Gains;
+const MAX_HOMOP_LENGTH: usize = 2;
+use crate::likelihood_gains::{Gains, Pvalues};
 use kiley::hmm::guided::NUM_ROW;
 use rand::Rng;
 
@@ -196,7 +197,8 @@ fn cluster_filtered_variants<R: Rng>(
         let improved_reads = count_improved_reads(&new_lk_gains, &read_lk_gains, min_gain);
         let expected_gain_per_read =
             expected_gains(gains, variant_type, &prev_used_columns, &used_columns);
-        let expected_gain = expected_gain_per_read * datasize as f64 / copy_num as f64;
+        // +0.1 to avoid silly errors.
+        let expected_gain = expected_gain_per_read * datasize as f64 / copy_num as f64 + 0.1;
         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}\t{coverage_imp_thr}");
         if expected_gain < score - max && coverage_imp_thr < improved_reads {
             assignments = asn;
@@ -238,6 +240,7 @@ fn expected_gains(
             false => 0.00001,
         })
         .sum();
+    trace!("EXPTGAIN\t{expt_sum:.4}\t{used_columns:?}");
     EXPT_GAIN_FACTOR * expt_sum
 }
 
@@ -301,7 +304,14 @@ where
     mean_diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
     mean_diffs.reverse();
     let thr = (SAMPLE_NUM as f64 * fprate).ceil() as usize;
-    (diff, mean_diffs[thr] + 0.01)
+    if log_enabled!(log::Level::Trace) {
+        let (pos, ed) = pos_to_bp_and_difftype(_pos);
+        let thr = mean_diffs[thr];
+        trace!(
+            "STRAND\t{pos}\t{ed}\t{fsum:.3}\t{fcount}\t{bsum:.3}\t{bcount}\t{thr:.3}\t{diff:.3}"
+        );
+    }
+    (diff, mean_diffs[thr] + 0.000001)
 }
 
 // LK->LK-logsumexp(LK).
@@ -391,8 +401,11 @@ const IN_POS_RATIO: f64 = 3f64;
 
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
-const PVALUE: f64 = 0.05;
-// const MAX_GAIN_FAC: f64 = 0.6;
+const PVALUE: f64 = 0.1;
+// False positive rate to determine the strand bias. In other words,
+// The probability that the variant is regarded as biased even if it is not
+// is 0.05. It essentially sacrifice 5% variants under the name of the strand bias.
+const FP_RATE: f64 = 0.05;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     template: &[u8],
     profiles: &[T],
@@ -403,7 +416,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let cluster_num = config.copy_num as usize;
     let coverage = config.coverage;
     let gains = config.gains;
-    debug!("Gain\n{gains}");
+    debug!("{gains}");
     let pvalues = gains.pvalues(profiles.len());
     let homopolymer_length = homopolymer_length(template);
     let min_req: Vec<_> = (0..profiles[0].borrow().len())
@@ -414,30 +427,19 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
         })
         .collect();
     let total_improvement = column_sum_of(profiles, &min_req);
-    let template_len = total_improvement.len() / NUM_ROW;
-    let base_position = |pos: usize| (pos / NUM_ROW, pos % NUM_ROW);
-    fn is_ins_del_subs(&(pos, _): &(usize, &(f64, usize))) -> bool {
-        pos % NUM_ROW < 9 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE
-    }
+    let temp_len = total_improvement.len() / NUM_ROW;
     let probes: Vec<(usize, f64)> = total_improvement
         .iter()
         .enumerate()
         .filter(|&(pos, _)| {
-            let pos = base_position(pos).0;
-            MASK_LENGTH <= pos && pos <= (template_len - MASK_LENGTH)
+            let (pos, _) = pos_to_bp_and_difftype(pos);
+            MASK_LENGTH <= pos && pos <= (temp_len - MASK_LENGTH)
         })
-        .filter(is_ins_del_subs)
+        .filter(|&(pos, _)| pos % NUM_ROW < 9 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE)
         .filter(|&(_, &(gain, _))| 0f64 < gain)
-        .filter(|&(pos, &(gain, count))| {
-            let (bp_pos, diff_type) = pos_to_bp_and_difftype(pos);
-            let homop_len = *homopolymer_length.get(bp_pos).unwrap_or(&0);
-            let pvalue = pvalues.pvalue(homop_len, diff_type, count);
-            let expt = gains.expected(homop_len, diff_type) * EXPT_GAIN_FACTOR;
-            if 10 < count {
-                let is_lower = pvalue < PVALUE / template_len as f64;
-                trace!("PVALUE\t{pos}\t{gain:.3}\t{count}\t{expt:.3}\t{is_lower}");
-            }
-            (count as f64) * expt < gain && pvalue < PVALUE / template_len as f64
+        .filter(|&(pos, _)| is_in_short_homopolymer(pos, &homopolymer_length, &template))
+        .filter(|&(pos, &improve)| {
+            has_small_pvalue(pos, improve, &homopolymer_length, &pvalues, gains, temp_len)
         })
         .map(|(pos, &(maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
@@ -451,7 +453,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
         .filter(|&(pos, _)| {
             let lks = profiles.iter().map(|p| p.borrow()[pos]);
             let paired = lks.zip(strands.iter().copied());
-            let (diff, thr) = is_explainable_by_strandedness(paired, rng, 0.01, pos);
+            let (diff, thr) = is_explainable_by_strandedness(paired, rng, FP_RATE, pos);
             diff < thr
         })
         .collect();
@@ -461,6 +463,48 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
         let (pos, ed) = (pos / NUM_ROW, pos % NUM_ROW);
         trace!("CAND\t{pos}\t{ed}\t{lk:.1}\t{count}");
     }
+    pick_filtered_profiles(&probes, profiles, cluster_num)
+}
+
+fn has_small_pvalue(
+    pos: usize,
+    (gain, count): (f64, usize),
+    homopolymer_length: &[usize],
+    pvalues: &Pvalues,
+    gains: &Gains,
+    template_len: usize,
+) -> bool {
+    let (bp_pos, diff_type) = pos_to_bp_and_difftype(pos);
+    let homop_len = *homopolymer_length.get(bp_pos).unwrap_or(&0);
+    let pvalue = pvalues.pvalue(homop_len, diff_type, count);
+    let expt = gains.expected(homop_len, diff_type) * EXPT_GAIN_FACTOR;
+    if 10 < count {
+        let pvalue = template_len as f64 * pvalue;
+        let (pos, ed) = pos_to_bp_and_difftype(pos);
+        let homop = &homopolymer_length[pos - 1..=pos + 1];
+        trace!("PVALUE\t{pos}\t{ed}\t{gain:.3}\t{count}\t{expt:.3}\t{pvalue:.3}\t{homop:?}");
+    }
+    (count as f64) * expt < gain && pvalue < PVALUE / template_len as f64
+}
+
+fn is_in_short_homopolymer(pos: usize, homopolymer_length: &[usize], template: &[u8]) -> bool {
+    match pos_to_bp_and_difftype(pos) {
+        (x, DiffType::Ins) if x == 0 => homopolymer_length[x] <= MAX_HOMOP_LENGTH,
+        (x, DiffType::Ins) if x < template.len() => {
+            let prev = homopolymer_length[x - 1] <= MAX_HOMOP_LENGTH;
+            let current = homopolymer_length[x] <= MAX_HOMOP_LENGTH;
+            prev && current
+        }
+        (x, DiffType::Del) if x < template.len() => homopolymer_length[x] <= MAX_HOMOP_LENGTH,
+        _ => true,
+    }
+}
+
+fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
+    probes: &[(usize, f64)],
+    profiles: &[T],
+    cluster_num: usize,
+) -> Vec<(usize, f64)> {
     // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
     // Currently, find and sweep. So, to select one variant,
     // It takes O(L) time to find a variant, and O(L) time to sweep linked variant.
@@ -473,7 +517,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             let next_var_idx = find_next_variants(&probes, &weights, &is_selected);
             if let Some(next_var_idx) = next_var_idx {
                 let picked_pos = probes[next_var_idx].0;
-                let picked_pos_in_bp = base_position(picked_pos).0;
+                let (picked_pos_in_bp, _) = pos_to_bp_and_difftype(picked_pos);
                 is_selected[next_var_idx] = 1;
                 for ((&(pos, _), weight), selected) in probes
                     .iter()
@@ -481,7 +525,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
                     .zip(is_selected.iter_mut())
                     .filter(|&(_, &mut selected)| selected == 0)
                 {
-                    let pos_in_bp = base_position(pos).0;
+                    let (pos_in_bp, _) = pos_to_bp_and_difftype(pos);
                     let diff_in_bp =
                         pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
                     let sim = sokal_michener(profiles, picked_pos, pos);
@@ -501,7 +545,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let selected_variants: Vec<_> = probes
         .into_iter()
         .zip(is_selected)
-        .filter_map(|(x, y)| (y == 1).then(|| x))
+        .filter_map(|(x, y)| (y == 1).then(|| *x))
         .collect();
     selected_variants
 }
@@ -516,36 +560,35 @@ fn column_sum_of<T: std::borrow::Borrow<[f64]>>(
 ) -> Vec<(f64, usize)> {
     let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
     assert_eq!(total_improvement.len(), min_req.len());
-    for (i, prof) in profiles.iter().map(|x| x.borrow()).enumerate() {
-        let per_row = std::iter::zip(prof.chunks_exact(NUM_ROW), min_req.chunks_exact(NUM_ROW));
-        let total_per_row = total_improvement.chunks_exact_mut(NUM_ROW);
-        for ((row, req), total_row) in std::iter::zip(per_row, total_per_row) {
-            if let Some((pos, max)) = pick_one_of_the_max(row, req, i) {
-                total_row[pos].0 += max;
-                total_row[pos].1 += 1;
+    for prof in profiles.iter().map(|x| x.borrow()) {
+        for ((slot, gain), req) in total_improvement.iter_mut().zip(prof).zip(min_req) {
+            if req < gain {
+                slot.0 += gain;
+                slot.1 += 1;
             }
         }
     }
+    // for (i, prof) in profiles.iter().map(|x| x.borrow()).enumerate() {
+    //     let per_row = std::iter::zip(prof.chunks_exact(NUM_ROW), min_req.chunks_exact(NUM_ROW));
+    //     let total_per_row = total_improvement.chunks_exact_mut(NUM_ROW);
+    //     for ((row, req), total_row) in std::iter::zip(per_row, total_per_row) {
+    //         if let Some((pos, max)) = pick_one_of_the_max(row, req, i) {
+    //             total_row[pos].0 += max;
+    //             total_row[pos].1 += 1;
+    //         }
+    //     }
+    // }
     total_improvement
 }
 
-fn pick_one_of_the_max(xs: &[f64], min_req: &[f64], _seed: usize) -> Option<(usize, f64)> {
-    assert_eq!(xs.len(), min_req.len());
-    std::iter::zip(xs, min_req)
-        .enumerate()
-        .max_by(|(_, x), (_, y)| x.0.partial_cmp(y.0).unwrap())
-        .filter(|&(_, (x, req))| req < x)
-        .map(|(idx, (&x, _))| (idx, x))
-    // let filtered = std::iter::zip(xs, min_req)
-    //     .enumerate()
-    //     .filter(|(_, (x, req))| req.max(max) < x);
-    // let count = filtered.clone().count();
-    // (count != 0).then(|| {
-    //     let pick = seed % count;
-    //     let (i, (&gain, _)) = filtered.clone().nth(pick).unwrap();
-    //     (i, gain)
-    // })
-}
+// fn pick_one_of_the_max(xs: &[f64], min_req: &[f64], _seed: usize) -> Option<(usize, f64)> {
+//     assert_eq!(xs.len(), min_req.len());
+//     std::iter::zip(xs, min_req)
+//         .enumerate()
+//         .max_by(|(_, x), (_, y)| x.0.partial_cmp(y.0).unwrap())
+//         .filter(|&(_, (x, req))| req < x)
+//         .map(|(idx, (&x, _))| (idx, x))
+// }
 
 fn find_next_variants(
     probes: &[(usize, f64)],
@@ -644,6 +687,8 @@ fn mcmc_clustering<R: Rng>(
 use rand::prelude::SliceRandom;
 use rand::seq::IteratorRandom;
 use rand_distr::num_traits::Signed;
+
+// use super::HOMOP_LEN;
 fn mcmc_with_filter<R: Rng>(
     data: &[Vec<f64>],
     assign: &mut [usize],
@@ -792,5 +837,12 @@ mod kmeans_test {
                     < 0.00001)
             );
         }
+    }
+    #[test]
+    fn homop_length_test() {
+        let xs = b"ACCCCGTTTGGTT";
+        let answer = vec![1, 4, 4, 4, 4, 1, 3, 3, 3, 2, 2, 2, 2];
+        let homop_len = homopolymer_length(xs);
+        assert_eq!(homop_len, answer);
     }
 }

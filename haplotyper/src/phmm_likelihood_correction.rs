@@ -47,7 +47,7 @@ impl AlignmentCorrection for DataSet {
                 let chunk = chunks_mut_ref.get_mut(&uid).unwrap();
                 let (score, prev) = (chunk.score, chunk.cluster_num);
                 if cluster_num == 1 && protected.contains(&uid) {
-                    debug!("SQUISHED\t{uid}\t{cluster_num}\t{prev}\t{score}\tP");
+                    debug!("PROTECT\t{uid}\t{cluster_num}\t{prev}\t{score}");
                     continue;
                 }
                 assert!(cluster_num <= chunk.copy_num);
@@ -71,6 +71,7 @@ impl AlignmentCorrection for DataSet {
     }
 }
 
+const PROTECT_FACTOR: f64 = 1f64;
 fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
     let mut coverage: HashMap<_, u32> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
@@ -80,13 +81,16 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
         crate::model_tune::update_model(ds);
     }
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    // ds.error_rate()
-    let gain = crate::likelihood_gains::estimate_minimum_gain(&hmm);
+    let gain = crate::likelihood_gains::estimate_minimum_gain(&hmm) * PROTECT_FACTOR;
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
         .iter()
-        .filter(|c| coverage.contains_key(&c.id))
-        .filter_map(|c| (coverage[&c.id] as f64 * gain / 1.5 < c.score).then(|| c.id))
+        .filter_map(|c| {
+            let cov = *coverage.get(&c.id)? as f64;
+            let cluster_num = c.cluster_num as f64;
+            let improve_frac = (cluster_num - 1f64) / cluster_num;
+            (cov * improve_frac * gain < c.score).then(|| c.id)
+        })
         .collect()
 }
 
@@ -156,7 +160,8 @@ fn correct_unit(
     trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
     let len = reads.len();
     trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
-    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit_id, config);
+    let unit = ds.selected_chunks.iter().find(|u| u.id == unit_id).unwrap();
+    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit, config);
     assert_eq!(assignments.len(), reads.len());
     let assignments: Vec<_> = reads
         .into_iter()
@@ -170,9 +175,10 @@ fn clustering(
     reads: &[(usize, &EncodedRead)],
     (k, _upper_k): (usize, usize),
     copy_numbers: &[Vec<f64>],
-    id: u64,
+    unit: &Unit,
     _: &CorrectionConfig,
 ) -> (Vec<usize>, usize) {
+    let id = unit.id;
     let contexts: Vec<_> = reads
         .iter()
         .map(|&(idx, read)| {
@@ -210,7 +216,6 @@ fn clustering(
         .iter()
         .enumerate()
         .map(|(i, ctx)| {
-            // let id = ids[i];
             contexts
                 .iter()
                 .enumerate()
@@ -221,13 +226,8 @@ fn clustering(
                 .collect()
         })
         .collect();
-    if log_enabled!(log::Level::Trace) {
-        let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
-        for (i, sm) in sims.iter().enumerate() {
-            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
-            trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
-        }
-    }
+    let cov_per_copy = reads.len() - reads.len() / unit.copy_num / 4;
+    let sims = filter_similarity(sims, cov_per_copy);
     let (rowsum, laplacian) = get_graph_laplacian(&sims);
     let (mut eigens, pick_k) = get_eigenvalues(&laplacian, &rowsum, id);
     append_posterior_probability(&mut eigens, pick_k, reads);
@@ -242,14 +242,54 @@ fn clustering(
         .map(|x| x.1)
         .unwrap();
     if log_enabled!(log::Level::Trace) {
+        let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
+        for (i, sm) in sims.iter().enumerate() {
+            let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+            trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
+        }
+        for (i, lap) in laplacian.iter().enumerate() {
+            let line: Vec<_> = lap.iter().map(|x| format!("{x:.2}")).collect();
+            trace!("LAP\t{i}\t{}\t{}", ids[i], line.join("\t"));
+        }
+    }
+    if log_enabled!(log::Level::Trace) {
         for (i, sm) in eigens.iter().enumerate() {
             let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
+            let line = line.join("\t");
             let cls = contexts[i].1.cluster;
-            trace!("EIG\t{id}\t{i}\t{}\t{}\t{}", cls, asn[i], line.join("\t"));
+            let len = reads[i].1.nodes.len();
+            let asn = asn[i];
+            trace!("EIG\t{id}\t{i}\t{cls}\t{len}\t{asn}\t{line}",);
         }
     }
     assert!(asn.iter().all(|&x| x <= cluster_num));
     (asn, cluster_num)
+}
+
+fn filter_similarity(mut sims: Vec<Vec<f64>>, len: usize) -> Vec<Vec<f64>> {
+    const SMALL: f64 = 0.0000000000000001;
+    const MIN_REQ: f64 = 0.5;
+    let mut to_retain: Vec<Vec<_>> = sims.iter().map(|xs| vec![false; xs.len()]).collect();
+    for (i, xs) in sims.iter().enumerate() {
+        let threshold = select_nth(xs, len).max(MIN_REQ);
+        for (j, _) in xs.iter().enumerate().filter(|x| threshold <= *x.1) {
+            to_retain[i][j] = true;
+            to_retain[j][i] = true;
+        }
+    }
+    for (xs, retains) in sims.iter_mut().zip(to_retain) {
+        for (x, _) in xs.iter_mut().zip(retains).filter(|x| !x.1) {
+            *x = SMALL;
+        }
+    }
+    sims
+}
+
+fn select_nth(sims: &[f64], pivot: usize) -> f64 {
+    assert!(pivot <= sims.len());
+    let mut sims = sims.to_vec();
+    sims.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    sims[pivot]
 }
 
 fn append_posterior_probability(
@@ -356,7 +396,7 @@ fn get_eigenvalues(matrix: &[Vec<f64>], rowsum: &[f64], id: u64) -> (Vec<Vec<f64
         let eigs: Vec<_> = eigen_and_eigenvec
             .iter()
             .map(|x| format!("{:.3}", x.1))
-            .take(opt_k)
+            .take(opt_k + 3)
             .collect();
         trace!("EIGVALUE\t{id}\t{}", eigs.join("\t"));
     }
@@ -382,7 +422,6 @@ fn get_eigenvalues(matrix: &[Vec<f64>], rowsum: &[f64], id: u64) -> (Vec<Vec<f64
 }
 
 type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
-const LK_CAP: f64 = 15f64;
 fn alignment<'a>(
     (up1, center1, down1): &Context<'a>,
     (up2, center2, down2): &Context<'a>,
@@ -398,10 +437,12 @@ fn alignment<'a>(
     // However, likelihood ratio test is usually goes to extreme and we want to examine the difference between exp(150) vs exp(151) into
     // similarity matrix.
     let likelihood_ratio = up_aln + down_aln + center;
-    match likelihood_ratio <= LK_CAP {
-        true => likelihood_ratio.exp(),
-        false => LK_CAP.exp() + LK_CAP.exp() * (likelihood_ratio - LK_CAP),
-    }
+    (1f64 + (-likelihood_ratio).exp()).recip()
+    // const LK_CAP: f64 = 15f64;
+    // match likelihood_ratio <= LK_CAP {
+    //     true => likelihood_ratio.exp(),
+    //     false => LK_CAP.exp() + LK_CAP.exp() * (likelihood_ratio - LK_CAP),
+    // }
 }
 
 // Align by SWG.

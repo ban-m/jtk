@@ -327,7 +327,6 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
             }
         }
     }
-    // TODO: maybe just zip up segments and summaries would be OK?
     let mut groups: HashMap<_, Vec<_>> = HashMap::new();
     let nodes: Vec<_> = segments
         .into_iter()

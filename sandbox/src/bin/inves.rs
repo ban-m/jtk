@@ -1,5 +1,5 @@
 use definitions::*;
-use std::collections::HashMap;
+
 use std::io::BufReader;
 fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -7,6 +7,7 @@ fn main() -> std::io::Result<()> {
     let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
+    use std::collections::HashMap;
     let units: Vec<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
     let num_cluster: HashMap<_, _> = ds
         .selected_chunks

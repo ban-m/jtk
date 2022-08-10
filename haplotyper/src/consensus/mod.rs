@@ -202,8 +202,56 @@ pub fn polish(
                 fix_alignment(aln, aloc_pos, &polished, &acc_len, &pileup_ops)
             });
         log_identity(sid, alignments);
+        alignments
+            .iter_mut()
+            .for_each(|aln| truncate_long_homopolymers(aln, &polished, TRUNCATE_LEN));
     }
     polished
+}
+
+// TODO: TUNE this parameter.
+const TRUNCATE_LEN: usize = 5;
+// Truncate homopolymers longer than the contig by `max_allowed` length, truncate them to `max_allowed` length.
+// In other words, if the contig is TAAA, the query is TAAAAAAA, and the max_allowed is 2, the query would be TAAAAA.
+fn truncate_long_homopolymers(aln: &mut Alignment, _contig: &[u8], max_allowed: usize) {
+    let mut base_retains = vec![true; aln.query.len()];
+    let mut ops_retain = vec![true; aln.ops.len()];
+    let mut qpos = 0;
+    let mut current_homop_len = 0;
+    let mut prev_base = None;
+    for (alnpos, &op) in aln.ops.iter().enumerate() {
+        let current_base = aln.query.get(qpos).copied();
+        if current_base == prev_base {
+            current_homop_len += 1;
+            if max_allowed < current_homop_len && op == Op::Ins {
+                base_retains[qpos] = false;
+                ops_retain[alnpos] = false;
+            }
+        } else {
+            current_homop_len = 0;
+        }
+        prev_base = current_base;
+        qpos += matches!(op, Op::Match | Op::Mismatch | Op::Ins) as usize;
+    }
+    {
+        let mut idx = 0;
+        aln.query.retain(|_| {
+            idx += 1;
+            base_retains[idx - 1]
+        });
+    }
+    {
+        let mut idx = 0;
+        aln.ops.retain(|_| {
+            idx += 1;
+            ops_retain[idx - 1]
+        })
+    }
+    // Check consistency.
+    let reflen = aln.ops.iter().filter(|&&op| op != Op::Ins).count();
+    let querylen = aln.ops.iter().filter(|&&op| op != Op::Del).count();
+    assert_eq!(reflen, aln.contig_end - aln.contig_start);
+    assert_eq!(querylen, aln.query.len());
 }
 
 fn train_hmm(
@@ -301,7 +349,8 @@ fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Ve
     }
     kiley::bialignment::guided::polish_until_converge_with(&draft, seqs, ops, radius)
 }
-
+// TODO: TUNE this parameter.
+const FIX_TIME: usize = 1;
 fn polish_seg(
     hmm: &PairHiddenMarkovModel,
     draft: &[u8],
@@ -327,8 +376,12 @@ fn polish_seg(
         let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
         assert_eq!(reflen, draft.len());
     }
-    let polished = hmm.polish_until_converge_with(&draft, &use_seqs, &mut use_ops, radius);
-    drop(draft);
+    let mut polished = draft;
+    let mut hmm = hmm.clone();
+    for _ in 0..FIX_TIME {
+        polished = hmm.polish_until_converge_with(&polished, &use_seqs, &mut use_ops, radius);
+        hmm.fit_naive_with(&polished, &use_seqs, &use_ops, radius);
+    }
     let (mut use_seqs, mut purged_seq, mut ops_order) = (use_seqs, purged_seq, ops_order);
     let mut idx = 0;
     for ops in use_ops.iter() {
@@ -1276,6 +1329,7 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
             tile.encoding.unit_len() - start,
         ),
     };
+    assert!(start <= end, "{},{}", start, end);
     let alignment = crate::misc::ops_to_kiley(&tile.node.cigar);
     let r_len = alignment.iter().filter(|&&op| op != Op::Del).count();
     let u_len = alignment.iter().filter(|&&op| op != Op::Ins).count();

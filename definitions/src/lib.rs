@@ -124,6 +124,22 @@ impl ReadType {
             ReadType::None => 1f64,
         }
     }
+    pub fn weak_llr(&self) -> f64 {
+        match *self {
+            ReadType::CCS => 1.3f64,
+            ReadType::CLR => 1.3f64,
+            ReadType::ONT => 1.3f64,
+            ReadType::None => 1.3f64,
+        }
+    }
+    pub fn weak_span_reads(&self) -> usize {
+        match *self {
+            ReadType::CCS => 4,
+            ReadType::CLR => 4,
+            ReadType::ONT => 4,
+            ReadType::None => 4,
+        }
+    }
 }
 
 impl std::default::Default for DataSet {

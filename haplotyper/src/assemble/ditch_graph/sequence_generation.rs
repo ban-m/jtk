@@ -437,6 +437,7 @@ impl<'a> super::DitchGraph<'a> {
             position = next_position;
         }
         seq += &self.trailing_sequence(node_index, position);
+        seq.make_ascii_uppercase();
         let summary = ContigSummary::new(&seqname, &unit_names);
         // Register start and tail node.
         // This if statement is no needed?

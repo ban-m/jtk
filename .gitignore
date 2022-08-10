@@ -24,6 +24,7 @@ python/dist
 python/jtk_definitions.egg-info
 *~
 *.ipynb
+!script/phase_by_longphase.sh
 !script/benchmark_clustering.job
 !script/extract_cox_pgf.sh
 !script/phase_mock_reads_from_mock_genome_baseline.sh

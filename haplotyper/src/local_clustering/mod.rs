@@ -106,11 +106,10 @@ fn pileup_nodes<'a>(
 
 const SEED: u64 = 309423;
 const SEQ_LEN: usize = 100;
-const BAND: usize = 20;
-const HOMOP_LEN: usize = 5;
+const BAND: usize = 10;
+const HOMOP_LEN: usize = 3;
 /// Selection: HashSet of the chunk ID to be clustered on.
 pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
-    use kiley::bialignment::guided::polish_until_converge_with;
     use kmeans::*;
     if selection.is_empty() {
         return;
@@ -124,8 +123,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
-    debug!("GAINS\n{gains}");
+    // let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
     let (mut pileups, chunks) = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
@@ -141,8 +139,9 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
             let start = std::time::Instant::now();
             let copy_num = ref_unit.copy_num as u8;
             let refseq = ref_unit.seq();
-            let cons = polish_until_converge_with(refseq, &seqs, &mut ops, band_width);
-            let cons = hmm.polish_until_converge_with(&cons, &seqs, &mut ops, band_width);
+            let (cons, hmm) = prep_consensus(&hmm, refseq, &seqs, &mut ops, band_width);
+            let gains =
+                crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
             let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, &gains);
             let polished = std::time::Instant::now();
             let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
@@ -180,6 +179,24 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         }
     }
     normalize::normalize_local_clustering(ds);
+}
+
+// TODO: this function is, very very slow. Please fasten this function, please.
+type PHMM = kiley::hmm::guided::PairHiddenMarkovModel;
+fn prep_consensus(
+    hmm: &PHMM,
+    draft: &[u8],
+    seqs: &[&[u8]],
+    ops: &mut [Vec<kiley::Op>],
+    band_width: usize,
+) -> (Vec<u8>, PHMM) {
+    let mut hmm = hmm.clone();
+    let mut cons = draft.to_vec();
+    for _t in 0..2 {
+        hmm.fit_naive_with(&cons, &seqs, &ops, band_width / 2);
+        cons = hmm.polish_until_converge_with(&cons, &seqs, ops, band_width / 2);
+    }
+    (cons, hmm)
 }
 
 #[cfg(test)]

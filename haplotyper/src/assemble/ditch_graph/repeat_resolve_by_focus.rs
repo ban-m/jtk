@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 type NodeWithTraverseInfo = (usize, usize, usize, NodeIndex, Position);
-const ERROR_PROB: f64 = 0.05;
+// TODO: Tune this parameter.
+const ERROR_PROB: f64 = 0.2;
 use super::super::AssembleConfig;
 use super::DitchGraph;
 use super::DitchNode;
@@ -236,7 +237,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         use_branch: bool,
     ) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
-        warn!("Please fix lk computation!");
+        // warn!("Please fix lk computation!");
         let mut count = 1;
         while count != 0 {
             let mut foci = self.get_foci(reads, use_branch, config);
@@ -333,6 +334,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         (occs, raw_nodes, node_indices)
     }
+
     fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, (NodeIndex, Position))> {
         let (occs, raw_nodes, node_indices) = self.split_node_info(nodes);
         if occs.len() < 2 {
@@ -350,10 +352,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .enumerate()
             .filter(|(_, (n, _))| n.copy_number == Some(1))
             .map(|(k, (_, &idx))| {
-                let occs_with_idx = occs.iter().map(|&x| x as f64).enumerate();
-                let lk: f64 = occs_with_idx
-                    .map(|(i, occ)| occ * (if i == k { correct_lk } else { error_lk }))
-                    .sum();
+                let correct_count = occs[k];
+                let other_count = occs.iter().sum::<usize>() - correct_count;
+                let lk = correct_count as f64 * correct_lk + other_count as f64 * error_lk;
                 assert!(!lk.is_nan());
                 (lk - null_likelihood, idx)
             })
@@ -419,6 +420,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         min_span: usize,
     ) -> Vec<Vec<NodeWithTraverseInfo>> {
         let node_counts_at = self.count_dist_nodes(reads, node_index, pos);
+
         let mut dist_and_maxweight = vec![vec![(0, 0, 0, node_index, !pos)]];
         for dist in 0.. {
             let prev_nodes = &dist_and_maxweight[dist];
@@ -428,7 +430,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .iter()
                 .map(|&(idx, pos)| {
                     let node = self.node(idx).unwrap().node;
-                    let count = *node_counts_at[dist + 1].get(&node).unwrap_or(&0);
+                    let count = match node_counts_at[dist + 1].get(&node) {
+                        Some(&x) => x,
+                        None => {
+                            // let from = self.node(node_index).unwrap();
+                            // warn!("{:?}\t{:?}\t{}", from.node, node, dist + 1);
+                            0
+                        }
+                    };
                     (count, count, 0, idx, pos)
                 })
                 .collect();
@@ -520,18 +529,24 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         Some(())
     }
 }
+
 fn lk_pairs(len: usize) -> (f64, f64) {
     let choice_num = len as f64;
-    let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
-    let error_lk = {
-        let correct_to_error = (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0) / choice_num;
-        let error_to_error =
-            ERROR_PROB / choice_num * ERROR_PROB * (choice_num - 1f64) / choice_num;
-        (correct_to_error + error_to_error).ln()
-    };
-    assert!(!correct_lk.is_nan(), "{}", len);
-    assert!(!error_lk.is_nan(), "{}", len);
-    (correct_lk, error_lk)
+    let correct_prob = (1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num;
+    let error_prob =
+        (1f64 - ERROR_PROB) * ERROR_PROB / (choice_num - 1f64) + ERROR_PROB / choice_num;
+    assert!((1f64 - correct_prob - (choice_num - 1f64) * error_prob).abs() < 0.00001);
+    (correct_prob.ln(), error_prob.ln())
+    // let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
+    // let error_lk = {
+    //     let correct_to_error = (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0) / choice_num;
+    //     let error_to_error =
+    //         ERROR_PROB / choice_num * ERROR_PROB * (choice_num - 1f64) / choice_num;
+    //     (correct_to_error + error_to_error).ln()
+    // };
+    // assert!(!correct_lk.is_nan(), "{}", len);
+    // assert!(!error_lk.is_nan(), "{}", len);
+    // (correct_lk, error_lk)
 }
 
 fn to_btree_map(nodes: &[(NodeIndex, Position)]) -> BTreeMap<(NodeIndex, Position), usize> {
@@ -545,6 +560,13 @@ fn normalize_coverage_array(nodes: &[&DitchNode]) -> Vec<f64> {
     assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
     probs
 }
+
+// fn normalize_occs(occs: &[usize]) -> Vec<f64> {
+//     let mut occs: Vec<_> = occs.iter().map(|&x| (x as f64).max(0.00001)).collect();
+//     let sum: f64 = occs.iter().sum();
+//     occs.iter_mut().for_each(|x| *x /= sum);
+//     occs
+// }
 
 fn lk_of_counts(occs: &[usize], distr: &[f64]) -> f64 {
     occs.iter()

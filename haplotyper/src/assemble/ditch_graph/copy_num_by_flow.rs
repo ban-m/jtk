@@ -323,7 +323,6 @@ impl Graph {
         nodes + edges
     }
     fn source_sink_tuple(&self) -> Vec<(ResIndex, ResIndex)> {
-        // TODO: check source -> sink path.
         // It would improve runtime because the reachability check is DFS(O(V)),
         // whereas the minimum distance is Bellman-Ford(O(VE)).
         let mut fu = self.connected_components();
@@ -385,7 +384,7 @@ impl Graph {
         let (mut min, mut argmin) = (LARGE_VALUE, None);
         for (source, sink) in tuples {
             if !self.reachable(source, sink) {
-                trace!("UNREACHABLE\t{}\t{}", source.0, sink.0);
+                // trace!("UNREACHABLE\t{}\t{}", source.0, sink.0);
                 continue;
             }
             let bellman = self.min_dist(&edge_scores, source, sink);

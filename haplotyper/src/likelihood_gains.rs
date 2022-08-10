@@ -13,10 +13,7 @@ pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) ->
         .map(|seed| {
             let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(SEED + seed as u64);
             let hap1 = kiley::gen_seq::generate_seq(&mut rng, LEN);
-            let hap2 = match seed % 2 == 0 {
-                true => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 0, 1),
-                false => kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 1, 0),
-            };
+            let hap2 = kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 1, 0);
             use kiley::gen_seq::Generate;
             let mut lks: Vec<_> = (0..SEQ_NUM)
                 .map(|_| {
@@ -180,11 +177,21 @@ pub fn estimate_gain(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffType {
     Subst,
     Del,
     Ins,
+}
+
+impl std::fmt::Display for DiffType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiffType::Subst => write!(f, "S"),
+            DiffType::Del => write!(f, "D"),
+            DiffType::Ins => write!(f, "I"),
+        }
+    }
 }
 
 const BASES: &[u8] = b"ACGT";
@@ -238,6 +245,8 @@ fn gain_of(
     diff_type: DiffType,
 ) -> GainProfile {
     const SAMPLE_NUM: usize = 50;
+    const GAIN_POS: usize = SAMPLE_NUM / 10;
+    const PROB_POS: usize = SAMPLE_NUM * 2 / 3;
     const SEQ_NUM: usize = 50;
     use kiley::gen_seq::Generate;
     let (mut medians, mut probs): (Vec<_>, Vec<_>) = (0..SAMPLE_NUM)
@@ -270,9 +279,11 @@ fn gain_of(
             (expected_gain, null_prob as f64 / SEQ_NUM as f64)
         })
         .collect();
-    let len = medians.len() / 2;
-    let (_, &mut gain, _) = medians.select_nth_unstable_by(len, |x, y| x.partial_cmp(y).unwrap());
-    let (_, &mut prob, _) = probs.select_nth_unstable_by(len, |x, y| x.partial_cmp(y).unwrap());
+    let (_, &mut gain, _) =
+        medians.select_nth_unstable_by(GAIN_POS, |x, y| x.partial_cmp(y).unwrap());
+    let (_, &mut prob, _) =
+        probs.select_nth_unstable_by(PROB_POS, |x, y| x.partial_cmp(y).unwrap());
+    let prob = prob.max(0.000000001);
     GainProfile { gain, prob }
 }
 

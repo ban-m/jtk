@@ -40,16 +40,21 @@ fn main() -> std::io::Result<()> {
             })
             .collect();
         nodes.sort_unstable_by_key(|x| (x.3.cluster, x.1));
-        for (readid, is_hap1, i, node, len) in nodes {
+        for (readid, _is_hap1, i, node, len) in nodes {
             let (query, aln, refr) = node.recover(ref_chunk);
             let dist = aln.iter().filter(|&&x| x != b'|').count();
             let identity = 1f64 - dist as f64 / aln.len() as f64;
             let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.2}", p)).collect();
             let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));
             let name = &id2desc[&readid];
+            let is_forward = node.is_forward;
             println!(
-                "{readid}\t{is_hap1}\t{i}\t{len}\t{unit}\t{cluster}\t{identity:.2}\t{post}\t{name}",
+                "{readid}\t{is_forward}\t{i}\t{len}\t{unit}\t{cluster}\t{identity:.2}\t{post}\t{name}",
             );
+            // println!(
+            //     "QUERY\t>{readid}\nQUERY\t{}",
+            //     std::str::from_utf8(&node.seq()).unwrap()
+            // );
             println!("ALN\t{}", dist);
             let (start, end) = match range {
                 Some((start, end)) => {
@@ -57,14 +62,14 @@ fn main() -> std::io::Result<()> {
                         .iter()
                         .enumerate()
                         .filter(|&(_, &b)| b != b' ')
-                        .take(start)
+                        .take(start + 1)
                         .last()
                         .unwrap();
                     let (end_pos, _) = refr
                         .iter()
                         .enumerate()
                         .filter(|&(_, &b)| b != b' ')
-                        .take(end)
+                        .take(end + 1)
                         .last()
                         .unwrap();
                     (st_pos, end_pos)
