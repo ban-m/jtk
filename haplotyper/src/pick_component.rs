@@ -18,27 +18,45 @@ pub trait ComponentPicking {
 
 impl ComponentPicking for DataSet {
     fn pick_top_n_component(&mut self, c: &ComponentPickingConfig) {
-        use crate::assemble::Assemble;
         use crate::assemble::AssembleConfig;
         // The last two parameter is not needed.
         let asm_config = AssembleConfig::new(100, false, false, 6, 3f64);
-        let graph = self.assemble_draft_graph(&asm_config);
-        let mut components: Vec<_> = graph.enumerate_connected_components();
+        let read_type = self.read_type;
+        let reads = &self.encoded_reads;
+        let units = &self.selected_chunks;
+        let mut graph =
+            crate::assemble::ditch_graph::DitchGraph::new(reads, units, read_type, &asm_config);
+        debug!("CC\t{}", graph.cc());
+        graph.remove_lightweight_edges(2, true);
+        debug!("CC\t{}\tAfterRm", graph.cc());
+        let mut components = graph.connected_components();
         for (i, cc) in components.iter().enumerate() {
-            let size = cc.iter().map(|node| node.segments.len()).sum::<usize>();
-            debug!("PICKING\t{}\t{}", i, size);
+            debug!("PICKING\t{}\t{}", i, cc.len());
         }
-        components.sort_by_key(|cc| cc.iter().map(|node| node.segments.len()).sum::<usize>());
-        components.reverse();
+        components.sort_by_key(|cc| std::cmp::Reverse(cc.len()));
         let picked_units: HashSet<u64> = components
             .into_iter()
             .take(c.component_number)
-            .flat_map(|cc| {
-                cc.iter()
-                    .flat_map(|node| node.segments.iter().map(|tile| tile.unit))
-                    .collect::<Vec<u64>>()
-            })
+            .flat_map(|cc| cc.iter().map(|&(unit, _)| unit).collect::<Vec<u64>>())
             .collect();
+        //         use crate::assemble::Assemble;
+        // let graph = self.assemble_draft_graph(&asm_config);
+        // let mut components: Vec<_> = graph.enumerate_connected_components();
+        // for (i, cc) in components.iter().enumerate() {
+        //     let size = cc.iter().map(|node| node.segments.len()).sum::<usize>();
+        //     debug!("PICKING\t{}\t{}", i, size);
+        // }
+        // components.sort_by_key(|cc| cc.iter().map(|node| node.segments.len()).sum::<usize>());
+        // components.reverse();
+        // let picked_units: HashSet<u64> = components
+        //     .into_iter()
+        //     .take(c.component_number)
+        //     .flat_map(|cc| {
+        //         cc.iter()
+        //             .flat_map(|node| node.segments.iter().map(|tile| tile.unit))
+        //             .collect::<Vec<u64>>()
+        //     })
+        //     .collect();
         debug!("PICKING\t{}\tConnectedComponents", c.component_number);
         debug!(
             "PICKING\t{}\t{}\tPicked",

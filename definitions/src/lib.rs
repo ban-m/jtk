@@ -343,7 +343,7 @@ impl DNASeq {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn seq_mut(&mut self) -> &mut [u8] {
+    pub fn seq_mut(&mut self) -> &mut Vec<u8> {
         self.0.as_mut()
     }
     pub fn as_slice(&self) -> &[u8] {

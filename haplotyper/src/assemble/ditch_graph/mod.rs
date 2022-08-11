@@ -687,6 +687,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         // self.z_edge_selection();
         // self.remove_zero_copy_path(0.2);
     }
+    /// Retun the number of the connected components
     pub fn cc(&self) -> usize {
         // Connected component.
         let mut fu = crate::find_union::FindUnion::new(self.nodes.len());
@@ -698,6 +699,23 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.nodes()
             .filter(|(idx, _)| fu.find(idx.0).unwrap() == idx.0)
             .count()
+    }
+    pub fn connected_components(&self) -> Vec<Vec<Node>> {
+        let mut fu = crate::find_union::FindUnion::new(self.nodes.len());
+        for (_, node) in self.nodes() {
+            for edge in node.edges.iter() {
+                fu.unite(edge.from.0, edge.to.0);
+            }
+        }
+        let mut clusters: HashMap<_, Vec<_>> = HashMap::new();
+        for (idx, node) in self.nodes() {
+            let elm = node.node;
+            clusters
+                .entry(fu.find(idx.0).unwrap())
+                .or_default()
+                .push(elm);
+        }
+        clusters.into_values().collect()
     }
 }
 

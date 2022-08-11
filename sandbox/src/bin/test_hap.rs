@@ -4,14 +4,59 @@ fn main() -> std::io::Result<()> {
 
     use definitions::*;
     use std::io::*;
-    let mut ds: DataSet =
+    let ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    use std::collections::HashSet;
-    let selection: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
-    use haplotyper::local_clustering::*;
-    local_clustering_selected(&mut ds, &selection);
-    println!("{}", serde_json::ser::to_string(&ds).unwrap());
+    let target = 274;
+    let nodes: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .flat_map(|r| r.nodes.iter())
+        .filter(|n| n.unit == target)
+        .collect();
+    let mut hmm = haplotyper::model_tune::get_model(&ds).unwrap();
+    let mut cons = ds
+        .selected_chunks
+        .iter()
+        .find(|u| u.id == target)
+        .unwrap()
+        .seq()
+        .to_vec();
+    let mut seqs: Vec<_> = nodes.iter().map(|n| n.seq().to_vec()).collect();
+    let mut ops: Vec<_> = nodes
+        .iter()
+        .map(|n| haplotyper::misc::ops_to_kiley(&n.cigar))
+        .collect();
+    let band_width = 100;
+    let total = seqs.iter().map(|x| x.len()).sum::<usize>();
+    eprintln!("{total}");
+    for _t in 0..2 {
+        for (seq, ops) in seqs.iter_mut().zip(ops.iter_mut()) {
+            haplotyper::misc::fix_long_homopolymers(seq, &cons, ops, 5);
+        }
+        hmm.fit_naive_with(&cons, &seqs, &ops, band_width / 2);
+        cons = hmm.polish_until_converge_with(&cons, &seqs, &mut ops, band_width / 2);
+    }
+    let total = seqs.iter().map(|x| x.len()).sum::<usize>();
+    eprintln!("{total}");
+    // for (seq, ops) in seqs.iter().zip(ops.iter()) {
+    // let (xr, ar, yr) = kiley::recover(&cons, &seq, &ops);
+    // for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
+    //     eprintln!("{}", std::str::from_utf8(xr).unwrap());
+    //     eprintln!("{}", std::str::from_utf8(ar).unwrap());
+    //     eprintln!("{}\n", std::str::from_utf8(yr).unwrap());
+    // }
+    // eprintln!("==================")
+    //    }
+    for (i, seq) in seqs.iter().enumerate() {
+        println!("READ\t{i}\t{}", std::str::from_utf8(seq).unwrap());
+    }
+    println!("UNIT\t{target}\t{}", std::str::from_utf8(&cons).unwrap());
+    // use std::collections::HashSet;
+    // let selection: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    // use haplotyper::local_clustering::*;
+    // local_clustering_selected(&mut ds, &selection);
+    // println!("{}", serde_json::ser::to_string(&ds).unwrap());
     // let mut diff = vec![];
     // let records: Vec<_> = std::fs::File::open(&args[1])
     //     .map(BufReader::new)?

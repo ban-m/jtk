@@ -134,7 +134,6 @@ fn remove_node_idx(read: &EncodedRead, to_remove: &HashMap<(u64, u64), u64>) -> 
 }
 
 impl RemoveErroneousNodes for DataSet {
-    // TODO: Polsih this.
     fn remove_erroneous_nodes(&mut self) {
         let to_remove = enumerate_edges_to_remove(self);
         for read in self.encoded_reads.iter_mut() {

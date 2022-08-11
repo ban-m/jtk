@@ -107,106 +107,13 @@ pub trait Assemble {
     /// Assemble the dataset. If there's duplicated regions or
     /// unresolved regions, it tries to un-entangle that region.
     fn assemble(&self, c: &AssembleConfig) -> GFA;
-    /// Assmeble the dataset into a draft assembly. It does not
-    /// dive into difficult regions such as non-single-copy chunks or
-    /// tangles. It just assemble the dataset into a graph.
-    fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
-    /// Detecting and squishing clusters with small confidence.
-    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize);
-    /// Zip up suspicious haplotig. In other words,
-    /// after usual assembly workflow, if two haplotig shares reads more than `count`,
-    /// it indicates that these contigs can not be phased because of something. We squish such haplotigs with length less than `len`.
-    fn zip_up_suspicious_haplotig(&mut self, c: &AssembleConfig, count: u32, len: usize);
+    // /// Assmeble the dataset into a draft assembly. It does not
+    // /// dive into difficult regions such as non-single-copy chunks or
+    // /// tangles. It just assemble the dataset into a graph.
+    // fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
 }
 
 impl Assemble for DataSet {
-    fn zip_up_suspicious_haplotig(&mut self, c: &AssembleConfig, count: u32, len: usize) {
-        let (_, summaries) = assemble(self, c);
-        // Select unique units.
-        let copy_numbers = get_contig_copy_numbers(&summaries);
-        let shared_read_counts = count_contig_connection(self, &summaries);
-        // Squishing. Unit -> Vec<Cluster>
-        let mut squishing_node: HashMap<u64, Vec<u64>> = HashMap::new();
-        for (i, (cs, &i_copy_number)) in shared_read_counts
-            .iter()
-            .zip(copy_numbers.iter())
-            .enumerate()
-        {
-            for (&c, &j_copy_number) in cs.iter().zip(copy_numbers.iter()) {
-                if c < count || 2 <= j_copy_number || 2 <= i_copy_number {
-                    continue;
-                }
-                if summaries[i].summary.len() < len {
-                    let dump: Vec<_> = summaries[i]
-                        .summary
-                        .iter()
-                        .map(|n| (n.unit, n.cluster))
-                        .collect();
-                    trace!("ZIPUP\t{:?}", dump);
-                    for (u, c) in summaries[i].summary.iter().map(|n| (n.unit, n.cluster)) {
-                        squishing_node.entry(u).or_default().push(c);
-                    }
-                    break;
-                }
-            }
-        }
-        // Squishing (unit,cluster)->cluster.
-        let mut converting_map: HashMap<(u64, u64), u64> = HashMap::new();
-        for (&unit, sqs) in squishing_node.iter() {
-            let target: u64 = *sqs.iter().min().unwrap();
-            if sqs.len() <= 2 {
-                debug!("ZIPUP\t({},{:?})\t{}", unit, sqs, target);
-                converting_map.extend(sqs.iter().map(|&cluster| ((unit, cluster), target)));
-            }
-        }
-        for read in self.encoded_reads.iter_mut() {
-            for node in read.nodes.iter_mut() {
-                if let Some(&to) = converting_map.get(&(node.unit, node.cluster)) {
-                    node.cluster = to;
-                }
-            }
-        }
-        let reads: Vec<_> = self.encoded_reads.iter().collect();
-        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let cov = self.coverage.unwrap();
-        let rt = self.read_type;
-        let mut graph = DitchGraph::new(&reads, &self.selected_chunks, rt, c);
-        graph.remove_lightweight_edges(2, true);
-        graph.clean_up_graph_for_assemble(cov, &reads, c, self.read_type);
-        // TODO: Parametrize here.
-        let squish = graph.squish_bubbles(2);
-        self.encoded_reads
-            .iter_mut()
-            .flat_map(|r| r.nodes.iter_mut())
-            .for_each(|n| {
-                if let Some(res) = squish.get(&(n.unit, n.cluster)) {
-                    n.cluster = *res;
-                }
-            });
-    }
-    fn squish_small_contig(&mut self, c: &AssembleConfig, len: usize) {
-        // assert!(c.to_resolve);
-        let reads: Vec<_> = self.encoded_reads.iter().collect();
-        let cov = self.coverage.unwrap_or_else(|| panic!("Need coverage!"));
-        // let lens: Vec<_> = self.raw_reads.iter().map(|x| x.seq().len()).collect();
-        let mut graph = DitchGraph::new(&reads, self.selected_chunks.as_slice(), self.read_type, c);
-        match self.read_type {
-            ReadType::CCS => graph.remove_lightweight_edges(1, true),
-            ReadType::ONT | ReadType::None | ReadType::CLR => {
-                graph.remove_lightweight_edges(2, true)
-            }
-        };
-        graph.clean_up_graph_for_assemble(cov, &reads, c, self.read_type);
-        let squish = graph.squish_bubbles(len);
-        self.encoded_reads
-            .iter_mut()
-            .flat_map(|r| r.nodes.iter_mut())
-            .for_each(|n| {
-                if let Some(res) = squish.get(&(n.unit, n.cluster)) {
-                    n.cluster = *res;
-                }
-            });
-    }
     fn assemble(&self, c: &AssembleConfig) -> GFA {
         debug!("Start assembly");
         let (records, summaries) = assemble(self, c);
@@ -249,45 +156,45 @@ impl Assemble for DataSet {
         header.extend(records);
         GFA::from_records(header)
     }
-    fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph {
-        let (records, summaries) = assemble_draft(self, c);
-        let nodes: Vec<_> = summaries
-            .iter()
-            .map(|s| {
-                let id = s.id.clone();
-                let segments: Vec<_> = s
-                    .summary
-                    .iter()
-                    .map(|n| Tile {
-                        unit: n.unit,
-                        cluster: n.cluster,
-                        strand: n.strand,
-                    })
-                    .collect();
-                Node { id, segments }
-            })
-            .collect();
-        let edges: Vec<_> = records
-            .iter()
-            .filter_map(|record| match &record.content {
-                gfa::Content::Edge(e) => Some(e),
-                _ => None,
-            })
-            .map(|e| {
-                let from = e.sid1.id.to_string();
-                let from_tail = e.sid1.is_forward();
-                let to = e.sid2.id.to_string();
-                let to_tail = e.sid2.is_forward();
-                Edge {
-                    from,
-                    from_tail,
-                    to,
-                    to_tail,
-                }
-            })
-            .collect();
-        Graph { nodes, edges }
-    }
+    // fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph {
+    //     let (records, summaries) = assemble_draft(self, c);
+    //     let nodes: Vec<_> = summaries
+    //         .iter()
+    //         .map(|s| {
+    //             let id = s.id.clone();
+    //             let segments: Vec<_> = s
+    //                 .summary
+    //                 .iter()
+    //                 .map(|n| Tile {
+    //                     unit: n.unit,
+    //                     cluster: n.cluster,
+    //                     strand: n.strand,
+    //                 })
+    //                 .collect();
+    //             Node { id, segments }
+    //         })
+    //         .collect();
+    //     let edges: Vec<_> = records
+    //         .iter()
+    //         .filter_map(|record| match &record.content {
+    //             gfa::Content::Edge(e) => Some(e),
+    //             _ => None,
+    //         })
+    //         .map(|e| {
+    //             let from = e.sid1.id.to_string();
+    //             let from_tail = e.sid1.is_forward();
+    //             let to = e.sid2.id.to_string();
+    //             let to_tail = e.sid2.is_forward();
+    //             Edge {
+    //                 from,
+    //                 from_tail,
+    //                 to,
+    //                 to_tail,
+    //             }
+    //         })
+    //         .collect();
+    //     Graph { nodes, edges }
+    // }
 }
 
 /// ASSEMBLEIMPL
