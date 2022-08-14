@@ -108,6 +108,9 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
                 trace!("VARS\t{i}\t{idx}\t{x}");
             }
         }
+        for (i, &strand) in strands.iter().enumerate() {
+            trace!("VARS\t{i}\t-1\t{}", strand as usize)
+        }
         for (i, asn) in assignments.iter().enumerate() {
             trace!("VARS\t{i}\t-2\t{asn}");
         }
@@ -190,10 +193,21 @@ fn cluster_filtered_variants<R: Rng>(
     let mut prev_used_columns = vec![false; variants[0].len()];
     let init_copy_num = copy_num.max(4) - 2;
     for k in init_copy_num..=copy_num {
-        let (asn, score, new_lk_gains, used_columns) = mcmc_clustering(variants, k, coverage, rng);
+        let (asn, score, new_lk_gains, used_columns) = match k == 2 {
+            false => mcmc_clustering(variants, k, coverage, rng),
+            true => {
+                let mcmc_gains = mcmc_clustering(variants, k, coverage, rng);
+                let highest_gain = use_highest_gain(variants);
+                if mcmc_gains.1 < highest_gain.1 {
+                    highest_gain
+                } else {
+                    mcmc_gains
+                }
+            }
+        };
         trace!("LK\t{k}\t{score:.3}");
         let min_gain = min_gain(gains, variant_type, &used_columns);
-        let score = score + get_lk_of_coverage(&asn, coverage, k);
+        // let score = score + get_lk_of_coverage(&asn, coverage, k);
         let improved_reads = count_improved_reads(&new_lk_gains, &read_lk_gains, min_gain);
         let expected_gain_per_read =
             expected_gains(gains, variant_type, &prev_used_columns, &used_columns);
@@ -214,6 +228,14 @@ fn cluster_filtered_variants<R: Rng>(
     (assignments, likelihood_gains, max, max_k as usize)
 }
 
+// fn get_lk_of_coverage(asn: &[usize], cov: f64, k: usize) -> f64 {
+//     let mut cluster = vec![0; k];
+//     for &asn in asn.iter() {
+//         cluster[asn] += 1;
+//     }
+//     cluster.iter().map(|&n| max_poisson_lk(n, cov, 1, k)).sum()
+// }
+
 fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[bool]) -> f64 {
     std::iter::zip(variant_type, used_columns)
         .filter_map(|(&(homop_len, diff_type), is_used)| match is_used {
@@ -224,7 +246,7 @@ fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[b
         .unwrap_or(1f64)
 }
 
-const EXPT_GAIN_FACTOR: f64 = 0.5;
+const EXPT_GAIN_FACTOR: f64 = 0.6;
 fn expected_gains(
     gains: &Gains,
     variant_type: &[(usize, DiffType)],
@@ -241,7 +263,7 @@ fn expected_gains(
         })
         .sum();
     trace!("EXPTGAIN\t{expt_sum:.4}\t{used_columns:?}");
-    EXPT_GAIN_FACTOR * expt_sum
+    (EXPT_GAIN_FACTOR * expt_sum).max(0.1)
 }
 
 fn count_improved_reads(new_gains: &[f64], old_gains: &[f64], min_gain: f64) -> usize {
@@ -250,25 +272,16 @@ fn count_improved_reads(new_gains: &[f64], old_gains: &[f64], min_gain: f64) -> 
         .count()
 }
 
-fn get_lk_of_coverage(asn: &[usize], cov: f64, k: usize) -> f64 {
-    let mut cluster = vec![0; k];
-    for &asn in asn.iter() {
-        cluster[asn] += 1;
-    }
-    cluster.iter().map(|&n| max_poisson_lk(n, cov, 1, k)).sum()
-}
-
 fn get_read_thr(cov: f64, sigma: f64) -> usize {
     (cov - sigma * cov.sqrt()).floor() as usize
 }
 
-// Make this function faster?
 fn is_explainable_by_strandedness<I, R: Rng>(
     profiles: I,
     rng: &mut R,
     fprate: f64,
     _pos: usize,
-) -> (f64, f64)
+) -> bool
 where
     I: std::iter::Iterator<Item = (f64, bool)>,
 {
@@ -277,41 +290,35 @@ where
     for (lkdiff, strand) in profiles {
         lks.push(lkdiff);
         if strand {
-            fsum += lkdiff;
+            fsum += lkdiff.max(0f64);
             fcount += 1;
         } else {
-            bsum += lkdiff;
+            bsum += lkdiff.max(0f64);
             bcount += 1;
         }
     }
-    // If fdiv == 0 or bdiv == 0, then all the mean_diff would be the same,
-    // and diff < mean_diff[thr] + 0.01 is always hold.
     if fcount == 0 || bcount == 0 {
-        return (0f64, 0.01);
+        return true;
     }
-    let diff = (fsum / fcount as f64 - bsum / bcount as f64).abs();
-    let (fcount, bcount) = (fcount.min(bcount), fcount.max(bcount));
+    let diff = fsum - bsum;
     const SAMPLE_NUM: usize = 3000;
-    let total: f64 = lks.iter().sum();
-    let mut mean_diffs: Vec<_> = (0..SAMPLE_NUM)
+    let mut null_diffs: Vec<_> = (0..SAMPLE_NUM)
         .map(|_| {
             lks.shuffle(rng);
-            let fsum: f64 = lks.iter().take(fcount).sum();
-            let bsum = total - fsum;
-            (fsum / fcount as f64 - bsum / bcount as f64).abs()
+            let fsum: f64 = lks[..fcount].iter().map(|x| x.max(0f64)).sum();
+            let bsum: f64 = lks[fcount..].iter().map(|x| x.max(0f64)).sum();
+            fsum - bsum
         })
         .collect();
-    mean_diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    mean_diffs.reverse();
-    let thr = (SAMPLE_NUM as f64 * fprate).ceil() as usize;
+    null_diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    let lower_thr_idx = (SAMPLE_NUM as f64 * fprate).ceil() as usize;
+    let upper_thr_idx = (SAMPLE_NUM as f64 * (1f64 - fprate)).ceil() as usize;
+    let (lower_thr, upper_thr) = (null_diffs[lower_thr_idx], null_diffs[upper_thr_idx]);
     if log_enabled!(log::Level::Trace) {
         let (pos, ed) = pos_to_bp_and_difftype(_pos);
-        let thr = mean_diffs[thr];
-        trace!(
-            "STRAND\t{pos}\t{ed}\t{fsum:.3}\t{fcount}\t{bsum:.3}\t{bcount}\t{thr:.3}\t{diff:.3}"
-        );
+        trace!("STRAND\t{pos}\t{ed}\t{fsum:.2}\t{fcount}\t{bsum:.2}\t{bcount}\t{lower_thr:.2}\t{upper_thr:.2}");
     }
-    (diff, mean_diffs[thr] + 0.000001)
+    lower_thr < diff && diff < upper_thr
 }
 
 // LK->LK-logsumexp(LK).
@@ -405,7 +412,7 @@ const PVALUE: f64 = 0.1;
 // False positive rate to determine the strand bias. In other words,
 // The probability that the variant is regarded as biased even if it is not
 // is 0.05. It essentially sacrifice 5% variants under the name of the strand bias.
-const FP_RATE: f64 = 0.05;
+const FP_RATE: f64 = 0.025;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     template: &[u8],
     profiles: &[T],
@@ -416,7 +423,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let cluster_num = config.copy_num as usize;
     let coverage = config.coverage;
     let gains = config.gains;
-    debug!("{gains}");
     let pvalues = gains.pvalues(profiles.len());
     let homopolymer_length = homopolymer_length(template);
     let min_req: Vec<_> = (0..profiles[0].borrow().len())
@@ -435,7 +441,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             let (pos, _) = pos_to_bp_and_difftype(pos);
             MASK_LENGTH <= pos && pos <= (temp_len - MASK_LENGTH)
         })
-        .filter(|&(pos, _)| pos % NUM_ROW < 9 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE)
+        .filter(|&(pos, _)| pos % NUM_ROW < 8 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE) // 8 -> 1 length copy = same as insertion
         .filter(|&(_, &(gain, _))| 0f64 < gain)
         .filter(|&(pos, _)| is_in_short_homopolymer(pos, &homopolymer_length, &template))
         .filter(|&(pos, &improve)| {
@@ -453,8 +459,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
         .filter(|&(pos, _)| {
             let lks = profiles.iter().map(|p| p.borrow()[pos]);
             let paired = lks.zip(strands.iter().copied());
-            let (diff, thr) = is_explainable_by_strandedness(paired, rng, FP_RATE, pos);
-            diff < thr
+            is_explainable_by_strandedness(paired, rng, FP_RATE, pos)
         })
         .collect();
     trace!("TOTAL\t{}", probes.len());
@@ -479,6 +484,7 @@ fn has_small_pvalue(
     let pvalue = pvalues.pvalue(homop_len, diff_type, count);
     let expt = gains.expected(homop_len, diff_type) * EXPT_GAIN_FACTOR;
     if 10 < count {
+        // if pvalue < PVALUE / template_len as f64 {
         let pvalue = template_len as f64 * pvalue;
         let (pos, ed) = pos_to_bp_and_difftype(pos);
         let homop = &homopolymer_length[pos - 1..=pos + 1];
@@ -489,11 +495,17 @@ fn has_small_pvalue(
 
 fn is_in_short_homopolymer(pos: usize, homopolymer_length: &[usize], template: &[u8]) -> bool {
     match pos_to_bp_and_difftype(pos) {
-        (x, DiffType::Ins) if x == 0 => homopolymer_length[x] <= MAX_HOMOP_LENGTH,
-        (x, DiffType::Ins) if x < template.len() => {
-            let prev = homopolymer_length[x - 1] <= MAX_HOMOP_LENGTH;
-            let current = homopolymer_length[x] <= MAX_HOMOP_LENGTH;
-            prev && current
+        (x, DiffType::Ins) => {
+            let base = *b"ACGT".get(pos % NUM_ROW - 4).unwrap_or(&0);
+            let prev_len = match 0 < x {
+                true => homopolymer_length[x - 1] + (template[x - 1] == base) as usize,
+                false => (template[x - 1] == base) as usize,
+            };
+            let next_len = match x < template.len() {
+                true => homopolymer_length[x] + (template[x] == base) as usize,
+                false => (template[x] == base) as usize,
+            };
+            prev_len <= MAX_HOMOP_LENGTH && next_len <= MAX_HOMOP_LENGTH
         }
         (x, DiffType::Del) if x < template.len() => homopolymer_length[x] <= MAX_HOMOP_LENGTH,
         _ => true,
@@ -676,6 +688,29 @@ fn mcmc_clustering<R: Rng>(
     (assignment, score - cluster_lk, lk_gains, used_columns)
 }
 
+// Take dataset and return the total likelihood when using the most powerful feature.
+fn use_highest_gain(data: &[Vec<f64>]) -> (Vec<usize>, f64, Vec<f64>, Vec<bool>) {
+    let dim = data[0].len();
+    let mut gains = vec![0f64; dim];
+    for xs in data.iter() {
+        for (slot, x) in gains.iter_mut().zip(xs) {
+            *slot += x.max(0f64);
+        }
+    }
+    let (max_idx, _) = gains
+        .iter()
+        .enumerate()
+        .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
+        .unwrap();
+    let assignments: Vec<_> = data
+        .iter()
+        .map(|xs| (0f64 < xs[max_idx]) as usize)
+        .collect();
+    let (used_columns, lk_gains) = get_read_lk_gains(data, &assignments, 2);
+    let score: f64 = lk_gains.iter().sum();
+    (assignments, score, lk_gains, used_columns)
+}
+
 // Return the maximum likelihood.
 // In this function, we sample the assignemnts of the data, then evaluate the
 // likelihood of the probability, P(X|Z) = max_O P(X|Z,O). Here, the parameters O can be analytically resolvable,
@@ -715,7 +750,7 @@ fn mcmc_with_filter<R: Rng>(
     let mut lk = get_lk(&lks, &clusters, &size_to_lk);
     let (mut max, mut argmax) = (lk, assign.to_vec());
     let total = 2000 * data.len();
-    let init = lk;
+    // let init = lk;
     for _t in 0..total {
         let idx = rng.gen_range(0..data.len());
         let old = assign[idx];
@@ -748,7 +783,6 @@ fn mcmc_with_filter<R: Rng>(
         }
     }
     let lk = get_lk(&lks, &clusters, &size_to_lk);
-    trace!("MCMC\t{init:.3}=>{lk:.3}\t{k}");
     assert!((max - lk).abs() < 0.0001);
     max
 }

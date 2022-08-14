@@ -14,7 +14,9 @@ pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovMod
             del_ins,
             del_del,
             ref mat_emit,
+            // ref ins_emit,
         } = param;
+        let ins_emit = [0.25; 20];
         PairHiddenMarkovModel {
             mat_mat,
             mat_ins,
@@ -26,13 +28,12 @@ pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovMod
             del_ins,
             del_del,
             mat_emit: *mat_emit,
+            ins_emit,
         }
     })
 }
 
 pub fn update_model(ds: &mut DataSet) {
-    // let mut pileups: HashMap<u64, Vec<_>> =
-    //     ds.selected_chunks.iter().map(|u| (u.id, vec![])).collect();
     let mut pileups: HashMap<_, Vec<_>> = HashMap::new();
     let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
@@ -53,6 +54,7 @@ pub fn update_model(ds: &mut DataSet) {
         del_ins,
         del_del,
         mat_emit,
+        ..
     } = hmm;
     ds.model_param = Some(HMMParam {
         mat_mat,
@@ -65,6 +67,7 @@ pub fn update_model(ds: &mut DataSet) {
         del_ins,
         del_del,
         mat_emit,
+        // ins_emit,
     });
 }
 

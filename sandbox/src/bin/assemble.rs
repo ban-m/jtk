@@ -17,7 +17,7 @@ fn main() -> std::io::Result<()> {
             .flat_map(|n| n.nodes.iter_mut())
             .for_each(|n| n.cluster = 0);
     }
-    let config = AssembleConfig::new(100, false, false, 3, 4f64);
+    let config = AssembleConfig::new(100, false, false, 3, 4f64, false);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![].into());

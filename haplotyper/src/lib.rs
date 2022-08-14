@@ -36,4 +36,6 @@ mod tests {
     }
 }
 
+/// Global alignment parameter.
 pub const ALN_PARAMETER: (i32, i32, i32, i32) = (2, -6, -5, -1);
+pub const MAX_ALLOWED_GAP: usize = 100;

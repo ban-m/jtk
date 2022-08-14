@@ -102,6 +102,45 @@ pub fn ops_to_kiley(ops: &definitions::Ops) -> Vec<kiley::Op> {
         .collect()
 }
 
+pub fn kiley_op_to_ops(k_ops: &[kiley::Op]) -> definitions::Ops {
+    use definitions::Op;
+    use definitions::Ops;
+    if k_ops.is_empty() {
+        return Ops(Vec::new());
+    }
+    fn is_the_same(op1: kiley::Op, op2: kiley::Op) -> bool {
+        match (op1, op2) {
+            (kiley::Op::Match, kiley::Op::Mismatch) | (kiley::Op::Mismatch, kiley::Op::Match) => {
+                true
+            }
+            (x, y) if x == y => true,
+            _ => false,
+        }
+    }
+    assert!(!k_ops.is_empty());
+    let (mut current_op, mut len) = (k_ops[0], 1);
+    let mut ops = vec![];
+    for &op in k_ops.iter().skip(1) {
+        if is_the_same(op, current_op) {
+            len += 1;
+        } else {
+            match current_op {
+                kiley::Op::Del => ops.push(Op::Del(len)),
+                kiley::Op::Ins => ops.push(Op::Ins(len)),
+                kiley::Op::Mismatch | kiley::Op::Match => ops.push(Op::Match(len)),
+            }
+            current_op = op;
+            len = 1;
+        }
+    }
+    match current_op {
+        kiley::Op::Del => ops.push(Op::Del(len)),
+        kiley::Op::Ins => ops.push(Op::Ins(len)),
+        kiley::Op::Mismatch | kiley::Op::Match => ops.push(Op::Match(len)),
+    }
+    Ops(ops)
+}
+
 use definitions::DataSet;
 use rand::Rng;
 const UPDATE_THR: f64 = 0.00000001;
@@ -526,6 +565,57 @@ pub fn check_compress_and_recover(ds: &DataSet) {
     }
 }
 
+// The maximum value of sum of a range in xs,
+// If the sequence is empty, return i64::MIN
+pub fn max_region<T: std::iter::Iterator<Item = i64>>(xs: T) -> i64 {
+    // The max value of the sum of the range ending at i.
+    let mut right = i64::MIN;
+    // The max value of the sum of the range ending before i.
+    let mut left = i64::MIN;
+    for x in xs {
+        left = right.max(left);
+        right = match right.is_negative() {
+            true => x,
+            false => right + x,
+        };
+    }
+    right.max(left)
+}
+
+/// Return the max_{i<j} xs[i..j], where xs is the converted value of the alignment operation.
+/// Each deletion and insertions would be converted into `indel_weight * operation length`, whereas
+/// match would be into `mat_weight * operation length * -1`.
+/// Thus, if we set mat_weight sufficiently large and indel_weight = 1, this function would return
+/// the maximum length of the consective insertion/deletion.
+pub fn max_indel(ops: &definitions::Ops, mat_weight: u64, indel_weight: u64) -> u64 {
+    let (mat_weight, indel_weight) = (mat_weight as i64, indel_weight as i64);
+    let xs = ops.0.iter().map(|&op| match op {
+        definitions::Op::Match(l) => -(l as i64) * mat_weight,
+        definitions::Op::Del(l) => l as i64 * indel_weight,
+        definitions::Op::Ins(l) => l as i64 * indel_weight,
+    });
+    max_region(xs).max(0) as u64
+}
+
+pub fn max_indel_cigar(cigar: &[bio_utils::sam::Op], mat_weight: u64, indel_weight: u64) -> u64 {
+    let (mat_weight, indel_weight) = (mat_weight as i64, indel_weight as i64);
+    let xs = cigar.iter().map(|&op| match op {
+        bio_utils::sam::Op::Align(l)
+        | bio_utils::sam::Op::Match(l)
+        | bio_utils::sam::Op::Mismatch(l) => -(l as i64) * mat_weight,
+        bio_utils::sam::Op::Insertion(l)
+        | bio_utils::sam::Op::Deletion(l)
+        | bio_utils::sam::Op::SoftClip(l)
+        | bio_utils::sam::Op::HardClip(l) => (l as i64) * indel_weight,
+        _ => 0,
+    });
+    max_region(xs).max(0) as u64
+}
+
+pub fn max_indel_node(node: &definitions::Node, mat_weight: u64, indel_weight: u64) -> u64 {
+    max_indel(&node.cigar, mat_weight, indel_weight)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,5 +699,52 @@ mod tests {
             let modif_q = std::str::from_utf8(&modif_q).unwrap();
             assert_eq!(query, modif_q);
         }
+    }
+    #[test]
+    fn max_range_operation_test() {
+        use definitions::Op;
+        let ops = [
+            Op::Match(10),
+            Op::Del(5),
+            Op::Ins(2),
+            Op::Match(1),
+            Op::Del(5),
+            Op::Match(10),
+        ];
+        let iter = ops.iter().map(|x| match x {
+            Op::Match(l) | Op::Ins(l) => -(*l as i64),
+            Op::Del(l) => *l as i64 * 2,
+        });
+        let max_del = max_region(iter);
+        assert_eq!(max_del, 10 + 10 - 3);
+        let ops = [
+            Op::Ins(10),
+            Op::Del(5),
+            Op::Ins(2),
+            Op::Match(1),
+            Op::Del(5),
+            Op::Match(10),
+        ];
+        let iter = ops.iter().map(|x| match x {
+            Op::Match(l) | Op::Del(l) => -(*l as i64),
+            Op::Ins(l) => *l as i64 * 2,
+        });
+        let max_in = max_region(iter);
+        assert_eq!(max_in, 20);
+        let ops = [
+            Op::Ins(10),
+            Op::Del(5),
+            Op::Ins(2),    // 19
+            Op::Match(1),  // 18
+            Op::Del(5),    // 13
+            Op::Match(10), // 3
+            Op::Ins(100),  // 203
+        ];
+        let iter = ops.iter().map(|x| match x {
+            Op::Match(l) | Op::Del(l) => -(*l as i64),
+            Op::Ins(l) => *l as i64 * 2,
+        });
+        let max_in = max_region(iter);
+        assert_eq!(max_in, 203);
     }
 }

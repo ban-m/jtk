@@ -3,18 +3,33 @@
 use definitions::*;
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Default)]
-pub struct PurgeDivConfig {
-    threads: usize,
-}
+pub struct PurgeDivConfig {}
 
 impl PurgeDivConfig {
-    pub fn new(threads: usize) -> Self {
-        Self { threads }
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PurgeLargeDelConfig {
+    indel_size: usize,
+    occupy_fraction: f64,
+}
+
+impl PurgeLargeDelConfig {
+    pub fn new(indel_size: usize, occupy_fraction: f64) -> Self {
+        Self {
+            indel_size,
+            occupy_fraction,
+        }
     }
 }
 
 pub trait PurgeDivergent {
     fn purge(&mut self, config: &PurgeDivConfig);
+    // Return the ids of the units.
+    fn purge_largeindel(&mut self, config: &PurgeLargeDelConfig) -> HashSet<u64>;
 }
 
 use rayon::prelude::*;
@@ -26,8 +41,109 @@ impl PurgeDivergent for DataSet {
         let mut purged_cluster = HashSet::new();
         purged_cluster.extend(purge_diverged_nodes(self, THR, config));
         debug!("PD\tEncodedRead\t{}\t{}\t0", prev, self.encoded_reads.len());
-        re_cluster(self, config.threads, &purged_cluster);
+        re_cluster(self, &purged_cluster);
     }
+    fn purge_largeindel(&mut self, config: &PurgeLargeDelConfig) -> HashSet<u64> {
+        let prev = self.encoded_reads.len();
+        let purged_cluster = purge_large_deletion_nodes(self, config);
+        self.encoded_reads.retain(|r| !r.nodes.is_empty());
+        debug!(
+            "PLI\tEncodedRead\t{}\t{}\t1",
+            prev,
+            self.encoded_reads.len()
+        );
+        purged_cluster
+    }
+}
+
+fn set_coverage(ds: &mut DataSet) {
+    let mut counts: HashMap<_, u32> = HashMap::new();
+    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+        *counts.entry(node.unit).or_default() += 1;
+    }
+    let cov = {
+        let mut counts: Vec<_> = counts.values().copied().collect();
+        counts.sort_unstable();
+        counts[counts.len() / 2] as f64 / 2f64
+    };
+    debug!("LOCALCLUSTERING\tSetCoverage\t{cov}");
+    ds.coverage = Some(cov);
+}
+
+const ACCEPT_RATE: f64 = 0.5;
+const DEL_WEIGHT: i64 = 2;
+const INS_WEIGHT: i64 = 0;
+const MATCH_WEIGHT: i64 = 1;
+fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) -> HashSet<u64> {
+    let mut indel_size_distr: HashMap<(u64, u64), Vec<_>> = HashMap::new();
+    for read in ds.encoded_reads.iter() {
+        for (idx, node) in read.nodes.iter().enumerate() {
+            let xs = node.cigar.iter().map(|&op| match op {
+                definitions::Op::Match(l) => -(l as i64) * MATCH_WEIGHT,
+                definitions::Op::Del(l) => l as i64 * DEL_WEIGHT,
+                definitions::Op::Ins(l) => l as i64 * INS_WEIGHT,
+            });
+            let del_size = crate::misc::max_region(xs) / DEL_WEIGHT;
+            indel_size_distr
+                .entry((node.unit, node.cluster))
+                .or_default()
+                .push((read.id, idx, del_size));
+        }
+    }
+    let indel_size = config.indel_size;
+    set_coverage(ds);
+    let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
+    indel_size_distr.retain(|(unit, cluster), distr| {
+        let dip_coverage = 2f64 * ds.coverage.unwrap();
+        let lower_thr = (dip_coverage / 2f64 * config.occupy_fraction).floor() as usize;
+        let upper_thr = (dip_coverage - lower_thr as f64).ceil() as usize;
+        let num = distr
+            .iter()
+            .map(|x| x.2)
+            .filter(|&x| indel_size < x as usize)
+            .count();
+        if lower_thr < num {
+            let sum: i64 = distr
+                .iter()
+                .map(|x| x.2)
+                .filter(|&x| (accept_size as i64) < x)
+                .sum();
+            let mean = sum / num as i64;
+            let cov = distr.len();
+            let retain = (lower_thr..upper_thr).contains(&num);
+            debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\t{retain}");
+        }
+        if (lower_thr..upper_thr).contains(&num) {
+            distr.retain(|&(_, _, size)| accept_size < size as usize);
+            true
+        } else {
+            false
+        }
+    });
+    let mut read_bucket: HashMap<_, Vec<_>> = HashMap::new();
+    for (&(unit, cluster), distr) in indel_size_distr.iter() {
+        for &(readid, idx, _) in distr.iter() {
+            read_bucket
+                .entry(readid)
+                .or_default()
+                .push((unit, cluster, idx));
+        }
+    }
+    read_bucket
+        .values_mut()
+        .for_each(|bucket| bucket.sort_by_key(|x| std::cmp::Reverse(x.2)));
+    for read in ds.encoded_reads.iter_mut() {
+        let bucket = match read_bucket.get(&read.id) {
+            Some(bucket) => bucket,
+            None => continue,
+        };
+        for &(unit, cluster, idx) in bucket {
+            let node = &read.nodes[idx];
+            assert_eq!((unit, cluster), (node.unit, node.cluster));
+            read.remove(idx);
+        }
+    }
+    indel_size_distr.keys().map(|x| x.0).collect()
 }
 
 // Purge node with very high error rate.
@@ -58,7 +174,7 @@ pub fn purge_erroneous_nodes(ds: &mut DataSet, _config: &PurgeDivConfig) -> Hash
     units_of_removed_nodes
 }
 
-fn re_cluster(ds: &mut DataSet, threads: usize, selection: &HashSet<u64>) {
+fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
     let copy_number: HashMap<_, _> = ds
         .selected_chunks
         .iter()
@@ -80,7 +196,7 @@ fn re_cluster(ds: &mut DataSet, threads: usize, selection: &HashSet<u64>) {
             .flat_map(|r| r.nodes.iter_mut())
             .for_each(|n| n.cluster = 0);
         use crate::multiplicity_estimation::*;
-        let multip_config = MultiplicityEstimationConfig::new(threads, 230493, ds.coverage, None);
+        let multip_config = MultiplicityEstimationConfig::new(230493, ds.coverage, None);
         ds.estimate_multiplicity(&multip_config);
         // Recover.
         for (r, (id, cls, len)) in ds.encoded_reads.iter_mut().zip(preserve) {

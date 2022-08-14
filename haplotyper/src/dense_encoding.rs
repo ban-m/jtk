@@ -302,7 +302,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
     use crate::assemble::*;
     let msr = ds.read_type.weak_span_reads();
     let min_lk = ds.read_type.weak_llr();
-    let config = AssembleConfig::new(1000, false, true, msr, min_lk);
+    let config = AssembleConfig::new(1000, false, true, msr, min_lk, false);
     let (records, summaries) = assemble(ds, &config);
     write_to_file(&records, &summaries, de_config);
     let multicopy_contigs: HashMap<_, _> = summaries
@@ -643,7 +643,7 @@ fn encode_edge(
                 };
                 let seq = seq[ypos - ylen..ypos].to_vec();
                 let cl = unit.cluster_num;
-                let cigar = crate::encode::compress_kiley_ops(&alignments);
+                let cigar = crate::misc::kiley_op_to_ops(&alignments).0;
                 let node = Node::new(unit.id, is_forward, seq, cigar, position_from_start, cl);
                 nodes.push(node);
             }

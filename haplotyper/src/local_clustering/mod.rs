@@ -114,16 +114,13 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     if selection.is_empty() {
         return;
     }
-    if ds.coverage.is_none() {
-        set_coverage(ds);
-    }
+    set_coverage(ds);
     if ds.model_param.is_none() {
         crate::model_tune::update_model(ds);
     }
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    // let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
     let (mut pileups, chunks) = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .par_iter_mut()
@@ -159,7 +156,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
                 node.cluster = asn as u64;
             }
             for (node, ops) in units.iter_mut().zip(ops) {
-                node.cigar = crate::encode::compress_kiley_ops(&ops).into();
+                node.cigar = crate::misc::kiley_op_to_ops(&ops);
             }
             let end = std::time::Instant::now();
             let polished_time = (polished - start).as_millis();

@@ -683,6 +683,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.assign_copy_number(cov, &mut rng);
         self.zip_up_overclustering_dev();
         self.resolve_repeats(reads, c, min_llr, true);
+        if c.to_bypass_contigs {
+            self.bypass_repeats(reads, c, min_llr);
+        }
         self.remove_zero_copy_elements(100f64);
         // self.z_edge_selection();
         // self.remove_zero_copy_path(0.2);
@@ -815,8 +818,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     // tune the occurence of these edges appropriately.
     fn decrement_edge_copy_number(
         &'b mut self,
-        (from_idx, from_pos): (NodeIndex, Position),
-        (to_idx, to_pos): (NodeIndex, Position),
+        (from_idx, from_pos): GraphNode,
+        (to_idx, to_pos): GraphNode,
     ) -> usize {
         let (mut num, mut total) = (0, 0);
         for edge in self.node_mut(from_idx).unwrap().edges.iter_mut() {
@@ -1008,11 +1011,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 let zc_dests: HashSet<_> = zc_edges
                     .iter()
                     .flat_map(|e| self.simple_path_and_dest(e.to, e.to_position).1)
+                    .map(|x| x.0)
                     .collect();
                 let zc_max = zc_edges.iter().map(|e| self.node(e.to).unwrap().occ).max();
                 let nzc_dests: HashSet<_> = nzc_edges
                     .iter()
                     .flat_map(|e| self.simple_path_and_dest(e.to, e.to_position).1)
+                    .map(|x| x.0)
                     .collect();
                 let nzc_max = nzc_edges.iter().map(|e| self.node(e.to).unwrap().occ).max();
                 let zc_nzc_ratio = match (zc_max, nzc_max) {
@@ -1253,7 +1258,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         (parents, sibs)
     }
     /// Return the position where a simple path from given edge ends.
-    pub fn destination(&self, edge: &DitchEdge) -> (NodeIndex, Position) {
+    pub fn destination(&self, edge: &DitchEdge) -> GraphNode {
         let mut current_node = edge.to;
         let mut current_pos = edge.to_position;
         loop {
@@ -1326,16 +1331,19 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         nodes
     }
     /// Return simple path start from the given node and position, and the destination nodes after this simple path.
+    /// Note that the given node would be in the path, and traversal first traverse the given path.
+    /// The position is the position after using an edge. So, for example, ((0,1),H) -- ((0,1),T) -> ((2,0),T) -- ((2,0), H), then,
+    /// the path would be ((0,1), H), ((2,0),T).
     pub fn simple_path_and_dest(
         &self,
         mut node: NodeIndex,
         mut position: Position,
-    ) -> (Vec<NodeIndex>, Vec<NodeIndex>) {
+    ) -> (Vec<GraphNode>, Vec<GraphNode>) {
         let mut nodes = vec![];
         loop {
+            nodes.push((node, position));
             // Move position.
             position = !position;
-            nodes.push(node);
             let edges = self.node(node).unwrap().edges.iter();
             let mut edges = edges.filter(|e| e.from_position == position);
             let edge = match edges.next() {
@@ -1364,7 +1372,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .edges
             .iter()
             .filter(|e| e.from_position == position)
-            .map(|e| e.to)
+            .map(|e| (e.to, e.to_position))
             .collect();
         dests.sort_unstable();
         (nodes, dests)
@@ -1421,8 +1429,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
     fn remove_edge_between(
         &mut self,
-        (from, from_pos): (NodeIndex, Position),
-        (to, to_pos): (NodeIndex, Position),
+        (from, from_pos): GraphNode,
+        (to, to_pos): GraphNode,
     ) -> Option<DitchEdge> {
         let removed = self.node_mut(from).and_then(|node| {
             node.edges
@@ -1470,11 +1478,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     // Removing (from,from_pos)-(to,to_pos) edge.
     // Then, recursively removing the edges in the opposite position and `to` node itself
     // if the degree of `(to,to_pos)` is zero after removing.
-    fn remove_edge_and_pruning(
-        &'b mut self,
-        (from, from_pos): (NodeIndex, Position),
-        (to, to_pos): (NodeIndex, Position),
-    ) {
+    fn remove_edge_and_pruning(&'b mut self, (from, from_pos): GraphNode, (to, to_pos): GraphNode) {
         self.remove_edge_between((from, from_pos), (to, to_pos));
         // If the degree became zero and this node and the copy number is zero, remove recursively
         let removed_all_edges = self
@@ -1579,7 +1583,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         root: NodeIndex,
         position: Position,
         _c: &AssembleConfig,
-    ) -> ((NodeIndex, Position), Vec<NodeIndex>) {
+    ) -> (GraphNode, Vec<NodeIndex>) {
         assert!(self.sanity_check());
         // Check the collapsing condition.
         let edges: Vec<_> = self.edges_from(root, position);
@@ -1692,14 +1696,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 if edges.clone().count() <= 1 {
                     continue;
                 }
-                let path_and_dest: Vec<_> = edges
-                    .map(|e| self.simple_path_and_dest(e.to, e.to_position))
+                let path_and_dest: Vec<Vec<_>> = edges
+                    .map(|e| self.simple_path_and_dest(e.to, e.to_position).0)
+                    .map(|path| path.iter().map(|x| x.0).collect())
                     .collect();
                 let is_bubble = {
                     let paths: Vec<_> = path_and_dest
                         .iter()
                         .map(|x| {
-                            let mut units: Vec<_> = x.0.iter().map(|x| x.0).collect();
+                            let mut units: Vec<_> = x.iter().map(|x| x.0).collect();
                             units.sort_unstable();
                             units
                         })
@@ -1708,7 +1713,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 };
                 if is_bubble {
                     let mut convert_table: HashMap<u64, u64> = HashMap::new();
-                    for (path, _) in path_and_dest.iter() {
+                    for path in path_and_dest.iter() {
                         for &node in path.iter() {
                             let (unit, cluster) = self.node(node).unwrap().node;
                             convert_table
@@ -1717,7 +1722,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                                 .or_insert(cluster);
                         }
                     }
-                    for (path, _) in path_and_dest.iter() {
+                    for path in path_and_dest.iter() {
                         for &node in path.iter() {
                             let (unit, cluster) = self.node(node).unwrap().node;
                             squish_to
@@ -2026,7 +2031,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / hap.len() / 2) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -2083,7 +2088,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -2138,7 +2143,7 @@ mod tests {
         println!("(1,2)\t{}", count);
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
-        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false);
         let mut graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         assert!(graph.sanity_check());
         println!("graph:{graph:?}");

@@ -72,6 +72,7 @@ pub struct AssembleConfig {
     to_resolve: bool,
     min_span_reads: usize,
     span_likelihood_ratio: f64,
+    to_bypass_contigs: bool,
 }
 
 impl std::default::Default for AssembleConfig {
@@ -82,6 +83,7 @@ impl std::default::Default for AssembleConfig {
             to_resolve: false,
             min_span_reads: 6,
             span_likelihood_ratio: 3f64,
+            to_bypass_contigs: false,
         }
     }
 }
@@ -92,6 +94,7 @@ impl AssembleConfig {
         to_resolve: bool,
         min_span_reads: usize,
         span_likelihood_ratio: f64,
+        to_bypass_contigs: bool,
     ) -> Self {
         Self {
             window_size,
@@ -99,6 +102,7 @@ impl AssembleConfig {
             to_resolve,
             min_span_reads,
             span_likelihood_ratio,
+            to_bypass_contigs,
         }
     }
 }
@@ -216,7 +220,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
         use crate::consensus;
         use crate::consensus::Polish;
         let seed = 394802;
-        let radius = 100;
+        let radius = 50;
         let config = consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, 2);
         segments = ds.polish_segment(&segments, &encodings, &config);
         let lengths: HashMap<_, _> = segments

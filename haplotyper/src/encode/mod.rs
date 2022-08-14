@@ -10,12 +10,6 @@ pub const MARGIN: usize = 50;
 // but it would be problem in local clustering, which requiring almost all the
 // unit is correctly globally aligned.
 const ALLOWED_END_GAP: usize = 25;
-// /// Any alignment having Insertion/Deletion longer than INDEL_THRESHOLD would be discarded.
-// pub const INDEL_THRESHOLD: usize = 50;
-/// Any alignment having Insertion/Deletion longer than unit.seq() * INDEL_FRACTION would be discarded.
-/// for 2Kbp length, the threshold is 60bp.
-pub const INDEL_FRACTION: f64 = 1f64 / 20f64;
-pub const MIN_INDEL_SIZE: usize = 20;
 pub trait Encode {
     fn encode(&mut self, threads: usize, sim_thr: f64);
 }
@@ -169,7 +163,7 @@ fn leading_alignment(refr: &[u8], mut leading: Vec<u8>) -> (Vec<Op>, Vec<u8>) {
     }
     lops.reverse();
     leading.reverse();
-    (compress_kiley_ops(&lops), leading)
+    (crate::misc::kiley_op_to_ops(&lops).0, leading)
 }
 
 fn trailing_alignment(refr: &[u8], mut trailing: Vec<u8>) -> (Vec<Op>, Vec<u8>) {
@@ -178,7 +172,7 @@ fn trailing_alignment(refr: &[u8], mut trailing: Vec<u8>) -> (Vec<Op>, Vec<u8>) 
         assert!(tops.pop().is_some());
         assert!(trailing.pop().is_some());
     }
-    (compress_kiley_ops(&tops), trailing)
+    (crate::misc::kiley_op_to_ops(&tops).0, trailing)
 }
 
 fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
@@ -246,43 +240,6 @@ fn semiglobal(refr: &[u8], query: &[u8]) -> Vec<kiley::Op> {
     let aln = aln.map(|&op| OPS[op as usize]);
     let trailing = std::iter::repeat(kiley::Op::Ins).take(query.len() - end);
     leading.chain(aln).chain(trailing).collect()
-}
-
-pub fn compress_kiley_ops(k_ops: &[kiley::Op]) -> Vec<Op> {
-    if k_ops.is_empty() {
-        return Vec::new();
-    }
-    fn is_the_same(op1: kiley::Op, op2: kiley::Op) -> bool {
-        match (op1, op2) {
-            (kiley::Op::Match, kiley::Op::Mismatch) | (kiley::Op::Mismatch, kiley::Op::Match) => {
-                true
-            }
-            (x, y) if x == y => true,
-            _ => false,
-        }
-    }
-    assert!(!k_ops.is_empty());
-    let (mut current_op, mut len) = (k_ops[0], 1);
-    let mut ops = vec![];
-    for &op in k_ops.iter().skip(1) {
-        if is_the_same(op, current_op) {
-            len += 1;
-        } else {
-            match current_op {
-                kiley::Op::Del => ops.push(Op::Del(len)),
-                kiley::Op::Ins => ops.push(Op::Ins(len)),
-                kiley::Op::Mismatch | kiley::Op::Match => ops.push(Op::Match(len)),
-            }
-            current_op = op;
-            len = 1;
-        }
-    }
-    match current_op {
-        kiley::Op::Del => ops.push(Op::Del(len)),
-        kiley::Op::Ins => ops.push(Op::Ins(len)),
-        kiley::Op::Mismatch | kiley::Op::Match => ops.push(Op::Match(len)),
-    }
-    ops
 }
 
 pub fn remove_slippy_alignment(nodes: Vec<Node>) -> Vec<Node> {
@@ -364,74 +321,4 @@ fn is_uppercase(read: &definitions::EncodedRead) -> bool {
         .iter()
         .all(|edge| edge.label.iter().all(|c| c.is_ascii_uppercase()));
     nodes && edges
-}
-
-// The maximum value of sum of a range in xs,
-// If the sequence is empty, return i32::MIN
-pub fn max_region<T: std::iter::Iterator<Item = i32>>(xs: T) -> i32 {
-    // The max value of the sum of the range ending at i.
-    let mut right = i32::MIN;
-    // The max value of the sum of the range ending before i.
-    let mut left = i32::MIN;
-    for x in xs {
-        left = right.max(left);
-        right = match right.is_negative() {
-            true => x,
-            false => right + x,
-        };
-    }
-    right.max(left)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn works() {}
-    #[test]
-    fn max_range_operation_test() {
-        let ops = [
-            Op::Match(10),
-            Op::Del(5),
-            Op::Ins(2),
-            Op::Match(1),
-            Op::Del(5),
-            Op::Match(10),
-        ];
-        let iter = ops.iter().map(|x| match x {
-            Op::Match(l) | Op::Ins(l) => -(*l as i32),
-            Op::Del(l) => *l as i32 * 2,
-        });
-        let max_del = max_region(iter);
-        assert_eq!(max_del, 10 + 10 - 3);
-        let ops = [
-            Op::Ins(10),
-            Op::Del(5),
-            Op::Ins(2),
-            Op::Match(1),
-            Op::Del(5),
-            Op::Match(10),
-        ];
-        let iter = ops.iter().map(|x| match x {
-            Op::Match(l) | Op::Del(l) => -(*l as i32),
-            Op::Ins(l) => *l as i32 * 2,
-        });
-        let max_in = max_region(iter);
-        assert_eq!(max_in, 20);
-        let ops = [
-            Op::Ins(10),
-            Op::Del(5),
-            Op::Ins(2),    // 19
-            Op::Match(1),  // 18
-            Op::Del(5),    // 13
-            Op::Match(10), // 3
-            Op::Ins(100),  // 203
-        ];
-        let iter = ops.iter().map(|x| match x {
-            Op::Match(l) | Op::Del(l) => -(*l as i32),
-            Op::Ins(l) => *l as i32 * 2,
-        });
-        let max_in = max_region(iter);
-        assert_eq!(max_in, 203);
-    }
 }

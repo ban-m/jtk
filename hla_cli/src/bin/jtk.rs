@@ -780,10 +780,6 @@ fn polish_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 }
 fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tmultiplicity estimation");
-    let threads: usize = matches
-        .value_of("threads")
-        .and_then(|e| e.parse().ok())
-        .unwrap();
     let seed: u64 = matches
         .value_of("seed")
         .and_then(|e| e.parse().ok())
@@ -792,7 +788,7 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let path = matches.value_of("draft_assembly");
     set_threads(matches);
     use haplotyper::multiplicity_estimation::*;
-    let config = MultiplicityEstimationConfig::new(threads, seed, cov, path);
+    let config = MultiplicityEstimationConfig::new(seed, cov, path);
     dataset.estimate_multiplicity(&config);
     let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
     if let Some(upper_copy_num) = purge {
@@ -809,13 +805,9 @@ fn local_clustering(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 
 fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tPurge diverged clusters");
-    let threads: usize = matches
-        .value_of("threads")
-        .and_then(|num| num.parse().ok())
-        .unwrap();
     set_threads(matches);
     use haplotyper::purge_diverged::*;
-    let config = PurgeDivConfig::new(threads);
+    let config = PurgeDivConfig::new();
     dataset.purge(&config);
 }
 
@@ -876,7 +868,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     use haplotyper::assemble::*;
     let msr = min_span.unwrap_or_else(|| dataset.read_type.min_span_reads());
     let min_lk = min_llr.unwrap_or_else(|| dataset.read_type.min_llr_value());
-    let config = AssembleConfig::new(window_size, !skip_polish, true, msr, min_lk);
+    let config = AssembleConfig::new(window_size, !skip_polish, true, msr, min_lk, true);
     debug!("START\tFinal assembly");
     if !skip_polish {
         use haplotyper::model_tune::update_model;

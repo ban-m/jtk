@@ -22,7 +22,7 @@ samtools index ${BAM}
 
 ## 1. call variants.
 REF_STEM=${REFERENCE%/*.fa}
-singularity exec --bind /usr/lib/locale/,${REF_STEM},${OUTDIR} $PMD\
+singularity exec --bind /usr/lib/locale/,${REF_STEM},${OUTDIR},${PWD} $PMD\
     run_pepper_margin_deepvariant call_variant -b ${BAM} -f ${REFERENCE} -o ${OUTDIR} -p $SNV_PREFIX -t${THREADS} --ont_r9_guppy5_sup 2> log   
 cuteSV ${BAM} ${REFERENCE} ${OUTDIR}/${SV_PREFIX}.vcf ${OUTDIR} --report_readid --genotype \
     --max_cluster_bias_INS 100 --diff_ratio_merging_INS 0.3 --max_cluster_bias_DEL 100 --diff_ratio_merging_DEL 0.3

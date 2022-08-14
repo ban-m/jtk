@@ -31,7 +31,12 @@ pub trait CorrectDeletion {
 
 impl CorrectDeletion for DataSet {
     fn correct_deletion(&mut self, config: &CorrectDeletionConfig) {
-        let find_new_units = correct_unit_deletion(self, config.sim_thr);
+        let mut find_new_units = correct_unit_deletion(self, config.sim_thr);
+        // If half of the coverage supports large deletion, remove them.
+        const OCCUPY_FRACTION: f64 = 0.5;
+        use crate::purge_diverged::*;
+        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION);
+        find_new_units.extend(self.purge_largeindel(&p_config));
         if config.re_clustering {
             // Log original assignments.
             let original_assignments = log_original_assignments(self);
@@ -49,7 +54,7 @@ impl CorrectDeletion for DataSet {
                 .for_each(|n| n.cluster = 0);
             use crate::multiplicity_estimation::*;
             let seed = (231043290490.0 * config.sim_thr).round() as u64;
-            let config = MultiplicityEstimationConfig::new(1, seed, self.coverage, None);
+            let config = MultiplicityEstimationConfig::new(seed, self.coverage, None);
             self.estimate_multiplicity(&config);
             // Retain all the units changed their copy numbers.
             let chainged_units: HashSet<_> = self
@@ -616,7 +621,7 @@ fn encode_node(
     query.iter_mut().for_each(u8::make_ascii_uppercase);
     let (seq, trim_head, trim_tail, kops, score) =
         fine_mapping(&query, (unit, cluster, unitseq), sim_thr)?;
-    let ops = super::compress_kiley_ops(&kops);
+    let ops = crate::misc::kiley_op_to_ops(&kops).0;
     let cl = unit.cluster_num;
     let position_from_start = match is_forward {
         true => start + trim_head,

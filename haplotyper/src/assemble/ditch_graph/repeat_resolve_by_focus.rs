@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 type NodeWithTraverseInfo = (usize, usize, usize, NodeIndex, Position);
+type NodeIndexWithPosition = (NodeIndex, Position);
 // TODO: Tune this parameter.
-const ERROR_PROB: f64 = 0.2;
+const ERROR_PROB: f64 = 0.1;
 use super::super::AssembleConfig;
 use super::DitchGraph;
 use super::DitchNode;
@@ -25,7 +26,7 @@ struct Focus {
     // Log Likelihood ratio between the alt hypothesis/null hypothesis.
     log_likelihood_ratio: f64,
     counts: Vec<usize>,
-    path: Vec<(NodeIndex, Position)>,
+    path: Vec<NodeIndexWithPosition>,
 }
 
 impl std::fmt::Display for Focus {
@@ -62,7 +63,7 @@ impl Focus {
         dist: usize,
         lk: f64,
         counts: Vec<usize>,
-        path: Vec<(NodeIndex, Position)>,
+        path: Vec<NodeIndexWithPosition>,
     ) -> Self {
         Self {
             from,
@@ -228,7 +229,16 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let affected = self.remove_neighbor_edges(focus);
         self.clean_up(focus, affected);
     }
-
+    pub fn bypass_repeats(&'b mut self, reads: &[&EncodedRead], config: &AssembleConfig, thr: f64) {
+        debug!("FOCI\tBYPASS\t{:.3}\t{}", thr, config.min_span_reads);
+        let mut count = 1;
+        while count != 0 {
+            let bypasses = self.get_bypasses(reads, config);
+            debug!("BYPASS\tNUM\t{}", bypasses.len());
+            count = self.survey_foci(&bypasses);
+            debug!("BYPASS\tTryAndSuccess\t{}\t{count}", bypasses.len());
+        }
+    }
     pub fn resolve_repeats(
         &'b mut self,
         reads: &[&EncodedRead],
@@ -237,16 +247,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         use_branch: bool,
     ) {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
-        // warn!("Please fix lk computation!");
         let mut count = 1;
         while count != 0 {
             let mut foci = self.get_foci(reads, use_branch, config);
             let prev = foci.len();
             foci.retain(|val| thr < val.llr());
             foci.retain(|val| val.llr() != std::f64::INFINITY);
-            if foci.is_empty() {
-                break;
-            }
             debug!("FOCI\tNUM\t{}\t{}", prev, foci.len());
             foci.sort_by(|x, y| match y.llr().partial_cmp(&x.llr()).unwrap() {
                 std::cmp::Ordering::Equal => (y.dist, y.from).cmp(&(x.dist, x.from)),
@@ -283,6 +289,11 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             if !matches!(node.copy_number, Some(1)) {
                 continue;
             }
+            // Find
+            // --Node(Copy=1)--|
+            //                 |--Node(Copy>1)--
+            // --Node----------|
+            //  (We are here now)
             for pos in [Position::Head, Position::Tail] {
                 let into_multi_copy = self.to_multi_copy(node, pos);
                 let is_branching = 1 < node.edges.iter().filter(|e| e.from_position == pos).count();
@@ -292,37 +303,134 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     }
                 }
             }
-            // Find
-            // --Node(Copy=1)--|
-            //                 |--Node(Copy>1)--
-            // --Node----------|
-            //  (We are here now)
-            // for pos in [Position::Head, Position::Tail] {
-            //     if self.count_edges(index, pos) != 1 {
-            //         continue;
-            //     }
-            //     let edge = node.edges.iter().find(|e| e.from_position == pos).unwrap();
-            //     let siblings = self.count_edges(edge.to, edge.to_position);
-            //     assert!(1 <= siblings);
-            //     if siblings == 1 {
-            //         continue;
-            //     }
-            //     // If this edge does not flow into multi-copy contig, continue.
-            //     match self.node(edge.to).unwrap().copy_number {
-            //         None | Some(1) | Some(0) => continue,
-            //         _ => {}
-            //     }
-            //     if let Some(focus) = self.examine_focus(index, pos, reads, config) {
-            //         foci.push(focus);
-            //     }
-            // }
         }
         foci
+    }
+    fn get_bypasses(&self, reads: &[&EncodedRead], config: &AssembleConfig) -> Vec<Focus> {
+        let mut bypasses = vec![];
+        let mut checked = HashSet::new();
+        for (index, node) in self.nodes() {
+            if !matches!(node.copy_number, Some(2)) || checked.contains(&index) {
+                continue;
+            }
+            // Find
+            // --Node(Copy=1)--|                 |-----------
+            //                 |--Node(Copy==2)--|
+            // --Node----------|                 |------------
+            let (head_childs, diplo_path, tail_childs) = self.traverse_diplo_path(index);
+            checked.extend(diplo_path.iter().map(|x| x.0));
+            if head_childs.len() != 2 || tail_childs.len() != 2 || head_childs == tail_childs {
+                continue;
+            }
+            debug!("BYPASS\t{head_childs:?}\t{tail_childs:?}");
+            if let Some(bypass) =
+                self.examine_bypass(&head_childs, &diplo_path, &tail_childs, &reads, config)
+            {
+                bypasses.push(bypass);
+            }
+        }
+        bypasses
+    }
+    // From the index, find head and tail children. The childrens are sorted.
+    fn traverse_diplo_path(
+        &self,
+        index: NodeIndex,
+    ) -> (
+        Vec<NodeIndexWithPosition>,
+        Vec<NodeIndexWithPosition>,
+        Vec<NodeIndexWithPosition>,
+    ) {
+        // First, go up. The `Position::Tail` is not a bug.
+        let (_, mut head_dests) = self.simple_path_and_dest(index, Position::Tail);
+        head_dests.sort();
+        if head_dests.is_empty() {
+            return (vec![], vec![], vec![]);
+        }
+        let (head_idx, head_pos) = head_dests[0];
+        let edges = self.edges_from(head_idx, head_pos);
+        assert_eq!(edges.len(), 1);
+        let (root, root_pos) = edges.get(0).map(|e| (e.to, e.to_position)).unwrap();
+        let (path, mut tail_dests) = self.simple_path_and_dest(root, root_pos);
+        tail_dests.sort();
+        (head_dests, path, tail_dests)
+    }
+    fn examine_bypass(
+        &self,
+        heads: &[NodeIndexWithPosition],
+        path: &[NodeIndexWithPosition],
+        tails: &[NodeIndexWithPosition],
+        reads: &[&EncodedRead],
+        config: &AssembleConfig,
+    ) -> Option<Focus> {
+        let counts = self.count_pairs(heads, tails, reads);
+        if counts.iter().sum::<usize>() < config.min_span_reads {
+            return None;
+        }
+        let [h0t0, h0t1, h1t0, h1t1] = counts;
+        // TODO:How can we compute this value? What is the model?
+        let llr = config.span_likelihood_ratio + 1f64;
+        let dist = path.len() + 1;
+        let mut path = path.to_vec();
+        let (from_index, from_pos) = heads[0];
+        let from = (from_index, self.node(from_index).unwrap().node, from_pos);
+        let counts = counts.to_vec();
+        // Case1. h0 <-> t0 and h1 <-> t1.
+        if h0t1 == 0 && h1t0 == 0 {
+            let (to_index, to_pos) = tails[0];
+            let to = (to_index, self.node(to_index).unwrap().node, to_pos);
+            path.push(tails[0]);
+            Some(Focus::with_backpath(from, to, dist, llr, counts, path))
+        } else if h0t0 == 0 && h1t1 == 0 {
+            // Case2.  h0 <-> t1 and h1 <-> t0
+            let (to_index, to_pos) = tails[1];
+            let to = (to_index, self.node(to_index).unwrap().node, to_pos);
+            path.push(tails[1]);
+            Some(Focus::with_backpath(from, to, dist, llr, counts, path))
+        } else {
+            None
+        }
+    }
+    fn count_pairs(
+        &self,
+        heads: &[NodeIndexWithPosition],
+        tails: &[NodeIndexWithPosition],
+        reads: &[&EncodedRead],
+    ) -> [usize; 4] {
+        let heads: Vec<_> = heads
+            .iter()
+            .map(|&(i, _)| self.node(i).unwrap().node)
+            .collect();
+        let tails: Vec<_> = tails
+            .iter()
+            .map(|&(i, _)| self.node(i).unwrap().node)
+            .collect();
+        fn hit(n: Node, targets: &[Node]) -> Option<usize> {
+            targets.iter().position(|&m| m == n)
+        }
+        let mut counts = [0, 0, 0, 0];
+        for read in reads.iter() {
+            let head_hits: Vec<_> = read
+                .nodes
+                .iter()
+                .filter_map(|n| hit((n.unit, n.cluster), &heads))
+                .collect();
+            let tail_hits: Vec<_> = read
+                .nodes
+                .iter()
+                .filter_map(|n| hit((n.unit, n.cluster), &tails))
+                .collect();
+            for &hi in head_hits.iter() {
+                for &ti in tail_hits.iter() {
+                    counts[(hi << 1) + ti] += 1;
+                }
+            }
+        }
+        counts
     }
     fn split_node_info(
         &self,
         nodes: &[NodeWithTraverseInfo],
-    ) -> (Vec<usize>, Vec<&DitchNode>, Vec<(NodeIndex, Position)>) {
+    ) -> (Vec<usize>, Vec<&DitchNode>, Vec<NodeIndexWithPosition>) {
         let (mut occs, mut raw_nodes, mut node_indices) = (vec![], vec![], vec![]);
         for (count, _, _, index, pos) in nodes.iter() {
             let raw_node = self.node(*index).unwrap();
@@ -335,7 +443,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         (occs, raw_nodes, node_indices)
     }
 
-    fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, (NodeIndex, Position))> {
+    fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, NodeIndexWithPosition)> {
         let (occs, raw_nodes, node_indices) = self.split_node_info(nodes);
         if occs.len() < 2 {
             return None;
@@ -398,7 +506,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         node_counts_at
     }
-    fn next_nodes(&self, nodes: &[NodeWithTraverseInfo]) -> Vec<(NodeIndex, Position)> {
+    fn next_nodes(&self, nodes: &[NodeWithTraverseInfo]) -> Vec<NodeIndexWithPosition> {
         let mut found_nodes: Vec<_> = vec![];
         for &(_, _, _, index, pos) in nodes {
             let edges = self.edges_from(index, !pos).into_iter();
@@ -420,7 +528,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         min_span: usize,
     ) -> Vec<Vec<NodeWithTraverseInfo>> {
         let node_counts_at = self.count_dist_nodes(reads, node_index, pos);
-
         let mut dist_and_maxweight = vec![vec![(0, 0, 0, node_index, !pos)]];
         for dist in 0.. {
             let prev_nodes = &dist_and_maxweight[dist];
@@ -432,11 +539,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     let node = self.node(idx).unwrap().node;
                     let count = match node_counts_at[dist + 1].get(&node) {
                         Some(&x) => x,
-                        None => {
-                            // let from = self.node(node_index).unwrap();
-                            // warn!("{:?}\t{:?}\t{}", from.node, node, dist + 1);
-                            0
-                        }
+                        None => 0,
                     };
                     (count, count, 0, idx, pos)
                 })
@@ -462,8 +565,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     fn trackback(
         indices_and_parents: &[Vec<NodeWithTraverseInfo>],
         mut dist: usize,
-        target: (NodeIndex, Position),
-    ) -> Vec<(NodeIndex, Position)> {
+        target: NodeIndexWithPosition,
+    ) -> Vec<NodeIndexWithPosition> {
         let mut backpath = vec![];
         let (mut target, _) = indices_and_parents[dist]
             .iter()
@@ -537,19 +640,9 @@ fn lk_pairs(len: usize) -> (f64, f64) {
         (1f64 - ERROR_PROB) * ERROR_PROB / (choice_num - 1f64) + ERROR_PROB / choice_num;
     assert!((1f64 - correct_prob - (choice_num - 1f64) * error_prob).abs() < 0.00001);
     (correct_prob.ln(), error_prob.ln())
-    // let correct_lk = ((1f64 - ERROR_PROB).powi(2) + ERROR_PROB / choice_num).ln();
-    // let error_lk = {
-    //     let correct_to_error = (1.0 - ERROR_PROB) * ERROR_PROB * (choice_num - 1.0) / choice_num;
-    //     let error_to_error =
-    //         ERROR_PROB / choice_num * ERROR_PROB * (choice_num - 1f64) / choice_num;
-    //     (correct_to_error + error_to_error).ln()
-    // };
-    // assert!(!correct_lk.is_nan(), "{}", len);
-    // assert!(!error_lk.is_nan(), "{}", len);
-    // (correct_lk, error_lk)
 }
 
-fn to_btree_map(nodes: &[(NodeIndex, Position)]) -> BTreeMap<(NodeIndex, Position), usize> {
+fn to_btree_map(nodes: &[NodeIndexWithPosition]) -> BTreeMap<NodeIndexWithPosition, usize> {
     nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect()
 }
 

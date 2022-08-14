@@ -148,6 +148,11 @@ impl DetermineUnit for definitions::DataSet {
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);
         }
+        // If half of the coverage supports large deletion, remove them.
+        const OCCUPY_FRACTION: f64 = 0.5;
+        use crate::purge_diverged::*;
+        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION);
+        self.purge_largeindel(&p_config);
         compaction_units(self);
     }
 }
@@ -486,7 +491,7 @@ fn fill_gap(
     let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
     let identity = mat_num as f64 / ops.len() as f64;
     (1f64 - identity < readtype.sim_thr()).then(|| {
-        let cigar = crate::encode::compress_kiley_ops(&ops);
+        let cigar = crate::misc::kiley_op_to_ops(&ops).0;
         let seq = seq.to_vec();
         Node::new(unit.id, direction, seq, cigar, position_from_start, 2)
     })

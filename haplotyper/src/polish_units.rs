@@ -65,7 +65,7 @@ impl PolishUnit for DataSet {
                 pileup
                     .iter_mut()
                     .zip(ops)
-                    .for_each(|(n, ops)| n.cigar = crate::encode::compress_kiley_ops(&ops).into());
+                    .for_each(|(n, ops)| n.cigar = crate::misc::kiley_op_to_ops(&ops));
                 (id, cons)
             })
             .collect();
@@ -123,7 +123,7 @@ impl PolishUnit for DataSet {
                     let task = edlib_sys::AlignTask::Alignment;
                     let aln = edlib_sys::align(node.seq(), &draft, mode, task);
                     let k_ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
-                    node.cigar = crate::encode::compress_kiley_ops(&k_ops).into();
+                    node.cigar = crate::misc::kiley_op_to_ops(&k_ops);
                 });
                 (id, draft)
             })

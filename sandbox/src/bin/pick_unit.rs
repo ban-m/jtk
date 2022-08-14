@@ -40,6 +40,10 @@ fn main() -> std::io::Result<()> {
             })
             .collect();
         nodes.sort_unstable_by_key(|x| (x.3.cluster, x.1));
+        // println!(
+        //     "UNIT\t>{unit}\nUNIT\t{}",
+        //     std::str::from_utf8(ref_chunk.seq()).unwrap(),
+        // );
         for (readid, _is_hap1, i, node, len) in nodes {
             let (query, aln, refr) = node.recover(ref_chunk);
             let dist = aln.iter().filter(|&&x| x != b'|').count();
@@ -51,10 +55,10 @@ fn main() -> std::io::Result<()> {
             println!(
                 "{readid}\t{is_forward}\t{i}\t{len}\t{unit}\t{cluster}\t{identity:.2}\t{post}\t{name}",
             );
-            // println!(
-            //     "QUERY\t>{readid}\nQUERY\t{}",
-            //     std::str::from_utf8(&node.seq()).unwrap()
-            // );
+            println!(
+                "QUERY\t>{readid}\nQUERY\t{}",
+                std::str::from_utf8(&node.seq()).unwrap()
+            );
             println!("ALN\t{}", dist);
             let (start, end) = match range {
                 Some((start, end)) => {

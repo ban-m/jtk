@@ -156,7 +156,8 @@ pub fn polish(
     let radius = config.radius;
     let mut polished = draft.to_vec();
     log_identity(sid, alignments);
-    for _ in 0..config.round_num {
+    let min_coverage = config.min_coverage;
+    for round in 0..config.round_num {
         // Allocation.
         let num_slot = polished.len() / window + (polished.len() % window != 0) as usize;
         let mut pileup_seq = vec![vec![]; num_slot];
@@ -176,16 +177,15 @@ pub fn polish(
             })
             .collect();
         train_hmm(hmm, &polished, window, &pileup_seq, &pileup_ops, radius);
+        let to_refresh = 0 == round;
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
             .zip(pileup_seq.par_iter())
             .zip(pileup_ops.par_iter_mut())
-            .map(
-                |((draft, seqs), ops)| match seqs.len() < config.min_coverage {
-                    true => draft.to_vec(),
-                    false => polish_seg(hmm, draft, seqs, ops, radius),
-                },
-            )
+            .map(|((draft, seqs), ops)| match seqs.len() < min_coverage {
+                true => draft.to_vec(),
+                false => polish_seg(hmm, draft, seqs, ops, radius, to_refresh),
+            })
             .collect();
         let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
             let len = len + x.len();
@@ -277,11 +277,11 @@ fn train_hmm(
     let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
     let filter = filter.filter(|(_, ops)| cov_range.contains(&ops.len()));
     debug!("MEDIAN\t{med_cov}");
-    debug!("MODEL\tBEFORE\n{hmm}");
+    // debug!("MODEL\tBEFORE\n{hmm}");
     for ((template, seqs), ops) in filter.take(3) {
         hmm.fit_naive_with_par(template, seqs, ops, radius)
     }
-    debug!("MODEL\tAFTER\n{hmm}");
+    // debug!("MODEL\tAFTER\n{hmm}");
 }
 
 fn length_median(seqs: &[&[u8]]) -> usize {
@@ -350,18 +350,26 @@ fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Ve
     kiley::bialignment::guided::polish_until_converge_with(&draft, seqs, ops, radius)
 }
 // TODO: TUNE this parameter.
-const FIX_TIME: usize = 1;
+// const FIX_TIME: usize = 1;
 fn polish_seg(
     hmm: &PairHiddenMarkovModel,
     draft: &[u8],
     seqs: &[&[u8]],
     ops: &mut Vec<Vec<Op>>,
     radius: usize,
+    refresh: bool,
 ) -> Vec<u8> {
     let length_median = length_median(seqs);
     if length_median == 0 {
         remove_refernece(ops, seqs);
         return Vec::new();
+    }
+    for ops in ops.iter_mut() {
+        let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+        assert_eq!(reflen, draft.len());
+        // assert!(reflen <= draft.len());
+        // let len = draft.len() - reflen;
+        // ops.extend(std::iter::repeat(Op::Del).take(len));
     }
     let (use_seqs, mut use_ops, purged_seq, ops_order) = split_sequences(seqs, ops, length_median);
     assert!(ops.is_empty());
@@ -369,19 +377,12 @@ fn polish_seg(
     assert_eq!(seqs.len(), use_seqs.len() + purged_seq.len());
     use kiley::bialignment::guided::polish_until_converge_with;
     let draft = match within_range(draft.len(), length_median, 0.2) {
-        true => polish_until_converge_with(draft, &use_seqs, &mut use_ops, radius),
+        true if refresh => polish_until_converge_with(draft, &use_seqs, &mut use_ops, radius),
+        true => draft.to_vec(),
         false => bootstrap_consensus(&use_seqs, &mut use_ops, radius),
     };
-    for ops in use_ops.iter() {
-        let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
-        assert_eq!(reflen, draft.len());
-    }
     let mut polished = draft;
-    let mut hmm = hmm.clone();
-    for _ in 0..FIX_TIME {
-        polished = hmm.polish_until_converge_with(&polished, &use_seqs, &mut use_ops, radius);
-        hmm.fit_naive_with(&polished, &use_seqs, &use_ops, radius);
-    }
+    polished = hmm.polish_until_converge_with(&polished, &use_seqs, &mut use_ops, radius);
     let (mut use_seqs, mut purged_seq, mut ops_order) = (use_seqs, purged_seq, ops_order);
     let mut idx = 0;
     for ops in use_ops.iter() {
@@ -589,6 +590,8 @@ fn split(
                     chunk_ops.push(Op::Ins);
                 }
                 None if current_chunk_id == window_num - 1 && (contig_len - cpos) < EDGE => {
+                    assert_eq!(qpos, alignment.query.len());
+                    chunk_ops.extend(std::iter::repeat(Op::Del).take(contig_len - cpos));
                     chunks.push((current_chunk_id, &alignment.query[start..qpos], chunk_ops));
                     end_pos = qpos;
                     current_chunk_id += 1;

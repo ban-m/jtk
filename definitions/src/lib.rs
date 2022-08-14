@@ -60,6 +60,7 @@ pub struct HMMParam {
     /// 4 * ref_base + query_base = Pr{Query|Ref}, 2bit-encoded.
     /// A->0, C->1, G->2, T->3
     pub mat_emit: [f64; 16],
+    // pub ins_emit: [f64; 20],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -120,7 +121,7 @@ impl ReadType {
         match *self {
             ReadType::CCS => 0.1f64,
             ReadType::CLR => 1f64,
-            ReadType::ONT => 1f64,
+            ReadType::ONT => 0.7f64,
             ReadType::None => 1f64,
         }
     }
@@ -712,7 +713,7 @@ pub enum Op {
 }
 
 #[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, Default)]
-pub struct Ops(Vec<Op>);
+pub struct Ops(pub Vec<Op>);
 impl std::fmt::Display for Ops {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for &x in self.0.iter() {
