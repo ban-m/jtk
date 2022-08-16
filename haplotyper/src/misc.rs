@@ -616,6 +616,21 @@ pub fn max_indel_node(node: &definitions::Node, mat_weight: u64, indel_weight: u
     max_indel(&node.cigar, mat_weight, indel_weight)
 }
 
+pub fn update_coverage(ds: &mut DataSet) {
+    if !ds.coverage.is_protected() {
+        use std::collections::HashMap;
+        let mut counts: HashMap<_, u32> = HashMap::new();
+        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            *counts.entry(node.unit).or_default() += 1;
+        }
+        let mut counts: Vec<_> = counts.values().copied().collect();
+        counts.sort_unstable();
+        let cov = counts[counts.len() / 2] as f64 / 2f64;
+        debug!("MULTP\tCOVERAGE\t{}\tHAPLOID", cov);
+        ds.coverage.set(cov);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

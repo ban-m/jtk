@@ -33,7 +33,7 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     use haplotyper::assemble::ditch_graph::DitchGraph;
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     graph.remove_lightweight_edges(2, true);
-    let cov = ds.coverage.unwrap_or(30.0);
+    let cov = ds.coverage.unwrap();
     let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
     graph.assign_copy_number_flow(cov, &mut rng);
     eprintln!("{graph}");

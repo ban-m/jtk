@@ -5,7 +5,7 @@
 use definitions::*;
 pub fn normalize_local_clustering(ds: &mut DataSet) {
     let max_chunk = ds.selected_chunks.iter().map(|x| x.id).max().unwrap() + 1;
-    let cov = ds.coverage.unwrap_or(10f64).ceil() as usize;
+    let cov = ds.coverage.unwrap().ceil() as usize;
     let mut pileups: Vec<Vec<&mut _>> = std::iter::repeat_with(|| Vec::with_capacity(cov))
         .take(max_chunk as usize)
         .collect();

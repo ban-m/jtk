@@ -205,7 +205,7 @@ impl Assemble for DataSet {
 pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     assert!(c.to_resolve);
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    let cov = ds.coverage.unwrap_or_else(|| panic!("Need coverage!"));
+    let cov = ds.coverage.unwrap();
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     debug!("GRAPH\t{graph}");
     match ds.read_type {

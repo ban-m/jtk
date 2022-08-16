@@ -11,7 +11,7 @@ pub struct DataSet {
     pub masked_kmers: MaskInfo,
     /// If Some(x), it is the estimated coverage per haplotype.
     /// Note that this value is a estimation, so please do not relay heavily on this value.
-    pub coverage: Option<f64>,
+    pub coverage: Coverage,
     /// The FASTA-like record for input. If this value is empy, please reload the original
     /// sequence from either `input_file` or `encoded_reads`.
     pub raw_reads: Vec<RawRead>,
@@ -34,6 +34,47 @@ pub struct DataSet {
     pub model_param: Option<HMMParam>,
     /// Estimated error rate.
     pub error_rate: ErrorRate,
+}
+
+/// Haploid coverage.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum Coverage {
+    /// Coverage is not available.
+    NotAvailable,
+    /// Estimated coverage given as a command-line argument or other programs.
+    /// It can not be changed by JTK.
+    Protected(f64),
+    /// Haploid coverage estimated by JTK.
+    Estimated(f64),
+}
+
+impl Coverage {
+    pub fn new(cov: f64, protect: bool) -> Self {
+        match protect {
+            true => Self::Protected(cov),
+            false => Self::Estimated(cov),
+        }
+    }
+    pub fn unwrap(&self) -> f64 {
+        match self {
+            Coverage::NotAvailable => panic!("Please estimate the haploid coverage first."),
+            Coverage::Protected(cov) => *cov,
+            Coverage::Estimated(cov) => *cov,
+        }
+    }
+    pub fn set(&mut self, cov: f64) {
+        *self = match self {
+            Coverage::Protected(x) => Coverage::Protected(*x),
+            _ => Coverage::Estimated(cov),
+        }
+    }
+    pub fn is_protected(&self) -> bool {
+        match self {
+            Coverage::Protected(_) => true,
+            Coverage::Estimated(_) => false,
+            Coverage::NotAvailable => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +101,7 @@ pub struct HMMParam {
     /// 4 * ref_base + query_base = Pr{Query|Ref}, 2bit-encoded.
     /// A->0, C->1, G->2, T->3
     pub mat_emit: [f64; 16],
-    // pub ins_emit: [f64; 20],
+    pub ins_emit: [f64; 20],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -147,7 +188,7 @@ impl std::default::Default for DataSet {
     fn default() -> Self {
         Self {
             input_file: String::new(),
-            coverage: None,
+            coverage: Coverage::NotAvailable,
             raw_reads: vec![],
             hic_pairs: vec![],
             selected_chunks: vec![],
@@ -181,7 +222,7 @@ impl DataSet {
             .collect();
         Self {
             input_file: input_file.to_string(),
-            coverage: None,
+            coverage: Coverage::NotAvailable,
             raw_reads,
             hic_pairs: vec![],
             selected_chunks: vec![],

@@ -78,11 +78,6 @@ impl Polish for DataSet {
         config: &PolishConfig,
     ) -> Vec<Segment> {
         let mut alignments_on_contigs = self.distribute_to_contig(segments, encs, config);
-        // for (ctg, alns) in alignments_on_contigs.iter() {
-        //     for aln in alns.iter() {
-        //         debug!("ALN\t{ctg}\t{}\t{}", aln.read_id, aln.query.len());
-        //     }
-        // }
         let hmm = get_model(self).unwrap();
         let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
             log::debug!("POLISH\t{sid}");
@@ -143,6 +138,41 @@ fn log_identity(sid: &str, alignments: &[Alignment]) {
     }
 }
 
+// (alignment index, node index, operations, seq)
+type SeqOps<'a> = (usize, usize, &'a [u8], Vec<Op>);
+type SeqOpsOnWindow<'a> = Vec<SeqOps<'a>>;
+type UsedRange = (TipPos, TipPos);
+use std::collections::HashMap;
+fn allocate_on_windows<'a>(
+    alignments: &'a [Alignment],
+    round: usize,
+    window: usize,
+    draft_len: usize,
+) -> (Vec<SeqOpsOnWindow<'a>>, HashMap<usize, UsedRange>) {
+    let num_slot = draft_len / window + (draft_len % window != 0) as usize;
+    let mut slots = vec![vec![]; num_slot];
+    let used_range: HashMap<_, _> = alignments
+        .iter()
+        .enumerate()
+        .map(|(aln_idx, aln)| {
+            let (start, chunks, end) = split(aln, window, num_slot, draft_len);
+            if chunks.is_empty() {
+                assert!(start.0 == end.0 || start.0 + 1 == end.0);
+            }
+            for (idx, (pos, seq, ops)) in chunks.into_iter().enumerate() {
+                slots[pos].push((aln_idx, idx, seq, ops));
+            }
+            (aln_idx, (start, end))
+        })
+        .collect();
+    if round != 0 {
+        for pileup in slots.iter_mut() {
+            pileup.sort_by_cached_key(|x| x.3.iter().filter(|&&op| op != Op::Match).count());
+        }
+    }
+    (slots, used_range)
+}
+
 pub fn polish(
     sid: &str,
     draft: &[u8],
@@ -158,33 +188,22 @@ pub fn polish(
     log_identity(sid, alignments);
     let min_coverage = config.min_coverage;
     for round in 0..config.round_num {
-        // Allocation.
-        let num_slot = polished.len() / window + (polished.len() % window != 0) as usize;
-        let mut pileup_seq = vec![vec![]; num_slot];
-        let mut pileup_ops = vec![vec![]; num_slot];
-        let allocated_positions: Vec<_> = alignments
-            .iter()
-            .map(|aln| {
-                let mut put_position = vec![];
-                let (start, chunks, end) = split(aln, window, num_slot, polished.len());
-                for (pos, seq, ops) in chunks {
-                    assert_eq!(pileup_seq[pos].len(), pileup_ops[pos].len());
-                    put_position.push((pos, pileup_seq[pos].len()));
-                    pileup_seq[pos].push(seq);
-                    pileup_ops[pos].push(ops);
-                }
-                (start, put_position, end)
-            })
-            .collect();
-        train_hmm(hmm, &polished, window, &pileup_seq, &pileup_ops, radius);
         let to_refresh = 0 == round;
+        let (mut pileups, used_ranges) =
+            allocate_on_windows(alignments, round, window, polished.len());
+        train_hmm(hmm, &polished, window, &pileups, radius);
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
-            .zip(pileup_seq.par_iter())
-            .zip(pileup_ops.par_iter_mut())
-            .map(|((draft, seqs), ops)| match seqs.len() < min_coverage {
-                true => draft.to_vec(),
-                false => polish_seg(hmm, draft, seqs, ops, radius, to_refresh),
+            .zip(pileups.par_iter_mut())
+            .map(|(draft, pileup)| {
+                let (seqs, ops): (Vec<_>, Vec<_>) = pileup
+                    .iter_mut()
+                    .map(|(_, _, seq, ops)| (*seq, ops))
+                    .unzip();
+                match seqs.len() < min_coverage {
+                    true => draft.to_vec(),
+                    false => polish_seg(hmm, draft, &seqs, ops, radius, to_refresh),
+                }
             })
             .collect();
         let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
@@ -195,12 +214,23 @@ pub fn polish(
         assert_eq!(acc_len.len(), polished_seg.len() + 1);
         polished = polished_seg.iter().flatten().copied().collect();
         // Fix alignment.
-        alignments
-            .iter_mut()
-            .zip(allocated_positions.iter())
-            .for_each(|(aln, aloc_pos)| {
-                fix_alignment(aln, aloc_pos, &polished, &acc_len, &pileup_ops)
-            });
+        let mut recovered: HashMap<_, Vec<_>> = HashMap::new();
+        for pileup in pileups {
+            for (idx, pos, _, ops) in pileup {
+                recovered.entry(idx).or_default().push((pos, ops));
+            }
+        }
+        recovered
+            .values_mut()
+            .for_each(|xs| xs.sort_by_key(|x| x.0));
+        assert_eq!(alignments.len(), used_ranges.len());
+        alignments.iter_mut().enumerate().for_each(|(idx, aln)| {
+            let used_range = used_ranges[&idx];
+            match recovered.get(&idx) {
+                Some(aloc_pos) => fix_alignment(aln, used_range, aloc_pos, &polished, &acc_len),
+                None => fix_alignment(aln, used_range, &vec![], &polished, &acc_len),
+            }
+        });
         log_identity(sid, alignments);
         alignments
             .iter_mut()
@@ -258,30 +288,47 @@ fn train_hmm(
     hmm: &mut PairHiddenMarkovModel,
     draft: &[u8],
     window: usize,
-    pileup_seqs: &[Vec<&[u8]>],
-    pileup_ops: &[Vec<Vec<Op>>],
+    pileups: &[SeqOpsOnWindow],
     radius: usize,
 ) {
-    let mut coverages: Vec<_> = pileup_seqs.iter().map(|xs| xs.len()).collect();
+    let mut coverages: Vec<_> = pileups.iter().map(|x| x.len()).collect();
     if coverages.is_empty() {
         return;
     }
     let idx = coverages.len() / 2;
     let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
+    let range = 2 * window / 3..4 * window / 3;
+    let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
+    debug!("MEDIAN\t{med_cov}");
     let iterator = draft
         .chunks(window)
-        .zip(pileup_seqs.iter())
-        .zip(pileup_ops.iter());
-    let range = 2 * window / 3..4 * window / 3;
-    let filter = iterator.filter(|((draft, _), _)| range.contains(&draft.len()));
-    let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
-    let filter = filter.filter(|(_, ops)| cov_range.contains(&ops.len()));
-    debug!("MEDIAN\t{med_cov}");
-    // debug!("MODEL\tBEFORE\n{hmm}");
-    for ((template, seqs), ops) in filter.take(3) {
-        hmm.fit_naive_with_par(template, seqs, ops, radius)
+        .zip(pileups.iter())
+        .map(|(template, pileup)| {
+            let (seqs, ops): (Vec<&[u8]>, Vec<&[Op]>) = pileup
+                .iter()
+                .filter_map(|(_, _, seq, ops)| {
+                    let indel = ops.iter().map(|op| match op {
+                        Op::Mismatch => 1,
+                        Op::Match => -1,
+                        Op::Ins => 1,
+                        Op::Del => 1,
+                    });
+                    if crate::misc::max_region(indel) < 30 {
+                        Some((seq, ops.as_slice()))
+                    } else {
+                        None
+                    }
+                })
+                .unzip();
+            (template, seqs, ops)
+        })
+        .filter(|(draft, _, _)| range.contains(&draft.len()))
+        .filter(|(_, _, ops)| cov_range.contains(&ops.len()))
+        .take(3);
+    for (template, seqs, ops) in iterator {
+        hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius)
     }
-    // debug!("MODEL\tAFTER\n{hmm}");
+    debug!("Tuned");
 }
 
 fn length_median(seqs: &[&[u8]]) -> usize {
@@ -296,8 +343,8 @@ fn within_range(median: usize, len: usize, frac: f64) -> bool {
     (diff as f64 / median as f64) < frac
 }
 
-fn remove_refernece(ops: &mut [Vec<Op>], seqs: &[&[u8]]) {
-    for (seq, op) in std::iter::zip(seqs, ops.iter_mut()) {
+fn remove_refernece(ops: Vec<&mut Vec<Op>>, seqs: &[&[u8]]) {
+    for (seq, op) in std::iter::zip(seqs, ops) {
         let qlen = op.iter().filter(|&&op| op != Op::Del).count();
         assert_eq!(seq.len(), qlen);
         op.clear();
@@ -305,28 +352,28 @@ fn remove_refernece(ops: &mut [Vec<Op>], seqs: &[&[u8]]) {
     }
 }
 
-type SplitQuery<'a> = (Vec<&'a [u8]>, Vec<Vec<Op>>, Vec<&'a [u8]>, Vec<bool>);
-fn split_sequences<'a>(
+type SplitQuery<'a, 'b> = (
+    Vec<&'a [u8]>,
+    Vec<&'b mut Vec<Op>>,
+    Vec<(usize, &'b mut Vec<Op>)>,
+);
+fn split_sequences<'a, 'b>(
     seqs: &[&'a [u8]],
-    ops: &mut Vec<Vec<Op>>,
+    ops: Vec<&'b mut Vec<Op>>,
     length_median: usize,
-) -> SplitQuery<'a> {
+) -> SplitQuery<'a, 'b> {
     let (mut use_seqs, mut use_ops) = (vec![], vec![]);
-    let mut remainings = vec![];
-    let mut ops_order = vec![];
+    let mut update_indices = vec![];
     assert_eq!(seqs.len(), ops.len());
-    for &seq in seqs.iter().rev() {
-        let ops = ops.pop().unwrap();
+    for (idx, (seq, ops)) in seqs.iter().zip(ops).enumerate() {
         if within_range(length_median, seq.len(), 0.2) {
-            use_seqs.push(seq);
+            use_seqs.push(*seq);
             use_ops.push(ops);
-            ops_order.push(true);
         } else {
-            remainings.push(seq);
-            ops_order.push(false);
+            update_indices.push((idx, ops));
         }
     }
-    (use_seqs, use_ops, remainings, ops_order)
+    (use_seqs, use_ops, update_indices)
 }
 
 fn global_align(query: &[u8], target: &[u8]) -> Vec<Op> {
@@ -349,13 +396,13 @@ fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Ve
     }
     kiley::bialignment::guided::polish_until_converge_with(&draft, seqs, ops, radius)
 }
-// TODO: TUNE this parameter.
-// const FIX_TIME: usize = 1;
+
+const MAX_COV: usize = 20;
 fn polish_seg(
     hmm: &PairHiddenMarkovModel,
     draft: &[u8],
     seqs: &[&[u8]],
-    ops: &mut Vec<Vec<Op>>,
+    ops: Vec<&mut Vec<Op>>,
     radius: usize,
     refresh: bool,
 ) -> Vec<u8> {
@@ -364,49 +411,30 @@ fn polish_seg(
         remove_refernece(ops, seqs);
         return Vec::new();
     }
-    for ops in ops.iter_mut() {
+    for ops in ops.iter() {
         let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
         assert_eq!(reflen, draft.len());
-        // assert!(reflen <= draft.len());
-        // let len = draft.len() - reflen;
-        // ops.extend(std::iter::repeat(Op::Del).take(len));
     }
-    let (use_seqs, mut use_ops, purged_seq, ops_order) = split_sequences(seqs, ops, length_median);
-    assert!(ops.is_empty());
-    assert_eq!(seqs.len(), ops_order.len());
-    assert_eq!(seqs.len(), use_seqs.len() + purged_seq.len());
+    let (use_seqs, use_ops, update_indices) = split_sequences(seqs, ops, length_median);
+    assert_eq!(seqs.len(), use_seqs.len() + update_indices.len());
     use kiley::bialignment::guided::polish_until_converge_with;
-    let draft = match within_range(draft.len(), length_median, 0.2) {
-        true if refresh => polish_until_converge_with(draft, &use_seqs, &mut use_ops, radius),
-        true => draft.to_vec(),
-        false => bootstrap_consensus(&use_seqs, &mut use_ops, radius),
+    let mut polished = draft.to_vec();
+    let mut temp_ops: Vec<_> = use_ops.iter().map(|x| x.to_vec()).collect();
+    polished = match within_range(draft.len(), length_median, 0.2) {
+        true if refresh => polish_until_converge_with(&polished, &use_seqs, &mut temp_ops, radius),
+        true => polished,
+        false => bootstrap_consensus(&use_seqs, &mut temp_ops, radius),
     };
-    let mut polished = draft;
-    polished = hmm.polish_until_converge_with(&polished, &use_seqs, &mut use_ops, radius);
-    let (mut use_seqs, mut purged_seq, mut ops_order) = (use_seqs, purged_seq, ops_order);
-    let mut idx = 0;
-    for ops in use_ops.iter() {
-        let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+    polished =
+        hmm.polish_until_converge_with_take(&polished, &use_seqs, &mut temp_ops, radius, MAX_COV);
+    assert_eq!(temp_ops.len(), use_ops.len());
+    for (old, new) in std::iter::zip(use_ops, temp_ops) {
+        *old = new;
+        let reflen = old.iter().filter(|&&op| op != Op::Ins).count();
         assert_eq!(reflen, polished.len());
     }
-    while let Some(is_used) = ops_order.pop() {
-        match is_used {
-            true => {
-                let seq = use_seqs.pop().unwrap();
-                assert_eq!(seq, seqs[idx]);
-                ops.push(use_ops.pop().unwrap());
-            }
-            false => {
-                let seq = purged_seq.pop().unwrap();
-                assert_eq!(seq, seqs[idx]);
-                ops.push(global_align(seq, &polished));
-            }
-        }
-        idx += 1;
-    }
-    assert!(use_seqs.is_empty() && purged_seq.is_empty() && ops_order.is_empty());
-    assert_eq!(ops.len(), seqs.len());
-    for ops in ops.iter() {
+    for (idx, ops) in update_indices {
+        *ops = global_align(seqs[idx], &polished);
         let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
         assert_eq!(reflen, polished.len());
     }
@@ -415,13 +443,13 @@ fn polish_seg(
 
 fn fix_alignment(
     aln: &mut Alignment,
-    aloc_pos: &(TipPos, Vec<(usize, usize)>, TipPos),
+    used_range: UsedRange,
+    aloc_ops: &[(usize, Vec<Op>)],
     polished: &[u8],
     acc_len: &[usize],
-    pileup_ops: &[Vec<Vec<Op>>],
 ) {
     aln.ops.clear();
-    let &((start, first_pos), ref allocated_pos, (end, last_pos)) = aloc_pos;
+    let ((start, first_pos), (end, last_pos)) = used_range;
     if start == end && first_pos == last_pos {
         // Contained alignment.
         let (contig_start, contig_end) = (acc_len[first_pos], acc_len[first_pos + 1]);
@@ -439,9 +467,7 @@ fn fix_alignment(
     } else {
         aln.contig_start = acc_len[first_pos];
     }
-    for &(pos, idx) in allocated_pos.iter() {
-        aln.ops.extend(pileup_ops[pos][idx].iter());
-    }
+    aln.ops.extend(aloc_ops.iter().flat_map(|(_, ops)| ops));
     if end != aln.query.len() {
         let last_pos_bp = acc_len[last_pos];
         let (ops, contig_len) = align_trailing(&aln.query[end..], &polished[last_pos_bp..]);

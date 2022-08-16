@@ -54,7 +54,7 @@ impl CorrectDeletion for DataSet {
                 .for_each(|n| n.cluster = 0);
             use crate::multiplicity_estimation::*;
             let seed = (231043290490.0 * config.sim_thr).round() as u64;
-            let config = MultiplicityEstimationConfig::new(seed, self.coverage, None);
+            let config = MultiplicityEstimationConfig::new(seed, None);
             self.estimate_multiplicity(&config);
             // Retain all the units changed their copy numbers.
             let chainged_units: HashSet<_> = self

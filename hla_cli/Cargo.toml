@@ -11,8 +11,10 @@ clap = "3.1.18"
 definitions = {path = "../definitions"}
 log = "0.4.17"
 env_logger = "0.9.0"
+serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0"
 bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 haplotyper = {path = "../haplotyper"}
 rayon = "1.5.3"
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
+toml = "0.5.9"

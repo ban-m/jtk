@@ -14,9 +14,8 @@ pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovMod
             del_ins,
             del_del,
             ref mat_emit,
-            // ref ins_emit,
+            ref ins_emit,
         } = param;
-        let ins_emit = [0.25; 20];
         PairHiddenMarkovModel {
             mat_mat,
             mat_ins,
@@ -28,7 +27,7 @@ pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovMod
             del_ins,
             del_del,
             mat_emit: *mat_emit,
-            ins_emit,
+            ins_emit: *ins_emit,
         }
     })
 }
@@ -54,7 +53,7 @@ pub fn update_model(ds: &mut DataSet) {
         del_ins,
         del_del,
         mat_emit,
-        ..
+        ins_emit,
     } = hmm;
     ds.model_param = Some(HMMParam {
         mat_mat,
@@ -67,7 +66,7 @@ pub fn update_model(ds: &mut DataSet) {
         del_ins,
         del_del,
         mat_emit,
-        // ins_emit,
+        ins_emit,
     });
 }
 

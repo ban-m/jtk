@@ -79,39 +79,6 @@ impl RepeatMask for definitions::DataSet {
     }
 }
 
-// pub fn mask_repeat_in_seq(seq: &mut [u8], config: &RepeatMaskConfig) {
-//     let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
-//     assert!(config.k <= 32);
-//     for w in seq.windows(config.k) {
-//         let idx = to_idx(w);
-//         *count.entry(idx).or_default() += 1;
-//     }
-//     let (mask, _) = create_mask(&count, config);
-//     mask_repeats(seq, &mask, config.k);
-// }
-
-// pub fn mask_repeats_in_reads(seqs: &mut [Vec<u8>], config: &RepeatMaskConfig) {
-//     let mut count: HashMap<_, _> = HashMap::with_capacity(1_000_000_000);
-//     assert!(config.k <= 32);
-//     let kmers = seqs
-//         .into_par_iter()
-//         .map(|seq| seq.windows(config.k).map(to_idx))
-//         .fold(Vec::new, |mut x, y| {
-//             x.extend(y);
-//             x
-//         })
-//         .reduce(Vec::new, |mut x, mut y| {
-//             x.append(&mut y);
-//             x
-//         });
-//     for idx in kmers {
-//         *count.entry(idx).or_default() += 1;
-//     }
-//     let mask = create_mask(&count, config);
-//     seqs.par_iter_mut()
-//         .for_each(|read| mask_repeats(read, &mask, config.k));
-// }
-
 use definitions::*;
 fn kmer_counting(reads: &[RawRead], config: &RepeatMaskConfig) -> HashMap<u64, u32> {
     let k = config.k;
@@ -180,27 +147,32 @@ const fn base2bit() -> [u64; 256] {
 }
 
 fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> (HashSet<u64>, u32) {
-    // if the size of the hashmap is too large, scale /100.
-    let mut counts: Vec<_> = if kmercount.len() > 1_000_000 {
-        kmercount
-            .values()
-            .enumerate()
-            .filter(|(i, _)| i % 100 == 0)
-            .map(|(_, &c)| c)
-            .collect()
+    let percentile = (kmercount.len() as f64 * (1f64 - config.freq)).floor() as usize;
+    let below_min = kmercount.values().filter(|&&x| x <= config.min).count();
+    if percentile < below_min {
+        warn!(
+            "Kmer occured below {} times occupied more than 1 - {} fraction.",
+            config.min, config.freq
+        );
+        warn!("Fall back to use all the k-mers.");
+        let kmers: HashSet<_> = kmercount.keys().copied().collect();
+        (kmers, 0)
     } else {
-        kmercount.values().copied().collect()
-    };
-    counts.sort_unstable();
-    counts.reverse();
-    let thr = counts[((counts.len() as f64) * config.freq).floor() as usize];
-    let thr = thr.max(config.min);
-    debug!("Masking {}-mer occuring more than {} times", config.k, thr);
-    let kmers: HashSet<_> = kmercount
-        .iter()
-        .filter_map(|(&key, &val)| if val > thr { Some(key) } else { None })
-        .collect();
-    (kmers, thr)
+        let percentile = percentile - below_min;
+        let mut counts: Vec<_> = kmercount
+            .values()
+            .filter(|&&count| config.min < count)
+            .copied()
+            .collect();
+        counts.sort_unstable();
+        let thr = counts[percentile];
+        debug!("Masking {}-mer occuring more than {} times", config.k, thr);
+        let kmers: HashSet<_> = kmercount
+            .iter()
+            .filter_map(|(&key, &val)| if val > thr { Some(key) } else { None })
+            .collect();
+        (kmers, thr)
+    }
 }
 
 fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) {

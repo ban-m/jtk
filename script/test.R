@@ -27,3 +27,30 @@ temp %>%
 
 
 matrix_data <- dataset %>% select(-X1, -X2) %>% as.matrix()
+
+
+col_names <- c("ID", "Contig", "Length", "Position")
+correct_aln <- read_tsv("answer.tsv", col_names = col_names)
+proposed_aln <- read_tsv("prop.tsv", col_names = c("ID", "assembly"))
+
+joined_data <- full_join(correct_aln, proposed_aln, by = "ID")
+
+
+diff_data <- read_tsv("pj73.diff")
+g <- diff_data %>%
+    ggplot() + geom_histogram(aes(x = Qpos), bins = 60) +
+    facet_grid(Type ~ Query) +
+    cowplot::theme_cowplot() +
+    labs(x = "Position in the assembly (bp)", y = "# of in/del/mism")
+
+cowplot::ggsave2("./result/plots/pj73_diff.png", g)
+
+
+g <- diff_data %>%
+    filter(Size > 3) %>%
+    ggplot() + geom_histogram(aes(x = Qpos), bins = 60) +
+    facet_grid(Type ~ Query) +
+    cowplot::theme_cowplot() +
+    labs(x = "Position in the assembly (bp)", y = "# of in/del/mism")
+
+cowplot::ggsave2("./result/plots/pj73_diff_above3.png", g)

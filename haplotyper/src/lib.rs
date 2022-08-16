@@ -26,6 +26,17 @@ pub mod repeat_masking;
 pub mod seq;
 pub mod stats;
 pub mod view;
+pub use assemble::{Assemble, AssembleConfig};
+pub use dense_encoding::{DenseEncoding, DenseEncodingConfig};
+pub use determine_units::{DetermineUnit, DetermineUnitConfig};
+pub use encode::deletion_fill::{CorrectDeletion, CorrectDeletionConfig};
+pub use entry::Entry;
+pub use multiplicity_estimation::{MultiplicityEstimation, MultiplicityEstimationConfig};
+pub use phmm_likelihood_correction::{AlignmentCorrection, CorrectionConfig};
+pub use pick_component::{ComponentPicking, ComponentPickingConfig};
+pub use purge_diverged::{PurgeDivConfig, PurgeDivergent};
+pub use remove_erroneous_nodes::RemoveErroneousNodes;
+pub use repeat_masking::{RepeatMask, RepeatMaskConfig};
 #[macro_use]
 extern crate log;
 #[cfg(test)]

@@ -56,20 +56,6 @@ impl PurgeDivergent for DataSet {
     }
 }
 
-fn set_coverage(ds: &mut DataSet) {
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *counts.entry(node.unit).or_default() += 1;
-    }
-    let cov = {
-        let mut counts: Vec<_> = counts.values().copied().collect();
-        counts.sort_unstable();
-        counts[counts.len() / 2] as f64 / 2f64
-    };
-    debug!("LOCALCLUSTERING\tSetCoverage\t{cov}");
-    ds.coverage = Some(cov);
-}
-
 const ACCEPT_RATE: f64 = 0.5;
 const DEL_WEIGHT: i64 = 2;
 const INS_WEIGHT: i64 = 0;
@@ -91,7 +77,7 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
         }
     }
     let indel_size = config.indel_size;
-    set_coverage(ds);
+    crate::misc::update_coverage(ds);
     let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
     indel_size_distr.retain(|(unit, cluster), distr| {
         let dip_coverage = 2f64 * ds.coverage.unwrap();
@@ -196,7 +182,7 @@ fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
             .flat_map(|r| r.nodes.iter_mut())
             .for_each(|n| n.cluster = 0);
         use crate::multiplicity_estimation::*;
-        let multip_config = MultiplicityEstimationConfig::new(230493, ds.coverage, None);
+        let multip_config = MultiplicityEstimationConfig::new(230493, None);
         ds.estimate_multiplicity(&multip_config);
         // Recover.
         for (r, (id, cls, len)) in ds.encoded_reads.iter_mut().zip(preserve) {

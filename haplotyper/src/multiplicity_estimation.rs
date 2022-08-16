@@ -7,14 +7,12 @@ use std::collections::HashSet;
 pub struct MultiplicityEstimationConfig {
     seed: u64,
     path: Option<String>,
-    coverage: Option<f64>,
 }
 
 impl MultiplicityEstimationConfig {
-    pub fn new(seed: u64, cov: Option<f64>, path: Option<&str>) -> Self {
+    pub fn new(seed: u64, path: Option<&str>) -> Self {
         Self {
             seed,
-            coverage: cov,
             path: path.map(|x| x.to_string()),
         }
     }
@@ -28,17 +26,8 @@ pub trait MultiplicityEstimation {
 
 impl MultiplicityEstimation for DataSet {
     fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig) {
-        let cov = {
-            let mut counts: HashMap<_, u32> = HashMap::new();
-            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-                *counts.entry(node.unit).or_default() += 1;
-            }
-            let mut counts: Vec<_> = counts.values().copied().collect();
-            counts.sort_unstable();
-            counts[counts.len() / 2] as f64 / 2f64
-        };
-        debug!("MULTP\tCOVERAGE\t{}\tHAPLOID", cov);
-        self.coverage = Some(cov);
+        crate::misc::update_coverage(self);
+        let cov = self.coverage.unwrap();
         let reads: Vec<_> = self.encoded_reads.iter().collect();
         let assemble_config = AssembleConfig::new(100, false, false, 4, 0f64, false);
         let rt = self.read_type;

@@ -62,20 +62,6 @@ impl LocalClustering for DataSet {
     }
 }
 
-fn set_coverage(ds: &mut DataSet) {
-    let mut counts: HashMap<_, u32> = HashMap::new();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *counts.entry(node.unit).or_default() += 1;
-    }
-    let cov = {
-        let mut counts: Vec<_> = counts.values().copied().collect();
-        counts.sort_unstable();
-        counts[counts.len() / 2] as f64 / 2f64
-    };
-    debug!("LOCALCLUSTERING\tSetCoverage\t{cov}");
-    ds.coverage = Some(cov);
-}
-
 fn pileup_nodes<'a>(
     ds: &'a mut DataSet,
     selection: &HashSet<u64>,
@@ -114,7 +100,7 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     if selection.is_empty() {
         return;
     }
-    set_coverage(ds);
+    crate::misc::update_coverage(ds);
     if ds.model_param.is_none() {
         crate::model_tune::update_model(ds);
     }

@@ -624,12 +624,25 @@ fn subcommand_polish() -> Command<'static> {
         )
 }
 
+fn subcommand_pipeline() -> Command<'static> {
+    Command::new("pipeline")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Run pipeline based on the given TOML file.")
+        .arg(
+            Arg::new("profile")
+                .short('p')
+                .takes_value(true)
+                .required(true)
+                .help("TOML configuration file. See example.toml for an example."),
+        )
+}
+
 fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     use haplotyper::entry::Entry;
     debug!("START\tEntry");
     set_threads(matches);
     let file = matches.value_of("input").unwrap();
-    // let slag = matches.value_of("slag");
     let reader = std::fs::File::open(file).map(BufReader::new)?;
     debug!("Opening {}", file);
     let seqs: Vec<(String, Vec<u8>)> = match file.chars().last() {
@@ -707,9 +720,9 @@ fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
     set_threads(matches);
-    use haplotyper::determine_units::{DetermineUnit, UnitConfig};
+    use haplotyper::determine_units::{DetermineUnit, DetermineUnitConfig};
     let (cl, tn) = (chunk_len, take_num);
-    let config = UnitConfig::new(cl, tn, margin, thrds, filter, upper, lower);
+    let config = DetermineUnitConfig::new(cl, tn, margin, thrds, filter, upper, lower);
     dataset.select_chunks(&config);
 }
 
@@ -785,10 +798,14 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|e| e.parse().ok())
         .unwrap();
     let cov: Option<f64> = matches.value_of("coverage").and_then(|e| e.parse().ok());
+    dataset.coverage = match cov {
+        Some(cov) => definitions::Coverage::Protected(cov),
+        None => definitions::Coverage::NotAvailable,
+    };
     let path = matches.value_of("draft_assembly");
     set_threads(matches);
     use haplotyper::multiplicity_estimation::*;
-    let config = MultiplicityEstimationConfig::new(seed, cov, path);
+    let config = MultiplicityEstimationConfig::new(seed, path);
     dataset.estimate_multiplicity(&config);
     let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
     if let Some(upper_copy_num) = purge {
@@ -926,8 +943,8 @@ fn flush_file(dataset: &DataSet) -> std::io::Result<()> {
 fn main() -> std::io::Result<()> {
     let matches = Command::new("jtk")
         .version("0.1")
-        .author("Bansho Masutani")
-        .about("HLA toolchain")
+        .author("Bansho Masutani <ban-m@g.ecc.u-tokyo.ac.jp>")
+        .about("JTK regional diploid assembler")
         .arg_required_else_help(true)
         .subcommand(subcommand_entry())
         .subcommand(subcommand_extract())
@@ -945,7 +962,17 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_pick_components())
         .subcommand(subcommand_mask_repeats())
         .subcommand(subcommand_polish())
+        .subcommand(subcommand_pipeline())
         .get_matches();
+    if let Some(("pipeline", sub_m)) = matches.subcommand() {
+        let path = sub_m.value_of("profile").unwrap();
+        use std::io::Read;
+        let mut rdr = std::fs::File::open(path).map(std::io::BufReader::new)?;
+        let mut file = String::new();
+        rdr.read_to_string(&mut file)?;
+        let config: hla_cli::PipelineConfig = toml::from_str(&file).unwrap();
+        return hla_cli::run_pipeline(&config);
+    }
     if let Some((_, sub_m)) = matches.subcommand() {
         let level = match sub_m.occurrences_of("verbose") {
             0 => "warn",

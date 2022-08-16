@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::hash::Hash;
 #[derive(Debug, Clone)]
-pub struct UnitConfig {
+pub struct DetermineUnitConfig {
     pub chunk_len: usize,
     pub unit_num: usize,
     pub margin: usize,
@@ -25,7 +25,7 @@ pub struct UnitConfig {
 const FIRST_RELAX: f64 = 2f64;
 
 pub const TAKE_THR: f64 = 0.999;
-impl UnitConfig {
+impl DetermineUnitConfig {
     pub fn new(
         chunk_len: usize,
         unit_num: usize,
@@ -49,7 +49,7 @@ impl UnitConfig {
 }
 
 pub trait DetermineUnit {
-    fn select_chunks(&mut self, config: &UnitConfig);
+    fn select_chunks(&mut self, config: &DetermineUnitConfig);
 }
 
 const FIRST_CONS_COV: usize = 20;
@@ -58,7 +58,7 @@ const CONS_COV: usize = 30;
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
     // TOOD: Maybe we can remove some low-quality reads?
-    fn select_chunks(&mut self, config: &UnitConfig) {
+    fn select_chunks(&mut self, config: &DetermineUnitConfig) {
         self.selected_chunks.clear();
         self.encoded_reads.clear();
         let filter_size = match self.read_type {
@@ -195,7 +195,7 @@ fn compaction_units(ds: &mut DataSet) {
 }
 
 use rand::Rng;
-fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> Vec<Unit> {
+fn pick_random<R: Rng>(reads: &[RawRead], config: &DetermineUnitConfig, rng: &mut R) -> Vec<Unit> {
     use rand::prelude::*;
     let subseqs: Vec<_> = reads
         .iter()
@@ -213,7 +213,7 @@ fn pick_random<R: Rng>(reads: &[RawRead], config: &UnitConfig, rng: &mut R) -> V
         .collect()
 }
 
-fn mm2_unit_overlap(ds: &DataSet, config: &UnitConfig) -> std::io::Result<Vec<u8>> {
+fn mm2_unit_overlap(ds: &DataSet, config: &DetermineUnitConfig) -> std::io::Result<Vec<u8>> {
     let mut rng = thread_rng();
     let id: u64 = rng.gen::<u64>() % 100_000_000;
     let mut c_dir = std::env::current_dir()?;
@@ -271,7 +271,7 @@ pub fn is_proper_overlap(paf: &bio_utils::paf::PAF) -> bool {
 fn remove_overlapping_units(
     ds: &mut DataSet,
     overlap_thr: f64,
-    config: &UnitConfig,
+    config: &DetermineUnitConfig,
 ) -> std::io::Result<()> {
     let unit_len = ds.selected_chunks.len();
     // How long one overlap should be at least.
@@ -343,7 +343,10 @@ type FilledEdge = ((u64, bool), (u64, bool));
 // Offset from the `from` position.
 const SKIP_OFFSET: usize = 5;
 type FilledEdges = HashMap<FilledEdge, Unit>;
-fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> HashMap<FilledEdge, Vec<u8>> {
+fn enumerate_filled_edges(
+    ds: &DataSet,
+    config: &DetermineUnitConfig,
+) -> HashMap<FilledEdge, Vec<u8>> {
     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
     for read in ds.encoded_reads.iter().filter(|r| !r.nodes.is_empty()) {
         assert_eq!(read.nodes.len(), read.edges.len() + 1);
@@ -378,7 +381,7 @@ fn enumerate_filled_edges(ds: &DataSet, config: &UnitConfig) -> HashMap<FilledEd
 fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
     chunks: &HashMap<K, Vec<Vec<u8>>>,
     read_type: &ReadType,
-    config: &UnitConfig,
+    config: &DetermineUnitConfig,
 ) -> HashMap<K, Vec<u8>> {
     chunks
         .par_iter()
@@ -401,7 +404,7 @@ fn pick_median_length(xs: &[Vec<u8>]) -> Vec<u8> {
     xs.iter().find(|x| x.len() == median).unwrap().clone()
 }
 
-fn get_count_thr(ds: &DataSet, _config: &UnitConfig) -> usize {
+fn get_count_thr(ds: &DataSet, _config: &DetermineUnitConfig) -> usize {
     let mut count: HashMap<_, usize> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         *count.entry(node.unit).or_default() += 1;
@@ -415,7 +418,7 @@ fn fill_edge(
     seq: &[u8],
     edge_units: &FilledEdges,
     readtype: ReadType,
-    config: &UnitConfig,
+    config: &DetermineUnitConfig,
 ) {
     let inserts = fill_sparse_edges_in_read(read, seq, edge_units, readtype, config);
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
@@ -432,7 +435,7 @@ fn fill_sparse_edges_in_read(
     seq: &[u8],
     edge_units: &FilledEdges,
     readtype: ReadType,
-    _config: &UnitConfig,
+    _config: &DetermineUnitConfig,
 ) -> Vec<(usize, Node)> {
     let mut inserts = vec![];
     for (idx, w) in read.nodes.windows(2).enumerate() {
@@ -513,7 +516,7 @@ fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
 fn fill_sparse_region_dev(
     ds: &mut DataSet,
     repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
-    config: &UnitConfig,
+    config: &DetermineUnitConfig,
 ) -> usize {
     let max_idx: u64 = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
     let edge_units: HashMap<_, _> = enumerate_filled_edges(ds, config)
@@ -541,7 +544,7 @@ type FilledTips = HashMap<(u64, bool), Unit>;
 fn fill_tips_dev(
     ds: &mut DataSet,
     repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
-    config: &UnitConfig,
+    config: &DetermineUnitConfig,
 ) -> usize {
     let max_idx = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
     let tip_units: HashMap<_, _> = enumerate_filled_tips(ds, config)
@@ -565,7 +568,10 @@ fn fill_tips_dev(
     len
 }
 
-fn enumerate_filled_tips(ds: &DataSet, config: &UnitConfig) -> HashMap<(u64, bool), Vec<u8>> {
+fn enumerate_filled_tips(
+    ds: &DataSet,
+    config: &DetermineUnitConfig,
+) -> HashMap<(u64, bool), Vec<u8>> {
     let mut tail_counts: HashMap<_, Vec<_>> = HashMap::new();
     let take_len = config.chunk_len + SKIP_OFFSET;
     for read in ds.encoded_reads.iter() {
@@ -619,7 +625,7 @@ fn fill_tip(
     seq: &[u8],
     tip_units: &FilledTips,
     readtype: ReadType,
-    _config: &UnitConfig,
+    _config: &DetermineUnitConfig,
 ) {
     let head_tip = read
         .nodes
@@ -661,14 +667,14 @@ fn fill_tip(
     }
 }
 
-fn is_repetitive(unit: &[u8], config: &UnitConfig) -> bool {
+fn is_repetitive(unit: &[u8], config: &DetermineUnitConfig) -> bool {
     let tot = unit.len();
     let lowercase = unit.iter().filter(|c| c.is_ascii_lowercase()).count();
     lowercase as f64 / tot as f64 > config.exclude_repeats
 }
 
 // Or, something went wrong? Please check it out.
-fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
+fn split_into<'a>(r: &'a RawRead, c: &DetermineUnitConfig) -> Vec<&'a [u8]> {
     let seq = r.seq();
     if seq.len() < c.margin * 2 {
         vec![]
@@ -682,7 +688,7 @@ fn split_into<'a>(r: &'a RawRead, c: &UnitConfig) -> Vec<&'a [u8]> {
     }
 }
 
-fn filter_unit_by_ovlp(ds: &mut DataSet, config: &UnitConfig) {
+fn filter_unit_by_ovlp(ds: &mut DataSet, config: &DetermineUnitConfig) {
     let overlap_thr: usize = match ds.read_type {
         ReadType::CCS => config.chunk_len / 2,
         ReadType::CLR => config.chunk_len / 4,
