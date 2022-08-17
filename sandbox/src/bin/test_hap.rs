@@ -8,6 +8,10 @@ fn main() -> std::io::Result<()> {
             .unwrap();
     use std::collections::HashSet;
     let selection: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    // use haplotyper::AlignmentCorrection;
+    // use haplotyper::CorrectionConfig;
+    // let config = CorrectionConfig::default();
+    // ds.correct_clustering_selected(&selection, &config);
     use haplotyper::local_clustering::*;
     local_clustering_selected(&mut ds, &selection);
     println!("{}", serde_json::ser::to_string(&ds).unwrap());

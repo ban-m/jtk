@@ -112,8 +112,8 @@ fn main() -> std::io::Result<()> {
     debug!("\n{answer:?}\n{preds:?}");
     let end = std::time::Instant::now();
     let time = (end - start).as_millis();
-    let rand_idx = haplotyper::local_clustering::rand_index(&preds, &answer);
-    let adj_rand = haplotyper::local_clustering::adjusted_rand_index(&preds, &answer);
+    let rand_idx = haplotyper::misc::rand_index(&preds, &answer);
+    let adj_rand = haplotyper::misc::adjusted_rand_index(&preds, &answer);
     println!("RESULT\t{seed}\t{time}\t{rand_idx}\t{adj_rand}\t{coverage}\t{error_rate}");
     Ok(())
 }

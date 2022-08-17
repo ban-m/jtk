@@ -1,13 +1,13 @@
+#![feature(path_try_exists)]
 use definitions::DataSet;
 use serde::{Deserialize, Serialize};
 extern crate log;
 use log::*;
-use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PipelineConfig {
     input_file: String,
     read_type: String,
-    out_dir: std::path::PathBuf,
+    out_dir: String,
     prefix: String,
     verbose: usize,
     threads: usize,
@@ -68,70 +68,95 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    let file_stem = out_dir.join(prefix);
-    let encoded = file_stem.with_extension("encoded.json");
-    let clustered = file_stem.with_extension("clustered.json");
-    let dense_encoded = file_stem.with_extension("de.json");
-    let corrected = file_stem.with_extension("json");
+    let file_stem = format!("{out_dir}/{prefix}");
+    let entry = format!("{file_stem}.encoded.json");
+    let encoded = format!("{file_stem}.encoded.json");
+    let clustered = format!("{file_stem}.clustered.json");
+    let dense_encoded = format!("{file_stem}.de.json");
+    let corrected = format!("{file_stem}.json");
     assert!(kmersize < 32);
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
         .unwrap();
     std::fs::create_dir_all(&out_dir)?;
-    assert!(out_dir.is_dir());
+    assert!(std::path::Path::new(&out_dir).is_dir());
     // Configurations.
     let repeat_mask_config = RepeatMaskConfig::new(kmersize, top_freq, min_count);
     let select_unit_config =
         DetermineUnitConfig::new(chunk_len, take_num, margin, threads, exclude, upper, lower);
     let pick_component_config = ComponentPickingConfig::new(component_num);
-    let draft = file_stem.with_extension("draft.gfa");
-    let multp_config = MultiplicityEstimationConfig::new(seed, draft.as_os_str().to_str());
+    let draft = format!("{file_stem}.draft.gfa");
+    let multp_config = MultiplicityEstimationConfig::new(seed, Some(&draft));
     let purge_config = PurgeDivConfig::new();
-    let de = file_stem.with_extension("draft2.gfa");
-    let dense_encode_config = DenseEncodingConfig::new(compress_contig, de.as_os_str().to_str());
+    let de = format!("{file_stem}.draft2.gfa");
+    let dense_encode_config = DenseEncodingConfig::new(compress_contig, Some(&de));
     let correction_config = CorrectionConfig::default();
     let assemble_config =
         AssembleConfig::new(polish_window_size, to_polish, true, min_span, min_llr, true);
-    let mut asm_file =
-        std::fs::File::create(file_stem.with_extension("gfa")).map(BufWriter::new)?;
-    if resume {
-        warn!("Currently resuming is not supported....");
-    }
+    let correct_deletion_config = CorrectDeletionConfig::new(false, None);
+    let correct_deletion_config_recluster = CorrectDeletionConfig::new(true, None);
     // Pipeline.
-    let mut ds = parse_input(&input_file, &read_type)?;
-    if let Some(hap) = haploid_coverage {
-        ds.coverage = definitions::Coverage::Protected(hap);
+    let mut ds = match resume && matches!(std::fs::try_exists(&entry), Ok(true)) {
+        false => {
+            let mut ds = parse_input(&input_file, &read_type)?;
+            if let Some(hap) = haploid_coverage {
+                ds.coverage = definitions::Coverage::Protected(hap);
+            }
+            log(&ds, &entry)?;
+            ds
+        }
+        true => parse_input(&input_file, &read_type)?,
+    };
+    if resume && matches!(std::fs::try_exists(&encoded), Ok(true)) {
+        ds = parse_json(&encoded)?
+    } else {
+        ds.mask_repeat(&repeat_mask_config);
+        ds.select_chunks(&select_unit_config);
+        ds.pick_top_n_component(&pick_component_config);
+        ds.correct_deletion(&correct_deletion_config);
+        ds.remove_erroneous_nodes();
+        ds.estimate_multiplicity(&multp_config);
+        ds.purge_multiplicity(purge_copy_num);
+        log(&ds, &encoded)?;
     }
-    ds.mask_repeat(&repeat_mask_config);
-    ds.select_chunks(&select_unit_config);
-    ds.pick_top_n_component(&pick_component_config);
-    let correct_deletion_config = CorrectDeletionConfig::new(false, get_sim_thr(&ds));
-    ds.correct_deletion(&correct_deletion_config);
-    ds.remove_erroneous_nodes();
-    ds.estimate_multiplicity(&multp_config);
-    ds.purge_multiplicity(purge_copy_num);
-    log(&ds, encoded)?;
-    ds.local_clustering();
-    log(&ds, clustered)?;
-    ds.purge(&purge_config);
-    ds.purge(&purge_config);
-    let correct_deletion_config = CorrectDeletionConfig::new(true, get_sim_thr(&ds));
-    ds.correct_deletion(&correct_deletion_config);
-    ds.dense_encoding_dev(&dense_encode_config);
-    log(&ds, dense_encoded)?;
-    ds.correct_deletion(&correct_deletion_config);
-    ds.correct_clustering(&correction_config);
-    log(&ds, corrected)?;
+    if resume && matches!(std::fs::try_exists(&clustered), Ok(true)) {
+        ds = parse_json(&encoded)?
+    } else {
+        ds.local_clustering();
+        log(&ds, &clustered)?;
+    }
+    if resume && matches!(std::fs::try_exists(&dense_encoded), Ok(true)) {
+        ds = parse_json(&dense_encoded)?;
+    } else {
+        ds.purge(&purge_config);
+        ds.purge(&purge_config);
+        ds.correct_deletion(&correct_deletion_config_recluster);
+        ds.dense_encoding_dev(&dense_encode_config);
+        log(&ds, &dense_encoded)?;
+    }
+    if resume && matches!(std::fs::try_exists(&corrected), Ok(true)) {
+        ds = parse_json(&dense_encoded)?;
+    } else {
+        ds.correct_deletion(&correct_deletion_config);
+        ds.correct_clustering(&correction_config);
+        log(&ds, &corrected)?;
+    }
+    // Flush the result.
     let gfa = ds.assemble(&assemble_config);
+    let mut asm_file = std::fs::File::create(format!("{file_stem}.gfa")).map(BufWriter::new)?;
     writeln!(asm_file, "{gfa}")
 }
 
-fn get_sim_thr(ds: &DataSet) -> f64 {
-    haplotyper::determine_units::calc_sim_thr(&ds, haplotyper::determine_units::TAKE_THR)
+fn parse_json(filename: &str) -> std::io::Result<DataSet> {
+    debug!("RESUME\t{filename}");
+    std::fs::File::open(&filename)
+        .map(std::io::BufReader::new)
+        .map(serde_json::de::from_reader)
+        .map(|x| x.unwrap())
 }
 
-fn log(ds: &DataSet, path: PathBuf) -> std::io::Result<()> {
+fn log(ds: &DataSet, path: &str) -> std::io::Result<()> {
     let mut wtr = std::fs::File::create(path).map(BufWriter::new)?;
     serde_json::ser::to_writer(&mut wtr, ds).unwrap();
     Ok(())

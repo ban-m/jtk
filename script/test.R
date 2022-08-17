@@ -1,6 +1,13 @@
 library(tidyverse)
 loadNamespace("cowplot")
 
+filename <- "sim.tsv"
+dataset <- read_tsv(filename, col_names = FALSE)
+dataset <- as.matrix(dataset)
+
+heatmap(x = dataset, Rowv = NA, symm = TRUE, scale = "none")
+
+
 filename <- "1341.tsv" # nolint
 
 dataset <- read_tsv(filename, col_names = FALSE)

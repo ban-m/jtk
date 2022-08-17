@@ -10,11 +10,7 @@ fn main() -> std::io::Result<()> {
     let split_into: usize = args[2].parse().unwrap();
     let prefix = &args[3];
     let mut files: Vec<_> = (0..split_into)
-        .map(|i| {
-            let mut pathbuf = std::env::current_dir().unwrap();
-            pathbuf.push(format!("{prefix}.{}.fq", i));
-            std::fs::File::create(pathbuf).unwrap()
-        })
+        .map(|i| std::fs::File::create(&format!("{prefix}.{}.fq", i)).unwrap())
         .collect();
     let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(34204);
     records.shuffle(&mut rng);

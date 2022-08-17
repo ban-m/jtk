@@ -13,11 +13,12 @@ const INS_THR: usize = 2;
 #[derive(Debug, Clone)]
 pub struct CorrectDeletionConfig {
     re_clustering: bool,
-    sim_thr: f64,
+    sim_thr: Option<f64>,
 }
 
 impl CorrectDeletionConfig {
-    pub fn new(re_clustering: bool, sim_thr: f64) -> Self {
+    /// If sim_thr is None, it is automatically estimated by `haplotyper::determine_units::calc_sim_thr`.
+    pub fn new(re_clustering: bool, sim_thr: Option<f64>) -> Self {
         Self {
             re_clustering,
             sim_thr,
@@ -28,10 +29,13 @@ impl CorrectDeletionConfig {
 pub trait CorrectDeletion {
     fn correct_deletion(&mut self, config: &CorrectDeletionConfig);
 }
-
+const SEED_CONST: f64 = 49823094830.0;
 impl CorrectDeletion for DataSet {
     fn correct_deletion(&mut self, config: &CorrectDeletionConfig) {
-        let mut find_new_units = correct_unit_deletion(self, config.sim_thr);
+        let sim_thr = config.sim_thr.unwrap_or_else(|| {
+            crate::determine_units::calc_sim_thr(self, crate::determine_units::TAKE_THR)
+        });
+        let mut find_new_units = correct_unit_deletion(self, sim_thr);
         // If half of the coverage supports large deletion, remove them.
         const OCCUPY_FRACTION: f64 = 0.5;
         use crate::purge_diverged::*;
@@ -53,7 +57,7 @@ impl CorrectDeletion for DataSet {
                 .flat_map(|r| r.nodes.iter_mut())
                 .for_each(|n| n.cluster = 0);
             use crate::multiplicity_estimation::*;
-            let seed = (231043290490.0 * config.sim_thr).round() as u64;
+            let seed = (SEED_CONST * sim_thr).round() as u64;
             let config = MultiplicityEstimationConfig::new(seed, None);
             self.estimate_multiplicity(&config);
             // Retain all the units changed their copy numbers.
@@ -669,7 +673,7 @@ fn fine_mapping<'a>(
         // let mut ops = vec![kiley::Op::Del; start];
         // ops.extend(edlib_op_to_kiley_op(aln.operations().unwrap()));
         // ops.extend(vec![kiley::Op::Del; orig_query.len() - end - 1]);
-        let (xr, ar, yr) = kiley::recover(unitseq, &query, &ops);
+        let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
         for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
             eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
             eprintln!("ALN\t{}", String::from_utf8_lossy(ar));

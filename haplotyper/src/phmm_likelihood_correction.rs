@@ -39,24 +39,35 @@ impl AlignmentCorrection for DataSet {
             .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, config))
             .collect();
         let protected = get_protected_clusterings(self);
+        let supress_cluster = supress_threshold(&corrected_clusterings);
         let corrected_clustering_on_read = {
             let mut chunks_mut_ref: HashMap<_, _> =
                 self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
             let mut corrected_clustering_on_read: HashMap<_, Vec<_>> = HashMap::new();
-            for (correcteds, (uid, cluster_num)) in corrected_clusterings {
+            for (correcteds, ari, (uid, cluster_num)) in corrected_clusterings {
                 let chunk = chunks_mut_ref.get_mut(&uid).unwrap();
                 let (score, prev) = (chunk.score, chunk.cluster_num);
-                if cluster_num == 1 && protected.contains(&uid) {
+                assert!(cluster_num <= chunk.copy_num);
+                let supress = cluster_num == 1 || (ari < supress_cluster);
+                if supress && protected.contains(&uid) {
                     debug!("PROTECT\t{uid}\t{cluster_num}\t{prev}\t{score}");
                     continue;
-                }
-                assert!(cluster_num <= chunk.copy_num);
-                chunk.cluster_num = cluster_num;
-                for (id, idx, asn) in correcteds {
-                    corrected_clustering_on_read
-                        .entry(id)
-                        .or_default()
-                        .push((idx, asn));
+                } else if supress {
+                    chunk.cluster_num = 1;
+                    for (id, idx, _) in correcteds {
+                        corrected_clustering_on_read
+                            .entry(id)
+                            .or_default()
+                            .push((idx, 0));
+                    }
+                } else {
+                    chunk.cluster_num = cluster_num;
+                    for (id, idx, asn) in correcteds {
+                        corrected_clustering_on_read
+                            .entry(id)
+                            .or_default()
+                            .push((idx, asn));
+                    }
                 }
             }
             corrected_clustering_on_read
@@ -68,7 +79,16 @@ impl AlignmentCorrection for DataSet {
                 }
             }
         }
+        // TODO: Clear posterior, as it is no longer valid ?
     }
+}
+
+const ADJ_RAND_QUANTILE: f64 = 0.01;
+fn supress_threshold(clusterings: &[CorrectionResult]) -> f64 {
+    let mut adj_rand_indicies: Vec<_> = clusterings.iter().map(|x| x.1).collect();
+    adj_rand_indicies.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    let pick = (adj_rand_indicies.len() as f64 * ADJ_RAND_QUANTILE).ceil() as usize;
+    adj_rand_indicies[pick]
 }
 
 const PROTECT_FACTOR: f64 = 1f64;
@@ -140,7 +160,7 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
         .collect()
 }
 
-type CorrectionResult = (Vec<(u64, usize, u64)>, (u64, usize));
+type CorrectionResult = (Vec<(u64, usize, u64)>, f64, (u64, usize));
 fn correct_unit(
     ds: &DataSet,
     unit_id: u64,
@@ -161,14 +181,14 @@ fn correct_unit(
     let len = reads.len();
     trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
     let unit = ds.selected_chunks.iter().find(|u| u.id == unit_id).unwrap();
-    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit, config);
+    let (assignments, k, ari) = clustering(&reads, cluster_and_copynum, copy_numbers, unit, config);
     assert_eq!(assignments.len(), reads.len());
     let assignments: Vec<_> = reads
         .into_iter()
         .zip(assignments)
         .map(|((idx, read), asn)| (read.id, idx, asn as u64))
         .collect();
-    (assignments, (unit_id, k))
+    (assignments, ari, (unit_id, k))
 }
 
 fn clustering(
@@ -177,7 +197,7 @@ fn clustering(
     copy_numbers: &[Vec<f64>],
     unit: &Unit,
     _: &CorrectionConfig,
-) -> (Vec<usize>, usize) {
+) -> (Vec<usize>, usize, f64) {
     let id = unit.id;
     let contexts: Vec<_> = reads
         .iter()
@@ -241,6 +261,9 @@ fn clustering(
         .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
         .map(|x| x.1)
         .unwrap();
+    let prev: Vec<_> = contexts.iter().map(|c| c.1.cluster as usize).collect();
+    let adj_rand_index = crate::misc::adjusted_rand_index(&prev, &asn);
+    debug!("ARI\t{id}\t{k}\t{adj_rand_index}");
     if log_enabled!(log::Level::Trace) {
         let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
         for (i, sm) in sims.iter().enumerate() {
@@ -263,7 +286,7 @@ fn clustering(
         }
     }
     assert!(asn.iter().all(|&x| x <= cluster_num));
-    (asn, cluster_num)
+    (asn, cluster_num, adj_rand_index)
 }
 
 fn filter_similarity(mut sims: Vec<Vec<f64>>, len: usize) -> Vec<Vec<f64>> {

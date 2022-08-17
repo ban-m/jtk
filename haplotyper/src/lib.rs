@@ -1,4 +1,6 @@
 #![feature(is_sorted)]
+#[macro_use]
+extern crate log;
 pub mod assemble;
 pub mod consensus;
 pub mod copy_number_estimation;
@@ -26,6 +28,7 @@ pub mod repeat_masking;
 pub mod seq;
 pub mod stats;
 pub mod view;
+/// Re-imports.
 pub use assemble::{Assemble, AssembleConfig};
 pub use dense_encoding::{DenseEncoding, DenseEncodingConfig};
 pub use determine_units::{DetermineUnit, DetermineUnitConfig};
@@ -37,15 +40,6 @@ pub use pick_component::{ComponentPicking, ComponentPickingConfig};
 pub use purge_diverged::{PurgeDivConfig, PurgeDivergent};
 pub use remove_erroneous_nodes::RemoveErroneousNodes;
 pub use repeat_masking::{RepeatMask, RepeatMaskConfig};
-#[macro_use]
-extern crate log;
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
 
 /// Global alignment parameter.
 pub const ALN_PARAMETER: (i32, i32, i32, i32) = (2, -6, -5, -1);

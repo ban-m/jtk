@@ -18,7 +18,7 @@ fn main() -> std::io::Result<()> {
         let mut rpos = record.tstart;
         let qname = &record.qname;
         let rname = &record.tname;
-        let cigar = bio_utils::sam::parse_cigar_string(&record.get_tag("cg").unwrap().1);
+        let cigar = bio_utils::sam::parse_cigar_string(record.get_tag("cg").unwrap().1);
         for op in cigar {
             use bio_utils::sam::Op;
             match op {

@@ -408,11 +408,11 @@ const IN_POS_RATIO: f64 = 3f64;
 
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
-const PVALUE: f64 = 0.1;
+const PVALUE: f64 = 0.05;
 // False positive rate to determine the strand bias. In other words,
 // The probability that the variant is regarded as biased even if it is not
 // is 0.05. It essentially sacrifice 5% variants under the name of the strand bias.
-const FP_RATE: f64 = 0.025;
+const FP_RATE: f64 = 0.05;
 const MIN_REQ_FRACTION: f64 = 0.5;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     template: &[u8],
@@ -444,7 +444,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
         })
         .filter(|&(pos, _)| pos % NUM_ROW < 8 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE) // 8 -> 1 length copy = same as insertion
         .filter(|&(_, &(gain, _))| 0f64 < gain)
-        .filter(|&(pos, _)| is_in_short_homopolymer(pos, &homopolymer_length, &template))
+        .filter(|&(pos, _)| is_in_short_homopolymer(pos, &homopolymer_length, template))
         .filter(|&(pos, &improve)| {
             has_small_pvalue(pos, improve, &homopolymer_length, &pvalues, gains, temp_len)
         })
@@ -526,7 +526,7 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
     'outer: for _ in 0..ROUND {
         let mut weights: Vec<_> = vec![1f64; probes.len()];
         for _ in 0..cluster_num.max(2) {
-            let next_var_idx = find_next_variants(&probes, &weights, &is_selected);
+            let next_var_idx = find_next_variants(probes, &weights, &is_selected);
             if let Some(next_var_idx) = next_var_idx {
                 let picked_pos = probes[next_var_idx].0;
                 let (picked_pos_in_bp, _) = pos_to_bp_and_difftype(picked_pos);
@@ -555,7 +555,7 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
         }
     }
     let selected_variants: Vec<_> = probes
-        .into_iter()
+        .iter()
         .zip(is_selected)
         .filter_map(|(x, y)| (y == 1).then(|| *x))
         .collect();

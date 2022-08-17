@@ -324,7 +324,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
             debug!("BYPASS\t{head_childs:?}\t{tail_childs:?}");
             if let Some(bypass) =
-                self.examine_bypass(&head_childs, &diplo_path, &tail_childs, &reads, config)
+                self.examine_bypass(&head_childs, &diplo_path, &tail_childs, reads, config)
             {
                 bypasses.push(bypass);
             }

@@ -7,49 +7,6 @@ mod config;
 pub use config::*;
 pub mod kmeans;
 pub mod normalize;
-/// Return rand index.
-pub fn rand_index(label: &[usize], pred: &[usize]) -> f64 {
-    assert_eq!(label.len(), pred.len());
-    let mut both_same_pair = 0;
-    let mut both_diff_pair = 0;
-    for (i, (l1, p1)) in label.iter().zip(pred.iter()).enumerate() {
-        for (l2, p2) in label.iter().zip(pred.iter()).take(i) {
-            if l1 == l2 && p1 == p2 {
-                both_same_pair += 1;
-            } else if l1 != l2 && p1 != p2 {
-                both_diff_pair += 1;
-            }
-        }
-    }
-    let len = label.len();
-    (both_same_pair + both_diff_pair) as f64 / (len * (len - 1) / 2) as f64
-}
-
-pub fn adjusted_rand_index(label: &[usize], pred: &[usize]) -> f64 {
-    assert_eq!(label.len(), pred.len());
-    let lab_max = *label.iter().max().unwrap();
-    let pred_max = *pred.iter().max().unwrap();
-    let mut cont_table = vec![vec![0; pred_max + 1]; lab_max + 1];
-    let mut lab_sum = vec![0; lab_max + 1];
-    let mut pred_sum = vec![0; pred_max + 1];
-    for (&lab, &pred) in label.iter().zip(pred.iter()) {
-        cont_table[lab][pred] += 1;
-        lab_sum[lab] += 1;
-        pred_sum[pred] += 1;
-    }
-    fn choose(x: &usize) -> usize {
-        (x.max(&1) - 1) * x / 2
-    }
-    let lab_match: usize = lab_sum.iter().map(choose).sum();
-    let pred_match: usize = pred_sum.iter().map(choose).sum();
-    let num_of_pairs = choose(&label.len());
-    let both_match: usize = cont_table.iter().flatten().map(choose).sum();
-    assert!(both_match <= (lab_match + pred_match) / 2);
-    let match_prod = (lab_match * pred_match) as i64;
-    let denom = (num_of_pairs * (lab_match + pred_match) / 2) as i64 - match_prod;
-    let numer = (num_of_pairs * both_match) as i64 - match_prod;
-    numer as f64 / denom as f64
-}
 
 pub trait LocalClustering {
     fn local_clustering(&mut self);
@@ -165,30 +122,19 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
 }
 
 // TODO: this function is, very very slow. Please fasten this function, please.
-type PHMM = kiley::hmm::guided::PairHiddenMarkovModel;
+type Phmm = kiley::hmm::guided::PairHiddenMarkovModel;
 fn prep_consensus(
-    hmm: &PHMM,
+    hmm: &Phmm,
     draft: &[u8],
     seqs: &[&[u8]],
     ops: &mut [Vec<kiley::Op>],
     band_width: usize,
-) -> (Vec<u8>, PHMM) {
+) -> (Vec<u8>, Phmm) {
     let mut hmm = hmm.clone();
     let mut cons = draft.to_vec();
     for _t in 0..2 {
-        hmm.fit_naive_with(&cons, &seqs, &ops, band_width / 2);
-        cons = hmm.polish_until_converge_with(&cons, &seqs, ops, band_width / 2);
+        hmm.fit_naive_with(&cons, seqs, ops, band_width / 2);
+        cons = hmm.polish_until_converge_with(&cons, seqs, ops, band_width / 2);
     }
     (cons, hmm)
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    #[test]
-    fn rand_index_test() {
-        let pred = [0, 0, 0, 1, 1, 1];
-        let answ = [0, 0, 1, 1, 2, 2];
-        assert!((0.6666 - rand_index(&pred, &answ)).abs() < 0.0001);
-    }
 }

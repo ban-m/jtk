@@ -25,7 +25,6 @@ lower = 4
 
 
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
-### Currently not supported!
 resume = false
 
 

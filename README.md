@@ -1,16 +1,38 @@
-# JKT -- HLA decomposer
+# JKT -- regional diploid genome assembler
 
-Author: Bansho Masutani
+## Requirements 
 
-Mail: ban-m@g.ecc.u-tokyo.ac.jp
+- [minimap2](https://github.com/lh3/minimap2) with version >= 2.23
+- [Rust](https://www.rust-lang.org/)
 
-# Desc
+## Install 
 
-It has ONLY ONE command line interface, `jtk.` `jtk` (short for Jittoku or Japanese HAL analysis toolkit) is THE entry point of entire analysis. It provides ways to modify dataset, inspect intermidiate file, and generate filnal product.
+After install minimap2 at the location included by `$PATH`, 
 
-To see the detail, run `cargo build --release` and then `./target/release/jtk --help`.
+```
+git clone 
+cd 
+cargo build --release 
+```
+
+Then, move `./target/release/jtk` at the location you want.
 
 
-The name, Jittoku, is taken from [a person in Zen literature](https://en.wikipedia.org/wiki/Hanshan_and_Shide).
+## Usage
 
-hg38's MHC region:chr6:28510120-33480577 corresponds to T2Tversion2's chr6:28381548-33301940.
+1. Modify `example.toml` as you want.
+2. Run `jtk pipeline -p example.toml`
+
+Then, several JSON files and assmbly graphs would be created.
+
+## *Caution*
+
+Please do not input reads comming from a region more than 10M bp long. It has not been tested.
+
+## Info 
+
+Contact: Bansho Masutani<ban-m@g.ecc.u-tokyo.ac.jp>
+
+Cite: 
+
+Jittoku: [a person in the zen literature](https://en.wikipedia.org/wiki/Hanshan_and_Shide).

@@ -143,12 +143,12 @@ type SeqOps<'a> = (usize, usize, &'a [u8], Vec<Op>);
 type SeqOpsOnWindow<'a> = Vec<SeqOps<'a>>;
 type UsedRange = (TipPos, TipPos);
 use std::collections::HashMap;
-fn allocate_on_windows<'a>(
-    alignments: &'a [Alignment],
+fn allocate_on_windows(
+    alignments: &[Alignment],
     round: usize,
     window: usize,
     draft_len: usize,
-) -> (Vec<SeqOpsOnWindow<'a>>, HashMap<usize, UsedRange>) {
+) -> (Vec<SeqOpsOnWindow>, HashMap<usize, UsedRange>) {
     let num_slot = draft_len / window + (draft_len % window != 0) as usize;
     let mut slots = vec![vec![]; num_slot];
     let used_range: HashMap<_, _> = alignments
@@ -228,7 +228,7 @@ pub fn polish(
             let used_range = used_ranges[&idx];
             match recovered.get(&idx) {
                 Some(aloc_pos) => fix_alignment(aln, used_range, aloc_pos, &polished, &acc_len),
-                None => fix_alignment(aln, used_range, &vec![], &polished, &acc_len),
+                None => fix_alignment(aln, used_range, &[], &polished, &acc_len),
             }
         });
         log_identity(sid, alignments);

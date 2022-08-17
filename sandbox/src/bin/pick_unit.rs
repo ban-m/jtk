@@ -57,7 +57,7 @@ fn main() -> std::io::Result<()> {
             );
             println!(
                 "QUERY\t>{readid}\nQUERY\t{}",
-                std::str::from_utf8(&node.seq()).unwrap()
+                std::str::from_utf8(node.seq()).unwrap()
             );
             println!("ALN\t{}", dist);
             let (start, end) = match range {

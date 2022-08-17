@@ -18,6 +18,32 @@ pub fn rand_index(label: &[usize], pred: &[usize]) -> f64 {
     (both_same_pair + both_diff_pair) as f64 / (len * (len - 1) / 2) as f64
 }
 
+pub fn adjusted_rand_index(label: &[usize], pred: &[usize]) -> f64 {
+    assert_eq!(label.len(), pred.len());
+    let lab_max = *label.iter().max().unwrap();
+    let pred_max = *pred.iter().max().unwrap();
+    let mut cont_table = vec![vec![0; pred_max + 1]; lab_max + 1];
+    let mut lab_sum = vec![0; lab_max + 1];
+    let mut pred_sum = vec![0; pred_max + 1];
+    for (&lab, &pred) in label.iter().zip(pred.iter()) {
+        cont_table[lab][pred] += 1;
+        lab_sum[lab] += 1;
+        pred_sum[pred] += 1;
+    }
+    fn choose(x: &usize) -> usize {
+        (x.max(&1) - 1) * x / 2
+    }
+    let lab_match: usize = lab_sum.iter().map(choose).sum();
+    let pred_match: usize = pred_sum.iter().map(choose).sum();
+    let num_of_pairs = choose(&label.len());
+    let both_match: usize = cont_table.iter().flatten().map(choose).sum();
+    assert!(both_match <= (lab_match + pred_match) / 2);
+    let match_prod = (lab_match * pred_match) as i64;
+    let denom = (num_of_pairs * (lab_match + pred_match) / 2) as i64 - match_prod;
+    let numer = (num_of_pairs * both_match) as i64 - match_prod;
+    numer as f64 / denom as f64
+}
+
 /// Input: observation of each occurence,
 /// return Cramer's V statistics.
 pub fn cramers_v(labels: &[(u32, u32)], (cl1, cl2): (usize, usize)) -> f64 {
@@ -761,5 +787,11 @@ mod tests {
         });
         let max_in = max_region(iter);
         assert_eq!(max_in, 203);
+    }
+    #[test]
+    fn rand_index_test() {
+        let pred = [0, 0, 0, 1, 1, 1];
+        let answ = [0, 0, 1, 1, 2, 2];
+        assert!((0.6666 - rand_index(&pred, &answ)).abs() < 0.0001);
     }
 }
