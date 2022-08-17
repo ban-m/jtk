@@ -1,4 +1,5 @@
 #!/bin/bash
+# Require: Nanosim and Rust.
 set -ue 
 OUTPUT=${PWD}/data/mock_genome/
 mkdir -p ${OUTPUT}
@@ -13,11 +14,9 @@ RENAME=${PWD}/script/rename_fastq.awk
 
 
 # Gen genome
-# cargo run --release --bin gen_sim_genome -- ${REFERENCE} ${HAPA} ${HAPB} ${SEED} 
-# cat ${HAPA} ${HAPB} > ${MERGED}
-
-# simulator.py genome --seed 100 -n 10000 -rg ${MERGED} -o ${ONT_READS}.30x -t 56 -c ${PWD}/../../tools/nanosim/training
-
+cargo run --release --bin gen_sim_genome -- ${REFERENCE} ${HAPA} ${HAPB} ${SEED} 
+cat ${HAPA} ${HAPB} > ${MERGED}
+simulator.py genome --seed 100 -n 10000 -rg ${MERGED} -o ${ONT_READS}.30x -t 56 -c ${PWD}/../../tools/nanosim/training
 
 OUTPUT=${PWD}/data/mock_genome_segdup/
 mkdir -p ${OUTPUT}

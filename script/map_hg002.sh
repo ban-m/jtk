@@ -10,8 +10,6 @@
 set -ue
 ## Alignment
 THREADS=24
-# INDEX=/grid/ban-m/human_genome/minimap2_index
-# REGION="chr6:28702185-33451429 chr6_GL000250v2_alt chr6_GL000251v2_alt chr6_GL000252v2_alt chr6_GL000253v2_alt chr6_GL000254v2_alt chr6_GL000255v2_alt chr6_GL000256v2_alt"
 INDEX=/grid/ban-m/human_genome/chm13.draft_v1.1.mmi
 REGION="chr6:28573494-33272792"
 mkdir -p ${PWD}/data/hg002_filtered/
