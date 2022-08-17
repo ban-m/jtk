@@ -348,6 +348,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         let (head_idx, head_pos) = head_dests[0];
         let edges = self.edges_from(head_idx, head_pos);
+        if edges.len() != 1 {
+            for e in edges.iter() {
+                debug!(
+                    "{:?},{}->{:?},{}",
+                    e.from_node, e.from_position, e.to_node, e.to_position
+                );
+            }
+        }
         assert_eq!(edges.len(), 1);
         let (root, root_pos) = edges.get(0).map(|e| (e.to, e.to_position)).unwrap();
         let (path, mut tail_dests) = self.simple_path_and_dest(root, root_pos);

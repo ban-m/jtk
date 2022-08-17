@@ -775,22 +775,6 @@ fn pick_components(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let config = ComponentPickingConfig::new(component_num);
     dataset.pick_top_n_component(&config);
 }
-
-fn polish_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
-    debug!("START\tpolishing units");
-    set_threads(matches);
-    let filter_size: usize = matches
-        .value_of("filter_size")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
-    let consensus_size: usize = matches
-        .value_of("consensus_size")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
-    use haplotyper::polish_units::*;
-    let config = PolishUnitConfig::new(dataset.read_type, filter_size, consensus_size);
-    dataset.polish_unit(&config);
-}
 fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tmultiplicity estimation");
     let seed: u64 = matches
@@ -994,7 +978,6 @@ fn main() -> std::io::Result<()> {
         Some(("select_unit", sub_m)) => select_unit(sub_m, ds),
         Some(("mask_repeats", sub_m)) => repeat_masking(sub_m, ds),
         Some(("encode", sub_m)) => encode(sub_m, ds),
-        Some(("polish_unit", sub_m)) => polish_unit(sub_m, ds),
         Some(("pick_components", sub_m)) => pick_components(sub_m, ds),
         Some(("polish_encoding", sub_m)) => polish_encode(sub_m, ds),
         Some(("partition_local", sub_m)) => local_clustering(sub_m, ds),

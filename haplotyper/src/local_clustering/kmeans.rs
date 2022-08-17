@@ -413,6 +413,7 @@ const PVALUE: f64 = 0.1;
 // The probability that the variant is regarded as biased even if it is not
 // is 0.05. It essentially sacrifice 5% variants under the name of the strand bias.
 const FP_RATE: f64 = 0.025;
+const MIN_REQ_FRACTION: f64 = 0.5;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     template: &[u8],
     profiles: &[T],
@@ -429,7 +430,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
         .map(|pos| {
             let (bp, diff_type) = pos_to_bp_and_difftype(pos);
             let homop_len = *homopolymer_length.get(bp).unwrap_or(&1);
-            gains.expected(homop_len, diff_type) / 3f64
+            gains.expected(homop_len, diff_type) * MIN_REQ_FRACTION
         })
         .collect();
     let total_improvement = column_sum_of(profiles, &min_req);
@@ -484,7 +485,6 @@ fn has_small_pvalue(
     let pvalue = pvalues.pvalue(homop_len, diff_type, count);
     let expt = gains.expected(homop_len, diff_type) * EXPT_GAIN_FACTOR;
     if 10 < count {
-        // if pvalue < PVALUE / template_len as f64 {
         let pvalue = template_len as f64 * pvalue;
         let (pos, ed) = pos_to_bp_and_difftype(pos);
         let homop = &homopolymer_length[pos - 1..=pos + 1];
@@ -580,16 +580,6 @@ fn column_sum_of<T: std::borrow::Borrow<[f64]>>(
             }
         }
     }
-    // for (i, prof) in profiles.iter().map(|x| x.borrow()).enumerate() {
-    //     let per_row = std::iter::zip(prof.chunks_exact(NUM_ROW), min_req.chunks_exact(NUM_ROW));
-    //     let total_per_row = total_improvement.chunks_exact_mut(NUM_ROW);
-    //     for ((row, req), total_row) in std::iter::zip(per_row, total_per_row) {
-    //         if let Some((pos, max)) = pick_one_of_the_max(row, req, i) {
-    //             total_row[pos].0 += max;
-    //             total_row[pos].1 += 1;
-    //         }
-    //     }
-    // }
     total_improvement
 }
 

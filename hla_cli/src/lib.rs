@@ -122,8 +122,8 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     log(&ds, dense_encoded)?;
     ds.correct_deletion(&correct_deletion_config);
     ds.correct_clustering(&correction_config);
-    let gfa = ds.assemble(&assemble_config);
     log(&ds, corrected)?;
+    let gfa = ds.assemble(&assemble_config);
     writeln!(asm_file, "{gfa}")
 }
 
