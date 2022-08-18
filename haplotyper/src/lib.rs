@@ -26,6 +26,7 @@ pub mod purge_diverged;
 pub mod remove_erroneous_nodes;
 pub mod repeat_masking;
 pub mod seq;
+pub mod squish_erroneous_clusters;
 pub mod stats;
 pub mod view;
 /// Re-imports.
@@ -40,6 +41,7 @@ pub use pick_component::{ComponentPicking, ComponentPickingConfig};
 pub use purge_diverged::{PurgeDivConfig, PurgeDivergent};
 pub use remove_erroneous_nodes::RemoveErroneousNodes;
 pub use repeat_masking::{RepeatMask, RepeatMaskConfig};
+pub use squish_erroneous_clusters::{SquishConfig, SquishErroneousClusters};
 
 /// Global alignment parameter.
 pub const ALN_PARAMETER: (i32, i32, i32, i32) = (2, -6, -5, -1);

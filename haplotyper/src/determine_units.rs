@@ -68,7 +68,7 @@ impl DetermineUnit for definitions::DataSet {
         };
         debug!("Select Unit: Configuration:{:?}", config);
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
-        self.selected_chunks = pick_random(&self.raw_reads, config, &mut rng);
+        self.selected_chunks = pick_random(self, config, &mut rng);
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
         let overlap_identity_thr = match self.read_type {
             ReadType::CCS => 0.95,
@@ -195,17 +195,24 @@ fn compaction_units(ds: &mut DataSet) {
 }
 
 use rand::Rng;
-fn pick_random<R: Rng>(reads: &[RawRead], config: &DetermineUnitConfig, rng: &mut R) -> Vec<Unit> {
+fn pick_random<R: Rng>(ds: &DataSet, config: &DetermineUnitConfig, rng: &mut R) -> Vec<Unit> {
+    use crate::RepeatMask;
     use rand::prelude::*;
-    let subseqs: Vec<_> = reads
+    let mask = ds.get_repetitive_kmer();
+    let subseqs: Vec<_> = ds
+        .raw_reads
         .iter()
         .flat_map(|r| split_into(r, config))
-        .filter(|u| !is_repetitive(u, config))
+        .map(|u| (u, mask.repetitiveness(u)))
+        .filter(|&(_, repetitiveness)| repetitiveness < config.exclude_repeats)
         .collect();
+    const SMALL: f64 = 0.0000000001;
     subseqs
-        .choose_multiple(rng, config.unit_num)
+        .choose_multiple_weighted(rng, config.unit_num, |(_, repet)| (1f64 - repet).max(SMALL))
+        .unwrap()
+        // .choose_multiple(rng, config.unit_num)
         .enumerate()
-        .map(|(idx, seq)| {
+        .map(|(idx, (seq, _))| {
             let mut seq = seq.to_vec();
             seq.iter_mut().for_each(u8::make_ascii_uppercase);
             Unit::new(idx as u64, seq, config.min_cluster)
@@ -667,11 +674,11 @@ fn fill_tip(
     }
 }
 
-fn is_repetitive(unit: &[u8], config: &DetermineUnitConfig) -> bool {
-    let tot = unit.len();
-    let lowercase = unit.iter().filter(|c| c.is_ascii_lowercase()).count();
-    lowercase as f64 / tot as f64 > config.exclude_repeats
-}
+// fn is_repetitive(unit: &[u8], config: &DetermineUnitConfig) -> bool {
+//     let tot = unit.len();
+//     let lowercase = unit.iter().filter(|c| c.is_ascii_lowercase()).count();
+//     lowercase as f64 / tot as f64 > config.exclude_repeats
+// }
 
 // Or, something went wrong? Please check it out.
 fn split_into<'a>(r: &'a RawRead, c: &DetermineUnitConfig) -> Vec<&'a [u8]> {

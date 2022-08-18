@@ -9,7 +9,6 @@ RESULT=${2}.json
 GFA=${2}.gfa
 DRAFT_GFA=${2}.draft.gfa
 DRAFT_GFA_2=${2}.draft2.gfa
-LOG=${2}.log
 STAT=${2}.stat
 READTYPE=${3}
 THREADS=56

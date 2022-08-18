@@ -317,12 +317,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             // --Node(Copy=1)--|                 |-----------
             //                 |--Node(Copy==2)--|
             // --Node----------|                 |------------
-            let (head_childs, diplo_path, tail_childs) = self.traverse_diplo_path(index);
+            let (head_childs, diplo_path, tail_childs) = match self.traverse_diplo_path(index) {
+                Some(res) => res,
+                None => continue,
+            };
             checked.extend(diplo_path.iter().map(|x| x.0));
             if head_childs.len() != 2 || tail_childs.len() != 2 || head_childs == tail_childs {
                 continue;
             }
-            debug!("BYPASS\t{head_childs:?}\t{tail_childs:?}");
+            // debug!("BYPASS\t{head_childs:?}\t{tail_childs:?}");
             if let Some(bypass) =
                 self.examine_bypass(&head_childs, &diplo_path, &tail_childs, reads, config)
             {
@@ -335,32 +338,27 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     fn traverse_diplo_path(
         &self,
         index: NodeIndex,
-    ) -> (
+    ) -> Option<(
         Vec<NodeIndexWithPosition>,
         Vec<NodeIndexWithPosition>,
         Vec<NodeIndexWithPosition>,
-    ) {
+    )> {
         // First, go up. The `Position::Tail` is not a bug.
         let (_, mut head_dests) = self.simple_path_and_dest(index, Position::Tail);
         head_dests.sort();
         if head_dests.is_empty() {
-            return (vec![], vec![], vec![]);
+            return None;
         }
         let (head_idx, head_pos) = head_dests[0];
         let edges = self.edges_from(head_idx, head_pos);
         if edges.len() != 1 {
-            for e in edges.iter() {
-                debug!(
-                    "{:?},{}->{:?},{}",
-                    e.from_node, e.from_position, e.to_node, e.to_position
-                );
-            }
+            None
+        } else {
+            let (root, root_pos) = edges.get(0).map(|e| (e.to, e.to_position)).unwrap();
+            let (path, mut tail_dests) = self.simple_path_and_dest(root, root_pos);
+            tail_dests.sort();
+            Some((head_dests, path, tail_dests))
         }
-        assert_eq!(edges.len(), 1);
-        let (root, root_pos) = edges.get(0).map(|e| (e.to, e.to_position)).unwrap();
-        let (path, mut tail_dests) = self.simple_path_and_dest(root, root_pos);
-        tail_dests.sort();
-        (head_dests, path, tail_dests)
     }
     fn examine_bypass(
         &self,
@@ -383,12 +381,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let from = (from_index, self.node(from_index).unwrap().node, from_pos);
         let counts = counts.to_vec();
         // Case1. h0 <-> t0 and h1 <-> t1.
-        if h0t1 == 0 && h1t0 == 0 {
+        //        if h0t1 == 0 && h1t0 == 0 {
+        if (h0t1 + h1t0) + config.min_span_reads <= (h0t0 + h1t1) {
             let (to_index, to_pos) = tails[0];
             let to = (to_index, self.node(to_index).unwrap().node, to_pos);
             path.push(tails[0]);
             Some(Focus::with_backpath(from, to, dist, llr, counts, path))
-        } else if h0t0 == 0 && h1t1 == 0 {
+        //} else if h0t0 == 0 && h1t1 == 0 {
+        } else if h0t0 + h1t1 + config.min_span_reads <= h1t0 + h0t1 {
             // Case2.  h0 <-> t1 and h1 <-> t0
             let (to_index, to_pos) = tails[1];
             let to = (to_index, self.node(to_index).unwrap().node, to_pos);

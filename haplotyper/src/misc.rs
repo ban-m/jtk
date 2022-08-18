@@ -190,8 +190,7 @@ pub fn kmeans<R: Rng, D: std::borrow::Borrow<[f64]>>(
         update_centers(data, &mut centers, &mut counts, &assignments);
         update_assignments(data, &centers, &mut assignments);
         let new_dist = get_dist(data, &centers, &assignments);
-        assert!(new_dist <= dist);
-        assert!(0f64 <= dist - new_dist);
+        assert!(new_dist < dist + UPDATE_THR, "{},{}", dist, new_dist);
         if dist - new_dist < UPDATE_THR {
             break;
         } else {

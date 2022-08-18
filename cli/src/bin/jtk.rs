@@ -131,7 +131,7 @@ fn subcommand_select_unit() -> Command<'static> {
             Arg::new("exclude")
                 .long("exclude")
                 .takes_value(true)
-                .default_value("0.6")
+                .default_value("0.8")
                 .help("filter out unit having more than [exclude] repetitiveness."),
         )
         .arg(
@@ -176,15 +176,15 @@ fn subcommand_mask_repeats() -> Command<'static> {
                 .short('k')
                 .help("K-mer size(<32)")
                 .takes_value(true)
-                .default_value("20"),
+                .default_value("12"),
         )
         .arg(
             Arg::new("freq")
                 .short('f')
                 .long("freq")
-                .help("Mask top [freq] k-mer")
+                .help("Mask top [freq] non-singleton k-mer")
                 .takes_value(true)
-                .default_value("0.0005"),
+                .default_value("0.001"),
         )
         .arg(
             Arg::new("min")

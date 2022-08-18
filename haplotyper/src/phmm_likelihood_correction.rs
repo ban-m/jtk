@@ -40,6 +40,7 @@ impl AlignmentCorrection for DataSet {
             .collect();
         let protected = get_protected_clusterings(self);
         let supress_cluster = supress_threshold(&corrected_clusterings);
+        debug!("SUPRESS\t{supress_cluster:.3}");
         let corrected_clustering_on_read = {
             let mut chunks_mut_ref: HashMap<_, _> =
                 self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
@@ -83,7 +84,7 @@ impl AlignmentCorrection for DataSet {
     }
 }
 
-const ADJ_RAND_QUANTILE: f64 = 0.01;
+const ADJ_RAND_QUANTILE: f64 = 0.05;
 fn supress_threshold(clusterings: &[CorrectionResult]) -> f64 {
     let mut adj_rand_indicies: Vec<_> = clusterings.iter().map(|x| x.1).collect();
     adj_rand_indicies.sort_by(|x, y| x.partial_cmp(y).unwrap());
@@ -263,7 +264,7 @@ fn clustering(
         .unwrap();
     let prev: Vec<_> = contexts.iter().map(|c| c.1.cluster as usize).collect();
     let adj_rand_index = crate::misc::adjusted_rand_index(&prev, &asn);
-    debug!("ARI\t{id}\t{k}\t{adj_rand_index}");
+    debug!("ARI\t{id}\t{k}\t{pick_k}\t{adj_rand_index}");
     if log_enabled!(log::Level::Trace) {
         let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
         for (i, sm) in sims.iter().enumerate() {

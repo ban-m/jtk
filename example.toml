@@ -11,19 +11,17 @@ read_type = "ONT"
 out_dir = "./"
 ### Output prefix. The final assembly would be out_dir/prefix.gfa.
 prefix = "temp"
-### The # of threads you have.
+### The # of threads.
 threads = 1
 ### The number of the chunks. Usually, 2 x (Genome size) / (chunk_len) would be OK.
 take_num = 2500
 ### If true, consensus generate high quality consensus.
 to_polish = true
 ### Discard units with occurence more than or equal to [upper].
-### Usually, it is 5 x (haploid coverage)
-upper = 150
+### Usually, it is 6 x (haploid coverage)
+upper = 180
 ### Discard units with occurence less than or equal to [lower].
 lower = 4
-
-
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
 resume = false
 
@@ -33,11 +31,11 @@ resume = false
 ### and the specified region is highly repetitive.
 # haploid_coverage = 20
 ### The length of the k-mers used to mask repeats.
-kmersize = 15
+kmersize = 12
 ### Upper [top_freq] k-mers would be masked as repeats.
-top_freq = 0.0005
+top_freq = 0.001
 ### Purge chunks having more than [purge_copy_num] phases.
-purge_copy_num = 5
+purge_copy_num = 6
 ### # of reads required to span homozygous region.
 ### Lowering this value would produce more "phased" assembly.
 ### But they would more likely to switching errors.
@@ -53,7 +51,7 @@ chunk_len = 2000
 ### The margin between adjacent chunks in base pair.
 margin = 500
 ### filter out unit having more than [exclude] repetitiveness."
-exclude = 0.6
+exclude = 0.8
 ### Min-counts of the k-mer.
 min_count = 10
 ### We pick the top [component_num] largest connected component for assembly.
@@ -63,4 +61,8 @@ compress_contig = 15
 ### The size of the window in consensus
 polish_window_size = 2000
 ### Minimum required log likelihood ratio to span region. Should be positive!
-min_llr = 1
+min_llr = 1.5
+### Filter lower [supress_frac] weak clusters.
+supress_frac = 0.02
+### The minimum required spanning reads to compute the weakness of a cluster.
+required_count = 10

@@ -207,11 +207,12 @@ fn cluster_filtered_variants<R: Rng>(
         };
         trace!("LK\t{k}\t{score:.3}");
         let min_gain = min_gain(gains, variant_type, &used_columns);
-        // let score = score + get_lk_of_coverage(&asn, coverage, k);
         let improved_reads = count_improved_reads(&new_lk_gains, &read_lk_gains, min_gain);
         let expected_gain_per_read =
             expected_gains(gains, variant_type, &prev_used_columns, &used_columns);
         // +0.1 to avoid silly errors.
+        // let has_substitution =
+        //     find_substitution(&used_columns, &prev_used_columns, &variant_type).is_some();
         let expected_gain = expected_gain_per_read * datasize as f64 / copy_num as f64 + 0.1;
         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}\t{coverage_imp_thr}");
         if expected_gain < score - max && coverage_imp_thr < improved_reads {
@@ -234,6 +235,17 @@ fn cluster_filtered_variants<R: Rng>(
 //         cluster[asn] += 1;
 //     }
 //     cluster.iter().map(|&n| max_poisson_lk(n, cov, 1, k)).sum()
+// }
+
+// fn find_substitution(
+//     used_columns: &[bool],
+//     prev_columns: &[bool],
+//     variant_type: &[(usize, DiffType)],
+// ) -> Option<usize> {
+//     std::iter::zip(used_columns, prev_columns)
+//         .zip(variant_type)
+//         .find(|((&now, &prev), &(_, t))| !prev && now && t == DiffType::Subst)
+//         .map(|(_, &(pos, _))| pos)
 // }
 
 fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[bool]) -> f64 {

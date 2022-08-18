@@ -4,20 +4,20 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Copy)]
 pub struct SquishConfig {
-    thr: f64,
-    count_thr: u32,
+    frac: f64,
+    count_thr: usize,
 }
 
 impl SquishConfig {
-    pub fn new(thr: f64, count_thr: u32) -> Self {
-        Self { thr, count_thr }
+    pub fn new(frac: f64, count_thr: usize) -> Self {
+        Self { frac, count_thr }
     }
 }
 
 impl std::default::Default for SquishConfig {
     fn default() -> Self {
         Self {
-            thr: 0.8,
+            frac: 0.01,
             count_thr: 10,
         }
     }
@@ -62,8 +62,8 @@ impl std::fmt::Display for RelClass {
     }
 }
 
-pub fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass> {
-    let mut unit_pairs: HashMap<_, u32> = HashMap::new();
+fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass> {
+    let mut unit_pairs: HashMap<_, usize> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         for (i, n1) in read.nodes.iter().enumerate() {
             for n2 in read.nodes.iter().skip(i + 1) {
@@ -80,24 +80,27 @@ pub fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelCl
     unit_pairs.retain(|_, val| config.count_thr < *val);
     unit_pairs.retain(|(u1, u2), _| 1 < units[u1] && 1 < units[u2]);
     trace!("REL\tUnit1\tUnit2\tRel\tCount\tTotal");
-    let cramers_vs: Vec<_> = unit_pairs
+    let adj_rand_indices: Vec<_> = unit_pairs
         .par_iter()
         .map(|(&(u1, u2), _)| {
             let (cl1, cl2) = (units[&u1], units[&u2]);
-            let (rel, count, total) = check_correl(ds, (u1, cl1), (u2, cl2));
-            trace!("REL\t{u1}\t{u2}\t{rel:.3}\t{count}\t{total}");
-            trace!("REL\t{u2}\t{u1}\t{rel:.3}\t{count}\t{total}");
+            let (rel, count, _total) = check_correl(ds, (u1, cl1), (u2, cl2));
+            // trace!("REL\t{u1}\t{u2}\t{rel:.3}\t{count}\t{total}");
+            // trace!("REL\t{u2}\t{u1}\t{rel:.3}\t{count}\t{total}");
             (u1, u2, (rel, count))
         })
         .collect();
     let mut unit_to_relvector: HashMap<_, Vec<_>> = HashMap::new();
-    for &(u1, u2, (rel, _)) in cramers_vs.iter() {
+    for &(u1, u2, (rel, _)) in adj_rand_indices.iter() {
         unit_to_relvector.entry(u1).or_default().push((u2, rel));
         unit_to_relvector.entry(u2).or_default().push((u1, rel));
     }
+    let thr = get_thr(&unit_to_relvector, config);
+    debug!("SUPRESS\tTHR\t{thr:.3}");
     let stiff_units: HashSet<_> = unit_to_relvector
         .iter()
-        .filter(|(_, rels)| rels.iter().any(|&(_, rel)| config.thr < rel))
+        // .filter(|(_, rels)| rels.iter().any(|&(_, rel)| config.thr < rel))
+        .filter(|(_, rels)| rels.iter().any(|&(_, rel)| thr < rel))
         .map(|x| x.0)
         .collect();
     ds.selected_chunks
@@ -105,9 +108,17 @@ pub fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelCl
         .map(|c| {
             let rels = unit_to_relvector.get(&c.id);
             let touch_stiff = rels.map(|rels| rels.iter().any(|(to, _)| stiff_units.contains(to)));
-            if stiff_units.contains(&c.id) {
+            if stiff_units.contains(&c.id) || 2 < c.copy_num {
                 (c.id, RelClass::Stiff)
             } else if touch_stiff == Some(true) {
+                let max = rels
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.1)
+                    .max_by(|x, y| x.partial_cmp(y).unwrap())
+                    .unwrap();
+                let len = rels.unwrap().len();
+                trace!("SUSPICOUS\t{}\t{}\t{:.3}\t{}", c.id, c.copy_num, max, len);
                 (c.id, RelClass::Suspicious)
             } else {
                 (c.id, RelClass::Isolated)
@@ -116,11 +127,60 @@ pub fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelCl
         .collect()
 }
 
+fn get_thr(unit_to_relvector: &HashMap<u64, Vec<(u64, f64)>>, config: &SquishConfig) -> f64 {
+    let mut max_indices: Vec<f64> = unit_to_relvector
+        .values()
+        .filter_map(|values| {
+            values
+                .iter()
+                .map(|x| x.1)
+                .max_by(|x, y| x.partial_cmp(y).unwrap())
+        })
+        .collect();
+    max_indices.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    debug!("{:?},{}", &max_indices[..10], max_indices.len());
+    max_indices[(config.frac * max_indices.len() as f64).ceil() as usize]
+}
+
 fn check_correl(
     ds: &DataSet,
     (unit1, cl1): (u64, usize),
     (unit2, cl2): (u64, usize),
 ) -> (f64, usize, usize) {
+    let (mut c1, mut c2) = (vec![], vec![]);
+    for read in ds.encoded_reads.iter() {
+        let node1 = read
+            .nodes
+            .iter()
+            .filter(|n| n.unit == unit1)
+            .map(|n| n.cluster as usize)
+            .min();
+        let node2 = read
+            .nodes
+            .iter()
+            .filter(|n| n.unit == unit2)
+            .map(|n| n.cluster as usize)
+            .min();
+        if let (Some(n1), Some(n2)) = (node1, node2) {
+            c1.push(n1);
+            c2.push(n2);
+        }
+    }
+
+    if c1.is_empty() {
+        return (0f64, c1.len(), c2.len());
+    }
+    let c1_is_same = c1.iter().all(|&x| x == c1[0]);
+    let c2_is_same = c2.iter().all(|&x| x == c2[0]);
+    let rel_value = match (c1_is_same && c2_is_same, cl1 == 1 && cl2 == 1) {
+        (true, true) => 0f64,
+        (true, false) => 1f64,
+        (false, _) => crate::misc::adjusted_rand_index(&c1, &c2),
+    };
+    if rel_value.is_nan() {
+        panic!("\n{:?}\n{:?}", c1, c2);
+    }
+    (rel_value, c1.len(), c1.len())
     // let mut occs = vec![];
     // let mut count = 0;
     // for read in ds.encoded_reads.iter() {
@@ -142,28 +202,5 @@ fn check_correl(
     //     }
     // }
     // let rel_value = crate::misc::cramers_v(&occs, (cl1, cl2));
-    let mut occs = vec![];
-    let mut count = 0;
-    for read in ds.encoded_reads.iter() {
-        let node1 = read
-            .nodes
-            .iter()
-            .filter(|n| n.unit == unit1)
-            .map(|n| n.cluster as u32 + 1)
-            .min()
-            .unwrap_or(0);
-        let node2 = read
-            .nodes
-            .iter()
-            .filter(|n| n.unit == unit2)
-            .map(|n| n.cluster as u32 + 1)
-            .min()
-            .unwrap_or(0);
-        if node1 != 0 || node2 != 0 {
-            occs.push((node1, node2));
-        }
-        count += (node1 != 0 && node2 != 0) as usize;
-    }
-    let rel_value = crate::misc::cramers_v(&occs, (cl1 + 1, cl2 + 1));
-    (rel_value, count, occs.len())
+    // (rel_value, count, occs.len())
 }

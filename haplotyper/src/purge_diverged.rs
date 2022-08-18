@@ -82,7 +82,7 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
     indel_size_distr.retain(|(unit, cluster), distr| {
         let dip_coverage = 2f64 * ds.coverage.unwrap();
         let lower_thr = (dip_coverage / 2f64 * config.occupy_fraction).floor() as usize;
-        let upper_thr = (dip_coverage - lower_thr as f64).ceil() as usize;
+        let upper_thr = (distr.len() as f64 - lower_thr as f64).max(0f64).ceil() as usize;
         let num = distr
             .iter()
             .map(|x| x.2)

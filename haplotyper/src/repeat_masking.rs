@@ -53,15 +53,17 @@ impl RepeatMask for definitions::DataSet {
         RepeatAnnot { k, kmers }
     }
     fn mask_repeat(&mut self, config: &RepeatMaskConfig) {
-        let (mask, thr) = {
-            debug!("Counting {}-mers", config.k);
-            let kmer_count = kmer_counting(&self.raw_reads, config);
-            debug!("Counted");
-            create_mask(&kmer_count, config)
-        };
+        self.raw_reads.par_iter_mut().for_each(|r| {
+            r.seq
+                .seq_mut()
+                .iter_mut()
+                .for_each(u8::make_ascii_uppercase)
+        });
+        let kmer_count = kmer_counting(&self.raw_reads, config.k);
+        let (mask, thr) = create_mask(kmer_count, config);
         self.masked_kmers.k = config.k;
         self.masked_kmers.thr = thr;
-        debug!("Constructed {}-mer filter. Size:{}", config.k, mask.len());
+        debug!("MASKREPEAT\tMaskLen\t{}\t{}", config.k, mask.len());
         self.raw_reads
             .par_iter_mut()
             .for_each(|read| mask_repeats(read.seq.seq_mut(), &mask, config.k));
@@ -71,33 +73,30 @@ impl RepeatMask for definitions::DataSet {
             .iter()
             .map(|r| r.seq.iter().filter(|x| x.is_ascii_lowercase()).count())
             .sum::<usize>();
-        debug!(
-            "Masked {} bases out of {} bases.",
-            num_lower_base, num_bases,
-        );
-        debug!("{} Masked {}-mers", mask.len(), config.k);
+        debug!("MASKREPEAT\tTotalMask\t{num_lower_base}\t{num_bases}");
+        debug!("MASKREPEAT\tMaskedKmers\t{}\t{}", mask.len(), config.k);
     }
 }
 
+const BUCKET_SIZE: usize = 1000;
 use definitions::*;
-fn kmer_counting(reads: &[RawRead], config: &RepeatMaskConfig) -> HashMap<u64, u32> {
-    let k = config.k;
+pub fn kmer_counting(reads: &[RawRead], k: usize) -> HashMap<u64, u32> {
     assert!(k <= 32);
-    reads
-        .into_par_iter()
-        .map(|read| read.seq().windows(k).map(to_idx))
-        .fold(HashMap::new, |mut x, kmers| {
-            for kmer in kmers {
-                *x.entry(kmer).or_default() += 1;
-            }
-            x
-        })
-        .reduce(HashMap::new, |mut x, kmercounts| {
-            for (kmer, count) in kmercounts {
-                *x.entry(kmer).or_default() += count;
-            }
-            x
-        })
+    let mut counts: HashMap<u64, u32> = HashMap::new();
+    for bucket in reads.chunks(BUCKET_SIZE) {
+        let kmers: Vec<_> = bucket
+            .into_par_iter()
+            .fold(Vec::new, |mut x, read| {
+                x.extend(read.seq().windows(k).map(to_idx));
+                x
+            })
+            .flatten()
+            .collect();
+        for kmer in kmers {
+            *counts.entry(kmer).or_default() += 1;
+        }
+    }
+    counts
 }
 
 fn to_idx(w: &[u8]) -> u64 {
@@ -146,15 +145,17 @@ const fn base2bit() -> [u64; 256] {
     slots
 }
 
-fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> (HashSet<u64>, u32) {
+fn create_mask(mut kmercount: HashMap<u64, u32>, config: &RepeatMaskConfig) -> (HashSet<u64>, u32) {
+    let (mut num_singleton, total) = (0, kmercount.len());
+    kmercount.retain(|_, &mut count| {
+        num_singleton += (count == 1) as usize;
+        count != 1
+    });
+    debug!("MASKREPEAT\tUNIQUE\t{num_singleton}\t{total}");
     let percentile = (kmercount.len() as f64 * (1f64 - config.freq)).floor() as usize;
     let below_min = kmercount.values().filter(|&&x| x <= config.min).count();
     if percentile < below_min {
-        warn!(
-            "Kmer occured below {} times occupied more than 1 - {} fraction.",
-            config.min, config.freq
-        );
-        warn!("Fall back to use all the k-mers.");
+        warn!("MASKREPEAT\tTakesAll\t{}\t{}", config.min, config.freq);
         let kmers: HashSet<_> = kmercount.keys().copied().collect();
         (kmers, 0)
     } else {
@@ -166,7 +167,7 @@ fn create_mask(kmercount: &HashMap<u64, u32>, config: &RepeatMaskConfig) -> (Has
             .collect();
         counts.sort_unstable();
         let thr = counts[percentile];
-        debug!("Masking {}-mer occuring more than {} times", config.k, thr);
+        debug!("MASKREPEAT\tMaskMoreThan\t{thr}\t{}", config.k);
         let kmers: HashSet<_> = kmercount
             .iter()
             .filter_map(|(&key, &val)| if val > thr { Some(key) } else { None })

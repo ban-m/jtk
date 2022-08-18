@@ -30,6 +30,8 @@ pub struct PipelineConfig {
     min_span: usize,
     min_llr: f64,
     resume: bool,
+    supress_frac: f64,
+    required_count: usize,
 }
 use haplotyper::{local_clustering::LocalClustering, *};
 use std::io::{BufReader, BufWriter, Write};
@@ -60,6 +62,8 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         min_span,
         min_llr,
         resume,
+        supress_frac,
+        required_count,
     } = config.clone();
     let level = match verbose {
         0 => "warn",
@@ -96,6 +100,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         AssembleConfig::new(polish_window_size, to_polish, true, min_span, min_llr, true);
     let correct_deletion_config = CorrectDeletionConfig::new(false, None);
     let correct_deletion_config_recluster = CorrectDeletionConfig::new(true, None);
+    let squish_config = SquishConfig::new(supress_frac, required_count);
     // Pipeline.
     let mut ds = match resume && matches!(std::fs::try_exists(&entry), Ok(true)) {
         false => {
@@ -121,7 +126,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         log(&ds, &encoded)?;
     }
     if resume && matches!(std::fs::try_exists(&clustered), Ok(true)) {
-        ds = parse_json(&encoded)?
+        ds = parse_json(&clustered)?
     } else {
         ds.local_clustering();
         log(&ds, &clustered)?;
@@ -136,9 +141,10 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         log(&ds, &dense_encoded)?;
     }
     if resume && matches!(std::fs::try_exists(&corrected), Ok(true)) {
-        ds = parse_json(&dense_encoded)?;
+        ds = parse_json(&corrected)?;
     } else {
-        ds.correct_deletion(&correct_deletion_config);
+        ds.correct_deletion(&correct_deletion_config_recluster);
+        ds.squish_erroneous_clusters(&squish_config);
         ds.correct_clustering(&correction_config);
         log(&ds, &corrected)?;
     }
