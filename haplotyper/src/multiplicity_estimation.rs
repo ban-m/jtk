@@ -97,13 +97,26 @@ impl MultiplicityEstimation for DataSet {
             writeln!(file, "{}", gfa).unwrap();
         }
     }
-
     fn purge_multiplicity(&mut self, upper: usize) {
         let to_remove: HashSet<_> = self
             .selected_chunks
             .iter()
-            .filter_map(|c| (upper <= c.copy_num).then(|| c.id))
+            .filter_map(|c| (upper <= c.copy_num || c.copy_num == 0).then(|| c.id))
             .collect();
+        {
+            let mut counts: HashMap<_, u32> = HashMap::new();
+            for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+                *counts.entry(node.unit).or_default() += 1;
+            }
+            for chunk in self
+                .selected_chunks
+                .iter()
+                .filter(|c| to_remove.contains(&c.id))
+            {
+                let count = counts[&chunk.id];
+                debug!("REMOVE\t{}\t{count}\t{}", chunk.id, chunk.copy_num);
+            }
+        }
         self.selected_chunks.retain(|x| !to_remove.contains(&x.id));
         use rayon::prelude::*;
         self.encoded_reads.par_iter_mut().for_each(|read| {

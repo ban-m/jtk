@@ -82,6 +82,8 @@ impl CorrectDeletion for DataSet {
                 });
             // Reclustering.
             crate::local_clustering::local_clustering_selected(self, &selection);
+            // By the way, removing zero-copy units. Give the upper bound a very large value.
+            self.purge_multiplicity(10000000);
         }
     }
 }
@@ -372,19 +374,6 @@ fn filling_until(
                 correct_deletion_error(read, fails, units, stddev, &read_skeltons)
             })
             .collect();
-        // let newly_encoded_units: Vec<_> = ds
-        //     .encoded_reads
-        //     .iter_mut()
-        //     .zip(failed_trials.iter_mut())
-        //     .zip(is_updated.iter_mut())
-        //     .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
-        //     .flat_map(|((read, fails), is_updated)| {
-        //         let seq = raw_seq[&read.id];
-        //         let read = (read, seq, is_updated);
-        //         let units = (&units, error_rates, consensi);
-        //         correct_deletion_error(read, fails, units, stddev, &read_skeltons)
-        //     })
-        //     .collect();
         find_new_node.extend(newly_encoded_units);
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
         debug!("Filled\t{}\t{}", current, after);

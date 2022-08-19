@@ -789,11 +789,11 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let path = matches.value_of("draft_assembly");
     set_threads(matches);
     use haplotyper::multiplicity_estimation::*;
+    let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
     let config = MultiplicityEstimationConfig::new(seed, path);
     dataset.estimate_multiplicity(&config);
-    let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
-    if let Some(upper_copy_num) = purge {
-        dataset.purge_multiplicity(upper_copy_num);
+    if let Some(upper) = purge {
+        dataset.purge_multiplicity(upper);
     }
 }
 

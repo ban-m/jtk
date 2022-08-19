@@ -18,13 +18,11 @@ take_num = 2500
 ### If true, consensus generate high quality consensus.
 to_polish = true
 ### Discard units with occurence more than or equal to [upper].
-### Usually, it is 6 x (haploid coverage)
-upper = 180
+upper = 300
 ### Discard units with occurence less than or equal to [lower].
 lower = 4
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
 resume = false
-
 
 ## Tunable parameters. Sometimes tuning these parameters would improve the assembly.
 ### Please un-comment this parameter if you have a esimation of the coverage, 
@@ -35,11 +33,11 @@ kmersize = 12
 ### Upper [top_freq] k-mers would be masked as repeats.
 top_freq = 0.001
 ### Purge chunks having more than [purge_copy_num] phases.
-purge_copy_num = 6
+purge_copy_num = 7
 ### # of reads required to span homozygous region.
 ### Lowering this value would produce more "phased" assembly.
 ### But they would more likely to switching errors.
-min_span = 3
+min_span = 2
 ### Verbose level. 2 is debug more, 3 is trace mode. I recommend to use 2.
 verbose = 2
 
@@ -63,6 +61,6 @@ polish_window_size = 2000
 ### Minimum required log likelihood ratio to span region. Should be positive!
 min_llr = 1.5
 ### Filter lower [supress_frac] weak clusters.
-supress_frac = 0.02
+supress_frac = 0.01
 ### The minimum required spanning reads to compute the weakness of a cluster.
 required_count = 10

@@ -25,13 +25,24 @@ pub struct RepeatAnnot {
 }
 
 impl RepeatAnnot {
+    /// Return the fraction of the repetitive kmer.
+    /// Here, the definition of the repetitiveness is both global (is it lowercase?) and local (is it occurred more than twice in this reads?)
     pub fn repetitiveness(&self, seq: &[u8]) -> f64 {
-        let kmers = seq.len().saturating_sub(self.k) + 1;
-        let rep_kmers = seq
+        let mut counts: HashMap<_, u32> = HashMap::new();
+        for kmer in seq
             .windows(self.k)
             .map(to_idx)
             .filter(|x| self.kmers.contains(x))
-            .count();
+        {
+            *counts.entry(kmer).or_default() += 1;
+        }
+        let rep_kmers: u32 = counts.values().filter(|&&count| 1 < count).sum();
+        // let rep_kmers = seq
+        //     .windows(self.k)
+        //     .map(to_idx)
+        //     .filter(|x| self.kmers.contains(x))
+        //     .count();
+        let kmers = seq.len().saturating_sub(self.k) + 1;
         rep_kmers as f64 / kmers as f64
     }
 }
@@ -53,16 +64,14 @@ impl RepeatMask for definitions::DataSet {
         RepeatAnnot { k, kmers }
     }
     fn mask_repeat(&mut self, config: &RepeatMaskConfig) {
+        self.masked_kmers.k = config.k;
         self.raw_reads.par_iter_mut().for_each(|r| {
             r.seq
                 .seq_mut()
                 .iter_mut()
                 .for_each(u8::make_ascii_uppercase)
         });
-        let kmer_count = kmer_counting(&self.raw_reads, config.k);
-        let (mask, thr) = create_mask(kmer_count, config);
-        self.masked_kmers.k = config.k;
-        self.masked_kmers.thr = thr;
+        let (mask, _thr) = create_mask(&self.raw_reads, config);
         debug!("MASKREPEAT\tMaskLen\t{}\t{}", config.k, mask.len());
         self.raw_reads
             .par_iter_mut()
@@ -145,7 +154,8 @@ const fn base2bit() -> [u64; 256] {
     slots
 }
 
-fn create_mask(mut kmercount: HashMap<u64, u32>, config: &RepeatMaskConfig) -> (HashSet<u64>, u32) {
+fn create_mask(reads: &[RawRead], config: &RepeatMaskConfig) -> (HashSet<u64>, u32) {
+    let mut kmercount = kmer_counting(reads, config.k);
     let (mut num_singleton, total) = (0, kmercount.len());
     kmercount.retain(|_, &mut count| {
         num_singleton += (count == 1) as usize;

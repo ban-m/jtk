@@ -184,7 +184,6 @@ fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
         use crate::multiplicity_estimation::*;
         let multip_config = MultiplicityEstimationConfig::new(230493, None);
         ds.estimate_multiplicity(&multip_config);
-        // Recover.
         for (r, (id, cls, len)) in ds.encoded_reads.iter_mut().zip(preserve) {
             assert_eq!(r.id, id);
             assert_eq!(r.nodes.len(), len);

@@ -19,13 +19,19 @@ cargo build --release
 
 Then, move `./target/release/jtk` at the location you want.
 
-
 ## Usage
 
 1. Modify `example.toml` as you want.
     - See `example.toml` for the explanation of the parameters.
+    - I recommend to use absolute path for the input and the output directory.
+    - `JTK` would create the temporary file at the *current directory*. Please exec at the location where you have a write permission.
 2. Run `jtk pipeline -p example.toml`
     - Several JSON files and assmbly graphs would be created.
+
+If you stoped or a panic occured in `JTK`, you can resume the execution by 
+
+1. Edit the TOML file by `sed -i -e "/resume/c resume = true"`
+2. Run `jtk pipeline -p foo.toml`
 
 ## Reproduce/Test dataset
 
@@ -38,10 +44,6 @@ wget
 ## *Caution*
 
 Please do not input reads comming from a region more than 10M bp long. It has not been tested.
-
-## Under the hood
-
-`jtk pipeline` is a 
 
 ## Info 
 

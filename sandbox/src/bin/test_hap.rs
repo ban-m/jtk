@@ -6,17 +6,18 @@ fn main() -> std::io::Result<()> {
     let mut ds: DataSet =
         serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
             .unwrap();
-    use haplotyper::{SquishConfig, SquishErroneousClusters};
-    let config = SquishConfig::new(0.02, 10);
-    ds.squish_erroneous_clusters(&config);
-    // use std::collections::HashSet;
-    // let selection: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+    // use haplotyper::SquishConfig;
+    // use haplotyper::SquishErroneousClusters;
+    // let config = SquishConfig::new(0.01, 10);
+    // ds.squish_erroneous_clusters(&config);
+    use std::collections::HashSet;
+    let selection: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
     // use haplotyper::AlignmentCorrection;
     // use haplotyper::CorrectionConfig;
     // let config = CorrectionConfig::default();
     // ds.correct_clustering_selected(&selection, &config);
-    // use haplotyper::local_clustering::*;
-    // local_clustering_selected(&mut ds, &selection);
-    // println!("{}", serde_json::ser::to_string(&ds).unwrap());
+    use haplotyper::local_clustering::*;
+    local_clustering_selected(&mut ds, &selection);
+    println!("{}", serde_json::ser::to_string(&ds).unwrap());
     Ok(())
 }
