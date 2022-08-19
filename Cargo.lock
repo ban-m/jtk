@@ -223,28 +223,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "de_bruijn_graph"
-version = "0.1.0"
-source = "git+https://github.com/ban-m/de_bruijn_graph.git?branch=hla_module#0f411b15dbee97cab2404c3b4738df079729fd99"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "definitions"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_with",
-]
-
-[[package]]
-name = "dirichlet_fit"
-version = "0.1.0"
-dependencies = [
- "log",
- "rand",
- "rand_xoshiro",
 ]
 
 [[package]]
@@ -303,9 +286,7 @@ version = "0.1.0"
 dependencies = [
  "bio_utils",
  "bytecount",
- "de_bruijn_graph",
  "definitions",
- "dirichlet_fit",
  "edlib_sys",
  "env_logger",
  "gfa",
@@ -313,7 +294,6 @@ dependencies = [
  "kiley",
  "log",
  "nalgebra",
- "path_phasing",
  "rand",
  "rand_distr",
  "rand_xoshiro",
@@ -558,20 +538,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c520e05135d6e763148b6426a837e239041653ba7becd2e538c076c738025fc"
 
 [[package]]
-name = "path_phasing"
-version = "0.1.0"
-source = "git+https://github.com/ban-m/pathhap.git?branch=main#dce244ef8a308a1295174a8782bde8e8aa3b6ed2"
-dependencies = [
- "clap 3.1.18",
- "env_logger",
- "histgram_viz",
- "log",
- "rand",
- "rand_xoshiro",
- "rayon",
-]
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -742,9 +708,7 @@ version = "0.1.0"
 dependencies = [
  "bio_utils",
  "clap 3.1.18",
- "de_bruijn_graph",
  "definitions",
- "dirichlet_fit",
  "edlib_sys",
  "env_logger",
  "gfa",

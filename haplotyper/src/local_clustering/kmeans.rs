@@ -365,7 +365,7 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -
                     vars.iter()
                         .zip(slots.iter())
                         .zip(use_columns.iter())
-                        .filter(|&((_, (sum, _)), to_use)| to_use & sum.is_positive())
+                        .filter(|&((_, (sum, _)), to_use)| to_use & sum.is_sign_positive())
                         .map(|x| (x.0).0)
                         .sum()
                 })
@@ -396,7 +396,7 @@ fn get_read_lk_gains(
             vars.iter()
                 .zip(lks[asn].iter())
                 .zip(use_columns.iter())
-                .filter(|&((_, (sum, _)), to_use)| to_use & sum.is_positive())
+                .filter(|&((_, (sum, _)), to_use)| to_use & sum.is_sign_positive())
                 .map(|x| (x.0).0)
                 .sum()
         })
@@ -723,7 +723,6 @@ fn use_highest_gain(data: &[Vec<f64>]) -> (Vec<usize>, f64, Vec<f64>, Vec<bool>)
 
 use rand::prelude::SliceRandom;
 use rand::seq::IteratorRandom;
-use rand_distr::num_traits::Signed;
 
 // use super::HOMOP_LEN;
 fn mcmc_with_filter<R: Rng>(
