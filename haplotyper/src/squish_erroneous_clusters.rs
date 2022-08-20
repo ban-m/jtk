@@ -106,15 +106,15 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
         .iter()
         .map(|c| {
             let rels = unit_to_relvector.get(&c.id);
-            // let max = rels
-            //     .and_then(|xs| {
-            //         xs.iter()
-            //             .map(|x| x.1)
-            //             .max_by(|x, y| x.partial_cmp(y).unwrap())
-            //     })
-            //     .unwrap_or(0f64);
-            // let len = rels.map(|x| x.len()).unwrap_or(0);
-            // debug!("SQI\t{}\t{}\t{max}\t{len}", c.id, c.cluster_num);
+            let max = rels
+                .and_then(|xs| {
+                    xs.iter()
+                        .map(|x| x.1)
+                        .max_by(|x, y| x.partial_cmp(y).unwrap())
+                })
+                .unwrap_or(0f64);
+            let len = rels.map(|x| x.len()).unwrap_or(0);
+            trace!("SQI\t{}\t{}\t{max}\t{len}", c.id, c.cluster_num);
             let touch_stiff = rels.map(|rels| rels.iter().any(|(to, _)| stiff_units.contains(to)));
             if stiff_units.contains(&c.id) || 2 < c.copy_num {
                 (c.id, RelClass::Stiff)

@@ -14,14 +14,16 @@ const INS_THR: usize = 2;
 pub struct CorrectDeletionConfig {
     re_clustering: bool,
     sim_thr: Option<f64>,
+    stddev_of_error: Option<f64>,
 }
 
 impl CorrectDeletionConfig {
     /// If sim_thr is None, it is automatically estimated by `haplotyper::determine_units::calc_sim_thr`.
-    pub fn new(re_clustering: bool, sim_thr: Option<f64>) -> Self {
+    pub fn new(re_clustering: bool, sim_thr: Option<f64>, stddev_of_error: Option<f64>) -> Self {
         Self {
             re_clustering,
             sim_thr,
+            stddev_of_error,
         }
     }
 }
@@ -29,13 +31,10 @@ impl CorrectDeletionConfig {
 pub trait CorrectDeletion {
     fn correct_deletion(&mut self, config: &CorrectDeletionConfig);
 }
-const SEED_CONST: f64 = 49823094830.0;
+const SEED_CONST: usize = 49823094830;
 impl CorrectDeletion for DataSet {
     fn correct_deletion(&mut self, config: &CorrectDeletionConfig) {
-        let sim_thr = config.sim_thr.unwrap_or_else(|| {
-            crate::determine_units::calc_sim_thr(self, crate::determine_units::TAKE_THR)
-        });
-        let mut find_new_units = correct_unit_deletion(self, sim_thr);
+        let mut find_new_units = correct_unit_deletion(self, config);
         // If half of the coverage supports large deletion, remove them.
         const OCCUPY_FRACTION: f64 = 0.5;
         use crate::purge_diverged::*;
@@ -57,7 +56,7 @@ impl CorrectDeletion for DataSet {
                 .flat_map(|r| r.nodes.iter_mut())
                 .for_each(|n| n.cluster = 0);
             use crate::multiplicity_estimation::*;
-            let seed = (SEED_CONST * sim_thr).round() as u64;
+            let seed = (SEED_CONST * self.encoded_reads.len()) as u64;
             let config = MultiplicityEstimationConfig::new(seed, None);
             self.estimate_multiplicity(&config);
             // Retain all the units changed their copy numbers.
@@ -130,18 +129,22 @@ However, in the second alignment, it tries to encode the putative region by each
 Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
 Auto-tune the similarity threshold.
  */
-pub fn correct_unit_deletion(ds: &mut DataSet, fallback: f64) -> HashSet<u64> {
+
+pub fn correct_unit_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
     let consensi = take_consensus_sequence(ds);
+    let fallback = config.sim_thr.unwrap_or_else(|| {
+        crate::determine_units::calc_sim_thr(ds, crate::determine_units::TAKE_THR)
+    });
     for t in 0..OUTER_LOOP {
         ds.encoded_reads.retain(|r| !r.nodes.is_empty());
         remove_weak_edges(ds);
         use crate::estimate_error_rate::estimate_error_rate;
         let errors = estimate_error_rate(ds, fallback);
-        let standard_dev = errors.median_of_sqrt_err;
+        let standard_dev = config.stddev_of_error.unwrap_or(errors.median_of_sqrt_err);
         debug!("ErrorRateSTDDev\t{}\t{}", t, standard_dev);
-        let (new_nodes, is_updated) = filling_until(ds, &consensi, &errors);
+        let (new_nodes, is_updated) = filling_until(ds, &consensi, &errors, standard_dev);
         find_new_node.extend(new_nodes);
         if !is_updated {
             break;
@@ -337,54 +340,54 @@ fn try_remove_tail(
     }
 }
 
+const INNER_LOOP: usize = 15;
 fn filling_until(
     ds: &mut DataSet,
     consensi: &HashMap<(u64, u64), Vec<u8>>,
     error_rates: &crate::estimate_error_rate::ErrorRate,
+    stddev: f64,
 ) -> (HashSet<u64>, bool) {
-    let stddev = error_rates.median_of_sqrt_err;
-    let raw_seq: HashMap<_, _> = ds
-        .raw_reads
-        .iter()
-        .map(|read| (read.id, read.seq()))
-        .collect();
-    const INNER_LOOP: usize = 15;
+    let raw_seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let mut find_new_node = HashSet::new();
-    let mut current: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-    // i->vector of failed index and units.
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
     let mut is_updated = vec![true; ds.encoded_reads.len()];
+    let mut read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
     for i in 0..INNER_LOOP {
+        let prev: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
         let alive = is_updated.iter().filter(|&&x| x).count();
         debug!("Reads\t{}\t{}", alive, is_updated.len());
-        let read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
         assert_eq!(ds.encoded_reads.len(), failed_trials.len());
         assert_eq!(ds.encoded_reads.len(), is_updated.len());
-        let newly_encoded_units: Vec<_> = ds
-            .encoded_reads
-            .par_iter_mut()
-            .zip(failed_trials.par_iter_mut())
-            .zip(is_updated.par_iter_mut())
-            .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
-            .flat_map(|((read, fails), is_updated)| {
-                let seq = raw_seq[&read.id];
-                let read = (read, seq, is_updated);
-                let units = (&units, error_rates, consensi);
-                correct_deletion_error(read, fails, units, stddev, &read_skeltons)
-            })
-            .collect();
-        find_new_node.extend(newly_encoded_units);
+        assert_eq!(ds.encoded_reads.len(), read_skeltons.len());
+        find_new_node.par_extend(
+            ds.encoded_reads
+                .par_iter_mut()
+                .zip(failed_trials.par_iter_mut())
+                .zip(is_updated.par_iter_mut())
+                .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
+                .flat_map(|((read, fails), is_updated)| {
+                    let seq = raw_seq[&read.id];
+                    let read = (read, seq, is_updated);
+                    let units = (&units, error_rates, consensi);
+                    correct_deletion_error(read, fails, units, stddev, &read_skeltons)
+                }),
+        );
+        read_skeltons
+            .iter_mut()
+            .zip(ds.encoded_reads.iter())
+            .zip(is_updated.iter())
+            .filter(|&(_, &b)| b)
+            .for_each(|((skelton, read), _)| *skelton = ReadSkelton::new(read));
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        debug!("Filled\t{}\t{}", current, after);
-        if after == current && i == 0 {
+        debug!("Filled\t{}\t{}", prev, after);
+        if after == prev && i == 0 {
             debug!("Filled\tBREAK\tOuter");
             return (find_new_node, false);
-        } else if after == current {
+        } else if after == prev {
             debug!("Filled\tBREAK\tInner");
             break;
         }
-        current = after;
     }
     ds.encoded_reads.retain(|r| !r.nodes.is_empty());
     (find_new_node, true)

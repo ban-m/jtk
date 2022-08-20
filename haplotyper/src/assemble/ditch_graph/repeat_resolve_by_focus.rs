@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-
 type NodeWithTraverseInfo = (usize, usize, usize, NodeIndex, Position);
-type NodeIndexWithPosition = (NodeIndex, Position);
 // TODO: Tune this parameter.
 const ERROR_PROB: f64 = 0.1;
+
 use super::super::AssembleConfig;
 use super::DitchGraph;
 use super::DitchNode;
+use super::GraphBoundary;
+use super::GraphNode;
 use super::Node;
 use super::NodeIndex;
 use super::Position;
@@ -26,7 +27,7 @@ struct Focus {
     // Log Likelihood ratio between the alt hypothesis/null hypothesis.
     log_likelihood_ratio: f64,
     counts: Vec<usize>,
-    path: Vec<NodeIndexWithPosition>,
+    path: GraphBoundary,
 }
 
 impl std::fmt::Display for Focus {
@@ -63,7 +64,7 @@ impl Focus {
         dist: usize,
         lk: f64,
         counts: Vec<usize>,
-        path: Vec<NodeIndexWithPosition>,
+        path: GraphBoundary,
     ) -> Self {
         Self {
             from,
@@ -321,28 +322,72 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 Some(res) => res,
                 None => continue,
             };
-            checked.extend(diplo_path.iter().map(|x| x.0));
             if head_childs.len() != 2 || tail_childs.len() != 2 || head_childs == tail_childs {
                 continue;
             }
-            // debug!("BYPASS\t{head_childs:?}\t{tail_childs:?}");
-            if let Some(bypass) =
-                self.examine_bypass(&head_childs, &diplo_path, &tail_childs, reads, config)
-            {
-                bypasses.push(bypass);
+            checked.extend(diplo_path.iter().map(|x| x.0));
+            let units: HashSet<_> = diplo_path
+                .iter()
+                .filter_map(|&(idx, _)| self.node(idx))
+                .map(|n| n.node)
+                .collect();
+            let reads: Vec<_> = reads
+                .iter()
+                .filter(|r| r.nodes.iter().any(|n| units.contains(&(n.unit, n.cluster))))
+                .copied()
+                .collect();
+            const TAKE_VAR_LIMIT: usize = 3;
+            let head_cands = self.proceed_path(&head_childs, TAKE_VAR_LIMIT);
+            let tail_cands = self.proceed_path(&tail_childs, TAKE_VAR_LIMIT);
+            'outer: for head_cand in head_cands.iter() {
+                for tail_cand in tail_cands.iter() {
+                    let bypass =
+                        self.examine_bypass(head_cand, &diplo_path, tail_cand, &reads, config);
+                    if let Some(bypass) = bypass {
+                        bypasses.push(bypass);
+                        break 'outer;
+                    }
+                }
             }
+            // if let Some(bypass) =
+            //     self.examine_bypass(&head_childs, &diplo_path, &tail_childs, &reads, config)
+            // {
+            //     bypasses.push(bypass);
+            // }
         }
         bypasses
+    }
+    fn proceed_path(&self, boundary: &GraphBoundary, limit: usize) -> Vec<GraphBoundary> {
+        let mut boundaries = vec![boundary.clone()];
+        let mut counts = 0;
+        let mut current: GraphBoundary = boundary.clone();
+        while counts < limit {
+            current = current
+                .iter()
+                .filter_map(|&(idx, pos)| {
+                    let edges = self.edges_from(idx, !pos);
+                    (edges.len() == 1).then(|| {
+                        let edge = &edges[0];
+                        (edge.to, edge.to_position)
+                    })
+                })
+                .collect();
+            if current.len() != 2 {
+                break;
+            }
+            let is_same = true;
+            if !is_same {
+                counts += 1;
+                boundaries.push(current.clone());
+            }
+        }
+        boundaries
     }
     // From the index, find head and tail children. The childrens are sorted.
     fn traverse_diplo_path(
         &self,
         index: NodeIndex,
-    ) -> Option<(
-        Vec<NodeIndexWithPosition>,
-        Vec<NodeIndexWithPosition>,
-        Vec<NodeIndexWithPosition>,
-    )> {
+    ) -> Option<(GraphBoundary, GraphBoundary, GraphBoundary)> {
         // First, go up. The `Position::Tail` is not a bug.
         let (_, mut head_dests) = self.simple_path_and_dest(index, Position::Tail);
         head_dests.sort();
@@ -362,9 +407,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
     fn examine_bypass(
         &self,
-        heads: &[NodeIndexWithPosition],
-        path: &[NodeIndexWithPosition],
-        tails: &[NodeIndexWithPosition],
+        heads: &GraphBoundary,
+        path: &GraphBoundary,
+        tails: &GraphBoundary,
         reads: &[&EncodedRead],
         config: &AssembleConfig,
     ) -> Option<Focus> {
@@ -400,8 +445,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
     fn count_pairs(
         &self,
-        heads: &[NodeIndexWithPosition],
-        tails: &[NodeIndexWithPosition],
+        heads: &GraphBoundary,
+        tails: &GraphBoundary,
         reads: &[&EncodedRead],
     ) -> [usize; 4] {
         let heads: Vec<_> = heads
@@ -438,7 +483,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     fn split_node_info(
         &self,
         nodes: &[NodeWithTraverseInfo],
-    ) -> (Vec<usize>, Vec<&DitchNode>, Vec<NodeIndexWithPosition>) {
+    ) -> (Vec<usize>, Vec<&DitchNode>, GraphBoundary) {
         let (mut occs, mut raw_nodes, mut node_indices) = (vec![], vec![], vec![]);
         for (count, _, _, index, pos) in nodes.iter() {
             let raw_node = self.node(*index).unwrap();
@@ -451,7 +496,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         (occs, raw_nodes, node_indices)
     }
 
-    fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, NodeIndexWithPosition)> {
+    fn max_lk_node(&self, nodes: &[NodeWithTraverseInfo]) -> Option<(f64, GraphNode)> {
         let (occs, raw_nodes, node_indices) = self.split_node_info(nodes);
         if occs.len() < 2 {
             return None;
@@ -514,7 +559,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         node_counts_at
     }
-    fn next_nodes(&self, nodes: &[NodeWithTraverseInfo]) -> Vec<NodeIndexWithPosition> {
+    fn next_nodes(&self, nodes: &[NodeWithTraverseInfo]) -> GraphBoundary {
         let mut found_nodes: Vec<_> = vec![];
         for &(_, _, _, index, pos) in nodes {
             let edges = self.edges_from(index, !pos).into_iter();
@@ -573,8 +618,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     fn trackback(
         indices_and_parents: &[Vec<NodeWithTraverseInfo>],
         mut dist: usize,
-        target: NodeIndexWithPosition,
-    ) -> Vec<NodeIndexWithPosition> {
+        target: GraphNode,
+    ) -> GraphBoundary {
         let mut backpath = vec![];
         let (mut target, _) = indices_and_parents[dist]
             .iter()
@@ -650,7 +695,7 @@ fn lk_pairs(len: usize) -> (f64, f64) {
     (correct_prob.ln(), error_prob.ln())
 }
 
-fn to_btree_map(nodes: &[NodeIndexWithPosition]) -> BTreeMap<NodeIndexWithPosition, usize> {
+fn to_btree_map(nodes: &GraphBoundary) -> BTreeMap<GraphNode, usize> {
     nodes.iter().enumerate().map(|(i, &n)| (n, i)).collect()
 }
 

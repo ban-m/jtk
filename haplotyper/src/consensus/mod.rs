@@ -132,7 +132,7 @@ fn log_identity(sid: &str, alignments: &[Alignment]) {
             let aln_len = aln.ops.len();
             mat += match_num;
             len += aln_len;
-            assert!(len < 2 * mat);
+            // assert!(len < 2 * mat, "{},{}", len, mat);
         }
         log::debug!("ALN\t{sid}\t{mat}\t{len}\t{}", mat as f64 / len as f64);
     }

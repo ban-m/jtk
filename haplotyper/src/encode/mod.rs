@@ -11,14 +11,16 @@ pub const MARGIN: usize = 50;
 // unit is correctly globally aligned.
 const ALLOWED_END_GAP: usize = 25;
 pub trait Encode {
-    fn encode(&mut self, threads: usize, sim_thr: f64);
+    fn encode(&mut self, threads: usize, sim_thr: f64, sd_of_error: f64);
 }
 
 impl Encode for definitions::DataSet {
-    fn encode(&mut self, threads: usize, sim_thr: f64) {
+    fn encode(&mut self, threads: usize, sim_thr: f64, sd_of_error: f64) {
         debug!("ENCODE\tErrorRate\t{sim_thr}");
         encode_by_mm2(self, threads, sim_thr).unwrap();
-        deletion_fill::correct_unit_deletion(self, sim_thr);
+        let config =
+            deletion_fill::CorrectDeletionConfig::new(false, Some(sim_thr), Some(sd_of_error));
+        deletion_fill::correct_unit_deletion(self, &config);
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(is_uppercase));
         if log_enabled!(log::Level::Debug) {

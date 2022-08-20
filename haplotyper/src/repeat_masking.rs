@@ -37,11 +37,6 @@ impl RepeatAnnot {
             *counts.entry(kmer).or_default() += 1;
         }
         let rep_kmers: u32 = counts.values().filter(|&&count| 1 < count).sum();
-        // let rep_kmers = seq
-        //     .windows(self.k)
-        //     .map(to_idx)
-        //     .filter(|x| self.kmers.contains(x))
-        //     .count();
         let kmers = seq.len().saturating_sub(self.k) + 1;
         rep_kmers as f64 / kmers as f64
     }

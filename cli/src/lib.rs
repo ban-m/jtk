@@ -96,10 +96,12 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     let de = format!("{file_stem}.draft2.gfa");
     let dense_encode_config = DenseEncodingConfig::new(compress_contig, Some(&de));
     let correction_config = CorrectionConfig::default();
+    use haplotyper::determine_units::STDDEV_OR_ERROR;
     let assemble_config =
         AssembleConfig::new(polish_window_size, to_polish, true, min_span, min_llr, true);
-    let correct_deletion_config = CorrectDeletionConfig::new(false, None);
-    let correct_deletion_config_recluster = CorrectDeletionConfig::new(true, None);
+    let correct_deletion_config = CorrectDeletionConfig::new(false, None, Some(STDDEV_OR_ERROR));
+    let correct_deletion_config_recluster =
+        CorrectDeletionConfig::new(true, None, Some(STDDEV_OR_ERROR));
     let squish_config = SquishConfig::new(supress_frac, required_count);
     // Pipeline.
     let mut ds = match resume && matches!(std::fs::try_exists(&entry), Ok(true)) {

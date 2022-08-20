@@ -18,7 +18,7 @@ take_num = 2500
 ### If true, consensus generate high quality consensus.
 to_polish = true
 ### Discard units with occurence more than or equal to [upper].
-upper = 300
+upper = 400
 ### Discard units with occurence less than or equal to [lower].
 lower = 4
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
@@ -33,7 +33,7 @@ kmersize = 12
 ### Upper [top_freq] k-mers would be masked as repeats.
 top_freq = 0.001
 ### Purge chunks having more than [purge_copy_num] phases.
-purge_copy_num = 7
+purge_copy_num = 8
 ### # of reads required to span homozygous region.
 ### Lowering this value would produce more "phased" assembly.
 ### But they would more likely to switching errors.

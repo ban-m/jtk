@@ -484,6 +484,49 @@ fn subcommand_encode_densely() -> Command<'static> {
         )
 }
 
+fn subcommand_squish() -> Command<'static> {
+    Command::new("squish")
+        .version("0.1")
+        .author("BanshoMasutani")
+        .about("Squish erroneous clusters")
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .multiple_occurrences(true)
+                .help("Debug mode"),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .required(false)
+                .value_name("THREADS")
+                .help("Number of Threads")
+                .default_value("1")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("frac")
+                .short('f')
+                .long("frac")
+                .required(false)
+                .value_name("FRAC")
+                .help("lower [FRAC] of the clusters with ARI would be compressed")
+                .default_value("0.01")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("count")
+                .short('c')
+                .long("count")
+                .required(false)
+                .value_name("COUNT")
+                .help("Min req coverage to compute ARI.")
+                .default_value("10")
+                .takes_value(true),
+        )
+}
+
 fn subcommand_assemble() -> Command<'static> {
     Command::new("assemble")
         .version("0.1")
@@ -754,7 +797,8 @@ fn encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
     use haplotyper::encode::Encode;
-    dataset.encode(threads, dataset.read_type.sim_thr())
+    let rt = dataset.read_type;
+    dataset.encode(threads, rt.sim_thr(), rt.sd_of_error())
 }
 
 fn polish_encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
@@ -820,7 +864,8 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::determine_units::TAKE_THR;
     let sim_thr = calc_sim_thr(dataset, TAKE_THR);
     use haplotyper::encode::deletion_fill::*;
-    let config = CorrectDeletionConfig::new(to_recal, Some(sim_thr));
+    let rt = dataset.read_type;
+    let config = CorrectDeletionConfig::new(to_recal, Some(sim_thr), Some(rt.sd_of_error()));
     debug!("SIMTHR\t{sim_thr}");
     dataset.correct_deletion(&config);
 }
@@ -852,6 +897,21 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let file = matches.value_of("output");
     let config = DenseEncodingConfig::new(length, file);
     dataset.dense_encoding_dev(&config);
+}
+fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+    debug!("START\tEncode densely");
+    set_threads(matches);
+    let frac: f64 = matches
+        .value_of("frac")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let count: usize = matches
+        .value_of("count")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    use haplotyper::{SquishConfig, SquishErroneousClusters};
+    let config = SquishConfig::new(frac, count);
+    dataset.squish_erroneous_clusters(&config);
 }
 
 fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
@@ -945,6 +1005,7 @@ fn main() -> std::io::Result<()> {
         .subcommand(subcommand_assemble())
         .subcommand(subcommand_pick_components())
         .subcommand(subcommand_mask_repeats())
+        .subcommand(subcommand_squish())
         .subcommand(subcommand_polish())
         .subcommand(subcommand_pipeline())
         .get_matches();
@@ -989,6 +1050,7 @@ fn main() -> std::io::Result<()> {
         Some(("assemble", sub_m)) => assembly(sub_m, ds).unwrap(),
         Some(("extract", sub_m)) => extract(sub_m, ds).unwrap(),
         Some(("stats", sub_m)) => stats(sub_m, ds).unwrap(),
+        Some(("squish", sub_m)) => squish(sub_m, ds),
         _ => unreachable!(),
     };
     flush_file(ds)

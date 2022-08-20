@@ -22,6 +22,7 @@ pub struct DetermineUnitConfig {
     pub lower_count: usize,
 }
 
+pub const STDDEV_OR_ERROR: f64 = 0.01;
 const FIRST_RELAX: f64 = 2f64;
 
 pub const TAKE_THR: f64 = 0.999;
@@ -83,7 +84,7 @@ impl DetermineUnit for definitions::DataSet {
         let mut sim_thr = self.read_type.sim_thr();
         {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
-            self.encode(config.threads, FIRST_RELAX * sim_thr);
+            self.encode(config.threads, FIRST_RELAX * sim_thr, STDDEV_OR_ERROR);
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);
@@ -95,14 +96,18 @@ impl DetermineUnit for definitions::DataSet {
         {
             use crate::repeat_masking::RepeatMask;
             let repetitive_kmer = self.get_repetitive_kmer();
-            self.encode(config.threads, sim_thr);
+            self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
-            // TODO: Faster this region...!
+            let fill_config = crate::encode::deletion_fill::CorrectDeletionConfig::new(
+                false,
+                Some(sim_thr),
+                Some(STDDEV_OR_ERROR),
+            );
             for _ in 0..10 {
                 let new_unit = fill_sparse_region_dev(self, &repetitive_kmer, config)
                     + fill_tips_dev(self, &repetitive_kmer, config);
-                crate::encode::deletion_fill::correct_unit_deletion(self, sim_thr);
+                crate::encode::deletion_fill::correct_unit_deletion(self, &fill_config);
                 if new_unit < MIN_REQ_NEW_UNIT {
                     break;
                 }
@@ -127,7 +132,7 @@ impl DetermineUnit for definitions::DataSet {
             encode_by_mm2(self, config.threads, sim_thr).unwrap();
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
-            self.encode(config.threads, sim_thr);
+            self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             remove_frequent_units(self, config.upper_count);
@@ -143,7 +148,7 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
         {
-            self.encode(config.threads, sim_thr);
+            self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);

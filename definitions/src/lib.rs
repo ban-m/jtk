@@ -140,6 +140,14 @@ impl ReadType {
             ReadType::ONT => ONT_SIM_THR,
         }
     }
+    pub fn sd_of_error(&self) -> f64 {
+        match *self {
+            ReadType::CCS => 0.005,
+            ReadType::CLR => 0.01,
+            ReadType::ONT => 0.01,
+            ReadType::None => 0.01,
+        }
+    }
     pub fn band_width(&self, len: usize) -> usize {
         let len = len as f64
             * match *self {
