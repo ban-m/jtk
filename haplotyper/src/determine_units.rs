@@ -99,6 +99,7 @@ impl DetermineUnit for definitions::DataSet {
             self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
+
             let fill_config = crate::encode::deletion_fill::CorrectDeletionConfig::new(
                 false,
                 Some(sim_thr),
@@ -132,7 +133,7 @@ impl DetermineUnit for definitions::DataSet {
             encode_by_mm2(self, config.threads, sim_thr).unwrap();
             remove_frequent_units(self, config.upper_count);
             filter_unit_by_ovlp(self, config);
-            self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
+            self.encode(config.threads, sim_thr, self.read_type.sd_of_error());
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             remove_frequent_units(self, config.upper_count);
@@ -148,7 +149,7 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
         {
-            self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
+            self.encode(config.threads, sim_thr, self.read_type.sd_of_error());
             debug!("ERRORRATE\t{}", self.error_rate());
             remove_frequent_units(self, config.upper_count);
             dump_histogram(self);

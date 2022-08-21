@@ -215,6 +215,12 @@ fn subcommand_encode() -> Command<'static> {
                 .takes_value(true)
                 .default_value("1"),
         )
+        .arg(
+            Arg::new("sim_thr")
+                .long("sim_thr")
+                .help("similarity threshold")
+                .takes_value(true),
+        )
 }
 
 fn subcommand_polish_encoding() -> Command<'static> {
@@ -798,7 +804,11 @@ fn encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .unwrap();
     use haplotyper::encode::Encode;
     let rt = dataset.read_type;
-    dataset.encode(threads, rt.sim_thr(), rt.sd_of_error())
+    let sim_thr = match matches.value_of("sim_thr").and_then(|e| e.parse().ok()) {
+        Some(res) => res,
+        None => rt.sim_thr(),
+    };
+    dataset.encode(threads, sim_thr, rt.sd_of_error())
 }
 
 fn polish_encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {

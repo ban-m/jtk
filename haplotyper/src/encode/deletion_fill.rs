@@ -137,208 +137,205 @@ pub fn correct_unit_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) -
     let fallback = config.sim_thr.unwrap_or_else(|| {
         crate::determine_units::calc_sim_thr(ds, crate::determine_units::TAKE_THR)
     });
+    use crate::estimate_error_rate::estimate_error_rate;
+    let errors = estimate_error_rate(ds, fallback);
+    let standard_dev = config.stddev_of_error.unwrap_or(errors.median_of_sqrt_err);
     for t in 0..OUTER_LOOP {
         ds.encoded_reads.retain(|r| !r.nodes.is_empty());
-        remove_weak_edges(ds);
-        use crate::estimate_error_rate::estimate_error_rate;
-        let errors = estimate_error_rate(ds, fallback);
-        let standard_dev = config.stddev_of_error.unwrap_or(errors.median_of_sqrt_err);
         debug!("ErrorRateSTDDev\t{}\t{}", t, standard_dev);
         let (new_nodes, is_updated) = filling_until(ds, &consensi, &errors, standard_dev);
         find_new_node.extend(new_nodes);
         if !is_updated {
             break;
         }
+        // remove_weak_edges(ds);
     }
     find_new_node
 }
 
-fn remove_weak_edges(ds: &mut DataSet) {
-    let edge_counts = {
-        let mut counts: HashMap<_, u32> = HashMap::new();
-        for read in ds.encoded_reads.iter() {
-            assert_eq!(read.nodes.len(), read.edges.len() + 1);
-            for (e, w) in read.edges.iter().zip(read.nodes.windows(2)) {
-                assert_eq!(e.from, w[0].unit);
-                assert_eq!(e.to, w[1].unit);
-                let entry1 = (w[0].unit, w[0].is_forward, w[1].unit, w[1].is_forward);
-                let entry2 = (w[1].unit, !w[1].is_forward, w[0].unit, !w[0].is_forward);
-                *counts.entry(entry1).or_default() += 1;
-                *counts.entry(entry2).or_default() += 1;
-            }
-        }
-        counts
-    };
-    let (thr, penalty) = {
-        let mut counts: Vec<_> = edge_counts.values().copied().collect();
-        let index = counts.len() / 2;
-        let median = *counts.select_nth_unstable(index).1;
-        debug!("RMEDGE\tMedian\t{median}");
-        ((median / 8).max(2), (median / 2).max(1))
-    };
-    for read in ds.encoded_reads.iter().filter(|r| r.nodes.len() > 2) {
-        for idx in 1..read.nodes.len() - 1 {
-            let (unit, forward) = (read.nodes[idx].unit, read.nodes[idx].is_forward);
-            let back = &read.nodes[idx - 1];
-            let back = edge_counts[&(back.unit, back.is_forward, unit, forward)];
-            let front = &read.nodes[idx + 1];
-            let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
-            assert!(0 < back + front);
-        }
-    }
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    let deleted_nodes: usize = ds
-        .encoded_reads
-        .iter_mut()
-        .map(|read| {
-            let len = read.nodes.len();
-            match len {
-                0..=1 => 0,
-                2 => {
-                    let (f, t) = (&read.nodes[0], &read.nodes[1]);
-                    let (fmat, flen) = f.aln_info(units[&f.unit]);
-                    let (tmat, tlen) = t.aln_info(units[&t.unit]);
-                    let query = (f.unit, f.is_forward, t.unit, t.is_forward);
-                    if edge_counts[&query] < thr {
-                        let erroneous = (tmat * flen < fmat * tlen) as usize;
-                        let unit = read.nodes[erroneous].unit;
-                        let count = edge_counts[&query];
-                        trace!("RMEDGE\tRemoved\t{unit}\t{len}\t{count}");
-                        read.remove(erroneous);
-                        1
-                    } else {
-                        0
-                    }
-                }
-                _ => {
-                    let weak_nodes = check_weak_edges(read, penalty, &edge_counts);
-                    for &idx in weak_nodes.iter() {
-                        let (unit, forward) = (read.nodes[idx].unit, read.nodes[idx].is_forward);
-                        let back = &read.nodes[idx - 1];
-                        let back = edge_counts[&(back.unit, back.is_forward, unit, forward)];
-                        let front = &read.nodes[idx + 1];
-                        let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
-                        let count = back + front;
-                        trace!("RMEDGE\tRemoved\t{unit}\t{len}\t{count}",);
-                    }
-                    for &idx in weak_nodes.iter() {
-                        read.remove(idx);
-                    }
-                    let mut removed = weak_nodes.len();
-                    // Remove the edge nodes.
-                    removed += try_remove_head(read, thr, &edge_counts);
-                    removed += try_remove_tail(read, thr, &edge_counts);
-                    removed
-                }
-            }
-        })
-        .sum();
-    let present: HashSet<_> = ds
-        .encoded_reads
-        .iter()
-        .flat_map(|r| r.nodes.iter())
-        .map(|n| n.unit)
-        .collect();
-    ds.selected_chunks.retain(|c| present.contains(&c.id));
-    debug!("RMEDGE\tTotal\t{deleted_nodes}");
-}
+// fn remove_weak_edges(ds: &mut DataSet) {
+//     let edge_counts = {
+//         let mut counts: HashMap<_, u32> = HashMap::new();
+//         for read in ds.encoded_reads.iter() {
+//             assert_eq!(read.nodes.len(), read.edges.len() + 1);
+//             for (e, w) in read.edges.iter().zip(read.nodes.windows(2)) {
+//                 assert_eq!(e.from, w[0].unit);
+//                 assert_eq!(e.to, w[1].unit);
+//                 let entry1 = (w[0].unit, w[0].is_forward, w[1].unit, w[1].is_forward);
+//                 let entry2 = (w[1].unit, !w[1].is_forward, w[0].unit, !w[0].is_forward);
+//                 *counts.entry(entry1).or_default() += 1;
+//                 *counts.entry(entry2).or_default() += 1;
+//             }
+//         }
+//         counts
+//     };
+//     let (thr, penalty) = {
+//         let mut counts: Vec<_> = edge_counts.values().copied().collect();
+//         let index = counts.len() / 2;
+//         let median = *counts.select_nth_unstable(index).1;
+//         debug!("RMEDGE\tMedian\t{median}");
+//         ((median / 8).max(2), (median / 2).max(1))
+//     };
+//     for read in ds.encoded_reads.iter().filter(|r| r.nodes.len() > 2) {
+//         for idx in 1..read.nodes.len() - 1 {
+//             let (unit, forward) = (read.nodes[idx].unit, read.nodes[idx].is_forward);
+//             let back = &read.nodes[idx - 1];
+//             let back = edge_counts[&(back.unit, back.is_forward, unit, forward)];
+//             let front = &read.nodes[idx + 1];
+//             let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
+//             assert!(0 < back + front);
+//         }
+//     }
+//     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+//     let deleted_nodes: usize = ds
+//         .encoded_reads
+//         .iter_mut()
+//         .map(|read| {
+//             let len = read.nodes.len();
+//             match len {
+//                 0..=1 => 0,
+//                 2 => {
+//                     let (f, t) = (&read.nodes[0], &read.nodes[1]);
+//                     let (fmat, flen) = f.aln_info(units[&f.unit]);
+//                     let (tmat, tlen) = t.aln_info(units[&t.unit]);
+//                     let query = (f.unit, f.is_forward, t.unit, t.is_forward);
+//                     if edge_counts[&query] < thr {
+//                         let erroneous = (tmat * flen < fmat * tlen) as usize;
+//                         let unit = read.nodes[erroneous].unit;
+//                         let count = edge_counts[&query];
+//                         trace!("RMEDGE\tRemoved\t{unit}\t{len}\t{count}");
+//                         read.remove(erroneous);
+//                         1
+//                     } else {
+//                         0
+//                     }
+//                 }
+//                 _ => {
+//                     let weak_nodes = check_weak_edges(read, penalty, &edge_counts);
+//                     for &idx in weak_nodes.iter() {
+//                         let (unit, forward) = (read.nodes[idx].unit, read.nodes[idx].is_forward);
+//                         let back = &read.nodes[idx - 1];
+//                         let back = edge_counts[&(back.unit, back.is_forward, unit, forward)];
+//                         let front = &read.nodes[idx + 1];
+//                         let front = edge_counts[&(unit, forward, front.unit, front.is_forward)];
+//                         let count = back + front;
+//                         trace!("RMEDGE\tRemoved\t{unit}\t{len}\t{count}",);
+//                     }
+//                     for &idx in weak_nodes.iter() {
+//                         read.remove(idx);
+//                     }
+//                     let mut removed = weak_nodes.len();
+//                     // Remove the edge nodes.
+//                     removed += try_remove_head(read, thr, &edge_counts).is_some() as usize;
+//                     removed += try_remove_tail(read, thr, &edge_counts).is_some() as usize;
+//                     removed
+//                 }
+//             }
+//         })
+//         .sum();
+//     let present: HashSet<_> = ds
+//         .encoded_reads
+//         .iter()
+//         .flat_map(|r| r.nodes.iter())
+//         .map(|n| n.unit)
+//         .collect();
+//     ds.selected_chunks.retain(|c| present.contains(&c.id));
+//     debug!("RMEDGE\tTotal\t{deleted_nodes}");
+// }
 
-fn check_weak_edges(
-    read: &EncodedRead,
-    penalty: u32,
-    edge_counts: &HashMap<(u64, bool, u64, bool), u32>,
-) -> Vec<usize> {
-    assert!(2 < read.nodes.len(), "{}", read.nodes.len());
-    let nodes = read.nodes.iter().enumerate();
-    let edges: Vec<Vec<_>> = nodes
-        .map(|(i, to)| {
-            let nodes = read.nodes.iter().enumerate();
-            nodes
-                .take(i)
-                .filter_map(|(j, from)| {
-                    let query = (from.unit, from.is_forward, to.unit, to.is_forward);
-                    edge_counts.get(&query).map(|&c| (j, c))
-                })
-                .collect()
-        })
-        .collect();
-    for eds in edges.iter().skip(1) {
-        assert!(!eds.is_empty());
-    }
-    max_chain(read.nodes.len(), &edges, penalty)
-}
+// fn check_weak_edges(
+//     read: &EncodedRead,
+//     penalty: u32,
+//     edge_counts: &HashMap<(u64, bool, u64, bool), u32>,
+// ) -> Vec<usize> {
+//     assert!(2 < read.nodes.len(), "{}", read.nodes.len());
+//     let nodes = read.nodes.iter().enumerate();
+//     let edges: Vec<Vec<_>> = nodes
+//         .map(|(i, to)| {
+//             let nodes = read.nodes.iter().enumerate();
+//             nodes
+//                 .take(i)
+//                 .filter_map(|(j, from)| {
+//                     let query = (from.unit, from.is_forward, to.unit, to.is_forward);
+//                     edge_counts.get(&query).map(|&c| (j, c))
+//                 })
+//                 .collect()
+//         })
+//         .collect();
+//     for eds in edges.iter().skip(1) {
+//         assert!(!eds.is_empty());
+//     }
+//     max_chain(read.nodes.len(), &edges, penalty)
+// }
 
-// Input:Number of nodes, edges between nodes, deletion penalty.
-// Output: The indices of the nodes dropped from the input, in reverse order.
-// The output would be maximize the penalty of
-// retained.windows(2).map(weight).sum() + removed.len() * penalty.
-fn max_chain(len: usize, edges: &[Vec<(usize, u32)>], penalty: u32) -> Vec<usize> {
-    let penalty = -(penalty as i32);
-    assert!(2 < len);
-    let mut max_when_in: Vec<(i32, usize)> = Vec::with_capacity(len);
-    max_when_in.push((0, 0));
-    for (i, edges) in edges.iter().enumerate().skip(1) {
-        let next = edges
-            .iter()
-            .map(|&(from, count)| {
-                let total = (i - from) as i32 * penalty + max_when_in[from].0 + count as i32;
-                (total, from)
-            })
-            .max_by_key(|x| x.0)
-            .unwrap();
-        max_when_in.push(next);
-    }
-    let mut is_taken = vec![false; len];
-    let mut pos = len - 1;
-    while 0 < pos {
-        is_taken[pos] = true;
-        pos = max_when_in[pos].1;
-    }
-    is_taken[pos] = true;
-    is_taken
-        .iter()
-        .enumerate()
-        .filter_map(|(i, is_taken)| (!is_taken).then(|| i))
-        .rev()
-        .collect()
-}
+// // Input:Number of nodes, edges between nodes, deletion penalty.
+// // Output: The indices of the nodes dropped from the input, in reverse order.
+// // The output would be maximize the penalty of
+// // retained.windows(2).map(weight).sum() + removed.len() * penalty.
+// fn max_chain(len: usize, edges: &[Vec<(usize, u32)>], penalty: u32) -> Vec<usize> {
+//     let penalty = -(penalty as i32);
+//     assert!(2 < len);
+//     let mut max_when_in: Vec<(i32, usize)> = Vec::with_capacity(len);
+//     max_when_in.push((0, 0));
+//     for (i, edges) in edges.iter().enumerate().skip(1) {
+//         let next = edges
+//             .iter()
+//             .map(|&(from, count)| {
+//                 let total = (i - from) as i32 * penalty + max_when_in[from].0 + count as i32;
+//                 (total, from)
+//             })
+//             .max_by_key(|x| x.0)
+//             .unwrap();
+//         max_when_in.push(next);
+//     }
+//     let mut is_taken = vec![false; len];
+//     let mut pos = len - 1;
+//     while 0 < pos {
+//         is_taken[pos] = true;
+//         pos = max_when_in[pos].1;
+//     }
+//     is_taken[pos] = true;
+//     is_taken
+//         .iter()
+//         .enumerate()
+//         .filter_map(|(i, is_taken)| (!is_taken).then(|| i))
+//         .rev()
+//         .collect()
+// }
 
-fn try_remove_head(
-    read: &mut EncodedRead,
-    thr: u32,
-    edge_counts: &HashMap<(u64, bool, u64, bool), u32>,
-) -> usize {
-    let f = &read.nodes[0];
-    let t = &read.nodes[1];
-    let query = (f.unit, f.is_forward, t.unit, t.is_forward);
-    let count = edge_counts[&query];
-    if count < thr {
-        trace!("RMEDGE\tRemoved\t{}\tH\t{count}", read.nodes[0].unit);
-        read.remove(0);
-        1
-    } else {
-        0
-    }
-}
+// fn try_remove_head(
+//     read: &mut EncodedRead,
+//     thr: u32,
+//     edge_counts: &HashMap<(u64, bool, u64, bool), u32>,
+// ) -> Option<()> {
+//     let f = &read.nodes.first()?;
+//     let t = &read.nodes.get(1)?;
+//     let query = (f.unit, f.is_forward, t.unit, t.is_forward);
+//     let count = edge_counts[&query];
+//     (count < thr).then(|| {
+//         trace!("RMEDGE\tRemoved\t{}\tH\t{count}", read.nodes[0].unit);
+//         read.remove(0);
+//     })
+// }
 
-fn try_remove_tail(
-    read: &mut EncodedRead,
-    thr: u32,
-    edge_counts: &HashMap<(u64, bool, u64, bool), u32>,
-) -> usize {
-    let len = read.nodes.len();
-    let f = &read.nodes[len - 2];
-    let t = &read.nodes[len - 1];
-    let query = (f.unit, f.is_forward, t.unit, t.is_forward);
-    let count = edge_counts[&query];
-    if count < thr {
-        trace!("RMEDGE\tRemoved\t{}\tT\t{count}", read.nodes[len - 1].unit);
-        read.remove(len - 1);
-        1
-    } else {
-        0
-    }
-}
+// fn try_remove_tail(
+//     read: &mut EncodedRead,
+//     thr: u32,
+//     edge_counts: &HashMap<(u64, bool, u64, bool), u32>,
+// ) -> Option<()> {
+//     let len = read.nodes.len();
+//     if len < 2 {
+//         return None;
+//     }
+//     let f = &read.nodes.get(len - 2)?;
+//     let t = &read.nodes.get(len - 1)?;
+//     let query = (f.unit, f.is_forward, t.unit, t.is_forward);
+//     let count = edge_counts[&query];
+//     (count < thr).then(|| {
+//         trace!("RMEDGE\tRemoved\t{}\tT\t{count}", read.nodes[len - 1].unit);
+//         read.remove(len - 1);
+//     })
+// }
 
 const INNER_LOOP: usize = 15;
 fn filling_until(
@@ -360,19 +357,19 @@ fn filling_until(
         assert_eq!(ds.encoded_reads.len(), failed_trials.len());
         assert_eq!(ds.encoded_reads.len(), is_updated.len());
         assert_eq!(ds.encoded_reads.len(), read_skeltons.len());
-        find_new_node.par_extend(
-            ds.encoded_reads
-                .par_iter_mut()
-                .zip(failed_trials.par_iter_mut())
-                .zip(is_updated.par_iter_mut())
-                .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
-                .flat_map(|((read, fails), is_updated)| {
-                    let seq = raw_seq[&read.id];
-                    let read = (read, seq, is_updated);
-                    let units = (&units, error_rates, consensi);
-                    correct_deletion_error(read, fails, units, stddev, &read_skeltons)
-                }),
-        );
+        let new_nodes = ds
+            .encoded_reads
+            .par_iter_mut()
+            .zip(failed_trials.par_iter_mut())
+            .zip(is_updated.par_iter_mut())
+            .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
+            .flat_map(|((read, fails), is_updated)| {
+                let seq = raw_seq[&read.id];
+                let read = (read, seq, is_updated);
+                let units = (&units, error_rates, consensi);
+                correct_deletion_error(read, fails, units, stddev, &read_skeltons)
+            });
+        find_new_node.par_extend(new_nodes);
         read_skeltons
             .iter_mut()
             .zip(ds.encoded_reads.iter())
@@ -479,7 +476,7 @@ fn correct_deletion_error(
             read.nodes.insert(idx + accum_inserts, node);
         }
     }
-    *is_changed |= remove_highly_erroneous(read, read_error, unitinfo, stddev);
+    // *is_changed |= remove_highly_erroneous(read, read_error, unitinfo, stddev);
     if *is_changed && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
@@ -493,23 +490,23 @@ fn correct_deletion_error(
     new_inserts
 }
 
-fn remove_highly_erroneous(
-    read: &mut EncodedRead,
-    read_error: f64,
-    (units, unit_error_rate, _): UnitInfo,
-    stddev: f64,
-) -> bool {
-    let orig_len = read.nodes.len();
-    read.nodes.retain(|node| {
-        let (_, aln, _) = node.recover(units[&node.unit]);
-        let diff = aln.iter().filter(|&&x| x != b'|').count();
-        let error_rate = diff as f64 / aln.len() as f64;
-        let expected = read_error + unit_error_rate.unit((node.unit, node.cluster));
-        let threshold = (expected + THR * stddev).max(0f64);
-        error_rate < threshold
-    });
-    read.nodes.len() != orig_len
-}
+// fn remove_highly_erroneous(
+//     read: &mut EncodedRead,
+//     read_error: f64,
+//     (units, unit_error_rate, _): UnitInfo,
+//     stddev: f64,
+// ) -> bool {
+//     let orig_len = read.nodes.len();
+//     read.nodes.retain(|node| {
+//         let (_, aln, _) = node.recover(units[&node.unit]);
+//         let diff = aln.iter().filter(|&&x| x != b'|').count();
+//         let error_rate = diff as f64 / aln.len() as f64;
+//         let expected = read_error + unit_error_rate.unit((node.unit, node.cluster));
+//         let threshold = (expected + THR * stddev).max(0f64);
+//         error_rate < threshold
+//     });
+//     read.nodes.len() != orig_len
+// }
 
 const THR: f64 = 9f64;
 fn try_encoding_head(
@@ -1348,26 +1345,26 @@ mod deletion_fill_test {
     //     let answer = vec![Op::Ins(1), Op::Del(1), Op::Match(2), Op::Del(1)];
     //     assert_eq!(ops, answer);
     // }
-    #[test]
-    fn max_chain_test() {
-        let penalty = 3;
-        let input = vec![vec![], vec![(0, 1)], vec![(0, 5), (1, 1)]];
-        let removed = max_chain(3, &input, penalty);
-        assert_eq!(removed, vec![1]);
-        let input = vec![vec![], vec![(0, 1)], vec![(0, 2), (1, 1)]];
-        let removed = max_chain(3, &input, penalty);
-        assert!(removed.is_empty());
-        let input = vec![vec![], vec![(0, 1)], vec![(1, 1)]];
-        let removed = max_chain(3, &input, penalty);
-        assert!(removed.is_empty());
-        let input = vec![
-            vec![],                          //0
-            vec![(0, 1)],                    // 1
-            vec![(0, 20), (1, 1)],           // 2
-            vec![(2, 0)],                    // 3
-            vec![(0, 100), (2, 90), (3, 0)], // 4
-        ];
-        let removed = max_chain(5, &input, penalty);
-        assert_eq!(removed, vec![3, 1]);
-    }
+    // #[test]
+    // fn max_chain_test() {
+    //     let penalty = 3;
+    //     let input = vec![vec![], vec![(0, 1)], vec![(0, 5), (1, 1)]];
+    //     let removed = max_chain(3, &input, penalty);
+    //     assert_eq!(removed, vec![1]);
+    //     let input = vec![vec![], vec![(0, 1)], vec![(0, 2), (1, 1)]];
+    //     let removed = max_chain(3, &input, penalty);
+    //     assert!(removed.is_empty());
+    //     let input = vec![vec![], vec![(0, 1)], vec![(1, 1)]];
+    //     let removed = max_chain(3, &input, penalty);
+    //     assert!(removed.is_empty());
+    //     let input = vec![
+    //         vec![],                          //0
+    //         vec![(0, 1)],                    // 1
+    //         vec![(0, 20), (1, 1)],           // 2
+    //         vec![(2, 0)],                    // 3
+    //         vec![(0, 100), (2, 90), (3, 0)], // 4
+    //     ];
+    //     let removed = max_chain(5, &input, penalty);
+    //     assert_eq!(removed, vec![3, 1]);
+    // }
 }

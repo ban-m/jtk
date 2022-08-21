@@ -1,7 +1,7 @@
 use definitions::DataSet;
 use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::*;
 pub mod deletion_fill;
 pub const MARGIN: usize = 50;
@@ -24,7 +24,6 @@ impl Encode for definitions::DataSet {
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(is_uppercase));
         if log_enabled!(log::Level::Debug) {
-            use std::collections::HashSet;
             let encoded: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();
             let no_aln_reads: Vec<_> = self
                 .raw_reads
