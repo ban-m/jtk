@@ -6,6 +6,7 @@ input_file = "input.fa"
 ### The sequencing platform. ONT, CCS, or CLR.
 read_type = "ONT"
 
+
 ## Recommended parameters. Please set them if you have (any) estimation.
 ### Output directory
 out_dir = "./"
@@ -24,6 +25,7 @@ lower = 4
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
 resume = false
 
+
 ## Tunable parameters. Sometimes tuning these parameters would improve the assembly.
 ### Please un-comment this parameter if you have a esimation of the coverage, 
 ### and the specified region is highly repetitive.
@@ -40,6 +42,7 @@ purge_copy_num = 8
 min_span = 2
 ### Verbose level. 2 is debug more, 3 is trace mode. I recommend to use 2.
 verbose = 2
+
 
 ## Parameters for reproducibility. Usually, you do not need to modify them.
 ### Seed for a pseudorandom number generator.
@@ -59,7 +62,7 @@ compress_contig = 15
 ### The size of the window in consensus
 polish_window_size = 2000
 ### Minimum required log likelihood ratio to span region. Should be positive!
-min_llr = 1.5
+min_llr = 1
 ### Filter lower [supress_frac] weak clusters.
 supress_frac = 0.01
 ### The minimum required spanning reads to compute the weakness of a cluster.

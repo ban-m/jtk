@@ -38,7 +38,9 @@ impl CorrectDeletion for DataSet {
         // If half of the coverage supports large deletion, remove them.
         const OCCUPY_FRACTION: f64 = 0.5;
         use crate::purge_diverged::*;
-        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION);
+        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION, false);
+        find_new_units.extend(self.purge_largeindel(&p_config));
+        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION, true);
         find_new_units.extend(self.purge_largeindel(&p_config));
         if config.re_clustering {
             // Log original assignments.
@@ -348,7 +350,11 @@ fn filling_until(
     let mut find_new_node = HashSet::new();
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
-    let mut is_updated = vec![true; ds.encoded_reads.len()];
+    let mut is_updated: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .map(|r| !r.nodes.is_empty())
+        .collect();
     let mut read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
     for i in 0..INNER_LOOP {
         let prev: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
@@ -952,7 +958,6 @@ fn pairwise_alignment_gotoh(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Ve
             state = if current_dist == dp[prev_pos] - 1 {
                 0
             } else {
-                //assert_eq!(current_dist, dp[prev_pos + 1]);
                 1
             };
             ops.push(Op::Ins(1));
@@ -962,7 +967,6 @@ fn pairwise_alignment_gotoh(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Ve
             state = if current_dist == dp[prev_pos] - 1 {
                 0
             } else {
-                // assert_eq!(current_dist, dp[prev_pos + 2]);
                 2
             };
             ops.push(Op::Del(1));

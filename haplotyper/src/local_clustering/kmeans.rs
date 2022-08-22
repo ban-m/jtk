@@ -186,7 +186,8 @@ fn cluster_filtered_variants<R: Rng>(
         let lk_gains = vec![vec![0f64; 1]; variants.len()];
         return (asn, lk_gains, 0f64, 1);
     }
-    let coverage_imp_thr = get_read_thr(variants.len() as f64 / copy_num as f64, 3f64);
+    let coverage_imp_thr = 0;
+    //    let coverage_imp_thr = get_read_thr(variants.len() as f64 / copy_num as f64, 3f64);
     let datasize = variants.len();
     let (mut assignments, mut max, mut max_k, mut read_lk_gains) =
         (vec![0; datasize], 0f64, 1, vec![0f64; datasize]);
@@ -210,12 +211,14 @@ fn cluster_filtered_variants<R: Rng>(
         let improved_reads = count_improved_reads(&new_lk_gains, &read_lk_gains, min_gain);
         let expected_gain_per_read =
             expected_gains(gains, variant_type, &prev_used_columns, &used_columns);
-        // +0.1 to avoid silly errors.
-        // let has_substitution =
-        //     find_substitution(&used_columns, &prev_used_columns, &variant_type).is_some();
         let expected_gain = expected_gain_per_read * datasize as f64 / copy_num as f64 + 0.1;
         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}\t{coverage_imp_thr}");
         if expected_gain < score - max && coverage_imp_thr < improved_reads {
+            let mut counts = vec![0; k];
+            for x in asn.iter() {
+                counts[*x] += 1;
+            }
+            trace!("COUNTS\t{counts:?}");
             assignments = asn;
             max = score;
             max_k = k;
@@ -273,7 +276,9 @@ fn expected_gains(
             true => gains.expected(homop, diff_type),
             false => 0.00001,
         })
-        .sum();
+        .max_by(|x, y| x.partial_cmp(y).unwrap())
+        .unwrap_or(0f64);
+    //        .sum();
     trace!("EXPTGAIN\t{expt_sum:.4}\t{used_columns:?}");
     (EXPT_GAIN_FACTOR * expt_sum).max(0.1)
 }
@@ -284,9 +289,9 @@ fn count_improved_reads(new_gains: &[f64], old_gains: &[f64], min_gain: f64) -> 
         .count()
 }
 
-fn get_read_thr(cov: f64, sigma: f64) -> usize {
-    (cov - sigma * cov.sqrt()).floor() as usize
-}
+// fn get_read_thr(cov: f64, sigma: f64) -> usize {
+//     (cov - sigma * cov.sqrt()).floor() as usize
+// }
 
 fn is_explainable_by_strandedness<I, R: Rng>(
     profiles: I,
@@ -415,8 +420,6 @@ fn get_read_lk_gains(
 // If we use a variant, we use that variant in almost all the reads.
 // TODO: Can we determine FRAC and IN_POS_RATIO from the data?
 // These values are critical.
-const POS_FRAC: f64 = 0.70;
-const IN_POS_RATIO: f64 = 3f64;
 
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
@@ -436,6 +439,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     let cluster_num = config.copy_num as usize;
     let coverage = config.coverage;
     let gains = config.gains;
+    trace!("\n{gains}");
     let pvalues = gains.pvalues(profiles.len());
     let homopolymer_length = homopolymer_length(template);
     let min_req: Vec<_> = (0..profiles[0].borrow().len())
@@ -676,12 +680,12 @@ fn mcmc_clustering<R: Rng>(
         .map(|_| {
             let mut assignments = crate::misc::kmeans(data, k, rng).1;
             let lk = mcmc_with_filter(data, &mut assignments, k, cov, rng);
+            // debug!("MCMC\t{lk:.2}");
             (assignments, lk)
         })
         .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .unwrap();
     let (used_columns, lk_gains) = get_read_lk_gains(data, &assignment, k);
-    // let read_lk: f64 = lk_gains.iter().sum();
     let mut counts = vec![0; k];
     for &a in assignment.iter() {
         counts[a] += 1;
@@ -822,7 +826,9 @@ fn get_lk(lks: &[Vec<(f64, usize)>], clusters: &[usize], _size_to_lk: &[f64]) ->
     }
     lk
 }
-
+const POS_FRAC: f64 = 0.70;
+// TODO: this is art.
+const IN_POS_RATIO: f64 = 2f64;
 fn get_used_columns(lks: &[Vec<(f64, usize)>], clusters: &[usize]) -> Vec<bool> {
     let mut to_uses = vec![false; lks[0].len()];
     for (lks, &size) in lks.iter().zip(clusters.iter()) {

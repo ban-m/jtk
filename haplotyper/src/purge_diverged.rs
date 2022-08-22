@@ -15,13 +15,15 @@ impl PurgeDivConfig {
 pub struct PurgeLargeDelConfig {
     indel_size: usize,
     occupy_fraction: f64,
+    compress: bool,
 }
 
 impl PurgeLargeDelConfig {
-    pub fn new(indel_size: usize, occupy_fraction: f64) -> Self {
+    pub fn new(indel_size: usize, occupy_fraction: f64, compress: bool) -> Self {
         Self {
             indel_size,
             occupy_fraction,
+            compress,
         }
     }
 }
@@ -62,6 +64,11 @@ const INS_WEIGHT: i64 = 0;
 const MATCH_WEIGHT: i64 = 1;
 fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) -> HashSet<u64> {
     let mut indel_size_distr: HashMap<(u64, u64), Vec<_>> = HashMap::new();
+    let copy_num: HashMap<_, _> = ds
+        .selected_chunks
+        .iter()
+        .map(|c| (c.id, c.copy_num))
+        .collect();
     for read in ds.encoded_reads.iter() {
         for (idx, node) in read.nodes.iter().enumerate() {
             let xs = node.cigar.iter().map(|&op| match op {
@@ -70,40 +77,21 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
                 definitions::Op::Ins(l) => l as i64 * INS_WEIGHT,
             });
             let del_size = crate::misc::max_region(xs) / DEL_WEIGHT;
-            indel_size_distr
-                .entry((node.unit, node.cluster))
-                .or_default()
-                .push((read.id, idx, del_size));
+            let key = match config.compress {
+                true => (node.unit, 0),
+                false => (node.unit, node.cluster),
+            };
+            let pointer = (read.id, idx, del_size);
+            indel_size_distr.entry(key).or_default().push(pointer);
         }
     }
-    let indel_size = config.indel_size;
     crate::misc::update_coverage(ds);
-    let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
-    indel_size_distr.retain(|(unit, cluster), distr| {
-        let dip_coverage = 2f64 * ds.coverage.unwrap();
-        let lower_thr = (dip_coverage / 2f64 * config.occupy_fraction).floor() as usize;
-        let upper_thr = (distr.len() as f64 - lower_thr as f64).max(0f64).ceil() as usize;
-        let num = distr
-            .iter()
-            .map(|x| x.2)
-            .filter(|&x| indel_size < x as usize)
-            .count();
-        if lower_thr < num {
-            let sum: i64 = distr
-                .iter()
-                .map(|x| x.2)
-                .filter(|&x| (accept_size as i64) < x)
-                .sum();
-            let mean = sum / num as i64;
-            let cov = distr.len();
-            let retain = (lower_thr..upper_thr).contains(&num);
-            debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\t{retain}");
-        }
-        if (lower_thr..upper_thr).contains(&num) {
-            distr.retain(|&(_, _, size)| accept_size < size as usize);
-            true
-        } else {
-            false
+    indel_size_distr.retain(|&(unit, cluster), distr| {
+        let copy_num = copy_num[&unit];
+        let hap_coverage = ds.coverage.unwrap();
+        match copy_num {
+            0 | 1 => filter_single_copy(distr, unit, cluster, hap_coverage, config),
+            _ => filter_multi_copy(distr, unit, cluster, hap_coverage, config),
         }
     });
     let mut read_bucket: HashMap<_, Vec<_>> = HashMap::new();
@@ -125,40 +113,102 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
         };
         for &(unit, cluster, idx) in bucket {
             let node = &read.nodes[idx];
-            assert_eq!((unit, cluster), (node.unit, node.cluster));
+            if config.compress {
+                assert_eq!(unit, node.unit);
+            } else {
+                assert_eq!((unit, cluster), (node.unit, node.cluster));
+            }
             read.remove(idx);
         }
     }
     indel_size_distr.keys().map(|x| x.0).collect()
 }
 
-// Purge node with very high error rate.
-pub fn purge_erroneous_nodes(ds: &mut DataSet, _config: &PurgeDivConfig) -> HashSet<u64> {
-    const SAFE_MARGIN: f64 = 5f64;
-    let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
-    use crate::estimate_error_rate::estimate_error_rate;
-    let errors = estimate_error_rate(ds, fallback);
-    let sigma_of_er = errors.median_of_sqrt_err;
-    debug!("PD\tPurgeErroneousNode\t{SAFE_MARGIN}\t{sigma_of_er}",);
-    let mut units_of_removed_nodes = HashSet::new();
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    for read in ds.encoded_reads.iter_mut() {
-        let read_error = errors.read(read.id);
-        read.nodes.retain(|node| {
-            let unit_error = errors.unit((node.unit, node.cluster));
-            let aln = node.recover(units[&node.unit]).1;
-            let errors = aln.iter().filter(|&&x| x != b'|').count();
-            let error = errors as f64 / aln.len() as f64;
-            let to_retain = error < read_error + unit_error + SAFE_MARGIN * sigma_of_er;
-            if !to_retain {
-                units_of_removed_nodes.insert(node.unit);
-            }
-            to_retain
-        });
+fn filter_single_copy(
+    distr: &mut Vec<(u64, usize, i64)>,
+    unit: u64,
+    cluster: u64,
+    _hap_coverage: f64,
+    config: &PurgeLargeDelConfig,
+) -> bool {
+    let indel_size = config.indel_size;
+    let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
+    let num = distr.iter().filter(|&x| (indel_size as i64) < x.2).count();
+    if 0 < num {
+        let sum: i64 = distr
+            .iter()
+            .map(|x| x.2)
+            .filter(|&x| (accept_size as i64) < x)
+            .sum();
+
+        let mean = sum / (num as i64).max(1);
+        let cov = distr.len();
+        debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\tSingle");
+        distr.retain(|&(_, _, size)| accept_size < size as usize);
+        true
+    } else {
+        false
     }
-    ds.encoded_reads.retain(|r| !r.nodes.is_empty());
-    units_of_removed_nodes
 }
+
+fn filter_multi_copy(
+    distr: &mut Vec<(u64, usize, i64)>,
+    unit: u64,
+    cluster: u64,
+    hap_coverage: f64,
+    config: &PurgeLargeDelConfig,
+) -> bool {
+    let indel_size = config.indel_size;
+    let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
+    let lower_thr = (hap_coverage * config.occupy_fraction).floor() as usize;
+    let upper_thr = (distr.len() as f64 - lower_thr as f64).max(0f64).ceil() as usize;
+    let num = distr.iter().filter(|&x| (indel_size as i64) < x.2).count();
+    if lower_thr < num {
+        let sum: i64 = distr
+            .iter()
+            .map(|x| x.2)
+            .filter(|&x| (accept_size as i64) < x)
+            .sum();
+        let mean = sum / num as i64;
+        let cov = distr.len();
+        let retain = (lower_thr..upper_thr).contains(&num);
+        debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\t{retain}");
+    }
+    if (lower_thr..upper_thr).contains(&num) {
+        distr.retain(|&(_, _, size)| accept_size < size as usize);
+        true
+    } else {
+        false
+    }
+}
+
+// // Purge node with very high error rate.
+// pub fn purge_erroneous_nodes(ds: &mut DataSet, _config: &PurgeDivConfig) -> HashSet<u64> {
+//     const SAFE_MARGIN: f64 = 5f64;
+//     let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
+//     use crate::estimate_error_rate::estimate_error_rate;
+//     let errors = estimate_error_rate(ds, fallback);
+//     let sigma_of_er = errors.median_of_sqrt_err;
+//     debug!("PD\tPurgeErroneousNode\t{SAFE_MARGIN}\t{sigma_of_er}",);
+//     let mut units_of_removed_nodes = HashSet::new();
+//     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+//     for read in ds.encoded_reads.iter_mut() {
+//         let read_error = errors.read(read.id);
+//         read.nodes.retain(|node| {
+//             let unit_error = errors.unit((node.unit, node.cluster));
+//             let aln = node.recover(units[&node.unit]).1;
+//             let errors = aln.iter().filter(|&&x| x != b'|').count();
+//             let error = errors as f64 / aln.len() as f64;
+//             let to_retain = error < read_error + unit_error + SAFE_MARGIN * sigma_of_er;
+//             if !to_retain {
+//                 units_of_removed_nodes.insert(node.unit);
+//             }
+//             to_retain
+//         });
+//     }
+//     ds.encoded_reads.retain(|r| !r.nodes.is_empty());
+//     units_of_removed_nodes
+// }
 
 fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
     let copy_number: HashMap<_, _> = ds

@@ -244,7 +244,7 @@ fn gain_of(
     len: usize,
     diff_type: DiffType,
 ) -> GainProfile {
-    const SAMPLE_NUM: usize = 50;
+    const SAMPLE_NUM: usize = 100;
     const GAIN_POS: usize = SAMPLE_NUM / 10;
     const PROB_POS: usize = SAMPLE_NUM * 2 / 3;
     const SEQ_NUM: usize = 50;
@@ -268,17 +268,24 @@ fn gain_of(
                 .collect();
             let (_, &mut expected_gain, _) =
                 lk_diff.select_nth_unstable_by(SEQ_NUM / 2, |x, y| x.partial_cmp(y).unwrap());
+            let min_gain = match diff_type {
+                DiffType::Subst => expected_gain / 10f64,
+                DiffType::Del => 0.0001,
+                DiffType::Ins => 0.0001,
+            };
             let null_prob = (0..SEQ_NUM)
                 .filter(|_| {
                     let read = hmm.gen(&template, &mut rng);
                     let lk_base = hmm.likelihood(&template, &read, band);
                     let lk_diff = hmm.likelihood(&diff, &read, band);
-                    lk_base < lk_diff
+                    lk_base + min_gain < lk_diff
                 })
                 .count();
             (expected_gain, null_prob as f64 / SEQ_NUM as f64)
         })
         .collect();
+    // let dump: Vec<_> = probs.iter().map(|x| format!("{x:.3}")).collect();
+    // trace!("NULLPROB\t{diff_type}\t{len}\t{}", dump.join("\t"));
     let (_, &mut gain, _) =
         medians.select_nth_unstable_by(GAIN_POS, |x, y| x.partial_cmp(y).unwrap());
     let (_, &mut prob, _) =

@@ -197,6 +197,10 @@ pub fn kmeans<R: Rng, D: std::borrow::Borrow<[f64]>>(
             dist = new_dist;
         }
     }
+    // for (i, (center, c)) in centers.iter().zip(counts.iter()).enumerate() {
+    //     let cs: Vec<_> = center.iter().map(|x| format!("{x:.1}")).collect();
+    //     debug!("KMEANS\t{c}\t{i}\t{}", cs.join("\t"));
+    // }
     (dist, assignments)
 }
 

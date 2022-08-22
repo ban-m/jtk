@@ -157,7 +157,7 @@ impl DetermineUnit for definitions::DataSet {
         // If half of the coverage supports large deletion, remove them.
         const OCCUPY_FRACTION: f64 = 0.5;
         use crate::purge_diverged::*;
-        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION);
+        let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION, true);
         self.purge_largeindel(&p_config);
         compaction_units(self);
     }

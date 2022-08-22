@@ -349,11 +349,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     }
                 }
             }
-            // if let Some(bypass) =
-            //     self.examine_bypass(&head_childs, &diplo_path, &tail_childs, &reads, config)
-            // {
-            //     bypasses.push(bypass);
-            // }
         }
         bypasses
     }
@@ -425,15 +420,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let (from_index, from_pos) = heads[0];
         let from = (from_index, self.node(from_index).unwrap().node, from_pos);
         let counts = counts.to_vec();
+        let min_span = config.min_span_reads;
         // Case1. h0 <-> t0 and h1 <-> t1.
-        //        if h0t1 == 0 && h1t0 == 0 {
-        if (h0t1 + h1t0) + config.min_span_reads <= (h0t0 + h1t1) {
+        if h0t1 + h1t0 + min_span <= h0t0 + h1t1 && h0t1 + h1t0 <= min_span {
             let (to_index, to_pos) = tails[0];
             let to = (to_index, self.node(to_index).unwrap().node, to_pos);
             path.push(tails[0]);
             Some(Focus::with_backpath(from, to, dist, llr, counts, path))
-        //} else if h0t0 == 0 && h1t1 == 0 {
-        } else if h0t0 + h1t1 + config.min_span_reads <= h1t0 + h0t1 {
+        } else if h0t0 + h1t1 + min_span <= h1t0 + h0t1 && h0t0 + h1t1 <= min_span {
             // Case2.  h0 <-> t1 and h1 <-> t0
             let (to_index, to_pos) = tails[1];
             let to = (to_index, self.node(to_index).unwrap().node, to_pos);
