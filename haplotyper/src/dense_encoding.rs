@@ -24,7 +24,7 @@ impl DenseEncodingConfig {
     }
 }
 pub trait DenseEncoding {
-    fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig);
+    fn dense_encoding(&mut self, config: &DenseEncodingConfig);
 }
 
 fn check_raw_read_consistency(ds: &DataSet) {
@@ -42,9 +42,14 @@ fn check_raw_read_consistency(ds: &DataSet) {
     assert!(is_ok);
 }
 
+const SQUISH_ARI_THR: f64 = 0.5;
+const SQUISH_COUNT_THR: usize = 7;
+const MAT_ARI: f64 = 4f64;
+const MIS_ARI: f64 = -1f64;
 impl DenseEncoding for DataSet {
-    fn dense_encoding_dev(&mut self, config: &DenseEncodingConfig) {
+    fn dense_encoding(&mut self, config: &DenseEncodingConfig) {
         check_raw_read_consistency(self);
+        self.sanity_check();
         let original_cluster_num: HashMap<_, _> = self
             .selected_chunks
             .iter()
@@ -52,7 +57,10 @@ impl DenseEncoding for DataSet {
             .collect();
         let original_assignments = log_original_assignments(self);
         use crate::phmm_likelihood_correction::*;
+        use crate::{SquishConfig, SquishErroneousClusters};
         let cor_config = CorrectionConfig::default();
+        let squish_config = SquishConfig::new(SQUISH_ARI_THR, SQUISH_COUNT_THR, MAT_ARI, MIS_ARI);
+        self.squish_erroneous_clusters(&squish_config);
         self.correct_clustering(&cor_config);
         let new_units = encode_polyploid_edges(self, config);
         for read in self.encoded_reads.iter_mut() {
@@ -148,11 +156,16 @@ fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
     }
 }
 
-fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<(u64, u64)>> {
+type NodeLog = (u64, u64, Vec<f64>);
+fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<NodeLog>> {
     ds.encoded_reads
         .iter()
         .map(|r| {
-            let xs: Vec<_> = r.nodes.iter().map(|u| (u.unit, u.cluster)).collect();
+            let xs: Vec<_> = r
+                .nodes
+                .iter()
+                .map(|u| (u.unit, u.cluster, u.posterior.clone()))
+                .collect();
             (r.id, xs)
         })
         .collect()
@@ -161,16 +174,18 @@ fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<(u64, u64)>> {
 // Recover the previous clustering. Note that sometimes the node is added
 // so that the length of the read is different from the logged one.
 // But it does not removed!
-fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)]) {
+fn recover_original_assignments(read: &mut EncodedRead, log: &[NodeLog]) {
     let mut read = read.nodes.iter_mut();
-    for &(unit, cluster) in log {
+    'outer: for &(unit, cluster, ref post) in log {
         for node in &mut read {
-            // while let Some(node) = read.next() {
             if node.unit == unit {
                 node.cluster = cluster;
-                break;
+                node.posterior.clear();
+                node.posterior.extend(post);
+                continue 'outer;
             }
         }
+        panic!("Can not find the logged units.");
     }
 }
 

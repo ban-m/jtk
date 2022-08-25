@@ -4,20 +4,34 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Copy)]
 pub struct SquishConfig {
-    frac: f64,
+    ari_thr: f64,
+    match_score: f64,
+    mismatch_score: f64,
     count_thr: usize,
 }
-
+const BIAS_THR: f64 = 0.2;
 impl SquishConfig {
-    pub fn new(frac: f64, count_thr: usize) -> Self {
-        Self { frac, count_thr }
+    pub const fn new(
+        ari_thr: f64,
+        count_thr: usize,
+        match_score: f64,
+        mismatch_score: f64,
+    ) -> Self {
+        Self {
+            ari_thr,
+            count_thr,
+            match_score,
+            mismatch_score,
+        }
     }
 }
 
 impl std::default::Default for SquishConfig {
     fn default() -> Self {
         Self {
-            frac: 0.01,
+            ari_thr: 0.5,
+            match_score: 4f64,
+            mismatch_score: -1f64,
             count_thr: 10,
         }
     }
@@ -65,8 +79,10 @@ impl std::fmt::Display for RelClass {
 fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass> {
     let mut unit_pairs: HashMap<_, usize> = HashMap::new();
     for read in ds.encoded_reads.iter() {
-        for (i, n1) in read.nodes.iter().enumerate() {
-            for n2 in read.nodes.iter().skip(i + 1) {
+        let nodes = read.nodes.iter().enumerate();
+        for (i, n1) in nodes.filter(|n| n.1.is_biased(BIAS_THR)) {
+            let n2s = read.nodes.iter().skip(i + 1);
+            for n2 in n2s.filter(|n| n.is_biased(BIAS_THR)) {
                 let key = (n1.unit.min(n2.unit), n1.unit.max(n2.unit));
                 *unit_pairs.entry(key).or_default() += 1;
             }
@@ -84,49 +100,55 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
         .par_iter()
         .map(|(&(u1, u2), _)| {
             let (cl1, cl2) = (units[&u1], units[&u2]);
-            let (rel, count, _total) = check_correl(ds, (u1, cl1), (u2, cl2));
-            // trace!("REL\t{u1}\t{u2}\t{rel:.3}\t{count}\t{total}");
-            // trace!("REL\t{u2}\t{u1}\t{rel:.3}\t{count}\t{total}");
+            let (rel, count) = check_correl(ds, (u1, cl1), (u2, cl2));
             (u1, u2, (rel, count))
         })
         .collect();
-    let mut unit_to_relvector: HashMap<_, Vec<_>> = HashMap::new();
-    for &(u1, u2, (rel, _)) in adj_rand_indices.iter() {
-        unit_to_relvector.entry(u1).or_default().push((u2, rel));
-        unit_to_relvector.entry(u2).or_default().push((u1, rel));
+    let mut touch_units: HashMap<_, Vec<_>> = HashMap::new();
+    for (&(u1, u2), _) in unit_pairs.iter() {
+        touch_units.entry(u1).or_default().push(u2);
     }
-    let thr = get_thr(&unit_to_relvector, config);
-    debug!("SUPRESS\tTHR\t{thr:.3}");
-    let stiff_units: HashSet<_> = unit_to_relvector
-        .iter()
-        .filter(|(_, rels)| rels.iter().any(|&(_, rel)| thr < rel))
-        .map(|x| x.0)
-        .collect();
+    let stiff_units = classify(&adj_rand_indices, config);
     ds.selected_chunks
         .iter()
         .map(|c| {
-            let rels = unit_to_relvector.get(&c.id);
-            let max = rels
-                .and_then(|xs| {
-                    xs.iter()
-                        .map(|x| x.1)
-                        .max_by(|x, y| x.partial_cmp(y).unwrap())
-                })
-                .unwrap_or(0f64);
-            let len = rels.map(|x| x.len()).unwrap_or(0);
-            trace!("SQI\t{}\t{}\t{max}\t{len}", c.id, c.cluster_num);
-            let touch_stiff = rels.map(|rels| rels.iter().any(|(to, _)| stiff_units.contains(to)));
+            let touch_stiff = touch_units.get(&c.id);
+            let touch_stiff =
+                touch_stiff.map(|rels| rels.iter().any(|to| stiff_units.contains(to)));
             if stiff_units.contains(&c.id) || 2 < c.copy_num {
                 (c.id, RelClass::Stiff)
             } else if touch_stiff == Some(true) {
-                let max = rels
-                    .unwrap()
+                let (to, ari, count) = adj_rand_indices
                     .iter()
-                    .map(|x| x.1)
-                    .max_by(|x, y| x.partial_cmp(y).unwrap())
+                    .filter_map(|&(from, to, (ari, count))| {
+                        if c.id == from {
+                            Some((to, ari, count))
+                        } else if c.id == to {
+                            Some((from, ari, count))
+                        } else {
+                            None
+                        }
+                    })
+                    .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
                     .unwrap();
-                let len = rels.unwrap().len();
-                trace!("SUSPICOUS\t{}\t{}\t{:.3}\t{}", c.id, c.copy_num, max, len);
+                if c.id == 689 {
+                    for (to, ari, count) in
+                        adj_rand_indices
+                            .iter()
+                            .filter_map(|&(from, to, (ari, count))| {
+                                if c.id == from {
+                                    Some((to, ari, count))
+                                } else if c.id == to {
+                                    Some((from, ari, count))
+                                } else {
+                                    None
+                                }
+                            })
+                    {
+                        debug!("SUSPIC\t{}\t{to}\t{ari:.3}\t{count}", c.id);
+                    }
+                }
+                debug!("SUSPIC\t{}\t{to}\t{ari:.3}\t{count}", c.id);
                 (c.id, RelClass::Suspicious)
             } else {
                 (c.id, RelClass::Isolated)
@@ -135,38 +157,23 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
         .collect()
 }
 
-fn get_thr(unit_to_relvector: &HashMap<u64, Vec<(u64, f64)>>, config: &SquishConfig) -> f64 {
-    let mut max_indices: Vec<f64> = unit_to_relvector
-        .values()
-        .filter_map(|values| {
-            values
-                .iter()
-                .map(|x| x.1)
-                .max_by(|x, y| x.partial_cmp(y).unwrap())
-        })
-        .collect();
-    max_indices.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    debug!("{:?},{}", &max_indices[..10], max_indices.len());
-    max_indices[(config.frac * max_indices.len() as f64).ceil() as usize]
-}
-
 fn check_correl(
     ds: &DataSet,
     (unit1, cl1): (u64, usize),
     (unit2, cl2): (u64, usize),
-) -> (f64, usize, usize) {
+) -> (f64, usize) {
     let (mut c1, mut c2) = (vec![], vec![]);
     for read in ds.encoded_reads.iter() {
         let node1 = read
             .nodes
             .iter()
-            .filter(|n| n.unit == unit1)
+            .filter(|n| n.unit == unit1 && n.is_biased(BIAS_THR))
             .map(|n| n.cluster as usize)
             .min();
         let node2 = read
             .nodes
             .iter()
-            .filter(|n| n.unit == unit2)
+            .filter(|n| n.unit == unit2 && n.is_biased(BIAS_THR))
             .map(|n| n.cluster as usize)
             .min();
         if let (Some(n1), Some(n2)) = (node1, node2) {
@@ -176,7 +183,7 @@ fn check_correl(
     }
 
     if c1.is_empty() {
-        return (0f64, c1.len(), c2.len());
+        return (0f64, c1.len());
     }
     let c1_is_same = c1.iter().all(|&x| x == c1[0]);
     let c2_is_same = c2.iter().all(|&x| x == c2[0]);
@@ -188,27 +195,138 @@ fn check_correl(
     if rel_value.is_nan() {
         panic!("\n{:?}\n{:?}", c1, c2);
     }
-    (rel_value, c1.len(), c1.len())
-    // let mut occs = vec![];
-    // let mut count = 0;
-    // for read in ds.encoded_reads.iter() {
-    //     let node1 = read
-    //         .nodes
-    //         .iter()
-    //         .filter(|n| n.unit == unit1)
-    //         .map(|n| n.cluster as u32)
-    //         .min();
-    //     let node2 = read
-    //         .nodes
-    //         .iter()
-    //         .filter(|n| n.unit == unit2)
-    //         .map(|n| n.cluster as u32)
-    //         .min();
-    //     if let (Some(n1), Some(n2)) = (node1, node2) {
-    //         occs.push((n1, n2));
-    //         count += 1;
-    //     }
-    // }
-    // let rel_value = crate::misc::cramers_v(&occs, (cl1, cl2));
-    // (rel_value, count, occs.len())
+    (rel_value, c1.len())
+}
+
+fn classify(adj_rand_indices: &[(u64, u64, (f64, usize))], config: &SquishConfig) -> HashSet<u64> {
+    let mut nodes: HashMap<_, usize> = HashMap::new();
+    for &(from, to, _) in adj_rand_indices.iter() {
+        let len = nodes.len();
+        nodes.entry(from).or_insert(len);
+        let len = nodes.len();
+        nodes.entry(to).or_insert(len);
+    }
+    let mut graph = vec![vec![]; nodes.len()];
+    for &(from, to, (ari, count)) in adj_rand_indices.iter() {
+        let ari = ari.max(0f64).min(1f64);
+        let (from, to) = (nodes[&from], nodes[&to]);
+        graph[from].push((to, ari, count));
+        graph[to].push((from, ari, count));
+    }
+    let param = ClassifyParam::new(config.ari_thr, config.mismatch_score, config.match_score);
+    let assignments = classify_nodes(&graph, nodes.len(), &param);
+    nodes
+        .iter()
+        .filter_map(|(&uid, &node)| assignments[node].then(|| uid))
+        .collect()
+}
+
+type RelGraph = Vec<Vec<(usize, f64, usize)>>;
+
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+fn classify_nodes(graph: &RelGraph, nodes: usize, param: &ClassifyParam) -> Vec<bool> {
+    let mut assignments = vec![true; nodes];
+    let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(3093240);
+    // let param = ClassifyParam::new(0.5, -1f64, 4f64);
+    for _t in 0..10 {
+        // Estimate parameters.
+        // let param = estimate_error_rate(graph, &assignments);
+        trace!("ESTIM\t{param}");
+        wipe_through(graph, &mut assignments, param);
+        mcmc(graph, &mut assignments, param, &mut rng);
+        let picked: usize = assignments.iter().filter(|&&b| b).count();
+        trace!("CLASSIFY\t{picked}\t{}", assignments.len());
+    }
+    assignments
+}
+
+#[derive(Debug, Clone)]
+struct ClassifyParam {
+    switch_point: f64,
+    error_score: f64,
+    correct_score: f64,
+}
+
+impl ClassifyParam {
+    fn score(&self, ari: f64, count: usize) -> f64 {
+        match ari <= self.switch_point {
+            true => self.error_score * count as f64,
+            false => self.correct_score * count as f64,
+        }
+    }
+    fn new(switch_point: f64, error_score: f64, correct_score: f64) -> Self {
+        Self {
+            switch_point,
+            error_score,
+            correct_score,
+        }
+    }
+}
+
+impl std::fmt::Display for ClassifyParam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:.3}\t{:.3}\t{:.3}",
+            self.switch_point, self.error_score, self.correct_score
+        )
+    }
+}
+
+fn wipe_through(graph: &RelGraph, assignments: &mut [bool], param: &ClassifyParam) {
+    let len = assignments.len();
+    let prev_score = assignment_score(graph, assignments, param);
+    for i in 0..len {
+        if 0f64 < diff_on_flip(graph, assignments, i, param) {
+            assignments[i] = !assignments[i];
+        }
+    }
+    let after_score = assignment_score(graph, assignments, param);
+    trace!("WIPE\t{prev_score:.3}\t{after_score:.3}")
+}
+
+fn diff_on_flip(
+    graph: &RelGraph,
+    assignments: &[bool],
+    target: usize,
+    param: &ClassifyParam,
+) -> f64 {
+    let sum_weight = graph[target]
+        .iter()
+        .filter(|&&(to, _, _)| assignments[to])
+        .map(|&(_, ari, count)| param.score(ari, count))
+        .sum::<f64>();
+    match assignments[target] {
+        true => -sum_weight,
+        false => sum_weight,
+    }
+}
+use rand::Rng;
+fn mcmc<R: Rng>(graph: &RelGraph, assignments: &mut [bool], param: &ClassifyParam, rng: &mut R) {
+    let prev_score = assignment_score(graph, assignments, param);
+    for _ in 0..1000 {
+        let i = rng.gen_range(0..assignments.len());
+        let diff = diff_on_flip(graph, assignments, i, param);
+        let prob = diff.min(0f64).exp();
+        if rng.gen_bool(prob) {
+            assignments[i] = !assignments[i];
+        }
+    }
+    let after_score = assignment_score(graph, assignments, param);
+    trace!("MCMC\t{prev_score:.3}\t{after_score:.3}");
+}
+
+fn assignment_score(graph: &RelGraph, assignments: &[bool], param: &ClassifyParam) -> f64 {
+    graph
+        .iter()
+        .enumerate()
+        .map(|(from, edges)| {
+            edges
+                .iter()
+                .filter(|&&(to, _, _)| assignments[to] && assignments[from] && from < to)
+                .map(|&(_, ari, count)| param.score(ari, count))
+                .sum::<f64>()
+        })
+        .sum()
 }

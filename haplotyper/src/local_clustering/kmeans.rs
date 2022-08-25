@@ -3,6 +3,7 @@
 // Should be greater than the maximum length of kiley::hmm::guided::COPY_SIZE or DEL_SIZE.
 const MASK_LENGTH: usize = 7;
 const MAX_HOMOP_LENGTH: usize = 2;
+const POS_THR: f64 = 0.00001;
 use crate::likelihood_gains::{Gains, Pvalues};
 use kiley::hmm::guided::NUM_ROW;
 use rand::Rng;
@@ -91,6 +92,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     config: &ClusteringConfig,
 ) -> Option<ClusteringDevResult> {
     let profiles = modification_table(template, reads, ops, config.band_width, hmm);
+    let profiles = compress_small_gains(profiles, template, config.gains);
     let probes = filter_profiles(template, &profiles, strands, config, rng);
     let op_and_homop = operation_and_homopolymer_length(template, &probes);
     let variants = filter_by(&profiles, &probes);
@@ -125,6 +127,33 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     }
     to_posterior_probability(&mut likelihood_gains);
     Some((assignments, likelihood_gains, max, max_k as usize))
+}
+
+const MIN_REQ_FRACTION: f64 = 0.5;
+fn compress_small_gains(
+    mut profiles: Vec<Vec<f64>>,
+    template: &[u8],
+    gains: &Gains,
+) -> Vec<Vec<f64>> {
+    if profiles.is_empty() {
+        return profiles;
+    }
+    let homopolymer_length = homopolymer_length(template);
+    let min_req: Vec<_> = (0..profiles[0].len())
+        .map(|pos| {
+            let (bp, diff_type) = pos_to_bp_and_difftype(pos);
+            let homop_len = *homopolymer_length.get(bp).unwrap_or(&1);
+            gains.expected(homop_len, diff_type) * MIN_REQ_FRACTION
+        })
+        .collect();
+    for prof in profiles.iter_mut() {
+        for (&min_req, x) in min_req.iter().zip(prof.iter_mut()) {
+            if x.abs() < min_req {
+                *x = 0f64;
+            }
+        }
+    }
+    profiles
 }
 
 use crate::likelihood_gains::DiffType;
@@ -192,8 +221,9 @@ fn cluster_filtered_variants<R: Rng>(
     let (mut assignments, mut max, mut max_k, mut read_lk_gains) =
         (vec![0; datasize], 0f64, 1, vec![0f64; datasize]);
     let mut prev_used_columns = vec![false; variants[0].len()];
-    let init_copy_num = copy_num.max(4) - 2;
+    let init_copy_num = copy_num.max(5) - 3;
     for k in init_copy_num..=copy_num {
+        // for k in 4..5 {
         let (asn, score, new_lk_gains, used_columns) = match k == 2 {
             false => mcmc_clustering(variants, k, coverage, rng),
             true => {
@@ -261,7 +291,7 @@ fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[b
         .unwrap_or(1f64)
 }
 
-const EXPT_GAIN_FACTOR: f64 = 0.6;
+const EXPT_GAIN_FACTOR: f64 = 0.5;
 fn expected_gains(
     gains: &Gains,
     variant_type: &[(usize, DiffType)],
@@ -269,18 +299,25 @@ fn expected_gains(
     used_columns: &[bool],
 ) -> f64 {
     assert_eq!(variant_type.len(), used_columns.len());
+    let is_all_used = used_columns.iter().all(|&x| x);
     // Previously not used, currently used.
     let newly_used = std::iter::zip(prev_columns, used_columns).map(|(&p, &c)| !p & c);
-    let expt_sum: f64 = std::iter::zip(variant_type, newly_used)
-        .map(|(&(homop, diff_type), is_used)| match is_used {
-            true => gains.expected(homop, diff_type),
-            false => 0.00001,
-        })
-        .max_by(|x, y| x.partial_cmp(y).unwrap())
-        .unwrap_or(0f64);
-    //        .sum();
-    trace!("EXPTGAIN\t{expt_sum:.4}\t{used_columns:?}");
-    (EXPT_GAIN_FACTOR * expt_sum).max(0.1)
+    let check_column = newly_used.map(|b| b | is_all_used);
+    let expt_gain: f64 = if is_all_used {
+        variant_type
+            .iter()
+            .map(|&(homop, diff_type)| gains.expected(homop, diff_type))
+            .sum()
+    } else {
+        std::iter::zip(variant_type, check_column)
+            .map(|(&(homop, diff_type), is_used)| match is_used {
+                true => gains.expected(homop, diff_type),
+                false => 0.0000001,
+            })
+            .max_by(|x, y| x.partial_cmp(y).unwrap())
+            .unwrap_or(0f64)
+    };
+    (EXPT_GAIN_FACTOR * expt_gain).max(0.1)
 }
 
 fn count_improved_reads(new_gains: &[f64], old_gains: &[f64], min_gain: f64) -> usize {
@@ -288,10 +325,6 @@ fn count_improved_reads(new_gains: &[f64], old_gains: &[f64], min_gain: f64) -> 
         .filter(|(&new, &old)| old + min_gain < new)
         .count()
 }
-
-// fn get_read_thr(cov: f64, sigma: f64) -> usize {
-//     (cov - sigma * cov.sqrt()).floor() as usize
-// }
 
 fn is_explainable_by_strandedness<I, R: Rng>(
     profiles: I,
@@ -357,7 +390,7 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -
         clusters[asn] += 1;
         for (slot, x) in lks[asn].iter_mut().zip(vars.iter()) {
             slot.0 += x;
-            slot.1 += x.is_sign_positive() as usize;
+            slot.1 += (POS_THR < *x) as usize;
         }
     }
     let use_columns = get_used_columns(&lks, &clusters);
@@ -370,7 +403,7 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -
                     vars.iter()
                         .zip(slots.iter())
                         .zip(use_columns.iter())
-                        .filter(|&((_, (sum, _)), to_use)| to_use & sum.is_sign_positive())
+                        .filter(|&((_, &(sum, _)), to_use)| to_use & (POS_THR < sum))
                         .map(|x| (x.0).0)
                         .sum()
                 })
@@ -390,7 +423,7 @@ fn get_read_lk_gains(
         clusters[asn] += 1;
         for (slot, x) in lks[asn].iter_mut().zip(vars.iter()) {
             slot.0 += x;
-            slot.1 += x.is_sign_positive() as usize;
+            slot.1 += (POS_THR < *x) as usize;
         }
     }
     let use_columns = get_used_columns(&lks, &clusters);
@@ -401,7 +434,7 @@ fn get_read_lk_gains(
             vars.iter()
                 .zip(lks[asn].iter())
                 .zip(use_columns.iter())
-                .filter(|&((_, (sum, _)), to_use)| to_use & sum.is_sign_positive())
+                .filter(|&((_, (sum, _)), to_use)| to_use & (POS_THR < *sum))
                 .map(|x| (x.0).0)
                 .sum()
         })
@@ -428,7 +461,6 @@ const PVALUE: f64 = 0.05;
 // The probability that the variant is regarded as biased even if it is not
 // is 0.05. It essentially sacrifice 5% variants under the name of the strand bias.
 const FP_RATE: f64 = 0.05;
-const MIN_REQ_FRACTION: f64 = 0.5;
 fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     template: &[u8],
     profiles: &[T],
@@ -442,14 +474,15 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     trace!("\n{gains}");
     let pvalues = gains.pvalues(profiles.len());
     let homopolymer_length = homopolymer_length(template);
-    let min_req: Vec<_> = (0..profiles[0].borrow().len())
-        .map(|pos| {
-            let (bp, diff_type) = pos_to_bp_and_difftype(pos);
-            let homop_len = *homopolymer_length.get(bp).unwrap_or(&1);
-            gains.expected(homop_len, diff_type) * MIN_REQ_FRACTION
-        })
-        .collect();
-    let total_improvement = column_sum_of(profiles, &min_req);
+    // let min_req: Vec<_> = (0..profiles[0].borrow().len())
+    //     .map(|pos| {
+    //         let (bp, diff_type) = pos_to_bp_and_difftype(pos);
+    //         let homop_len = *homopolymer_length.get(bp).unwrap_or(&1);
+    //         gains.expected(homop_len, diff_type) * MIN_REQ_FRACTION
+    //     })
+    //     .collect();
+    // let total_improvement = column_sum_of(profiles, &min_req);
+    let total_improvement = column_sum(profiles);
     let temp_len = total_improvement.len() / NUM_ROW;
     let probes: Vec<(usize, f64)> = total_improvement
         .iter()
@@ -582,15 +615,28 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
 // Each position have exactly one chance to contribute to the total sum.
 // In other words, for each position, one of the largest value would be
 // chosen as "varinats".
-fn column_sum_of<T: std::borrow::Borrow<[f64]>>(
-    profiles: &[T],
-    min_req: &[f64],
-) -> Vec<(f64, usize)> {
+// fn column_sum_of<T: std::borrow::Borrow<[f64]>>(
+//     profiles: &[T],
+//     min_req: &[f64],
+// ) -> Vec<(f64, usize)> {
+//     let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
+//     assert_eq!(total_improvement.len(), min_req.len());
+//     for prof in profiles.iter().map(|x| x.borrow()) {
+//         for ((slot, gain), req) in total_improvement.iter_mut().zip(prof).zip(min_req) {
+//             if req < gain {
+//                 slot.0 += gain;
+//                 slot.1 += 1;
+//             }
+//         }
+//     }
+//     total_improvement
+// }
+
+fn column_sum<T: std::borrow::Borrow<[f64]>>(profiles: &[T]) -> Vec<(f64, usize)> {
     let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
-    assert_eq!(total_improvement.len(), min_req.len());
     for prof in profiles.iter().map(|x| x.borrow()) {
-        for ((slot, gain), req) in total_improvement.iter_mut().zip(prof).zip(min_req) {
-            if req < gain {
+        for (slot, &gain) in total_improvement.iter_mut().zip(prof) {
+            if 0f64 < gain {
                 slot.0 += gain;
                 slot.1 += 1;
             }
@@ -647,7 +693,7 @@ fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: us
         .iter()
         .map(|prof| {
             let prof = prof.borrow();
-            (prof[i] * prof[j]).is_sign_positive()
+            POS_THR < (prof[i] * prof[j])
         })
         .fold((0, 0), |(mat, mism), x| match x {
             true => (mat + 1, mism),
@@ -680,7 +726,6 @@ fn mcmc_clustering<R: Rng>(
         .map(|_| {
             let mut assignments = crate::misc::kmeans(data, k, rng).1;
             let lk = mcmc_with_filter(data, &mut assignments, k, cov, rng);
-            // debug!("MCMC\t{lk:.2}");
             (assignments, lk)
         })
         .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
@@ -749,13 +794,12 @@ fn mcmc_with_filter<R: Rng>(
         clusters[asn] += 1;
         for (lk, x) in lks[asn].iter_mut().zip(xs) {
             lk.0 += x;
-            lk.1 += x.is_sign_positive() as usize;
+            lk.1 += (POS_THR < *x) as usize;
         }
     }
     let mut lk = get_lk(&lks, &clusters, &size_to_lk);
     let (mut max, mut argmax) = (lk, assign.to_vec());
     let total = 2000 * data.len();
-    // let init = lk;
     for _t in 0..total {
         let idx = rng.gen_range(0..data.len());
         let old = assign[idx];
@@ -784,7 +828,7 @@ fn mcmc_with_filter<R: Rng>(
         clusters[asn] += 1;
         for (lk, x) in lks[asn].iter_mut().zip(xs) {
             lk.0 += x;
-            lk.1 += x.is_sign_positive() as usize;
+            lk.1 += (POS_THR < *x) as usize;
         }
     }
     let lk = get_lk(&lks, &clusters, &size_to_lk);
@@ -805,13 +849,13 @@ fn flip(
     clusters[from] -= 1;
     for (lks, x) in lks[from].iter_mut().zip(data[idx].iter()) {
         lks.0 -= x;
-        lks.1 -= x.is_sign_positive() as usize;
+        lks.1 -= (POS_THR < *x) as usize;
     }
     assign[idx] = to;
     clusters[to] += 1;
     for (lks, x) in lks[to].iter_mut().zip(data[idx].iter()) {
         lks.0 += x;
-        lks.1 += x.is_sign_positive() as usize;
+        lks.1 += (POS_THR < *x) as usize;
     }
 }
 
@@ -827,7 +871,6 @@ fn get_lk(lks: &[Vec<(f64, usize)>], clusters: &[usize], _size_to_lk: &[f64]) ->
     lk
 }
 const POS_FRAC: f64 = 0.70;
-// TODO: this is art.
 const IN_POS_RATIO: f64 = 2f64;
 fn get_used_columns(lks: &[Vec<(f64, usize)>], clusters: &[usize]) -> Vec<bool> {
     let mut to_uses = vec![false; lks[0].len()];

@@ -256,7 +256,6 @@ impl DataSet {
             .iter()
             .flat_map(|r| r.nodes.iter())
             .for_each(|n| assert!(units.contains(&n.unit)));
-        // assert!(std::path::Path::new(&self.input_file).exists());
         self.encoded_reads_can_be_recovered();
         use std::collections::HashSet;
         let mut units = HashSet::new();
@@ -265,7 +264,13 @@ impl DataSet {
             units.insert(unit.id);
         }
         for chunk in self.selected_chunks.iter() {
-            assert!(chunk.cluster_num <= chunk.copy_num);
+            assert!(
+                chunk.cluster_num <= chunk.copy_num,
+                "{},{},{}",
+                chunk.id,
+                chunk.cluster_num,
+                chunk.copy_num
+            );
         }
         use std::collections::HashMap;
         let max_cl_num: HashMap<_, _> = self
@@ -646,6 +651,12 @@ impl std::fmt::Display for Node {
 }
 
 impl Node {
+    /// Return if there is a cluster such that self.posterior[i].exp() > thr + 1/posterior.len().
+    /// If the posterior is empty, return false.
+    pub fn is_biased(&self, thr: f64) -> bool {
+        let thr = (self.posterior.len() as f64).recip() + thr;
+        self.posterior.iter().any(|x| thr <= x.exp())
+    }
     /// Create a new instance of node.
     /// As usually it is created before the local clustering,
     /// It only accepts the minimum requirements, i.e, the position in the read, the units, the direction, the sequence, and the cigar string.

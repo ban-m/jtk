@@ -514,7 +514,7 @@ fn correct_deletion_error(
 //     read.nodes.len() != orig_len
 // }
 
-const THR: f64 = 9f64;
+const THR: f64 = 10f64;
 fn try_encoding_head(
     nodes: &[Node],
     head_cand: &HashMap<LightNode, usize>,

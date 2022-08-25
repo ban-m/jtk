@@ -512,13 +512,29 @@ fn subcommand_squish() -> Command<'static> {
                 .takes_value(true),
         )
         .arg(
-            Arg::new("frac")
-                .short('f')
-                .long("frac")
+            Arg::new("ari")
+                .short('a')
+                .long("ari")
                 .required(false)
-                .value_name("FRAC")
-                .help("lower [FRAC] of the clusters with ARI would be compressed")
-                .default_value("0.01")
+                .value_name("ARI")
+                .help("clusters with ARI smaller than [ARI] would be compressed")
+                .default_value("0.4")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("match_score")
+                .long("match_score")
+                .required(false)
+                .help("Match score for clusters with adj.rand index above [ARI]")
+                .default_value("4.0")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::new("mismatch_score")
+                .long("mismatch_score")
+                .required(false)
+                .help("Mismatch score for clusters with adj.rand index below [ARI]")
+                .default_value("-1.0")
                 .takes_value(true),
         )
         .arg(
@@ -528,7 +544,7 @@ fn subcommand_squish() -> Command<'static> {
                 .required(false)
                 .value_name("COUNT")
                 .help("Min req coverage to compute ARI.")
-                .default_value("10")
+                .default_value("7")
                 .takes_value(true),
         )
 }
@@ -906,21 +922,29 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     use haplotyper::dense_encoding::*;
     let file = matches.value_of("output");
     let config = DenseEncodingConfig::new(length, file);
-    dataset.dense_encoding_dev(&config);
+    dataset.dense_encoding(&config);
 }
 fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
-    debug!("START\tEncode densely");
+    debug!("START\tSquish Clustering");
     set_threads(matches);
-    let frac: f64 = matches
-        .value_of("frac")
+    let ari_thr: f64 = matches
+        .value_of("ari")
         .and_then(|num| num.parse().ok())
         .unwrap();
     let count: usize = matches
         .value_of("count")
         .and_then(|num| num.parse().ok())
         .unwrap();
+    let match_score: f64 = matches
+        .value_of("match_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let mismatch_score: f64 = matches
+        .value_of("mismatch_score")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     use haplotyper::{SquishConfig, SquishErroneousClusters};
-    let config = SquishConfig::new(frac, count);
+    let config = SquishConfig::new(ari_thr, count, match_score, mismatch_score);
     dataset.squish_erroneous_clusters(&config);
 }
 

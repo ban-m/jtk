@@ -73,14 +73,23 @@ impl AlignmentCorrection for DataSet {
             }
             corrected_clustering_on_read
         };
+        let cluster_num: HashMap<_, _> = self
+            .selected_chunks
+            .iter()
+            .map(|c| (c.id, c.cluster_num))
+            .collect();
         for read in self.encoded_reads.iter_mut() {
             if let Some(corrected) = corrected_clustering_on_read.get(&read.id) {
                 for &(pos, asn) in corrected.iter() {
-                    read.nodes[pos].cluster = asn;
+                    let node = read.nodes.get_mut(pos).unwrap();
+                    node.cluster = asn;
+                    let cl = cluster_num[&node.unit];
+                    node.posterior.clear();
+                    node.posterior.extend(std::iter::repeat(-10000f64).take(cl));
+                    node.posterior[asn as usize] = 0f64;
                 }
             }
         }
-        // TODO: Clear posterior, as it is no longer valid ?
     }
 }
 
@@ -182,14 +191,38 @@ fn correct_unit(
     let len = reads.len();
     trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
     let unit = ds.selected_chunks.iter().find(|u| u.id == unit_id).unwrap();
-    let (assignments, k, ari) = clustering(&reads, cluster_and_copynum, copy_numbers, unit, config);
+    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit, config);
+    let (adj_rand_index, raw) = adj_rand_on_biased(&reads, &assignments);
+    debug!("ARI\t{}\t{k}\t{adj_rand_index:.3}\t{raw:.3}", unit.id);
     assert_eq!(assignments.len(), reads.len());
     let assignments: Vec<_> = reads
         .into_iter()
         .zip(assignments)
         .map(|((idx, read), asn)| (read.id, idx, asn as u64))
         .collect();
-    (assignments, ari, (unit_id, k))
+    (assignments, adj_rand_index, (unit_id, k))
+}
+
+fn adj_rand_on_biased(reads: &[(usize, &EncodedRead)], asns: &[usize]) -> (f64, f64) {
+    const BIAS_THR: f64 = 0.2;
+    assert_eq!(asns.len(), reads.len());
+    let prev: Vec<_> = reads
+        .iter()
+        .map(|&(i, ref r)| r.nodes[i].cluster as usize)
+        .collect();
+    let adj_raw = crate::misc::adjusted_rand_index(&prev, &asns);
+    let (prev, asns): (Vec<_>, Vec<_>) = std::iter::zip(reads, asns)
+        .filter_map(|(&(i, ref read), &asn)| {
+            let n = &read.nodes[i];
+            n.is_biased(BIAS_THR).then(|| (n.cluster as usize, asn))
+        })
+        .unzip();
+    let adj = crate::misc::adjusted_rand_index(&prev, &asns);
+    if adj.is_nan() {
+        (1f64, adj_raw)
+    } else {
+        (adj, adj_raw)
+    }
 }
 
 fn clustering(
@@ -198,7 +231,7 @@ fn clustering(
     copy_numbers: &[Vec<f64>],
     unit: &Unit,
     _: &CorrectionConfig,
-) -> (Vec<usize>, usize, f64) {
+) -> (Vec<usize>, usize) {
     let id = unit.id;
     let contexts: Vec<_> = reads
         .iter()
@@ -253,6 +286,11 @@ fn clustering(
     let (mut eigens, pick_k) = get_eigenvalues(&laplacian, &rowsum, id);
     append_posterior_probability(&mut eigens, pick_k, reads);
     normalize_columns(&mut eigens);
+    // for eigen in eigens.iter_mut() {
+    //     for e in eigen.iter_mut().skip(pick_k) {
+    //         *e /= k as f64;
+    //     }
+    // }
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128PlusPlus;
     let mut rng = Xoroshiro128PlusPlus::seed_from_u64(id * k as u64);
@@ -262,9 +300,6 @@ fn clustering(
         .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
         .map(|x| x.1)
         .unwrap();
-    let prev: Vec<_> = contexts.iter().map(|c| c.1.cluster as usize).collect();
-    let adj_rand_index = crate::misc::adjusted_rand_index(&prev, &asn);
-    debug!("ARI\t{id}\t{k}\t{pick_k}\t{adj_rand_index}");
     if log_enabled!(log::Level::Trace) {
         let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
         for (i, sm) in sims.iter().enumerate() {
@@ -274,6 +309,9 @@ fn clustering(
         for (i, lap) in laplacian.iter().enumerate() {
             let line: Vec<_> = lap.iter().map(|x| format!("{x:.2}")).collect();
             trace!("LAP\t{i}\t{}\t{}", ids[i], line.join("\t"));
+        }
+        for (i, (up, _, tail)) in contexts.iter().enumerate() {
+            trace!("LENS\t{i}\t{}\t{}", ids[i], up.len() + tail.len());
         }
     }
     if log_enabled!(log::Level::Trace) {
@@ -287,16 +325,16 @@ fn clustering(
         }
     }
     assert!(asn.iter().all(|&x| x <= cluster_num));
-    (asn, cluster_num, adj_rand_index)
+    (asn, cluster_num)
 }
 
 fn filter_similarity(mut sims: Vec<Vec<f64>>, len: usize) -> Vec<Vec<f64>> {
     const SMALL: f64 = 0.0000000000000001;
-    const MIN_REQ: f64 = 0.5;
+    const MIN_REQ: f64 = 0.51;
     let mut to_retain: Vec<Vec<_>> = sims.iter().map(|xs| vec![false; xs.len()]).collect();
     for (i, xs) in sims.iter().enumerate() {
         let threshold = select_nth(xs, len).max(MIN_REQ);
-        for (j, _) in xs.iter().enumerate().filter(|x| threshold <= *x.1) {
+        for (j, _) in xs.iter().enumerate().filter(|x| threshold < *x.1) {
             to_retain[i][j] = true;
             to_retain[j][i] = true;
         }
@@ -452,21 +490,13 @@ fn alignment<'a>(
     copy_numbers: &[Vec<f64>],
 ) -> f64 {
     assert_eq!(center1.unit, center2.unit);
-    let center_copy_num = &copy_numbers[center1.unit as usize];
-    let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let up_aln = align_swg(up1, up2, copy_numbers);
     let down_aln = align_swg(down1, down2, copy_numbers);
-    // This is probably the correct formulation of the similarity score, a.k.a the
-    // likelihood ratio of the identity-by-haplotype. Exp(ln(From the same Hap) - ln(1-From the same hap)).
-    // However, likelihood ratio test is usually goes to extreme and we want to examine the difference between exp(150) vs exp(151) into
-    // similarity matrix.
+    let center_copy_num = &copy_numbers[center1.unit as usize];
+    let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let likelihood_ratio = up_aln + down_aln + center;
+    // let likelihood_ratio = up_aln + down_aln;
     (1f64 + (-likelihood_ratio).exp()).recip()
-    // const LK_CAP: f64 = 15f64;
-    // match likelihood_ratio <= LK_CAP {
-    //     true => likelihood_ratio.exp(),
-    //     false => LK_CAP.exp() + LK_CAP.exp() * (likelihood_ratio - LK_CAP),
-    // }
 }
 
 // Align by SWG.

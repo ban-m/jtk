@@ -30,7 +30,9 @@ pub struct PipelineConfig {
     min_span: usize,
     min_llr: f64,
     resume: bool,
-    supress_frac: f64,
+    supress_ari: f64,
+    match_ari: f64,
+    mismatch_ari: f64,
     required_count: usize,
 }
 use haplotyper::{local_clustering::LocalClustering, *};
@@ -62,7 +64,9 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         min_span,
         min_llr,
         resume,
-        supress_frac,
+        supress_ari,
+        match_ari,
+        mismatch_ari,
         required_count,
     } = config.clone();
     let level = match verbose {
@@ -102,7 +106,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     let correct_deletion_config = CorrectDeletionConfig::new(false, None, Some(STDDEV_OR_ERROR));
     let correct_deletion_config_recluster =
         CorrectDeletionConfig::new(true, None, Some(STDDEV_OR_ERROR));
-    let squish_config = SquishConfig::new(supress_frac, required_count);
+    let squish_config = SquishConfig::new(supress_ari, required_count, match_ari, mismatch_ari);
     // Pipeline.
     let mut ds = match resume && matches!(std::fs::try_exists(&entry), Ok(true)) {
         false => {
@@ -139,7 +143,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         ds.purge(&purge_config);
         ds.purge(&purge_config);
         ds.correct_deletion(&correct_deletion_config_recluster);
-        ds.dense_encoding_dev(&dense_encode_config);
+        ds.dense_encoding(&dense_encode_config);
         log(&ds, &dense_encoded)?;
     }
     if resume && matches!(std::fs::try_exists(&corrected), Ok(true)) {

@@ -23,7 +23,7 @@ upper = 400
 ### Discard units with occurence less than or equal to [lower].
 lower = 4
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
-resume = false
+resume = true
 
 
 ## Tunable parameters. Sometimes tuning these parameters would improve the assembly.
@@ -64,6 +64,9 @@ polish_window_size = 2000
 ### Minimum required log likelihood ratio to span region. Should be positive!
 min_llr = 1
 ### Filter lower [supress_frac] weak clusters.
-supress_frac = 0.01
+supress_ari = 0.4
+### Match/Mismatch penalty for clustering
+match_ari = 4.0
+mismatch_ari = -1.0
 ### The minimum required spanning reads to compute the weakness of a cluster.
-required_count = 10
+required_count = 7
