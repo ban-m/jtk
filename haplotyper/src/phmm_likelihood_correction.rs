@@ -280,17 +280,19 @@ fn clustering(
                 .collect()
         })
         .collect();
+    if log_enabled!(log::Level::Trace) {
+        let ids: Vec<_> = reads.iter().map(|x| x.1.id).collect();
+        for (i, lap) in sims.iter().enumerate() {
+            let line: Vec<_> = lap.iter().map(|x| format!("{x:.2}")).collect();
+            trace!("LAP\t{i}\t{}\t{}", ids[i], line.join("\t"));
+        }
+    }
     let cov_per_copy = reads.len() - reads.len() / unit.copy_num / 4;
     let sims = filter_similarity(sims, cov_per_copy);
     let (rowsum, laplacian) = get_graph_laplacian(&sims);
     let (mut eigens, pick_k) = get_eigenvalues(&laplacian, &rowsum, id);
     append_posterior_probability(&mut eigens, pick_k, reads);
     normalize_columns(&mut eigens);
-    // for eigen in eigens.iter_mut() {
-    //     for e in eigen.iter_mut().skip(pick_k) {
-    //         *e /= k as f64;
-    //     }
-    // }
     use rand::SeedableRng;
     use rand_xoshiro::Xoroshiro128PlusPlus;
     let mut rng = Xoroshiro128PlusPlus::seed_from_u64(id * k as u64);
@@ -306,10 +308,7 @@ fn clustering(
             let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
             trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
         }
-        for (i, lap) in laplacian.iter().enumerate() {
-            let line: Vec<_> = lap.iter().map(|x| format!("{x:.2}")).collect();
-            trace!("LAP\t{i}\t{}\t{}", ids[i], line.join("\t"));
-        }
+
         for (i, (up, _, tail)) in contexts.iter().enumerate() {
             trace!("LENS\t{i}\t{}\t{}", ids[i], up.len() + tail.len());
         }
@@ -334,7 +333,7 @@ fn filter_similarity(mut sims: Vec<Vec<f64>>, len: usize) -> Vec<Vec<f64>> {
     let mut to_retain: Vec<Vec<_>> = sims.iter().map(|xs| vec![false; xs.len()]).collect();
     for (i, xs) in sims.iter().enumerate() {
         let threshold = select_nth(xs, len).max(MIN_REQ);
-        for (j, _) in xs.iter().enumerate().filter(|x| threshold < *x.1) {
+        for (j, _) in xs.iter().enumerate().filter(|x| threshold <= *x.1) {
             to_retain[i][j] = true;
             to_retain[j][i] = true;
         }
@@ -495,7 +494,6 @@ fn alignment<'a>(
     let center_copy_num = &copy_numbers[center1.unit as usize];
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let likelihood_ratio = up_aln + down_aln + center;
-    // let likelihood_ratio = up_aln + down_aln;
     (1f64 + (-likelihood_ratio).exp()).recip()
 }
 

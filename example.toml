@@ -23,7 +23,7 @@ upper = 400
 ### Discard units with occurence less than or equal to [lower].
 lower = 4
 ### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
-resume = true
+resume = false
 
 
 ## Tunable parameters. Sometimes tuning these parameters would improve the assembly.

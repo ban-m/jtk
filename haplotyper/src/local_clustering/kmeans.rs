@@ -215,9 +215,13 @@ fn cluster_filtered_variants<R: Rng>(
         let lk_gains = vec![vec![0f64; 1]; variants.len()];
         return (asn, lk_gains, 0f64, 1);
     }
+    let datasize = variants.len();
+    let per_cluster_cov = match copy_num {
+        0 | 1 | 2 => datasize as f64 / copy_num as f64,
+        _ => (datasize as f64 / copy_num as f64).max(coverage),
+    };
     let coverage_imp_thr = 0;
     //    let coverage_imp_thr = get_read_thr(variants.len() as f64 / copy_num as f64, 3f64);
-    let datasize = variants.len();
     let (mut assignments, mut max, mut max_k, mut read_lk_gains) =
         (vec![0; datasize], 0f64, 1, vec![0f64; datasize]);
     let mut prev_used_columns = vec![false; variants[0].len()];
@@ -241,7 +245,7 @@ fn cluster_filtered_variants<R: Rng>(
         let improved_reads = count_improved_reads(&new_lk_gains, &read_lk_gains, min_gain);
         let expected_gain_per_read =
             expected_gains(gains, variant_type, &prev_used_columns, &used_columns);
-        let expected_gain = expected_gain_per_read * datasize as f64 / copy_num as f64 + 0.1;
+        let expected_gain = expected_gain_per_read * per_cluster_cov + 0.1;
         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}\t{coverage_imp_thr}");
         if expected_gain < score - max && coverage_imp_thr < improved_reads {
             let mut counts = vec![0; k];
@@ -303,20 +307,20 @@ fn expected_gains(
     // Previously not used, currently used.
     let newly_used = std::iter::zip(prev_columns, used_columns).map(|(&p, &c)| !p & c);
     let check_column = newly_used.map(|b| b | is_all_used);
-    let expt_gain: f64 = if is_all_used {
-        variant_type
-            .iter()
-            .map(|&(homop, diff_type)| gains.expected(homop, diff_type))
-            .sum()
-    } else {
-        std::iter::zip(variant_type, check_column)
-            .map(|(&(homop, diff_type), is_used)| match is_used {
-                true => gains.expected(homop, diff_type),
-                false => 0.0000001,
-            })
-            .max_by(|x, y| x.partial_cmp(y).unwrap())
-            .unwrap_or(0f64)
-    };
+    // let expt_gain: f64 = if is_all_used {
+    //     variant_type
+    //         .iter()
+    //         .map(|&(homop, diff_type)| gains.expected(homop, diff_type))
+    //         .sum()
+    // } else {
+    let expt_gain = std::iter::zip(variant_type, check_column)
+        .map(|(&(homop, diff_type), is_used)| match is_used {
+            true => gains.expected(homop, diff_type),
+            false => 0.0000001,
+        })
+        .max_by(|x, y| x.partial_cmp(y).unwrap())
+        .unwrap_or(0f64);
+    // };
     (EXPT_GAIN_FACTOR * expt_gain).max(0.1)
 }
 

@@ -1,7 +1,7 @@
 library(tidyverse)
 loadNamespace("cowplot")
 
-filename <- "new.tsv"
+filename <- "sim.tsv"
 dataset <- read_tsv(filename, col_names = FALSE)
 dataset <- as.matrix(dataset)
 

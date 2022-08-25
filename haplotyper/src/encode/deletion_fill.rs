@@ -62,7 +62,7 @@ impl CorrectDeletion for DataSet {
             let config = MultiplicityEstimationConfig::new(seed, None);
             self.estimate_multiplicity(&config);
             // Retain all the units changed their copy numbers.
-            let chainged_units: HashSet<_> = self
+            let changed_units: HashSet<_> = self
                 .selected_chunks
                 .iter()
                 .filter_map(|c| match prev_copy_numbers.get(&c.id) {
@@ -72,7 +72,7 @@ impl CorrectDeletion for DataSet {
                 })
                 .collect();
             // Merge these two.
-            let selection: HashSet<_> = find_new_units.union(&chainged_units).copied().collect();
+            let selection: HashSet<_> = find_new_units.union(&changed_units).copied().collect();
             // Recover the original assignments on the retained units.
             self.encoded_reads
                 .iter_mut()

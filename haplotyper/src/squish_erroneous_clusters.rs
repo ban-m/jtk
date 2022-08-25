@@ -181,7 +181,6 @@ fn check_correl(
             c2.push(n2);
         }
     }
-
     if c1.is_empty() {
         return (0f64, c1.len());
     }
@@ -193,7 +192,8 @@ fn check_correl(
         (false, _) => crate::misc::adjusted_rand_index(&c1, &c2),
     };
     if rel_value.is_nan() {
-        panic!("\n{:?}\n{:?}", c1, c2);
+        warn!("\n{:?}\n{:?}", c1, c2);
+        return (0f64, c1.len());
     }
     (rel_value, c1.len())
 }

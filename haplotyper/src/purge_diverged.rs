@@ -54,13 +54,14 @@ impl PurgeDivergent for DataSet {
             prev,
             self.encoded_reads.len()
         );
+        debug!("PLI\tUnits\t{:?}", purged_cluster);
         purged_cluster
     }
 }
 
 const ACCEPT_RATE: f64 = 0.5;
 const DEL_WEIGHT: i64 = 2;
-const INS_WEIGHT: i64 = 0;
+// const INS_WEIGHT: i64 = 0;
 const MATCH_WEIGHT: i64 = 1;
 fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) -> HashSet<u64> {
     let mut indel_size_distr: HashMap<(u64, u64), Vec<_>> = HashMap::new();
@@ -74,7 +75,7 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
             let xs = node.cigar.iter().map(|&op| match op {
                 definitions::Op::Match(l) => -(l as i64) * MATCH_WEIGHT,
                 definitions::Op::Del(l) => l as i64 * DEL_WEIGHT,
-                definitions::Op::Ins(l) => l as i64 * INS_WEIGHT,
+                definitions::Op::Ins(l) => l as i64 * DEL_WEIGHT,
             });
             let del_size = crate::misc::max_region(xs) / DEL_WEIGHT;
             let key = match config.compress {
@@ -134,13 +135,13 @@ fn filter_single_copy(
     let indel_size = config.indel_size;
     let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
     let num = distr.iter().filter(|&x| (indel_size as i64) < x.2).count();
-    if 0 < num {
+    let upper_thr = ((distr.len() as f64) * (1f64 - config.occupy_fraction / 2f64)).ceil() as usize;
+    if (1..upper_thr).contains(&num) {
         let sum: i64 = distr
             .iter()
             .map(|x| x.2)
             .filter(|&x| (accept_size as i64) < x)
             .sum();
-
         let mean = sum / (num as i64).max(1);
         let cov = distr.len();
         debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\tSingle");
@@ -162,19 +163,20 @@ fn filter_multi_copy(
     let accept_size = (indel_size as f64 * ACCEPT_RATE).ceil() as usize;
     let lower_thr = (hap_coverage * config.occupy_fraction).floor() as usize;
     let upper_thr = (distr.len() as f64 - lower_thr as f64).max(0f64).ceil() as usize;
-    let num = distr.iter().filter(|&x| (indel_size as i64) < x.2).count();
-    if lower_thr < num {
+    let min_remove = distr.iter().filter(|&x| (indel_size as i64) < x.2).count();
+    let max_remove = distr.iter().filter(|&x| (accept_size as i64) < x.2).count();
+    if unit == 1527 {
+        debug!("PLI\t{unit}\t{cluster}\t{min_remove}\t{max_remove}");
+    }
+    if lower_thr < min_remove && max_remove < upper_thr {
         let sum: i64 = distr
             .iter()
             .map(|x| x.2)
             .filter(|&x| (accept_size as i64) < x)
             .sum();
-        let mean = sum / num as i64;
+        let mean = sum / max_remove as i64;
         let cov = distr.len();
-        let retain = (lower_thr..upper_thr).contains(&num);
-        debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\t{retain}");
-    }
-    if (lower_thr..upper_thr).contains(&num) {
+        debug!("PLI\t{unit}\t{cluster}\t{mean}\t{min_remove}\t{max_remove}\t{cov}");
         distr.retain(|&(_, _, size)| accept_size < size as usize);
         true
     } else {

@@ -31,7 +31,6 @@ fn pileup_nodes<'a>(
         .collect();
     let mut pileups: HashMap<u64, Vec<&mut Node>> =
         selection.iter().map(|&id| (id, vec![])).collect();
-
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         if let Some(bucket) = pileups.get_mut(&node.unit) {
             bucket.push(node);
