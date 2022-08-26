@@ -95,12 +95,14 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
         .collect();
     unit_pairs.retain(|_, val| config.count_thr < *val);
     unit_pairs.retain(|(u1, u2), _| 1 < units[u1] && 1 < units[u2]);
-    trace!("REL\tUnit1\tUnit2\tRel\tCount\tTotal");
     let adj_rand_indices: Vec<_> = unit_pairs
         .par_iter()
         .map(|(&(u1, u2), _)| {
             let (cl1, cl2) = (units[&u1], units[&u2]);
             let (rel, count) = check_correl(ds, (u1, cl1), (u2, cl2));
+            if u1 == 1449 || u2 == 1449 {
+                debug!("DUMP\t{u1}\t{u2}\t{rel:.3}\t{count}");
+            }
             (u1, u2, (rel, count))
         })
         .collect();
@@ -131,23 +133,6 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
                     })
                     .max_by(|x, y| (x.1).partial_cmp(&y.1).unwrap())
                     .unwrap();
-                if c.id == 689 {
-                    for (to, ari, count) in
-                        adj_rand_indices
-                            .iter()
-                            .filter_map(|&(from, to, (ari, count))| {
-                                if c.id == from {
-                                    Some((to, ari, count))
-                                } else if c.id == to {
-                                    Some((from, ari, count))
-                                } else {
-                                    None
-                                }
-                            })
-                    {
-                        debug!("SUSPIC\t{}\t{to}\t{ari:.3}\t{count}", c.id);
-                    }
-                }
                 debug!("SUSPIC\t{}\t{to}\t{ari:.3}\t{count}", c.id);
                 (c.id, RelClass::Suspicious)
             } else {
@@ -209,6 +194,9 @@ fn classify(adj_rand_indices: &[(u64, u64, (f64, usize))], config: &SquishConfig
     let mut graph = vec![vec![]; nodes.len()];
     for &(from, to, (ari, count)) in adj_rand_indices.iter() {
         let ari = ari.max(0f64).min(1f64);
+        if from == 1449 || to == 1449 {
+            debug!("FIND\t{from}\t{to}\t{ari}\t{count}");
+        }
         let (from, to) = (nodes[&from], nodes[&to]);
         graph[from].push((to, ari, count));
         graph[to].push((from, ari, count));
@@ -228,15 +216,9 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 fn classify_nodes(graph: &RelGraph, nodes: usize, param: &ClassifyParam) -> Vec<bool> {
     let mut assignments = vec![true; nodes];
     let mut rng: Xoshiro256PlusPlus = SeedableRng::seed_from_u64(3093240);
-    // let param = ClassifyParam::new(0.5, -1f64, 4f64);
     for _t in 0..10 {
-        // Estimate parameters.
-        // let param = estimate_error_rate(graph, &assignments);
-        trace!("ESTIM\t{param}");
         wipe_through(graph, &mut assignments, param);
         mcmc(graph, &mut assignments, param, &mut rng);
-        let picked: usize = assignments.iter().filter(|&&b| b).count();
-        trace!("CLASSIFY\t{picked}\t{}", assignments.len());
     }
     assignments
 }

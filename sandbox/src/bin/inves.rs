@@ -28,22 +28,22 @@ fn main() -> std::io::Result<()> {
             for read in ds.encoded_reads.iter() {
                 for node1 in read.nodes.iter().filter(|n| n.unit == unit1) {
                     for node2 in read.nodes.iter().filter(|n| n.unit == unit2) {
-                        //if node1.is_biased(0.2) && node2.is_biased(0.2) {
-                        occs[node1.cluster as usize][node2.cluster as usize] += 1;
-                        c1.push(node1.cluster as usize);
-                        c2.push(node2.cluster as usize);
-                        // eprintln!("{:?}\t{:?}", node1.posterior, node2.posterior);
-                        // let nodes: Vec<_> = read
-                        //     .nodes
-                        //     .iter()
-                        //     .filter(|n| !squished.contains(&n.unit))
-                        //     .map(|n| match n.is_biased(0.2) {
-                        //         true => format!("{}-{}", n.unit, n.cluster),
-                        //         false => format!("{}-?", n.unit),
-                        //     })
-                        //     .collect();
-                        // eprintln!("{}", nodes.join("\t"));
-                        // }
+                        if node1.is_biased(0.2) && node2.is_biased(0.2) {
+                            occs[node1.cluster as usize][node2.cluster as usize] += 1;
+                            c1.push(node1.cluster as usize);
+                            c2.push(node2.cluster as usize);
+                            // eprintln!("{:?}\t{:?}", node1.posterior, node2.posterior);
+                            // let nodes: Vec<_> = read
+                            //     .nodes
+                            //     .iter()
+                            //     .filter(|n| !squished.contains(&n.unit))
+                            //     .map(|n| match n.is_biased(0.2) {
+                            //         true => format!("{}-{}", n.unit, n.cluster),
+                            //         false => format!("{}-?", n.unit),
+                            //     })
+                            //     .collect();
+                            // eprintln!("{}", nodes.join("\t"));
+                        }
                     }
                 }
                 // let idx = read.nodes.iter().position(|n| n.unit == unit1);

@@ -591,6 +591,7 @@ fn subcommand_assemble() -> Command<'static> {
                 .long("min_llr")
                 .takes_value(true)
                 .value_name("LK Ratio")
+                .default_value("1")
                 .required(false)
                 .help("Minimum likelihood ratio"),
         )
@@ -599,6 +600,7 @@ fn subcommand_assemble() -> Command<'static> {
                 .long("min_span")
                 .takes_value(true)
                 .value_name("# of reads")
+                .default_value("2")
                 .required(false)
                 .help("Minimum required reads to span repeats"),
         )
@@ -955,15 +957,19 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         .value_of("window_size")
         .and_then(|num| num.parse().ok())
         .unwrap();
-    let min_llr: Option<f64> = matches.value_of("min_llr").map(|num| num.parse().unwrap());
-    let min_span: Option<usize> = matches.value_of("min_span").map(|num| num.parse().unwrap());
+    let min_llr: f64 = matches
+        .value_of("min_llr")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
+    let min_span: usize = matches
+        .value_of("min_span")
+        .and_then(|num| num.parse().ok())
+        .unwrap();
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
     let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
-    let msr = min_span.unwrap_or_else(|| dataset.read_type.min_span_reads());
-    let min_lk = min_llr.unwrap_or_else(|| dataset.read_type.min_llr_value());
-    let config = AssembleConfig::new(window_size, !skip_polish, true, msr, min_lk, true);
+    let config = AssembleConfig::new(window_size, !skip_polish, true, min_span, min_llr, true);
     debug!("START\tFinal assembly");
     if !skip_polish {
         use haplotyper::model_tune::update_model;

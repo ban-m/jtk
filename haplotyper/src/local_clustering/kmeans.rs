@@ -372,7 +372,7 @@ where
         let (pos, ed) = pos_to_bp_and_difftype(_pos);
         trace!("STRAND\t{pos}\t{ed}\t{fsum:.2}\t{fcount}\t{bsum:.2}\t{bcount}\t{lower_thr:.2}\t{upper_thr:.2}");
     }
-    lower_thr < diff && diff < upper_thr
+    lower_thr <= diff && diff <= upper_thr
 }
 
 // LK->LK-logsumexp(LK).
@@ -478,14 +478,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
     trace!("\n{gains}");
     let pvalues = gains.pvalues(profiles.len());
     let homopolymer_length = homopolymer_length(template);
-    // let min_req: Vec<_> = (0..profiles[0].borrow().len())
-    //     .map(|pos| {
-    //         let (bp, diff_type) = pos_to_bp_and_difftype(pos);
-    //         let homop_len = *homopolymer_length.get(bp).unwrap_or(&1);
-    //         gains.expected(homop_len, diff_type) * MIN_REQ_FRACTION
-    //     })
-    //     .collect();
-    // let total_improvement = column_sum_of(profiles, &min_req);
     let total_improvement = column_sum(profiles);
     let temp_len = total_improvement.len() / NUM_ROW;
     let probes: Vec<(usize, f64)> = total_improvement

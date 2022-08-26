@@ -658,18 +658,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.remove_zero_copy_path(0.1);
-            self.resolve_repeats(reads, c, llr as f64, false);
+            self.resolve_repeats(reads, c, llr as f64, true, false);
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
-            if i == 5 {
-                self.assign_copy_number(cov, &mut rng);
-                self.remove_zero_copy_elements(0.9);
-                self.remove_zero_copy_path(0.3);
-                self.remove_lightweight_edges(0, true);
-                self.remove_tips(0.8, 4);
-                self.squish_small_net(3);
-                assert!(self.sanity_check(), "{}", line!());
-            }
             if log_enabled!(log::Level::Trace) {
                 dump(self, i + 1, c);
             }
@@ -682,7 +673,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.squish_small_net(3);
         self.assign_copy_number(cov, &mut rng);
         self.zip_up_overclustering_dev();
-        self.resolve_repeats(reads, c, min_llr, true);
+        self.resolve_repeats(reads, c, min_llr, false, true);
         if c.to_bypass_contigs {
             self.bypass_repeats(reads, c, min_llr);
         }

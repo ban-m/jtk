@@ -654,6 +654,9 @@ impl Node {
     /// Return if there is a cluster such that self.posterior[i].exp() > thr + 1/posterior.len().
     /// If the posterior is empty, return false.
     pub fn is_biased(&self, thr: f64) -> bool {
+        if self.posterior.len() <= 1 {
+            return true;
+        }
         let thr = (self.posterior.len() as f64).recip() + thr;
         self.posterior.iter().any(|x| thr <= x.exp())
     }
