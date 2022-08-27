@@ -36,7 +36,6 @@ pub trait PurgeDivergent {
 
 use rayon::prelude::*;
 const THR: f64 = 0.1;
-// const SD_SIGMA: f64 = 8f64;
 impl PurgeDivergent for DataSet {
     fn purge(&mut self, config: &PurgeDivConfig) {
         let prev = self.encoded_reads.len();
@@ -86,6 +85,8 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
             indel_size_distr.entry(key).or_default().push(pointer);
         }
     }
+    // TODO: If there are two more clusters, and all the read in one cluster
+    // support large indel, we can .. ?
     crate::misc::update_coverage(ds);
     indel_size_distr.retain(|&(unit, cluster), distr| {
         let copy_num = copy_num[&unit];
@@ -295,8 +296,6 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
 // Unit -> Cluster -> If the cluster is very diverged.
 pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
     use crate::estimate_error_rate::estimate_error_rate;
-    // let error_rate = ds.error_rate();
-    // let fallback = error_rate.total + SD_SIGMA * error_rate.total_sd;
     let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
     debug!("PD\tFallback\t{fallback}");
     let error_rates = estimate_error_rate(ds, fallback);

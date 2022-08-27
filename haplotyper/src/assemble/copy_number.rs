@@ -85,10 +85,6 @@ impl CoverageCalibrator {
 // For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge
 // even in the zero-copy elements.
 const ERROR_FRAC: f64 = 0.25;
-// Probability that the adjacent copy number is correct.
-// TODO: Maybe we need to increase this value from 0.5 -> 1 as the iteration goes.
-// 0:no condidence to 1:certain
-// const CONFIDENCE: f64 = 0.8;
 // If true, condidence is set to the MAX_CONFIDENCE from the beggining.
 const CONST_CONFIDENCE: bool = false;
 const MAX_CONFIDENCE: f64 = 0.95;

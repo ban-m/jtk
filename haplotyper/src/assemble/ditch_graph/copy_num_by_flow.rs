@@ -301,7 +301,7 @@ impl Graph {
         let numsource = self.source_sinks().len();
         debug!("COPY\tFLOW\tGraphNode\t{}\t{}", graph_size, numsource);
         debug!("COPY\tFLOW\tPenalty\t0\t{}", penalty);
-        while self.update_dev() {
+        while self.update() {
             trace!("PENALTY\t{:.1}", self.penalty());
         }
         let penalty = self.penalty();
@@ -353,7 +353,7 @@ impl Graph {
         }
     }
     // True if source can reach sink
-    fn reachable(&self, source: ResIndex, sink: ResIndex) -> bool {
+    fn reachable(&self, source: ResIndex, sink: ResIndex, edges: &[Vec<f64>]) -> bool {
         let mut stack = vec![source];
         let mut is_arrived = vec![false; self.residual_graph.len()];
         'dfs: while !stack.is_empty() {
@@ -362,7 +362,11 @@ impl Graph {
                 return true;
             }
             is_arrived[last.0] = true;
-            for edge in self.residual_graph[last].0.iter() {
+            let scores = &edges[last.0];
+            let edges = &self.residual_graph[last].0;
+            assert_eq!(edges.len(), scores.len());
+            let edges = std::iter::zip(scores, edges).filter(|&(&score, _)| score < LARGE_VALUE);
+            for (_, edge) in edges {
                 if !is_arrived[edge.to.0] {
                     stack.push(edge.to);
                     continue 'dfs;
@@ -372,7 +376,7 @@ impl Graph {
         }
         false
     }
-    fn update_dev(&mut self) -> bool {
+    fn update(&mut self) -> bool {
         let tuples = self.source_sink_tuple();
         let edge_scores: Vec<Vec<_>> = self
             .residual_graph
@@ -383,7 +387,7 @@ impl Graph {
         // Check cycle.
         let (mut min, mut argmin) = (LARGE_VALUE, None);
         for (source, sink) in tuples {
-            if !self.reachable(source, sink) {
+            if !self.reachable(source, sink, &edge_scores) {
                 // trace!("UNREACHABLE\t{}\t{}", source.0, sink.0);
                 continue;
             }
@@ -400,6 +404,7 @@ impl Graph {
                     return true;
                 }
             }
+            // TODO: Here are some bugs.
             let bfs = self
                 .bfs(&edge_scores, source, sink)
                 .and_then(|path| self.eval(&path).map(|score| (path, score)))

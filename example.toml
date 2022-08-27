@@ -18,7 +18,7 @@ threads = 1
 take_num = 2500
 ### If true, consensus generate high quality consensus.
 to_polish = true
-### Discard units with occurence more than or equal to [upper].
+### Discard units with occurence more than or equal to [upper]. 30x * 10 = 300.
 upper = 400
 ### Discard units with occurence less than or equal to [lower].
 lower = 4

@@ -284,10 +284,10 @@ fn expected_gains(
     used_columns: &[bool],
 ) -> f64 {
     assert_eq!(variant_type.len(), used_columns.len());
-    let is_all_used = used_columns.iter().all(|&x| x);
+    let no_new_variants = prev_columns == used_columns;
     // Previously not used, currently used.
     let newly_used = std::iter::zip(prev_columns, used_columns).map(|(&p, &c)| !p & c);
-    let check_column = newly_used.map(|b| b | is_all_used);
+    let check_column = newly_used.map(|b| b | no_new_variants);
     let expt_gain = std::iter::zip(variant_type, check_column)
         .map(|(&(homop, diff_type), is_used)| match is_used {
             true => gains.expected(homop, diff_type),

@@ -100,9 +100,6 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
         .map(|(&(u1, u2), _)| {
             let (cl1, cl2) = (units[&u1], units[&u2]);
             let (rel, count) = check_correl(ds, (u1, cl1), (u2, cl2));
-            if u1 == 1449 || u2 == 1449 {
-                debug!("DUMP\t{u1}\t{u2}\t{rel:.3}\t{count}");
-            }
             (u1, u2, (rel, count))
         })
         .collect();
@@ -194,9 +191,6 @@ fn classify(adj_rand_indices: &[(u64, u64, (f64, usize))], config: &SquishConfig
     let mut graph = vec![vec![]; nodes.len()];
     for &(from, to, (ari, count)) in adj_rand_indices.iter() {
         let ari = ari.max(0f64).min(1f64);
-        if from == 1449 || to == 1449 {
-            debug!("FIND\t{from}\t{to}\t{ari}\t{count}");
-        }
         let (from, to) = (nodes[&from], nodes[&to]);
         graph[from].push((to, ari, count));
         graph[to].push((from, ari, count));

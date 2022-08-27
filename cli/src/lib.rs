@@ -144,12 +144,12 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         ds.purge(&purge_config);
         ds.correct_deletion(&correct_deletion_config_recluster);
         ds.dense_encoding(&dense_encode_config);
+        ds.correct_deletion(&correct_deletion_config_recluster);
         log(&ds, &dense_encoded)?;
     }
     if resume && matches!(std::fs::try_exists(&corrected), Ok(true)) {
         ds = parse_json(&corrected)?;
     } else {
-        ds.correct_deletion(&correct_deletion_config_recluster);
         ds.squish_erroneous_clusters(&squish_config);
         ds.correct_clustering(&correction_config);
         log(&ds, &corrected)?;

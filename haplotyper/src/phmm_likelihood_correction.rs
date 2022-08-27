@@ -136,35 +136,63 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
         let mut obs_counts: Vec<Vec<f64>> = cls.into_iter().map(|k| vec![0f64; k]).collect();
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
             let unit = node.unit as usize;
-            // We need to normalize the posterior....
             let total = crate::misc::logsumexp(&node.posterior);
             obs_counts[unit]
                 .iter_mut()
                 .zip(node.posterior.iter())
                 .for_each(|(o, p)| *o += (p - total).exp());
         }
-        // We already have coverage, at least I assume so.
-        let cov = ds.coverage.unwrap();
         // Normalize the coverage.
-        obs_counts.iter_mut().flatten().for_each(|x| *x /= cov);
+        // obs_counts.iter_mut().flatten().for_each(|x| *x /= cov);
         (cps, obs_counts)
     };
+    let cov = ds.coverage.unwrap();
     obs_copy_number
         .par_iter()
         .zip(copy_number.par_iter())
         .map(|(obs_cp, &total_cp)| {
-            let mut est_cp = vec![1f64; obs_cp.len()];
-            // Give a copy number to the most needed one...
-            for _ in (obs_cp.len()).min(total_cp)..total_cp {
-                let (idx, _) = obs_cp
+            let mut est_cp: Vec<_> = obs_cp
+                .iter()
+                .map(|obs| (obs / cov).round().max(1f64))
+                .collect();
+            let sum: usize = est_cp.iter().sum::<f64>().round() as usize;
+            for _ in (sum).min(total_cp)..total_cp {
+                if let Some((_, est)) = obs_cp
                     .iter()
-                    .zip(est_cp.iter())
-                    .enumerate()
-                    .map(|(i, (&o, &e))| (i, 2f64 * (o - e) - 1f64))
-                    .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-                    .unwrap();
-                est_cp[idx] += 1f64;
+                    .zip(est_cp.iter_mut())
+                    .map(|(obs, est)| {
+                        let now = (obs - *est * cov).powi(2);
+                        let next = (obs - (*est + 1f64) * cov).powi(2);
+                        (now - next, est)
+                    })
+                    .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+                {
+                    *est += 1.0;
+                }
             }
+            // let mut est_cp = vec![1f64; obs_cp.len()];
+            // Give a copy number to the most needed one...
+            // for _ in (obs_cp.len()).min(total_cp)..total_cp {
+            // let (idx, _) = obs_cp
+            //     .iter()
+            //     .zip(est_cp.iter())
+            //     .enumerate()
+            //     .map(|(i, (&o, &e))| {
+            //         let now = (o - e * cov).powi(2);
+            //         let next = (o - (e + 1f64) * cov).powi(2);
+            //         (i, now - next)
+            //     })
+            //     .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+            //     .unwrap();
+            // let (idx, _) = obs_cp
+            //     .iter()
+            //     .zip(est_cp.iter())
+            //     .enumerate()
+            //     .map(|(i, (&o, &e))| (i, 2f64 * (o - e) - 1f64))
+            //     .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+            //     .unwrap();
+            //     est_cp[idx] += 1f64;
+            // }
             est_cp
         })
         .collect()
@@ -225,6 +253,44 @@ fn adj_rand_on_biased(reads: &[(usize, &EncodedRead)], asns: &[usize]) -> (f64, 
     }
 }
 
+type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
+fn to_context<'a>(&(idx, read): &(usize, &'a EncodedRead)) -> Context<'a> {
+    let center = &read.nodes[idx];
+    fn get_tuple(n: &Node) -> (u64, &[f64]) {
+        (n.unit, n.posterior.as_slice())
+    }
+    let (up, tail) = match center.is_forward {
+        true => {
+            let up: Vec<_> = read.nodes[..idx].iter().map(get_tuple).rev().collect();
+            let tail: Vec<_> = read.nodes[idx + 1..].iter().map(get_tuple).collect();
+            (up, tail)
+        }
+        false => {
+            let tail: Vec<_> = read.nodes[..idx].iter().map(get_tuple).rev().collect();
+            let up: Vec<_> = read.nodes[idx + 1..].iter().map(get_tuple).collect();
+            (up, tail)
+        }
+    };
+    (up, center, tail)
+}
+
+// fn format_ctx(&(ref up, ref center, ref down): &Context) -> (Vec<String>, String, Vec<String>) {
+//     fn vec_to_str(xs: &[f64]) -> String {
+//         let xs: Vec<_> = xs.iter().map(|x| format!("{x:.2}")).collect();
+//         xs.join(",")
+//     }
+//     let up: Vec<_> = up
+//         .iter()
+//         .map(|(u, post)| format!("[{u}({})]", vec_to_str(post)))
+//         .collect();
+//     let donw: Vec<_> = down
+//         .iter()
+//         .map(|(u, post)| format!("[{u}({})]", vec_to_str(post)))
+//         .collect();
+//     let center = format!("{}({})", center.unit, vec_to_str(&center.posterior));
+//     (up, center, donw)
+// }
+
 fn clustering(
     reads: &[(usize, &EncodedRead)],
     (k, _upper_k): (usize, usize),
@@ -233,39 +299,7 @@ fn clustering(
     _: &CorrectionConfig,
 ) -> (Vec<usize>, usize) {
     let id = unit.id;
-    let contexts: Vec<_> = reads
-        .iter()
-        .map(|&(idx, read)| {
-            let center = &read.nodes[idx];
-            let (up, tail) = match center.is_forward {
-                true => {
-                    let up: Vec<_> = read.nodes[..idx]
-                        .iter()
-                        .map(|n| (n.unit, n.posterior.as_slice()))
-                        .rev()
-                        .collect();
-                    let tail: Vec<_> = read.nodes[idx + 1..]
-                        .iter()
-                        .map(|n| (n.unit, n.posterior.as_slice()))
-                        .collect();
-                    (up, tail)
-                }
-                false => {
-                    let tail: Vec<_> = read.nodes[..idx]
-                        .iter()
-                        .map(|n| (n.unit, n.posterior.as_slice()))
-                        .rev()
-                        .collect();
-                    let up: Vec<_> = read.nodes[idx + 1..]
-                        .iter()
-                        .map(|n| (n.unit, n.posterior.as_slice()))
-                        .collect();
-                    (up, tail)
-                }
-            };
-            (up, center, tail)
-        })
-        .collect();
+    let contexts: Vec<_> = reads.iter().map(to_context).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
         .enumerate()
@@ -274,7 +308,7 @@ fn clustering(
                 .iter()
                 .enumerate()
                 .map(|(j, dtx)| match i == j {
-                    false => alignment(ctx, dtx, copy_numbers),
+                    false => alignment(ctx, dtx, copy_numbers, i, j),
                     true => 0f64,
                 })
                 .collect()
@@ -308,12 +342,9 @@ fn clustering(
             let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
             trace!("SIM\t{i}\t{}\t{}", ids[i], line.join("\t"));
         }
-
         for (i, (up, _, tail)) in contexts.iter().enumerate() {
             trace!("LENS\t{i}\t{}\t{}", ids[i], up.len() + tail.len());
         }
-    }
-    if log_enabled!(log::Level::Trace) {
         for (i, sm) in eigens.iter().enumerate() {
             let line: Vec<_> = sm.iter().map(|x| format!("{x:.2}")).collect();
             let line = line.join("\t");
@@ -482,12 +513,14 @@ fn get_eigenvalues(matrix: &[Vec<f64>], rowsum: &[f64], id: u64) -> (Vec<Vec<f64
     (features, opt_k)
 }
 
-type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
 fn alignment<'a>(
     (up1, center1, down1): &Context<'a>,
-    (up2, center2, down2): &Context<'a>,
+    ctx2: &Context<'a>,
     copy_numbers: &[Vec<f64>],
+    _i: usize,
+    _j: usize,
 ) -> f64 {
+    let (up2, center2, down2) = ctx2;
     assert_eq!(center1.unit, center2.unit);
     let up_aln = align_swg(up1, up2, copy_numbers);
     let down_aln = align_swg(down1, down2, copy_numbers);
