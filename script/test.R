@@ -8,7 +8,7 @@ dataset <- as.matrix(dataset)
 heatmap(x = dataset, Rowv = NA, symm = TRUE, scale = "none")
 
 
-filename <- "1297.tsv" # nolint
+filename <- "22.tsv" # nolint
 
 dataset <- read_tsv(filename, col_names = FALSE)
 len <- dataset %>% pull(X1) %>% max()

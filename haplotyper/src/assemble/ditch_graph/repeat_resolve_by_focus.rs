@@ -331,28 +331,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     .max_by(|x, y| x.llr().partial_cmp(&y.llr()).unwrap())
             })
             .collect()
-        // let mut foci = vec![];
-        // for (index, node) in self.nodes() {
-        //     if !matches!(node.copy_number, Some(1)) {
-        //         continue;
-        //     }
-        //     // Find
-        //     // --Node(Copy=1)--|
-        //     //                 |--Node(Copy>1)--
-        //     // --Node----------|
-        //     //  (We are here now)
-        //     for pos in [Position::Head, Position::Tail] {
-        //         let into_multi_copy = self.to_multi_copy(node, pos);
-        //         let is_branching = 1 < node.edges.iter().filter(|e| e.from_position == pos).count();
-        //         if into_multi_copy || (use_branch && is_branching) {
-        //             if let Some(focus) = self.examine_focus(index, pos, reads, config) {
-        //                 foci.push(focus);
-        //             }
-        //         }
-        //     }
-        // }
-        // foci.retain(|val| thr < val.llr());
-        // foci
     }
     fn get_bypasses(&self, reads: &[&EncodedRead], config: &AssembleConfig) -> Vec<Focus> {
         let mut bypasses = vec![];
@@ -716,40 +694,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             .filter(|focus| 0.01 < focus.llr())
             .collect()
     }
-    // fn examine_focus(
-    //     &self,
-    //     node_index: NodeIndex,
-    //     pos: Position,
-    //     reads: &[&EncodedRead],
-    //     config: &AssembleConfig,
-    // ) -> Option<Focus> {
-    //     let node = self.node(node_index).unwrap();
-    //     let min_span = config.min_span_reads;
-    //     let reads: Vec<_> = reads
-    //         .iter()
-    //         .filter(|r| r.contains(node.node))
-    //         .copied()
-    //         .collect();
-    //     let indices_and_parents = self.traverse(&reads, node_index, pos, min_span);
-    //     indices_and_parents
-    //         .iter()
-    //         .enumerate()
-    //         .skip(1)
-    //         .filter_map(|(d, nodes_with_pars)| {
-    //             self.max_lk_node(nodes_with_pars)
-    //                 .map(|(lk, target)| (lk, d, target))
-    //         })
-    //         .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
-    //         .map(|(lk, d, (to_idx, to_pos))| {
-    //             let backpath = Self::trackback(&indices_and_parents, d, (to_idx, to_pos));
-    //             let nodes_with_pars = &indices_and_parents[d];
-    //             let counts: Vec<_> = nodes_with_pars.iter().map(|x| x.0).collect();
-    //             let to_node = self.node(to_idx).unwrap().node;
-    //             let from_tuple = (node_index, node.node, pos);
-    //             let to_tuple = (to_idx, to_node, to_pos);
-    //             Focus::with_backpath(from_tuple, to_tuple, d, lk, counts, backpath)
-    //         })
-    // }
+
     fn survey_focus(&'b mut self, focus: &Focus, affected: &mut HashSet<NodeIndex>) -> Option<()> {
         if !self.is_path_branching(focus) {
             return None;

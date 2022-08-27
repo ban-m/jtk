@@ -184,34 +184,6 @@ fn filter_multi_copy(
     }
 }
 
-// // Purge node with very high error rate.
-// pub fn purge_erroneous_nodes(ds: &mut DataSet, _config: &PurgeDivConfig) -> HashSet<u64> {
-//     const SAFE_MARGIN: f64 = 5f64;
-//     let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
-//     use crate::estimate_error_rate::estimate_error_rate;
-//     let errors = estimate_error_rate(ds, fallback);
-//     let sigma_of_er = errors.median_of_sqrt_err;
-//     debug!("PD\tPurgeErroneousNode\t{SAFE_MARGIN}\t{sigma_of_er}",);
-//     let mut units_of_removed_nodes = HashSet::new();
-//     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-//     for read in ds.encoded_reads.iter_mut() {
-//         let read_error = errors.read(read.id);
-//         read.nodes.retain(|node| {
-//             let unit_error = errors.unit((node.unit, node.cluster));
-//             let aln = node.recover(units[&node.unit]).1;
-//             let errors = aln.iter().filter(|&&x| x != b'|').count();
-//             let error = errors as f64 / aln.len() as f64;
-//             let to_retain = error < read_error + unit_error + SAFE_MARGIN * sigma_of_er;
-//             if !to_retain {
-//                 units_of_removed_nodes.insert(node.unit);
-//             }
-//             to_retain
-//         });
-//     }
-//     ds.encoded_reads.retain(|r| !r.nodes.is_empty());
-//     units_of_removed_nodes
-// }
-
 fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
     let copy_number: HashMap<_, _> = ds
         .selected_chunks
@@ -335,40 +307,6 @@ pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> 
         .collect()
 }
 
-// Unit -> Cluster -> If the cluster is very diverged.
-// fn get_diverged_clusters(ds: &DataSet, thr: f64, _config: &PurgeDivConfig) -> Vec<Vec<bool>> {
-//     let max_unit_id = ds.selected_chunks.iter().map(|x| x.id).max().unwrap();
-//     let mut slots = vec![vec![]; max_unit_id as usize + 1];
-//     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-//         slots[node.unit as usize].push(node);
-//     }
-//     let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-//     slots
-//         .iter()
-//         .enumerate()
-//         .map(|(id, nodes)| {
-//             assert!(nodes.iter().all(|n| n.unit as usize == id));
-//             let ref_unit = match chunks.get(&(id as u64)) {
-//                 Some(res) => res,
-//                 None => return Vec::new(),
-//             };
-//             let mut div_rates = vec![vec![]; ref_unit.cluster_num];
-//             for node in nodes.iter() {
-//                 let (_, aln, _) = node.recover(ref_unit);
-//                 let div = aln.iter().filter(|&&x| x != b'|').count() as f64 / aln.len() as f64;
-//                 div_rates[node.cluster as usize].push(div);
-//             }
-//             div_rates
-//                 .iter()
-//                 .map(|rates| {
-//                     let sum: f64 = rates.iter().sum();
-//                     thr < sum / rates.len() as f64
-//                 })
-//                 .collect()
-//         })
-//         .collect()
-// }
-
 fn remove_diverged(node: &mut Node, cluster_info: &[bool]) {
     node.cluster -= cluster_info
         .iter()
@@ -381,81 +319,3 @@ fn remove_diverged(node: &mut Node, cluster_info: &[bool]) {
         !cluster_info[i - 1]
     });
 }
-
-// ///Return mapping from one chunk to another.
-// ///The `selected_chunks` member would be modified.
-// fn purge_diverged_nodes_dev(
-//     ds: &mut DataSet,
-//     thr: f64,
-//     config: &PurgeDivConfig,
-// ) -> (HashMap<(u64, u64), (u64, u64)>, HashSet<u64>) {
-//     let diverged_clusters = get_diverged_clusters(ds, thr, config);
-//     // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
-//     let diverged_clusters: Vec<Vec<bool>> = diverged_clusters
-//         .into_iter()
-//         .map(|mut xs| {
-//             if xs.iter().all(|&x| x) {
-//                 xs.iter_mut().for_each(|x| *x = false);
-//             }
-//             xs
-//         })
-//         .collect();
-//     for (uid, cls) in diverged_clusters.iter().enumerate() {
-//         for (cl, _) in cls.iter().enumerate().filter(|&(_, &b)| b) {
-//             debug!("PD\t{uid}\t{cl}");
-//         }
-//     }
-//     let has_diverged_cluster: Vec<bool> = diverged_clusters
-//         .iter()
-//         .map(|xs| xs.iter().any(|&x| x))
-//         .collect();
-//     let removed_clusters: usize = diverged_clusters
-//         .iter()
-//         .map(|cls| cls.iter().filter(|&&x| x).count())
-//         .sum();
-//     debug!("PD\tPurge\t{}", removed_clusters);
-//     // Modify cluster number.
-//     let mut new_units = Vec::new();
-//     let max_id = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
-//     let mut changed = HashSet::new();
-//     let mappings = ds
-//         .selected_chunks
-//         .iter_mut()
-//         .filter(|u| has_diverged_cluster[u.id as usize])
-//         .flat_map(|u| {
-//             changed.insert(u.id);
-//             // Tune cluster number.
-//             let squished = diverged_clusters[u.id as usize]
-//                 .iter()
-//                 .filter(|&&x| x)
-//                 .count();
-//             u.cluster_num -= squished;
-//             u.copy_num -= squished;
-//             // Create new chunk.
-//             let id = max_id + 1 + new_units.len() as u64;
-//             changed.insert(id);
-//             let mut new_unit = Unit::new(id, u.seq.clone().into(), squished);
-//             new_unit.cluster_num = squished;
-//             new_units.push(new_unit);
-//             // Determine mappings.
-//             let mut mapping = Vec::with_capacity(diverged_clusters[u.id as usize].len());
-//             let (mut new_unit_cl, mut old_unit_cl) = (0, 0);
-//             for (from, is_diverged) in diverged_clusters[u.id as usize].iter().enumerate() {
-//                 let from = (u.id, from as u64);
-//                 match is_diverged {
-//                     true => {
-//                         mapping.push((from, (id, new_unit_cl)));
-//                         new_unit_cl += 1;
-//                     }
-//                     false => {
-//                         mapping.push((from, (u.id, old_unit_cl)));
-//                         old_unit_cl += 1;
-//                     }
-//                 }
-//             }
-//             mapping
-//         })
-//         .collect();
-//     ds.selected_chunks.extend(new_units);
-//     (mappings, changed)
-// }

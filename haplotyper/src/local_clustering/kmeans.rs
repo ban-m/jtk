@@ -266,25 +266,6 @@ fn cluster_filtered_variants<R: Rng>(
     (assignments, likelihood_gains, max, max_k as usize)
 }
 
-// fn get_lk_of_coverage(asn: &[usize], cov: f64, k: usize) -> f64 {
-//     let mut cluster = vec![0; k];
-//     for &asn in asn.iter() {
-//         cluster[asn] += 1;
-//     }
-//     cluster.iter().map(|&n| max_poisson_lk(n, cov, 1, k)).sum()
-// }
-
-// fn find_substitution(
-//     used_columns: &[bool],
-//     prev_columns: &[bool],
-//     variant_type: &[(usize, DiffType)],
-// ) -> Option<usize> {
-//     std::iter::zip(used_columns, prev_columns)
-//         .zip(variant_type)
-//         .find(|((&now, &prev), &(_, t))| !prev && now && t == DiffType::Subst)
-//         .map(|(_, &(pos, _))| pos)
-// }
-
 fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[bool]) -> f64 {
     std::iter::zip(variant_type, used_columns)
         .filter_map(|(&(homop_len, diff_type), is_used)| match is_used {
@@ -307,12 +288,6 @@ fn expected_gains(
     // Previously not used, currently used.
     let newly_used = std::iter::zip(prev_columns, used_columns).map(|(&p, &c)| !p & c);
     let check_column = newly_used.map(|b| b | is_all_used);
-    // let expt_gain: f64 = if is_all_used {
-    //     variant_type
-    //         .iter()
-    //         .map(|&(homop, diff_type)| gains.expected(homop, diff_type))
-    //         .sum()
-    // } else {
     let expt_gain = std::iter::zip(variant_type, check_column)
         .map(|(&(homop, diff_type), is_used)| match is_used {
             true => gains.expected(homop, diff_type),
@@ -320,7 +295,6 @@ fn expected_gains(
         })
         .max_by(|x, y| x.partial_cmp(y).unwrap())
         .unwrap_or(0f64);
-    // };
     (EXPT_GAIN_FACTOR * expt_gain).max(0.1)
 }
 
@@ -388,16 +362,15 @@ fn to_posterior_probability(lks: &mut [Vec<f64>]) {
 // Usually, they are the same but sometimes there are exact repeats, and the number of the cluster
 // would be smaller than the copy number.
 fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -> Vec<Vec<f64>> {
-    let mut lks = vec![vec![(0f64, 0); variants[0].len()]; k];
+    let mut lks = vec![vec![LKCount::default(); variants[0].len()]; k];
     let mut clusters = vec![0; k];
     for (vars, &asn) in variants.iter().zip(assignments.iter()) {
         clusters[asn] += 1;
         for (slot, x) in lks[asn].iter_mut().zip(vars.iter()) {
-            slot.0 += x;
-            slot.1 += (POS_THR < *x) as usize;
+            slot.add(*x);
         }
     }
-    let use_columns = get_used_columns(&lks, &clusters);
+    let use_columns = get_used_columns(&lks);
     trace!("FILTER\t{use_columns:?}");
     variants
         .iter()
@@ -407,7 +380,7 @@ fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -
                     vars.iter()
                         .zip(slots.iter())
                         .zip(use_columns.iter())
-                        .filter(|&((_, &(sum, _)), to_use)| to_use & (POS_THR < sum))
+                        .filter(|&((_, lkc), to_use)| to_use & (POS_THR < lkc.total_gain))
                         .map(|x| (x.0).0)
                         .sum()
                 })
@@ -421,16 +394,15 @@ fn get_read_lk_gains(
     assignments: &[usize],
     k: usize,
 ) -> (Vec<bool>, Vec<f64>) {
-    let mut lks = vec![vec![(0f64, 0); variants[0].len()]; k];
+    let mut lks = vec![vec![LKCount::default(); variants[0].len()]; k];
     let mut clusters = vec![0; k];
     for (vars, &asn) in variants.iter().zip(assignments.iter()) {
         clusters[asn] += 1;
         for (slot, x) in lks[asn].iter_mut().zip(vars.iter()) {
-            slot.0 += x;
-            slot.1 += (POS_THR < *x) as usize;
+            slot.add(*x);
         }
     }
-    let use_columns = get_used_columns(&lks, &clusters);
+    let use_columns = get_used_columns(&lks);
     let gain_on_read: Vec<_> = variants
         .iter()
         .zip(assignments.iter())
@@ -438,7 +410,7 @@ fn get_read_lk_gains(
             vars.iter()
                 .zip(lks[asn].iter())
                 .zip(use_columns.iter())
-                .filter(|&((_, (sum, _)), to_use)| to_use & (POS_THR < *sum))
+                .filter(|&((_, lkc), to_use)| to_use & (POS_THR < lkc.total_gain))
                 .map(|x| (x.0).0)
                 .sum()
         })
@@ -573,10 +545,12 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
         for _ in 0..cluster_num.max(2) {
             let next_var_idx = find_next_variants(probes, &weights, &is_selected);
             if let Some(next_var_idx) = next_var_idx {
-                let picked_pos = probes[next_var_idx].0;
-                let (picked_pos_in_bp, _) = pos_to_bp_and_difftype(picked_pos);
+                let (picked_pos, lk) = probes[next_var_idx];
+                let (picked_pos_in_bp, ed) = pos_to_bp_and_difftype(picked_pos);
+                let weight = weights[next_var_idx];
+                trace!("PICK\t{picked_pos_in_bp}\t{ed}\t{lk:.3}\t{weight:.3}");
                 is_selected[next_var_idx] = 1;
-                for ((&(pos, _), weight), selected) in probes
+                for ((&(pos, _), _), selected) in probes
                     .iter()
                     .zip(weights.iter_mut())
                     .zip(is_selected.iter_mut())
@@ -587,12 +561,15 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
                         pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
                     let sim = sokal_michener(profiles, picked_pos, pos);
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    if 0.95 < sim || 1f64 - cos_sim.abs() < 0.01 || diff_in_bp < MASK_LENGTH {
+                    if 0.95 < sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
                         *selected = 2;
                     }
-                    if 0.75 < sim {
-                        *weight *= 1f64 - sim;
+                    if picked_pos_in_bp == 478 && pos_in_bp == 1111 {
+                        debug!("TARGET\t{sim:.3}\t{cos_sim:.3}");
                     }
+                    // if 0.75 < cos_sim {
+                    //     *weight *= 1f64 - cos_sim;
+                    // }
                 }
             } else {
                 break 'outer;
@@ -607,27 +584,6 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
     selected_variants
 }
 
-// Return the sum of the positive values of the columns.
-// Each position have exactly one chance to contribute to the total sum.
-// In other words, for each position, one of the largest value would be
-// chosen as "varinats".
-// fn column_sum_of<T: std::borrow::Borrow<[f64]>>(
-//     profiles: &[T],
-//     min_req: &[f64],
-// ) -> Vec<(f64, usize)> {
-//     let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
-//     assert_eq!(total_improvement.len(), min_req.len());
-//     for prof in profiles.iter().map(|x| x.borrow()) {
-//         for ((slot, gain), req) in total_improvement.iter_mut().zip(prof).zip(min_req) {
-//             if req < gain {
-//                 slot.0 += gain;
-//                 slot.1 += 1;
-//             }
-//         }
-//     }
-//     total_improvement
-// }
-
 fn column_sum<T: std::borrow::Borrow<[f64]>>(profiles: &[T]) -> Vec<(f64, usize)> {
     let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
     for prof in profiles.iter().map(|x| x.borrow()) {
@@ -641,15 +597,6 @@ fn column_sum<T: std::borrow::Borrow<[f64]>>(profiles: &[T]) -> Vec<(f64, usize)
     total_improvement
 }
 
-// fn pick_one_of_the_max(xs: &[f64], min_req: &[f64], _seed: usize) -> Option<(usize, f64)> {
-//     assert_eq!(xs.len(), min_req.len());
-//     std::iter::zip(xs, min_req)
-//         .enumerate()
-//         .max_by(|(_, x), (_, y)| x.0.partial_cmp(y.0).unwrap())
-//         .filter(|&(_, (x, req))| req < x)
-//         .map(|(idx, (&x, _))| (idx, x))
-// }
-
 fn find_next_variants(
     probes: &[(usize, f64)],
     weights: &[f64],
@@ -662,13 +609,8 @@ fn find_next_variants(
         .zip(is_selected.iter())
         .enumerate()
         .filter(|&(_, (_, &flag))| flag == 0)
-        .max_by(
-            |(_, ((lk1, w1), picked1)), (_, ((lk2, w2), picked2))| match (picked1, picked2) {
-                (1, _) | (2, _) => std::cmp::Ordering::Less,
-                (_, 1) | (_, 2) => std::cmp::Ordering::Greater,
-                _ => (lk1 * *w1).partial_cmp(&(lk2 * *w2)).unwrap(),
-            },
-        )
+        .map(|(idx, ((lk, w), _))| (idx, lk * w))
+        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .map(|x| x.0)
 }
 
@@ -677,9 +619,13 @@ fn cosine_similarity<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j:
         .iter()
         .map(|profile| profile.borrow())
         .map(|profile| (profile[i], profile[j]))
+        .filter(|(x, y)| POS_THR < x.abs() && POS_THR < y.abs())
         .fold((0f64, 0f64, 0f64), |(ip, isumsq, jsumsq), (x, y)| {
             (ip + x * y, isumsq + x * x, jsumsq + y * y)
         });
+    if isumsq == 0f64 {
+        return 0f64;
+    }
     inner_prod / isumsq.sqrt() / jsumsq.sqrt()
 }
 
@@ -687,15 +633,18 @@ fn cosine_similarity<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j:
 fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
     let (matches, mismatches) = profiles
         .iter()
-        .map(|prof| {
-            let prof = prof.borrow();
-            POS_THR < (prof[i] * prof[j])
-        })
-        .fold((0, 0), |(mat, mism), x| match x {
+        .map(|prof| (prof.borrow()[i], prof.borrow()[j]))
+        .filter(|&(x, y)| POS_THR < x.abs() && POS_THR < y.abs())
+        .fold((0, 0), |(mat, mism), (x, y)| match 0f64 < x * y {
             true => (mat + 1, mism),
             false => (mat, mism + 1),
         });
-    mismatches.max(matches) as f64 / profiles.len() as f64
+    let total = matches + mismatches;
+    if total == 0 {
+        0f64
+    } else {
+        mismatches.max(matches) as f64 / total as f64
+    }
 }
 
 // Return log Poiss{x|lambda}
@@ -758,6 +707,9 @@ fn use_highest_gain(data: &[Vec<f64>]) -> (Vec<usize>, f64, Vec<f64>, Vec<bool>)
     (assignments, score, lk_gains, used_columns)
 }
 
+use rand::prelude::SliceRandom;
+use rand::seq::IteratorRandom;
+
 // Return the maximum likelihood.
 // In this function, we sample the assignemnts of the data, then evaluate the
 // likelihood of the probability, P(X|Z) = max_O P(X|Z,O). Here, the parameters O can be analytically resolvable,
@@ -765,11 +717,6 @@ fn use_highest_gain(data: &[Vec<f64>]) -> (Vec<usize>, f64, Vec<f64>, Vec<bool>)
 // Since we have P(Z|X,O) = P(X|Z,O) * P(Z|O) / P(X|O) ~ P(X|Z,O) * P(Z|O), (not precise?)
 // We can flip Z->Z' by comparing P(Z'|X)/P(Z|X).
 // Finally, the retuned value would be P(Z,X) = P(Z) P(X|Z).
-
-use rand::prelude::SliceRandom;
-use rand::seq::IteratorRandom;
-
-// use super::HOMOP_LEN;
 fn mcmc_with_filter<R: Rng>(
     data: &[Vec<f64>],
     assign: &mut [usize],
@@ -785,12 +732,11 @@ fn mcmc_with_filter<R: Rng>(
     // how many instance in a cluster.
     let mut clusters = vec![0; k];
     // Cluster Id -> Column ID -> (total lk, # of positive values in the cluster)
-    let mut lks = vec![vec![(0f64, 0); data[0].len()]; k];
+    let mut lks = vec![vec![LKCount::default(); data[0].len()]; k];
     for (xs, &asn) in data.iter().zip(assign.iter()) {
         clusters[asn] += 1;
         for (lk, x) in lks[asn].iter_mut().zip(xs) {
-            lk.0 += x;
-            lk.1 += (POS_THR < *x) as usize;
+            lk.add(*x);
         }
     }
     let mut lk = get_lk(&lks, &clusters, &size_to_lk);
@@ -819,12 +765,11 @@ fn mcmc_with_filter<R: Rng>(
     // get max value.
     assign.iter_mut().zip(argmax).for_each(|(x, y)| *x = y);
     let mut clusters = vec![0; k];
-    let mut lks = vec![vec![(0f64, 0); data[0].len()]; k];
+    let mut lks = vec![vec![LKCount::default(); data[0].len()]; k];
     for (xs, &asn) in data.iter().zip(assign.iter()) {
         clusters[asn] += 1;
         for (lk, x) in lks[asn].iter_mut().zip(xs) {
-            lk.0 += x;
-            lk.1 += (POS_THR < *x) as usize;
+            lk.add(*x);
         }
     }
     let lk = get_lk(&lks, &clusters, &size_to_lk);
@@ -837,54 +782,101 @@ fn flip(
     assign: &mut [usize],
     idx: usize,
     to: usize,
-    lks: &mut [Vec<(f64, usize)>],
+    lks: &mut [Vec<LKCount>],
     clusters: &mut [usize],
 ) {
     let from = assign[idx];
     // Remove data[idx] from lks[from] and clusters[from.]
     clusters[from] -= 1;
     for (lks, x) in lks[from].iter_mut().zip(data[idx].iter()) {
-        lks.0 -= x;
-        lks.1 -= (POS_THR < *x) as usize;
+        lks.sub(*x);
     }
     assign[idx] = to;
     clusters[to] += 1;
     for (lks, x) in lks[to].iter_mut().zip(data[idx].iter()) {
-        lks.0 += x;
-        lks.1 += (POS_THR < *x) as usize;
+        lks.add(*x);
     }
 }
 
-fn get_lk(lks: &[Vec<(f64, usize)>], clusters: &[usize], _size_to_lk: &[f64]) -> f64 {
+fn get_lk(lks: &[Vec<LKCount>], clusters: &[usize], _size_to_lk: &[f64]) -> f64 {
     // If true, then that column would not be used.
-    let use_columns = get_used_columns(lks, clusters);
+    let use_columns = get_used_columns(lks);
     let mut lk: f64 = clusters.iter().map(|&size| _size_to_lk[size]).sum();
     for lks in lks.iter() {
-        for ((total, _), _) in lks.iter().zip(use_columns.iter()).filter(|x| *x.1) {
-            lk += total.max(0f64);
+        for (lkc, _) in lks.iter().zip(use_columns.iter()).filter(|x| *x.1) {
+            lk += lkc.total_gain.max(0f64);
         }
     }
     lk
 }
-const POS_FRAC: f64 = 0.70;
-const IN_POS_RATIO: f64 = 2f64;
-fn get_used_columns(lks: &[Vec<(f64, usize)>], clusters: &[usize]) -> Vec<bool> {
-    let mut to_uses = vec![false; lks[0].len()];
-    for (lks, &size) in lks.iter().zip(clusters.iter()) {
-        assert_eq!(to_uses.len(), lks.len());
-        for (to_use, &(lk, pos_count)) in to_uses.iter_mut().zip(lks.iter()) {
-            *to_use |= 0f64 < lk && size as f64 * POS_FRAC < pos_count as f64;
+
+#[derive(Debug, Clone)]
+struct LKCount {
+    total_gain: f64,
+    num_pos: usize,
+    num_neg: usize,
+    num_zero: usize,
+}
+
+impl std::default::Default for LKCount {
+    fn default() -> Self {
+        Self {
+            total_gain: 0f64,
+            num_pos: 0,
+            num_neg: 0,
+            num_zero: 0,
         }
     }
+}
+
+impl LKCount {
+    fn is_informative(&self) -> bool {
+        const POS_FRAC: f64 = 0.70;
+        let cov = (self.num_pos + self.num_neg) as f64 + 0.0000001;
+        0f64 < self.total_gain && POS_FRAC < (self.num_pos as f64) / cov
+    }
+    fn add(&mut self, x: f64) {
+        self.total_gain += x;
+        if POS_THR < x {
+            self.num_pos += 1;
+        } else if x < -POS_THR {
+            self.num_neg += 1;
+        } else {
+            assert!(x.abs() < POS_THR);
+            self.num_zero += 1;
+        }
+    }
+    fn sub(&mut self, x: f64) {
+        self.total_gain -= x;
+        if POS_THR < x {
+            self.num_pos -= 1;
+        } else if x < -POS_THR {
+            self.num_neg -= 1;
+        } else {
+            assert!(x.abs() < POS_THR);
+            self.num_zero -= 1;
+        }
+    }
+}
+
+fn get_used_columns(lks: &[Vec<LKCount>]) -> Vec<bool> {
+    let mut to_uses = vec![false; lks[0].len()];
+    for lks in lks.iter() {
+        assert_eq!(to_uses.len(), lks.len());
+        for (to_use, lkc) in to_uses.iter_mut().zip(lks.iter()) {
+            *to_use |= lkc.is_informative();
+        }
+    }
+    const IN_POS_RATIO: f64 = 2f64;
     for (d, to_use) in to_uses.iter_mut().enumerate() {
-        let column = lks.iter().map(|lks| lks[d]);
+        let column = lks.iter().map(|lks| &lks[d]);
         let pos_in_use: usize = column
             .clone()
-            .filter_map(|x| (0f64 < x.0).then(|| x.1))
+            .filter_map(|x| (0f64 < x.total_gain).then(|| x.num_pos))
             .sum();
         let pos_in_neg: usize = column
             .clone()
-            .filter_map(|x| (x.0 <= 0f64).then(|| x.1))
+            .filter_map(|x| (x.total_gain <= 0f64).then(|| x.num_pos))
             .sum();
         *to_use &= pos_in_neg as f64 * IN_POS_RATIO < pos_in_use as f64;
     }
