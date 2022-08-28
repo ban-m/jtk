@@ -429,7 +429,6 @@ fn get_read_lk_gains(
 // If we use a variant, we use that variant in almost all the reads.
 // TODO: Can we determine FRAC and IN_POS_RATIO from the data?
 // These values are critical.
-
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
 const PVALUE: f64 = 0.05;
@@ -534,61 +533,61 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
     profiles: &[T],
     cluster_num: usize,
 ) -> Vec<(usize, f64)> {
-    // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence.
+    // 0-> not selected yet. 1-> selected. 2-> removed because of co-occurence, 3-> temporary supressed.
     // Currently, find and sweep. So, to select one variant,
     // It takes O(L) time to find a variant, and O(L) time to sweep linked variant.
     // So, in total, O(ML) time to select M variants. It is OK I think, because
     // usually L is 2K, M is around 3-20.
     let mut is_selected = vec![0; probes.len()];
     'outer: for _ in 0..ROUND {
-        let mut weights: Vec<_> = vec![1f64; probes.len()];
+        is_selected
+            .iter_mut()
+            .filter(|b| **b == 3)
+            .for_each(|b| *b = 0);
         for _ in 0..cluster_num.max(2) {
-            let next_var_idx = find_next_variants(probes, &weights, &is_selected);
+            let next_var_idx = find_next_variants(probes, &is_selected);
             if let Some(next_var_idx) = next_var_idx {
                 let (picked_pos, lk) = probes[next_var_idx];
                 let (picked_pos_in_bp, ed) = pos_to_bp_and_difftype(picked_pos);
-                let weight = weights[next_var_idx];
-                trace!("PICK\t{picked_pos_in_bp}\t{ed}\t{lk:.3}\t{weight:.3}");
+                trace!("PICK\t{picked_pos_in_bp}\t{ed}\t{lk:.3}");
                 is_selected[next_var_idx] = 1;
-                for ((&(pos, _), _), selected) in probes
+                for (&(pos, _), selected) in probes
                     .iter()
-                    .zip(weights.iter_mut())
                     .zip(is_selected.iter_mut())
-                    .filter(|&(_, &mut selected)| selected == 0)
+                    .filter(|&(_, &mut selected)| selected == 0 || selected == 3)
                 {
                     let (pos_in_bp, _) = pos_to_bp_and_difftype(pos);
                     let diff_in_bp =
                         pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
-                    let sim = sokal_michener(profiles, picked_pos, pos);
+                    let sok_sim = sokal_michener(profiles, picked_pos, pos);
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    if 0.95 < sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
+                    if [45, 1743, 1942, 1993].contains(&pos_in_bp) {
+                        trace!("COSSIM\t{picked_pos_in_bp}\t{pos_in_bp}\t{cos_sim}\t{sok_sim}\t{diff_in_bp}");
+                    }
+                    if 0.99 < sok_sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
                         *selected = 2;
+                    } else if 0.8 < cos_sim.abs() {
+                        *selected = 3;
                     }
-                    if picked_pos_in_bp == 478 && pos_in_bp == 1111 {
-                        debug!("TARGET\t{sim:.3}\t{cos_sim:.3}");
-                    }
-                    // if 0.75 < cos_sim {
-                    //     *weight *= 1f64 - cos_sim;
-                    // }
                 }
             } else {
                 break 'outer;
             }
         }
     }
-    let selected_variants: Vec<_> = probes
+
+    probes
         .iter()
         .zip(is_selected)
         .filter_map(|(x, y)| (y == 1).then(|| *x))
-        .collect();
-    selected_variants
+        .collect()
 }
 
 fn column_sum<T: std::borrow::Borrow<[f64]>>(profiles: &[T]) -> Vec<(f64, usize)> {
     let mut total_improvement = vec![(0.0, 0); profiles[0].borrow().len()];
     for prof in profiles.iter().map(|x| x.borrow()) {
         for (slot, &gain) in total_improvement.iter_mut().zip(prof) {
-            if 0f64 < gain {
+            if POS_THR < gain {
                 slot.0 += gain;
                 slot.1 += 1;
             }
@@ -597,19 +596,14 @@ fn column_sum<T: std::borrow::Borrow<[f64]>>(profiles: &[T]) -> Vec<(f64, usize)
     total_improvement
 }
 
-fn find_next_variants(
-    probes: &[(usize, f64)],
-    weights: &[f64],
-    is_selected: &[u8],
-) -> Option<usize> {
+fn find_next_variants(probes: &[(usize, f64)], is_selected: &[u8]) -> Option<usize> {
     probes
         .iter()
         .map(|x| x.1)
-        .zip(weights.iter())
         .zip(is_selected.iter())
         .enumerate()
         .filter(|&(_, (_, &flag))| flag == 0)
-        .map(|(idx, ((lk, w), _))| (idx, lk * w))
+        .map(|(idx, (lk, _))| (idx, lk))
         .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .map(|x| x.0)
 }
