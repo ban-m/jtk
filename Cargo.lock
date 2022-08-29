@@ -329,23 +329,6 @@ version = "0.1.0"
 source = "git+https://github.com/ban-m/histgram_viz?branch=master#9260229e514289cc9c0e35f9b52f174fe03e805f"
 
 [[package]]
-name = "hla_cli"
-version = "0.1.0"
-dependencies = [
- "bio_utils",
- "clap 3.1.18",
- "definitions",
- "env_logger",
- "gfa",
- "haplotyper",
- "log",
- "rayon",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
 name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -380,6 +363,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af25a77299a7f711a01975c35a6a424eb6862092cc2d6c72c4ed6cbc56dfc1fa"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "jtk_cli"
+version = "0.1.0"
+dependencies = [
+ "bio_utils",
+ "clap 3.1.18",
+ "definitions",
+ "env_logger",
+ "gfa",
+ "haplotyper",
+ "log",
+ "rayon",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

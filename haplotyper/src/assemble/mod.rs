@@ -160,45 +160,6 @@ impl Assemble for DataSet {
         header.extend(records);
         GFA::from_records(header)
     }
-    // fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph {
-    //     let (records, summaries) = assemble_draft(self, c);
-    //     let nodes: Vec<_> = summaries
-    //         .iter()
-    //         .map(|s| {
-    //             let id = s.id.clone();
-    //             let segments: Vec<_> = s
-    //                 .summary
-    //                 .iter()
-    //                 .map(|n| Tile {
-    //                     unit: n.unit,
-    //                     cluster: n.cluster,
-    //                     strand: n.strand,
-    //                 })
-    //                 .collect();
-    //             Node { id, segments }
-    //         })
-    //         .collect();
-    //     let edges: Vec<_> = records
-    //         .iter()
-    //         .filter_map(|record| match &record.content {
-    //             gfa::Content::Edge(e) => Some(e),
-    //             _ => None,
-    //         })
-    //         .map(|e| {
-    //             let from = e.sid1.id.to_string();
-    //             let from_tail = e.sid1.is_forward();
-    //             let to = e.sid2.id.to_string();
-    //             let to_tail = e.sid2.is_forward();
-    //             Edge {
-    //                 from,
-    //                 from_tail,
-    //                 to,
-    //                 to_tail,
-    //             }
-    //         })
-    //         .collect();
-    //     Graph { nodes, edges }
-    // }
 }
 
 /// ASSEMBLEIMPL
@@ -221,7 +182,9 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
         use crate::consensus::Polish;
         let seed = 394802;
         let radius = 50;
-        let config = consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, 2);
+        let round = 4;
+        let config =
+            consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, round);
         segments = ds.polish_segment(&segments, &encodings, &config);
         let lengths: HashMap<_, _> = segments
             .iter()

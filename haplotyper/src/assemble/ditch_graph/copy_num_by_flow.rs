@@ -385,7 +385,7 @@ impl Graph {
             .map(|edges| edges.0.iter().map(|e| self.score(e)).collect())
             .collect();
         // Check cycle.
-        let (mut min, mut argmin) = (LARGE_VALUE, None);
+        let (mut min, mut argmin) = (0f64, None);
         for (source, sink) in tuples {
             if !self.reachable(source, sink, &edge_scores) {
                 // trace!("UNREACHABLE\t{}\t{}", source.0, sink.0);
@@ -420,7 +420,7 @@ impl Graph {
                 argmin = Some((path, source, sink));
             }
         }
-        if min < LARGE_VALUE {
+        if min < 0f64 {
             let (path, ResIndex(source), ResIndex(sink)) = argmin.unwrap();
             let len = path.len();
             trace!("UPDATE\tPATH\t{len}\t{source}\t{sink}\t{min:.0}");

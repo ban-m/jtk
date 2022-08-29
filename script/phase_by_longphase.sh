@@ -39,5 +39,5 @@ awk '(3 < NF && $1 ~ !/^#/ && $5 != "1")' "$OUTDIR"/haplotag.out | cut -f1 > "$O
 awk '(3 < NF && $1 ~ !/^#/ && $5 != "2")' "$OUTDIR"/haplotag.out | cut -f1 > "$OUTDIR"/h1.ids
 seqtk subseq "$READS" "$OUTDIR"/h1.ids > "$OUTDIR"/h1.fq
 seqtk subseq "$READS" "$OUTDIR"/h2.ids > "$OUTDIR"/h2.fq
-flye --nano-raw "$OUTDIR"/h1.fq --out-dir "$OUTDIR"/h1 --genome-size 5M -t"$THREADS" 
-flye --nano-raw "$OUTDIR"/h2.fq --out-dir "$OUTDIR"/h2 --genome-size 5M -t"$THREADS" 
+/usr/bin/time -v flye --nano-raw "$OUTDIR"/h1.fq --out-dir "$OUTDIR"/h1 --genome-size 5M -t"$THREADS" 
+/usr/bin/time -v flye --nano-raw "$OUTDIR"/h2.fq --out-dir "$OUTDIR"/h2 --genome-size 5M -t"$THREADS" 

@@ -17,6 +17,7 @@ fn main() -> std::io::Result<()> {
             .flat_map(|n| n.nodes.iter_mut())
             .for_each(|n| n.cluster = 0);
     }
+    haplotyper::misc::update_coverage(&mut ds);
     let config = AssembleConfig::new(100, false, false, 3, 4f64, false);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());
@@ -34,9 +35,11 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     graph.remove_lightweight_edges(2, true);
     graph.remove_tips(0.8, 4);
-    let cov = ds.coverage.unwrap();
-    let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
-    graph.assign_copy_number_flow(cov, &mut rng);
+    if ds.coverage.is_available() {
+        let cov = ds.coverage.unwrap();
+        let mut rng: Xoshiro256Plus = SeedableRng::seed_from_u64(4395);
+        graph.assign_copy_number_flow(cov, &mut rng);
+    }
     eprintln!("{graph}");
     eprintln!("CC:{}", graph.cc());
     assert!(graph.sanity_check());

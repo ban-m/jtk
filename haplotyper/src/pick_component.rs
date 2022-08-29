@@ -39,24 +39,7 @@ impl ComponentPicking for DataSet {
             .take(c.component_number)
             .flat_map(|cc| cc.iter().map(|&(unit, _)| unit).collect::<Vec<u64>>())
             .collect();
-        //         use crate::assemble::Assemble;
-        // let graph = self.assemble_draft_graph(&asm_config);
-        // let mut components: Vec<_> = graph.enumerate_connected_components();
-        // for (i, cc) in components.iter().enumerate() {
-        //     let size = cc.iter().map(|node| node.segments.len()).sum::<usize>();
-        //     debug!("PICKING\t{}\t{}", i, size);
-        // }
-        // components.sort_by_key(|cc| cc.iter().map(|node| node.segments.len()).sum::<usize>());
-        // components.reverse();
-        // let picked_units: HashSet<u64> = components
-        //     .into_iter()
-        //     .take(c.component_number)
-        //     .flat_map(|cc| {
-        //         cc.iter()
-        //             .flat_map(|node| node.segments.iter().map(|tile| tile.unit))
-        //             .collect::<Vec<u64>>()
-        //     })
-        //     .collect();
+
         debug!("PICKING\t{}\tConnectedComponents", c.component_number);
         debug!(
             "PICKING\t{}\t{}\tPicked",

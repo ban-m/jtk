@@ -13,7 +13,6 @@ mod repeat_resolve_by_focus;
 mod squish_graph;
 mod update_copy_numbers;
 use position::Position;
-pub mod dg_test;
 
 type Node = (u64, u64);
 type DitEdge = ((NodeIndex, Position), (NodeIndex, Position));
@@ -1766,80 +1765,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 .retain(|edge| !removed_edges.contains(&format_edge(edge)));
         });
     }
-    // fn share_units(&self, boundary: &GraphBoundary) -> bool {
-    //     let boundary: Vec<_> = boundary
-    //         .iter()
-    //         .map(|(n, pos)| (self.node(*n).unwrap().node.0, pos))
-    //         .collect();
-    //     if boundary.is_empty() {
-    //         false
-    //     } else {
-    //         boundary.iter().all(|&elm| elm == boundary[0])
-    //     }
-    // }
-    // fn z_edge_squish(&mut self) {
-    //     let mut keys: Vec<_> = self.nodes().map(|n| n.0).collect();
-    //     keys.sort_unstable();
-    //     for node in keys {
-    //         if self.is_deleted(node) || self.has_self_loop(node) {
-    //             continue;
-    //         }
-    //         for position in [Position::Head, Position::Tail] {
-    //             if self.count_edges(node, position) <= 1 {
-    //                 continue;
-    //             }
-    //             let (parents, sibs) = self.get_reflex_nodes(node, position, 6);
-    //             let par_copy = parents
-    //                 .iter()
-    //                 .filter_map(|&(n, _)| self.node(n).and_then(|n| n.copy_number))
-    //                 .all(|cp| cp == 1);
-    //             let sib_copy = sibs
-    //                 .iter()
-    //                 .filter_map(|&(n, _)| self.node(n).and_then(|n| n.copy_number))
-    //                 .all(|cp| cp == 1);
-    //             if !(par_copy && sib_copy) {
-    //                 continue;
-    //             }
-    //             if !(self.share_units(&parents) && self.share_units(&sibs)) {
-    //                 continue;
-    //             }
-    //             let sibs: Vec<_> = sibs.into_iter().filter(|&x| x.0 != node).collect();
-    //             let retain = node;
-    //             drop(node);
-    //             // Make all the edges into sibs to retain.
-    //             let (edges, increase_occ, increase_copy_num) = {
-    //                 let (mut edges, mut occ, mut cp) = (vec![], 0, 0);
-    //                 for &(node, _) in sibs.iter() {
-    //                     let removed = self.node(node).unwrap();
-    //                     edges.extend(removed.edges.clone());
-    //                     occ += removed.occ;
-    //                     cp += removed.copy_number.unwrap_or(0);
-    //                     self.delete(node);
-    //                 }
-    //                 let retain_node = self.node(retain).unwrap().node;
-    //                 for edge in edges.iter_mut() {
-    //                     edge.from = retain;
-    //                     edge.from_node = retain_node;
-    //                 }
-    //                 (edges, occ, cp)
-    //             };
-    //             {
-    //                 let retain_node = self.node_mut(retain).unwrap();
-    //                 retain_node.occ += increase_occ;
-    //                 if let Some(cp) = retain_node.copy_number.as_mut() {
-    //                     *cp += increase_copy_num;
-    //                 }
-    //             };
-    //             for edge in edges {
-    //                 if self.has_edge(edge.key()) {
-    //                     self.merge_edge(&edge);
-    //                 } else {
-    //                     self.add_edge(edge);
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
     /// Check if we can select this edge when we need to select an edge for each
     /// node while preserving the connectiviy of the graph.
     /// true if we could select this edge.
@@ -1904,52 +1829,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
     }
 }
-
-// fn get_bridge(nodes: usize, edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
-//     warn!("Have you tested this code? I think not.");
-//     let mut is_arrived = vec![false; nodes];
-//     let mut bridges = vec![vec![]; nodes];
-//     let mut order = vec![-1; nodes];
-//     let mut low = vec![-1; nodes];
-//     let mut parent = vec![0; nodes];
-//     let mut count = 0;
-//     for i in 0..nodes {
-//         if is_arrived[i] {
-//             continue;
-//         }
-//         let mut stack = vec![i];
-//         'dfs: while !stack.is_empty() {
-//             let last = *stack.last().unwrap();
-//             if !is_arrived[last] {
-//                 is_arrived[last] = true;
-//                 order[last] = count as i64;
-//                 count += 1;
-//             }
-//             for &to in edges[last].iter() {
-//                 if !is_arrived[to] {
-//                     parent[to] = last;
-//                     stack.push(to);
-//                     continue 'dfs;
-//                 }
-//             }
-//             // Postorder, we have arrived all the nodes below this node.
-//             let last = stack.pop().unwrap();
-//             for &to in edges[last].iter() {
-//                 if parent[to] == last {
-//                     low[last] = low[last].min(low[to]);
-//                     if order[last] < low[to] {
-//                         bridges[last].push(to);
-//                         bridges[to].push(last);
-//                     }
-//                 } else {
-//                     // This is a back edge.
-//                     low[last] = low[last].min(order[to]);
-//                 }
-//             }
-//         }
-//     }
-//     bridges
-// }
 
 #[cfg(test)]
 mod tests {

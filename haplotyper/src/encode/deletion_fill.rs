@@ -162,54 +162,86 @@ fn filling_until(
     error_rates: &crate::estimate_error_rate::ErrorRate,
     stddev: f64,
 ) -> (HashSet<u64>, bool) {
+    ds.encoded_reads.retain(|r| !r.nodes.is_empty());
     let raw_seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let mut find_new_node = HashSet::new();
     let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
-    let mut failed_trials = vec![vec![]; ds.encoded_reads.len()];
-    let mut is_updated: Vec<_> = ds
+    let mut failed_trials: Vec<_> = ds
         .encoded_reads
         .iter()
-        .map(|r| !r.nodes.is_empty())
+        .map(|r| FailedUpdates::new(r.id))
         .collect();
     let mut read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
     for i in 0..INNER_LOOP {
         let prev: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        let alive = is_updated.iter().filter(|&&x| x).count();
-        debug!("Reads\t{}\t{}", alive, is_updated.len());
+        let alive = failed_trials.iter().filter(|r| r.is_alive).count();
+        debug!("Reads\t{}\t{}", alive, failed_trials.len());
         assert_eq!(ds.encoded_reads.len(), failed_trials.len());
-        assert_eq!(ds.encoded_reads.len(), is_updated.len());
         assert_eq!(ds.encoded_reads.len(), read_skeltons.len());
         let new_nodes = ds
             .encoded_reads
             .par_iter_mut()
             .zip(failed_trials.par_iter_mut())
-            .zip(is_updated.par_iter_mut())
-            .filter(|((r, _), is_updated)| !r.nodes.is_empty() && **is_updated)
-            .flat_map(|((read, fails), is_updated)| {
+            .filter(|(r, t)| !r.nodes.is_empty() && t.is_alive)
+            .flat_map(|(read, fails)| {
                 let seq = raw_seq[&read.id];
-                let read = (read, seq, is_updated);
+                let read = (read, seq);
                 let units = (&units, error_rates, consensi);
                 correct_deletion_error(read, fails, units, stddev, &read_skeltons)
             });
         find_new_node.par_extend(new_nodes);
-        read_skeltons
-            .iter_mut()
-            .zip(ds.encoded_reads.iter())
-            .zip(is_updated.iter())
-            .filter(|&(_, &b)| b)
-            .for_each(|((skelton, read), _)| *skelton = ReadSkelton::new(read));
+        updates_updated_reads(&mut read_skeltons, &ds.encoded_reads, &failed_trials);
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        debug!("Filled\t{}\t{}", prev, after);
+        debug!("Filled\t{i}\t{prev}\t{after}");
         if after == prev && i == 0 {
-            debug!("Filled\tBREAK\tOuter");
             return (find_new_node, false);
         } else if after == prev {
-            debug!("Filled\tBREAK\tInner");
             break;
         }
     }
     ds.encoded_reads.retain(|r| !r.nodes.is_empty());
     (find_new_node, true)
+}
+
+fn updates_updated_reads(
+    skeltons: &mut Vec<ReadSkelton>,
+    reads: &[EncodedRead],
+    failed_updates: &[FailedUpdates],
+) {
+    for ((ft, r), sk) in failed_updates.iter().zip(reads.iter()).zip(skeltons.iter()) {
+        assert_eq!(ft.readid, r.id);
+        assert_eq!(ft.readid, sk.id);
+    }
+    skeltons
+        .iter_mut()
+        .zip(reads.iter())
+        .zip(failed_updates.iter())
+        .filter(|&(_, t)| t.is_alive)
+        .for_each(|((skelton, read), _)| *skelton = ReadSkelton::new(read));
+}
+
+#[derive(Debug, Clone)]
+struct FailedUpdates {
+    readid: u64,
+    is_alive: bool,
+    failed_trials: Vec<(usize, LightNode)>,
+}
+
+impl FailedUpdates {
+    fn revive(&mut self) {
+        self.is_alive = true;
+        self.failed_trials.clear();
+    }
+    fn new(id: u64) -> Self {
+        Self {
+            readid: id,
+            is_alive: true,
+            failed_trials: vec![],
+        }
+    }
+    fn extend<I: std::iter::Iterator<Item = (usize, LightNode)>>(&mut self, iter: I) {
+        self.failed_trials.extend(iter);
+    }
 }
 
 // Take consensus of each cluster of each unit, return the consensus seuqneces.
@@ -258,13 +290,12 @@ type UnitInfo<'a> = (
     &'a HashMap<(u64, u64), Vec<u8>>,
 );
 fn correct_deletion_error(
-    (read, seq, is_changed): (&mut EncodedRead, &[u8], &mut bool),
-    failed_trials: &mut Vec<(usize, LightNode)>,
+    (read, seq): (&mut EncodedRead, &[u8]),
+    ft: &mut FailedUpdates,
     unitinfo: UnitInfo,
     stddev: f64,
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
-    *is_changed = false;
     let read_error = unitinfo.1.read(read.id);
     let pileups = get_pileup(read, reads);
     let nodes = &read.nodes;
@@ -274,32 +305,31 @@ fn correct_deletion_error(
         .unwrap_or(INS_THR);
     for (idx, pileup) in pileups.iter().enumerate() {
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
-        head_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
+        head_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let head_best =
             try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, stddev);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
-            None => failed_trials.extend(head_cand.into_iter().map(|(n, _)| (idx, n))),
+            None => ft.extend(head_cand.into_iter().map(|(n, _)| (idx, n))),
         }
         let mut tail_cand = pileup.check_insertion_tail(nodes, ins_thr, idx);
-        tail_cand.retain(|node, _| !failed_trials.contains(&(idx, *node)));
+        tail_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let tail_best =
             try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, stddev);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
-            None => failed_trials.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
+            None => ft.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
         }
     }
     let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.unit).collect();
+    ft.is_alive = !inserts.is_empty();
     if !inserts.is_empty() {
-        *is_changed = true;
-        failed_trials.clear();
+        ft.revive();
         for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
             read.nodes.insert(idx + accum_inserts, node);
         }
     }
-    // *is_changed |= remove_highly_erroneous(read, read_error, unitinfo, stddev);
-    if *is_changed && !read.nodes.is_empty() {
+    if ft.is_alive && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_slippy_alignment};
@@ -1140,51 +1170,4 @@ mod deletion_fill_test {
         let (score, ops) = pairwise_alignment_gotoh(&query, &read);
         assert_eq!(score, 2, "{:?}", ops);
     }
-    // #[test]
-    // fn aln_test_gotoh_2() {
-    //     let into_read = |nodes: Vec<(u64, u64, bool)>| {
-    //         let nodes: Vec<_> = nodes
-    //             .into_iter()
-    //             .map(|(unit, cluster, is_forward)| LightNode {
-    //                 prev_offset: None,
-    //                 unit,
-    //                 cluster,
-    //                 is_forward,
-    //                 after_offset: None,
-    //             })
-    //             .collect();
-    //         ReadSkelton { nodes }
-    //     };
-    //     let read = vec![(0, 0, true), (2, 0, true), (3, 0, true), (4, 0, true)];
-    //     let read = into_read(read);
-    //     let query = vec![(1, 0, true), (2, 0, true), (3, 0, true)];
-    //     let query = into_read(query);
-    //     let (score, ops) = pairwise_alignment_gotoh(&read, &query);
-    //     assert_eq!(score, 2);
-    //     use definitions::Op;
-    //     let answer = vec![Op::Ins(1), Op::Del(1), Op::Match(2), Op::Del(1)];
-    //     assert_eq!(ops, answer);
-    // }
-    // #[test]
-    // fn max_chain_test() {
-    //     let penalty = 3;
-    //     let input = vec![vec![], vec![(0, 1)], vec![(0, 5), (1, 1)]];
-    //     let removed = max_chain(3, &input, penalty);
-    //     assert_eq!(removed, vec![1]);
-    //     let input = vec![vec![], vec![(0, 1)], vec![(0, 2), (1, 1)]];
-    //     let removed = max_chain(3, &input, penalty);
-    //     assert!(removed.is_empty());
-    //     let input = vec![vec![], vec![(0, 1)], vec![(1, 1)]];
-    //     let removed = max_chain(3, &input, penalty);
-    //     assert!(removed.is_empty());
-    //     let input = vec![
-    //         vec![],                          //0
-    //         vec![(0, 1)],                    // 1
-    //         vec![(0, 20), (1, 1)],           // 2
-    //         vec![(2, 0)],                    // 3
-    //         vec![(0, 100), (2, 90), (3, 0)], // 4
-    //     ];
-    //     let removed = max_chain(5, &input, penalty);
-    //     assert_eq!(removed, vec![3, 1]);
-    // }
 }

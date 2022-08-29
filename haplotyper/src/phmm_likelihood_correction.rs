@@ -170,29 +170,7 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
                     *est += 1.0;
                 }
             }
-            // let mut est_cp = vec![1f64; obs_cp.len()];
-            // Give a copy number to the most needed one...
-            // for _ in (obs_cp.len()).min(total_cp)..total_cp {
-            // let (idx, _) = obs_cp
-            //     .iter()
-            //     .zip(est_cp.iter())
-            //     .enumerate()
-            //     .map(|(i, (&o, &e))| {
-            //         let now = (o - e * cov).powi(2);
-            //         let next = (o - (e + 1f64) * cov).powi(2);
-            //         (i, now - next)
-            //     })
-            //     .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-            //     .unwrap();
-            // let (idx, _) = obs_cp
-            //     .iter()
-            //     .zip(est_cp.iter())
-            //     .enumerate()
-            //     .map(|(i, (&o, &e))| (i, 2f64 * (o - e) - 1f64))
-            //     .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
-            //     .unwrap();
-            //     est_cp[idx] += 1f64;
-            // }
+
             est_cp
         })
         .collect()
@@ -431,25 +409,6 @@ fn get_graph_laplacian(sims: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
         .collect();
     (rowsum, lap)
 }
-
-// Return the *normalized* graph lap.
-// I - D^{-1}W, where I is identity matrix, D is the diagonal "summed" matrix and
-// W is the similarity matrix itself..
-// fn get_graph_laplacian(sims: &[Vec<f64>]) -> Vec<Vec<f64>> {
-//     sims.iter()
-//         .enumerate()
-//         .map(|(i, row)| {
-//             let sum: f64 = row.iter().sum();
-//             assert!(0.000001 < sum);
-//             let div: f64 = row.iter().sum::<f64>().recip();
-//             row.iter()
-//                 .enumerate()
-//                 .map(|(t, w)| if t == i { 1f64 } else { -w * div })
-//                 .collect()
-//         })
-//         .collect()
-// }
-
 // const EIGEN_THR: f64 = 0.25;
 const EIGEN_THR: f64 = 0.2;
 fn get_eigenvalues(matrix: &[Vec<f64>], rowsum: &[f64], id: u64) -> (Vec<Vec<f64>>, usize) {

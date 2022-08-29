@@ -49,6 +49,13 @@ pub enum Coverage {
 }
 
 impl Coverage {
+    pub fn is_available(&self) -> bool {
+        match self {
+            Coverage::NotAvailable => false,
+            Coverage::Protected(_) => true,
+            Coverage::Estimated(_) => true,
+        }
+    }
     pub fn new(cov: f64, protect: bool) -> Self {
         match protect {
             true => Self::Protected(cov),
