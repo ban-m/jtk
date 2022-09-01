@@ -55,7 +55,8 @@ fn main() -> std::io::Result<()> {
         ins: command_arg.error_rate / 3f64,
     };
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(command_arg.seed);
-    let template: Vec<_> = generate_seq(&mut rng, command_arg.template_len);
+    let length = command_arg.template_len;
+    let template: Vec<_> = generate_seq(&mut rng, length);
     let mut templates = vec![];
     for _ in 0..cluster_num - 1 {
         let mut seq = template.clone();
@@ -97,10 +98,7 @@ fn main() -> std::io::Result<()> {
     let mut draft = kiley::ternary_consensus_by_chunk(&reads, band);
     let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
     let mut ops: Vec<_> = reads.iter().map(|x| hmm.align(&draft, x, band).1).collect();
-    // for _ in 0..3 {
-    //     hmm.fit_naive_with(&draft, &reads, &mut ops, band);
     draft = hmm.polish_until_converge_with(&draft, &reads, &mut ops, band);
-    // }
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let config = ClusteringConfig::new(band, cluster_num as u8, coverage as f64, &gains);
     let strands = vec![true; reads.len()];
@@ -114,6 +112,6 @@ fn main() -> std::io::Result<()> {
     let time = (end - start).as_millis();
     let rand_idx = haplotyper::misc::rand_index(&preds, &answer);
     let adj_rand = haplotyper::misc::adjusted_rand_index(&preds, &answer);
-    println!("RESULT\t{seed}\t{time}\t{rand_idx}\t{adj_rand}\t{coverage}\t{error_rate}");
+    println!("RESULT\t{seed}\t{length}\t{time}\t{rand_idx}\t{adj_rand}\t{coverage}\t{error_rate}");
     Ok(())
 }

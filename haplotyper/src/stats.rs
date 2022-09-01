@@ -13,12 +13,13 @@ impl Stats for definitions::DataSet {
     fn stats<W: std::io::Write>(&self, mut wtr: W) -> std::io::Result<()> {
         // raw reads.
         if !self.raw_reads.is_empty() {
-            let lens = self.raw_reads.iter().map(|r| r.seq().len());
-            let sum = lens.clone().sum::<usize>();
-            let min = lens.clone().min().unwrap_or(0);
-            let max = lens.clone().max().unwrap_or(0);
+            let lens: Vec<_> = self.raw_reads.iter().map(|r| r.seq().len()).collect();
+            let sum = lens.iter().sum::<usize>();
+            let min = lens.iter().min().unwrap_or(&0);
+            let max = lens.iter().max().unwrap_or(&0);
             let len = self.raw_reads.len();
             let ave = sum / len;
+            let nfif = up_to(&lens, 0.5);
             let masked: usize = self
                 .raw_reads
                 .iter()
@@ -30,6 +31,7 @@ impl Stats for definitions::DataSet {
             writeln!(wtr, "RAWREADS\tMeanLength\t{ave}")?;
             writeln!(wtr, "RAWREADS\tMaxLength\t{max}")?;
             writeln!(wtr, "RAWREADS\tMinLength\t{min}")?;
+            writeln!(wtr, "RAWREADS\tN50\t{nfif}")?;
             let mut lens: Vec<_> = self.raw_reads.iter().map(|r| r.seq().len()).collect();
             lens.sort_unstable();
             lens.reverse();
@@ -191,14 +193,20 @@ fn summarize<I: std::iter::Iterator<Item = f64>>(error_rates: I) -> (f64, f64) {
         .select_nth_unstable_by(idx, |x, y| x.partial_cmp(y).unwrap())
         .1;
     (median, mad)
-    // let (mut sum, mut sumsq, mut count) = (0f64, 0f64, 0);
-    // for x in error_rates {
-    //     sum += x;
-    //     sumsq += x * x;
-    //     count += 1;
-    // }
-    // let mean = sum / count as f64;
-    // let variance = sumsq / count as f64 - mean * mean;
-    // assert!(0f64 <= variance);
-    // (mean, variance.sqrt())
+}
+
+fn up_to(lens: &[usize], frac: f64) -> usize {
+    let mut lens = lens.to_vec();
+    lens.sort_unstable();
+    lens.reverse();
+    let sum: usize = lens.iter().sum();
+    let target = (frac * sum as f64).floor() as usize;
+    let mut acc = 0;
+    for len in lens.iter() {
+        acc += len;
+        if target <= acc {
+            return *len;
+        }
+    }
+    panic!()
 }

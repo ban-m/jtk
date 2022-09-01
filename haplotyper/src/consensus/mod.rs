@@ -326,7 +326,7 @@ fn train_hmm(
         .filter(|(_, _, ops)| cov_range.contains(&ops.len()))
         .take(3);
     for (template, seqs, ops) in iterator {
-        hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius)
+        hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius);
     }
     debug!("Tuned");
 }

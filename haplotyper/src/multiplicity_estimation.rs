@@ -44,9 +44,7 @@ impl MultiplicityEstimation for DataSet {
         use rand::SeedableRng;
         use rand_xoshiro::Xoroshiro128PlusPlus;
         let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(config.seed);
-        // graph.assign_copy_number_mcmc(cov, &mut rng);
-        // graph.assign_copy_number_mst(cov, &mut rng);
-        graph.assign_copy_number_flow(cov, &mut rng);
+        graph.assign_copy_number(cov, &mut rng);
         let nodes: HashMap<_, _> = graph
             .nodes()
             .filter_map(|(_, node)| node.copy_number.map(|c| (node.node, c)))
@@ -203,8 +201,6 @@ fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
         let group = gfa::Content::Group(gfa::Group::Set(group));
         gfa::Record::from_contents(group, vec![].into())
     });
-    // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
-    // let group = std::iter::once(group);
     let header = gfa::Content::Header(gfa::Header::default());
     let header = std::iter::once(gfa::Record::from_contents(header, vec![].into()));
     let records: Vec<_> = header.chain(groups).chain(nodes).chain(edges).collect();
