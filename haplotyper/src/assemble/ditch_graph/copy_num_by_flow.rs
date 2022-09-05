@@ -404,7 +404,6 @@ impl Graph {
                     return true;
                 }
             }
-            // TODO: Here are some bugs.
             let bfs = self
                 .bfs(&edge_scores, source, sink)
                 .and_then(|path| self.eval(&path).map(|score| (path, score)))

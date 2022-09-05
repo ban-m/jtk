@@ -10,19 +10,15 @@ read_type = "ONT"
 ## Recommended parameters. Please set them if you have (any) estimation.
 ### Output directory
 out_dir = "./"
-### Output prefix. The final assembly would be out_dir/prefix.gfa.
+### Output prefix. The final assembly would be `out_dir/prefix.gfa`.
 prefix = "temp"
-### The # of threads.
+### The number of threads.
 threads = 1
 ### The number of the chunks. Usually, 2 x (Genome size) / (chunk_len) would be OK.
 take_num = 2500
-### If true, consensus generate high quality consensus.
+### If true, the consensus would be polished by JTK.
 to_polish = true
-### Discard units with occurence more than or equal to [upper]. 30x * 10 = 300.
-upper = 400
-### Discard units with occurence less than or equal to [lower].
-lower = 4
-### Resuming. If out_dir have JSON files with the specified prefix, JTK re-uses it.
+### Resuming. If `out_dir` have JSON files with the specified prefix, JTK re-uses it.
 resume = false
 
 
@@ -35,7 +31,11 @@ kmersize = 12
 ### Upper [top_freq] k-mers would be masked as repeats.
 top_freq = 0.001
 ### Purge chunks having more than [purge_copy_num] phases.
-purge_copy_num = 8
+purge_copy_num = 9
+### Discard chunks with occurence more than or equal to [upper].
+upper = 400
+### Discard chunks with occurence less than or equal to [lower].
+lower = 4
 ### # of reads required to span homozygous region.
 ### Lowering this value would produce more "phased" assembly.
 ### But they would more likely to switching errors.

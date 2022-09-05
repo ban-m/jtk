@@ -111,10 +111,6 @@ pub trait Assemble {
     /// Assemble the dataset. If there's duplicated regions or
     /// unresolved regions, it tries to un-entangle that region.
     fn assemble(&self, c: &AssembleConfig) -> GFA;
-    // /// Assmeble the dataset into a draft assembly. It does not
-    // /// dive into difficult regions such as non-single-copy chunks or
-    // /// tangles. It just assemble the dataset into a graph.
-    // fn assemble_draft_graph(&self, c: &AssembleConfig) -> Graph;
 }
 
 impl Assemble for DataSet {
@@ -170,9 +166,10 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     debug!("GRAPH\t{graph}");
     match ds.read_type {
-        ReadType::CCS => graph.remove_lightweight_edges(1, true),
+        ReadType::CCS => graph.remove_lightweight_edges(1, false),
         ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
     };
+    graph.remove_lightweight_edges(1, false);
     graph.clean_up_graph_for_assemble(cov, &reads, c, ds.read_type);
     let (mut segments, mut edges, _, summaries, encodings) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
@@ -242,34 +239,6 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     });
     // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let records: Vec<_> = groups.chain(nodes).chain(edges).collect();
-    (records, summaries)
-}
-pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
-    let reads: Vec<_> = ds.encoded_reads.iter().collect();
-    let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
-    debug!("CC\t{}", graph.cc());
-    graph.remove_lightweight_edges(2, true);
-    debug!("CC\t{}\tAfterRm", graph.cc());
-    let (segments, edge, group, summaries, _unit_positions) = graph.spell(c);
-    let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
-    debug!("{} segments({} bp in total).", segments.len(), total_base);
-    let nodes = segments.into_iter().map(|node| {
-        let tags = match summaries.iter().find(|x| x.id == node.sid) {
-            Some(contigsummary) => {
-                let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
-                let coverage =
-                    gfa::SamTag::new(format!("cv:i:{}", total / contigsummary.summary.len()));
-                vec![coverage]
-            }
-            None => Vec::new(),
-        };
-        gfa::Record::from_contents(gfa::Content::Seg(node), tags.into())
-    });
-    let edges = edge
-        .into_iter()
-        .map(|(edge, tags)| gfa::Record::from_contents(gfa::Content::Edge(edge), tags.into()));
-    let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
-    let records: Vec<_> = std::iter::once(group).chain(nodes).chain(edges).collect();
     (records, summaries)
 }
 

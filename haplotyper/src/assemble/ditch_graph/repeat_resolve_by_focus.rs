@@ -445,7 +445,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             return None;
         }
         let [h0t0, h0t1, h1t0, h1t1] = counts;
-        // TODO:How can we compute this value? What is the model?
+        // Mock llr.
         let llr = config.span_likelihood_ratio + 1f64;
         let dist = path.len() + 1;
         let mut path = path.to_vec();

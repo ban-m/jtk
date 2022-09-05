@@ -232,57 +232,111 @@ pub fn polish(
             }
         });
         log_identity(sid, alignments);
-        // alignments
-        //     .iter_mut()
-        //     .for_each(|aln| truncate_long_homopolymers(aln, &polished, TRUNCATE_LEN));
+        const TRUNCATE_LEN: usize = 10;
+        alignments
+            .iter_mut()
+            .for_each(|aln| truncate_long_homopolymers(aln, &polished, TRUNCATE_LEN));
     }
     polished
 }
 
-// // TODO: TUNE this parameter.
-// const TRUNCATE_LEN: usize = 5;
-// // Truncate homopolymers longer than the contig by `max_allowed` length, truncate them to `max_allowed` length.
-// // In other words, if the contig is TAAA, the query is TAAAAAAA, and the max_allowed is 2, the query would be TAAAAA.
-// fn truncate_long_homopolymers(aln: &mut Alignment, _contig: &[u8], max_allowed: usize) {
-//     let mut base_retains = vec![true; aln.query.len()];
-//     let mut ops_retain = vec![true; aln.ops.len()];
-//     let mut qpos = 0;
-//     let mut current_homop_len = 0;
-//     let mut prev_base = None;
-//     for (alnpos, &op) in aln.ops.iter().enumerate() {
-//         let current_base = aln.query.get(qpos).copied();
-//         if current_base == prev_base {
-//             current_homop_len += 1;
-//             if max_allowed < current_homop_len && op == Op::Ins {
-//                 base_retains[qpos] = false;
-//                 ops_retain[alnpos] = false;
-//             }
-//         } else {
-//             current_homop_len = 0;
-//         }
-//         prev_base = current_base;
-//         qpos += matches!(op, Op::Match | Op::Mismatch | Op::Ins) as usize;
-//     }
-//     {
-//         let mut idx = 0;
-//         aln.query.retain(|_| {
-//             idx += 1;
-//             base_retains[idx - 1]
-//         });
-//     }
-//     {
-//         let mut idx = 0;
-//         aln.ops.retain(|_| {
-//             idx += 1;
-//             ops_retain[idx - 1]
-//         })
-//     }
-//     // Check consistency.
-//     let reflen = aln.ops.iter().filter(|&&op| op != Op::Ins).count();
-//     let querylen = aln.ops.iter().filter(|&&op| op != Op::Del).count();
-//     assert_eq!(reflen, aln.contig_end - aln.contig_start);
-//     assert_eq!(querylen, aln.query.len());
-// }
+#[derive(Debug, Clone)]
+struct Buffer {
+    op: Op,
+    bases: Vec<u8>,
+    ops: Vec<Op>,
+}
+impl Buffer {
+    fn new() -> Self {
+        Self {
+            op: Op::Match,
+            bases: vec![],
+            ops: vec![],
+        }
+    }
+    fn flush(&mut self, aln: &mut Alignment, max_len: usize) {
+        assert_eq!(self.ops.len(), self.bases.len());
+        let length = self.bases.len();
+        let is_homop = (0 < length) && self.bases.iter().all(|&x| x == self.bases[0]);
+        if self.op == Op::Del && max_len < length && is_homop {
+            aln.ops.extend(std::iter::repeat(Op::Match).take(length));
+            aln.query.append(&mut self.bases);
+        } else if self.op == Op::Del {
+            aln.ops.extend(std::iter::repeat(Op::Del).take(length));
+        } else if self.op == Op::Ins && max_len < length && is_homop {
+            // Just discard the insertions.
+        } else if self.op == Op::Ins {
+            aln.query.append(&mut self.bases);
+            aln.ops.extend(std::iter::repeat(Op::Ins).take(length));
+        } else {
+            // Match. Do nothing.
+        }
+        self.bases.clear();
+        self.ops.clear();
+    }
+    fn add(&mut self, op: Op, base: u8) {
+        self.bases.push(base);
+        self.ops.push(op);
+    }
+}
+
+// Truncate homopolymers longer than the contig by `max_allowed` length, truncate them to `max_allowed` length.
+// In other words, if the contig is TAAA, the query is TAAAAAAA, and the max_allowed is 2, the query would be TAAAAA.
+fn truncate_long_homopolymers(aln: &mut Alignment, contig: &[u8], max_allowed: usize) {
+    let (base_len, ops_len) = (aln.query.len(), aln.ops.len());
+    let mut buffer = Buffer::new();
+    let (mut qpos, mut rpos) = (0, aln.contig_start);
+    let op_len = aln.ops.len();
+    for op_idx in 0..op_len {
+        let op = aln.ops[op_idx];
+        match op {
+            Op::Mismatch | Op::Match => {
+                buffer.flush(aln, max_allowed);
+                aln.query.push(aln.query[qpos]);
+                aln.ops.push(op);
+                buffer.op = op;
+                qpos += 1;
+                rpos += 1;
+            }
+            Op::Ins => {
+                if buffer.op != Op::Ins {
+                    buffer.flush(aln, max_allowed);
+                }
+                buffer.op = op;
+                buffer.add(op, aln.query[qpos]);
+                qpos += 1;
+            }
+            Op::Del => {
+                if buffer.op != Op::Del {
+                    buffer.flush(aln, max_allowed);
+                }
+                buffer.op = op;
+                buffer.add(op, contig[rpos]);
+                rpos += 1;
+            }
+        }
+    }
+    buffer.flush(aln, max_allowed);
+    {
+        let mut idx = 0;
+        aln.query.retain(|_| {
+            idx += 1;
+            base_len < idx
+        });
+    }
+    {
+        let mut idx = 0;
+        aln.ops.retain(|_| {
+            idx += 1;
+            ops_len < idx
+        })
+    }
+    // Check consistency.
+    let reflen = aln.ops.iter().filter(|&&op| op != Op::Ins).count();
+    let querylen = aln.ops.iter().filter(|&&op| op != Op::Del).count();
+    assert_eq!(reflen, aln.contig_end - aln.contig_start);
+    assert_eq!(querylen, aln.query.len());
+}
 
 fn train_hmm(
     hmm: &mut PairHiddenMarkovModel,

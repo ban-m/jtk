@@ -1,5 +1,4 @@
 //! Filling deletion.
-// TODO:Curretly the alignment can not handle to re-encode missing tips. It reduce some of the reads which should be encoded otherwise...
 use crate::ALN_PARAMETER;
 use definitions::*;
 use rayon::prelude::*;

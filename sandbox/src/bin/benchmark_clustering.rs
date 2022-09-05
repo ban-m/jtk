@@ -100,13 +100,14 @@ fn main() -> std::io::Result<()> {
     let mut ops: Vec<_> = reads.iter().map(|x| hmm.align(&draft, x, band).1).collect();
     draft = hmm.polish_until_converge_with(&draft, &reads, &mut ops, band);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
-    let config = ClusteringConfig::new(band, cluster_num as u8, coverage as f64, &gains);
+    let coverage = coverage as f64;
+    let config = ClusteringConfig::new(band, cluster_num, coverage, coverage, &gains);
     let strands = vec![true; reads.len()];
     let start = std::time::Instant::now();
     use haplotyper::local_clustering::kmeans;
     let clustering =
         kmeans::clustering_dev(&draft, &reads, &mut ops, &strands, &mut rng, &hmm, &config);
-    let (preds, _, _, _) = clustering.unwrap();
+    let (preds, _, _, _) = clustering;
     debug!("\n{answer:?}\n{preds:?}");
     let end = std::time::Instant::now();
     let time = (end - start).as_millis();

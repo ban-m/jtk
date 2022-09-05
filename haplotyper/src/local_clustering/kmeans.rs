@@ -10,20 +10,28 @@ use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig<'a> {
-    band_width: usize,
+    pub band_width: usize,
     gains: &'a Gains,
     // Coverage for haploid.
-    coverage: f64,
-    pub copy_num: u8,
+    pub coverage: f64,
+    pub copy_num: usize,
+    pub local_coverage: f64,
 }
 
 impl<'a> ClusteringConfig<'a> {
-    pub fn new(band_width: usize, copy_num: u8, coverage: f64, gains: &'a Gains) -> Self {
+    pub fn new(
+        band_width: usize,
+        copy_num: usize,
+        coverage: f64,
+        local_coverage: f64,
+        gains: &'a Gains,
+    ) -> Self {
         Self {
             band_width,
             coverage,
             gains,
             copy_num,
+            local_coverage,
         }
     }
 }
@@ -36,13 +44,13 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     rng: &mut R,
     cluster_num: usize,
     band: usize,
-) -> Option<ClusteringResult> {
+) -> ClusteringResult {
     let mut template = kiley::ternary_consensus_by_chunk(reads, band);
     let mut hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
     hmm.fit_naive(&template, reads, band);
     let gains = crate::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let cov = reads.len() as f64 / cluster_num as f64;
-    let config = ClusteringConfig::new(band, cluster_num as u8, cov, &gains);
+    let config = ClusteringConfig::new(band, cluster_num, cov, cov, &gains);
     let mut ops: Vec<_> = reads
         .iter()
         .map(|x| hmm.align(&template, x.borrow(), band).1)
@@ -52,20 +60,21 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         template = hmm.polish_until_converge_with(&template, reads, &mut ops, band / t);
     }
     let strands = vec![true; reads.len()];
-    let result = clustering_dev(&template, reads, &mut ops, &strands, rng, &hmm, &config);
-    result.map(|(asn, gains, lk, _)| (asn, gains, lk, template))
+    let (asn, gains, lk, _) =
+        clustering_dev(&template, reads, &mut ops, &strands, rng, &hmm, &config);
+    (asn, gains, lk, template)
 }
 
 fn modification_table<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
-    ops: &mut [Vec<kiley::Op>],
+    ops: &[Vec<kiley::Op>],
     band: usize,
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
 ) -> Vec<Vec<f64>> {
     reads
         .iter()
-        .zip(ops.iter_mut())
+        .zip(ops.iter())
         .map(|(seq, op)| {
             let (mut table, lk) = hmm.modification_table(template, seq.borrow(), band, op);
             table.iter_mut().for_each(|x| *x -= lk);
@@ -85,12 +94,15 @@ type ClusteringDevResult = (Vec<usize>, Vec<Vec<f64>>, f64, usize);
 pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
-    ops: &mut [Vec<kiley::Op>],
+    ops: &[Vec<kiley::Op>],
     strands: &[bool],
     rng: &mut R,
     hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
     config: &ClusteringConfig,
-) -> Option<ClusteringDevResult> {
+) -> ClusteringDevResult {
+    if config.copy_num < 2 {
+        return (vec![0; reads.len()], vec![vec![0f64]; reads.len()], 0f64, 1);
+    }
     let profiles = modification_table(template, reads, ops, config.band_width, hmm);
     let profiles = compress_small_gains(profiles, template, config.gains);
     let probes = filter_profiles(template, &profiles, strands, config, rng);
@@ -126,7 +138,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
         }
     }
     to_posterior_probability(&mut likelihood_gains);
-    Some((assignments, likelihood_gains, max, max_k as usize))
+    (assignments, likelihood_gains, max, max_k as usize)
 }
 
 const MIN_REQ_FRACTION: f64 = 0.5;
@@ -216,18 +228,22 @@ fn cluster_filtered_variants<R: Rng>(
         return (asn, lk_gains, 0f64, 1);
     }
     let datasize = variants.len();
-    let per_cluster_cov = match copy_num {
-        0 | 1 | 2 => datasize as f64 / copy_num as f64,
-        _ => (datasize as f64 / copy_num as f64).max(coverage),
-    };
-    let coverage_imp_thr = 0;
+    let per_cluster_cov = config.local_coverage;
+    // let per_cluster_cov = match copy_num {
+    //     0 | 1 | 2 => datasize as f64 / copy_num as f64,
+    //     _ => (datasize as f64 / copy_num as f64).max(coverage),
+    // };
     //    let coverage_imp_thr = get_read_thr(variants.len() as f64 / copy_num as f64, 3f64);
     let (mut assignments, mut max, mut max_k, mut read_lk_gains) =
         (vec![0; datasize], 0f64, 1, vec![0f64; datasize]);
     let mut prev_used_columns = vec![false; variants[0].len()];
-    let init_copy_num = copy_num.max(5) - 3;
-    for k in init_copy_num..=copy_num {
-        // for k in 4..5 {
+    let range = {
+        let end = copy_num.min(1 + 2 * variant_type.len());
+        let start = end.max(5) - 3;
+        start..=end
+    };
+    trace!("RANGE\t{:?}", range);
+    for k in range {
         let (asn, score, new_lk_gains, used_columns) = match k == 2 {
             false => mcmc_clustering(variants, k, coverage, rng),
             true => {
@@ -246,8 +262,9 @@ fn cluster_filtered_variants<R: Rng>(
         let expected_gain_per_read =
             expected_gains(gains, variant_type, &prev_used_columns, &used_columns);
         let expected_gain = expected_gain_per_read * per_cluster_cov + 0.1;
-        trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}\t{coverage_imp_thr}");
-        if expected_gain < score - max && coverage_imp_thr < improved_reads {
+        trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}");
+        if expected_gain < score - max {
+            // && coverage_imp_thr < improved_reads {
             let mut counts = vec![0; k];
             for x in asn.iter() {
                 counts[*x] += 1;
@@ -427,8 +444,7 @@ fn get_read_lk_gains(
 // If this value is too small, we can remove that column from `variants.`
 // Also, we check "exhaution criteria", in other words,
 // If we use a variant, we use that variant in almost all the reads.
-// TODO: Can we determine FRAC and IN_POS_RATIO from the data?
-// These values are critical.
+
 // ROUND * cluster num variants would be selected.
 const ROUND: usize = 3;
 const PVALUE: f64 = 0.05;
@@ -822,7 +838,8 @@ impl std::default::Default for LKCount {
         }
     }
 }
-
+// TODO: Can we determine FRAC and IN_POS_RATIO from the data?
+// These values are critical.
 impl LKCount {
     fn is_informative(&self) -> bool {
         const POS_FRAC: f64 = 0.70;

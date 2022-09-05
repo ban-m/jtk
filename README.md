@@ -5,7 +5,7 @@ JTK is a regional diploid genome assembler.
 ## Requirements 
 
 - [minimap2](https://github.com/lh3/minimap2) with version >= 2.23
-- [Rust](https://www.rust-lang.org/)
+- [Rust](https://www.rust-lang.org/) with version > 1.59
 
 ## Installation
 
@@ -48,7 +48,3 @@ Please do not input reads comming from a region more than 10M bp long. It has no
 ## Info 
 
 Contact: Bansho Masutani<ban-m@g.ecc.u-tokyo.ac.jp>
-
-Cite: 
-
-Jittoku: [a person in the zen literature](https://en.wikipedia.org/wiki/Hanshan_and_Shide).

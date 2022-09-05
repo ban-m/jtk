@@ -60,7 +60,6 @@ impl PurgeDivergent for DataSet {
 
 const ACCEPT_RATE: f64 = 0.5;
 const DEL_WEIGHT: i64 = 2;
-// const INS_WEIGHT: i64 = 0;
 const MATCH_WEIGHT: i64 = 1;
 fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) -> HashSet<u64> {
     let mut indel_size_distr: HashMap<(u64, u64), Vec<_>> = HashMap::new();

@@ -58,19 +58,6 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             retain_current_clustering: false,
         }
     }
-    pub fn ccs(dataset: &definitions::DataSet, cluster_num: usize, subchunk_length: usize) -> Self {
-        Self::with_default(dataset, cluster_num, subchunk_length)
-    }
-    pub fn clr(dataset: &definitions::DataSet, cluster_num: usize, subchunk_length: usize) -> Self {
-        let mut c = Self::with_default(dataset, cluster_num, subchunk_length);
-        c.read_type = ReadType::CLR;
-        c
-    }
-    pub fn ont(dataset: &definitions::DataSet, cluster_num: usize, subchunk_length: usize) -> Self {
-        let mut c = Self::clr(dataset, cluster_num, subchunk_length);
-        c.read_type = ReadType::ONT;
-        c
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

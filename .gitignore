@@ -14,6 +14,7 @@
 **/pics
 script/*.sh
 script/*.job
+script/*.yml
 script/sync_*
 .*
 !.gitignore
@@ -24,6 +25,7 @@ python/dist
 python/jtk_definitions.egg-info
 *~
 *.ipynb
+!script/alntv_prepare.sh
 !script/phase_by_longphase.sh
 !script/benchmark_clustering.job
 !script/extract_cox_pgf.sh

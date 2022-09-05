@@ -39,6 +39,7 @@ impl MultiplicityEstimation for DataSet {
             definitions::ReadType::ONT => 2,
             definitions::ReadType::None => 1,
         };
+        graph.remove_lightweight_edges(1, false);
         graph.remove_lightweight_edges(thr, true);
         debug!("SQUISHED\t{graph}");
         use rand::SeedableRng;
