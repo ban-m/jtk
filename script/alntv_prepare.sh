@@ -19,19 +19,33 @@ PREFIX=${14}
 mkdir -p "$PREFIX"
 
 ### 0. extract diploid assemblies into four parts.
-samtools faidx "$DIPLO_ASM" "$DIPLO_ASM_H1" |\
-    awk --assign name="$DIPLO_NAME" \
-    '($0 ~ />/){sum+=1; print(">" name "_1_" sum);next}{print $0}' > "$PREFIX"/"$DIPLO_NAME"_h1.fa
-samtools faidx "$DIPLO_ASM" "$DIPLO_ASM_H2" |\
-    awk --assign name="$DIPLO_NAME" \
-    '($0 ~ />/){sum+=1;print(">" name "_2_" sum);next}{print $0}' > "$PREFIX"/"$DIPLO_NAME"_h2.fa
+function cut_and_rename (){
+    ASM=$1
+    CTG_NAMES=$2
+    HAP_NAME=$3
+    HAP_NUM=$4
+    TEMP=$RANDOM
+    for ctgname in $CTG_NAMES
+    do
+        samtools faidx "$ASM" "$ctgname" >> "$TEMP".fa 
+    done
+    awk --assign name="$HAP_NAME" --assign hnum="$HAP_NUM"\
+        '($0 ~ />/){sum+=1; print(">" name "_" hnum "_" sum);next}{print $0}'\
+        "$TEMP".fa > "$PREFIX"/"$HAP_NAME"_h"$HAP_NUM".fa
+    rm "$TEMP".fa
+}
 
-samtools faidx "$JTK_ASM" "$JTK_ASM_H1" |\
-    awk --assign name="$JTK_NAME" \
-    '($0 ~ />/){sum+=1;print(">" name "_1_" sum);next}{print $0}' > "$PREFIX"/"$JTK_NAME"_h1.fa
-samtools faidx "$JTK_ASM" "$JTK_ASM_H2" |\
-    awk --assign name="$JTK_NAME" \
-    '($0 ~ />/){sum+=1;print(">" name "_2_" sum);next}{print $0}' > "$PREFIX"/"$JTK_NAME"_h2.fa
+cut_and_rename "$DIPLO_ASM" "$DIPLO_ASM_H1" "$DIPLO_NAME" 1
+cut_and_rename "$DIPLO_ASM" "$DIPLO_ASM_H2" "$DIPLO_NAME" 2
+cut_and_rename "$JTK_ASM" "$JTK_ASM_H1" "$JTK_NAME" 1
+cut_and_rename "$JTK_ASM" "$JTK_ASM_H2" "$JTK_NAME" 2
+
+# samtools faidx "$JTK_ASM" "$JTK_ASM_H1" |\
+#     awk --assign name="$JTK_NAME" \
+#     '($0 ~ />/){sum+=1;print(">" name "_1_" sum);next}{print $0}' > "$PREFIX"/"$JTK_NAME"_h1.fa
+# samtools faidx "$JTK_ASM" "$JTK_ASM_H2" |\
+#     awk --assign name="$JTK_NAME" \
+#     '($0 ~ />/){sum+=1;print(">" name "_2_" sum);next}{print $0}' > "$PREFIX"/"$JTK_NAME"_h2.fa
 
 ## TODO: Check there is only one reference sequence.
 awk '($0 ~ />/){print(">ref");next}{print $0}' "$REFERENCE" > "$PREFIX"/reference.fa
