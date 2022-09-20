@@ -40,13 +40,6 @@ cut_and_rename "$DIPLO_ASM" "$DIPLO_ASM_H2" "$DIPLO_NAME" 2
 cut_and_rename "$JTK_ASM" "$JTK_ASM_H1" "$JTK_NAME" 1
 cut_and_rename "$JTK_ASM" "$JTK_ASM_H2" "$JTK_NAME" 2
 
-# samtools faidx "$JTK_ASM" "$JTK_ASM_H1" |\
-#     awk --assign name="$JTK_NAME" \
-#     '($0 ~ />/){sum+=1;print(">" name "_1_" sum);next}{print $0}' > "$PREFIX"/"$JTK_NAME"_h1.fa
-# samtools faidx "$JTK_ASM" "$JTK_ASM_H2" |\
-#     awk --assign name="$JTK_NAME" \
-#     '($0 ~ />/){sum+=1;print(">" name "_2_" sum);next}{print $0}' > "$PREFIX"/"$JTK_NAME"_h2.fa
-
 ## TODO: Check there is only one reference sequence.
 awk '($0 ~ />/){print(">ref");next}{print $0}' "$REFERENCE" > "$PREFIX"/reference.fa
 

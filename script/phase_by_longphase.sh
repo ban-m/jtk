@@ -45,3 +45,5 @@ else
     flye --nano-raw "$OUTDIR"/h1.fq --out-dir "$OUTDIR"/h1 --genome-size 5M -t"$THREADS"
     flye --nano-raw "$OUTDIR"/h2.fq --out-dir "$OUTDIR"/h2 --genome-size 5M -t"$THREADS"
 fi
+awk 'BEGIN{num=0}($0 ~ />/){if(num != 0){printf("\n")} printf(">contig_h1_%d\n", num); num +=1;next}{printf("%s", $0)}END{printf("\n")}' "$OUTDIR"/h1/assembly.fasta > "$OUTDIR"/final_assembly.fasta
+awk 'BEGIN{num=0}($0 ~ />/){if(num != 0){printf("\n")} printf(">contig_h2_%d\n", num); num +=1;next}{printf("%s", $0)}END{printf("\n")}' "$OUTDIR"/h2/assembly.fasta >> "$OUTDIR"/final_assembly.fasta

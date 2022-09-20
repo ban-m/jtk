@@ -19,22 +19,18 @@ struct Args {
     /// The number of the read on each cluster.
     #[clap(short, long, default_value_t = 20)]
     coverage: usize,
-    /// The error rate of the reads
-    #[clap(short, long, default_value_t = 0.15)]
-    error_rate: f64,
     /// The number of variants in each cluster.
-    #[clap(short, long, default_value_t = 1)]
+    #[clap(long, default_value_t = 1)]
     variant_num: usize,
-    /// The length of the template.
-    #[clap(short, long, default_value_t = 2000)]
-    template_len: usize,
     /// The band length of the alignment.
-    #[clap(short, long, default_value_t = 50)]
+    #[clap(short, long, default_value_t = 20)]
     radius: usize,
     #[clap(short, long, parse(from_occurrences))]
     verbose: usize,
 }
 
+const ERROR_RATE: f64 = 0.10;
+const TEMPLATE_LEN: usize = 1_000;
 fn main() -> std::io::Result<()> {
     let command_arg = Args::parse();
     let level = match command_arg.verbose {
@@ -52,15 +48,13 @@ fn main() -> std::io::Result<()> {
     let coverage = command_arg.coverage;
     let seed = command_arg.seed;
     let band = command_arg.radius;
-    let error_rate = command_arg.error_rate;
     let profile = Profile {
-        sub: command_arg.error_rate / 3f64,
-        del: command_arg.error_rate / 3f64,
-        ins: command_arg.error_rate / 3f64,
+        sub: ERROR_RATE / 3f64,
+        del: ERROR_RATE / 3f64,
+        ins: ERROR_RATE / 3f64,
     };
     let mut rng: Xoroshiro128PlusPlus = rand::SeedableRng::seed_from_u64(command_arg.seed);
-    let length = command_arg.template_len;
-    let template: Vec<_> = generate_seq(&mut rng, length);
+    let template: Vec<_> = generate_seq(&mut rng, TEMPLATE_LEN);
     let mut templates = vec![];
     for _ in 0..cluster_num - 1 {
         let mut seq = template.clone();
@@ -89,8 +83,7 @@ fn main() -> std::io::Result<()> {
         }
         templates.push(seq);
     }
-    templates.push(template);
-    let answer: Vec<_> = (0..cluster_num).flat_map(|k| vec![k; coverage]).collect();
+    templates.push(template.clone());
     let reads: Vec<_> = templates
         .iter()
         .flat_map(|template| -> Vec<Vec<u8>> {
@@ -99,24 +92,29 @@ fn main() -> std::io::Result<()> {
                 .collect()
         })
         .collect();
-    let mut draft = kiley::ternary_consensus_by_chunk(&reads, band);
     let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
-    let mut ops: Vec<_> = reads.iter().map(|x| hmm.align(&draft, x, band).1).collect();
-    draft = hmm.polish_until_converge_with(&draft, &reads, &mut ops, band);
+    let template = hmm.polish_until_converge(&template, &reads, command_arg.radius);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;
     let config = ClusteringConfig::new(band, cluster_num, coverage, coverage, &gains);
     let strands = vec![true; reads.len()];
-    let start = std::time::Instant::now();
     use haplotyper::local_clustering::kmeans;
-    let clustering =
-        kmeans::clustering_dev(&draft, &reads, &mut ops, &strands, &mut rng, &hmm, &config);
-    let (preds, _, _, _) = clustering;
-    debug!("\n{answer:?}\n{preds:?}");
-    let end = std::time::Instant::now();
-    let time = (end - start).as_millis();
-    let rand_idx = haplotyper::misc::rand_index(&preds, &answer);
-    let adj_rand = haplotyper::misc::adjusted_rand_index(&preds, &answer);
-    println!("RESULT\t{seed}\t{length}\t{time}\t{rand_idx}\t{adj_rand}\t{coverage}\t{error_rate}");
+    let ops: Vec<_> = reads
+        .iter()
+        .map(|x| hmm.align(&template, x, band).1)
+        .collect();
+    let feature_vectors =
+        kmeans::search_variants(&template, &reads, &ops, &strands, &mut rng, &hmm, &config);
+    let mcmc_start = std::time::Instant::now();
+    let mcmc_score = kmeans::cluster_filtered_variants(&feature_vectors, &config, &mut rng);
+    let mcmc_score = mcmc_score.2;
+    let mcmc_time = (std::time::Instant::now() - mcmc_start).as_millis();
+    let exact_start = std::time::Instant::now();
+    let exact_score = kmeans::cluster_filtered_variants_exact(&feature_vectors, &config);
+    let exact_score = exact_score.2;
+    let exact_time = (std::time::Instant::now() - exact_start).as_millis();
+    let var_num = command_arg.variant_num;
+    print!("RESULT\t{seed}\t{coverage}\t{var_num}\t{cluster_num}");
+    println!("\t{mcmc_score}\t{exact_score}\t{mcmc_time}\t{exact_time}");
     Ok(())
 }

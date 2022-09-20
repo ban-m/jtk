@@ -62,13 +62,19 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
     let hmm = crate::model_tune::get_model(ds).unwrap();
-    let (mut pileups, chunks) = pileup_nodes(ds, selection);
+    let (pileups, chunks) = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
-        .par_iter_mut()
+        .into_par_iter()
         .filter(|(_, units)| !units.is_empty())
-        .map(|(&unit_id, units)| {
+        .map(|(unit_id, mut units)| {
             let ref_unit = chunks.get(&unit_id).unwrap();
-            clustering_on_pileup(units, ref_unit, read_type, &hmm, coverage)
+            // let (mut units, mut unused_units) =
+            //     partition_by_lk_capability(ref_unit, units, read_type, &hmm);
+            assert!(!units.is_empty());
+            let (uid, (template, score, cl_num)) =
+                clustering_on_pileup(&mut units, ref_unit, read_type, &hmm, coverage);
+            // update_by_removed_nodes(&mut unused_units, cl_num, &template);
+            (uid, (template, score, cl_num))
         })
         .collect();
     debug!("LC\t{}", consensus_and_clusternum.len());
@@ -82,6 +88,24 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     normalize::normalize_local_clustering(ds);
 }
 
+// fn partition_by_lk_capability<'a>(
+//     ref_unit: &Unit,
+//     units: Vec<&'a mut Node>,
+//     read_type: ReadType,
+//     hmm: &Phmm,
+// ) -> (Vec<&'a mut Node>, Vec<&'a mut Node>) {
+//     let refseq = ref_unit.seq();
+//     let band_width = read_type.band_width(ref_unit.seq().len());
+//     units.into_iter().partition(|node| {
+//         let ops = crate::misc::ops_to_kiley(&node.cigar);
+//         let forward = hmm.likelihood_guided(refseq, node.seq(), &ops, band_width / 2);
+//         let forward_ng = forward.is_nan() || forward.is_infinite();
+//         let backward = hmm.likelihood_guided_post(refseq, node.seq(), &ops, band_width / 2);
+//         let backward_ng = backward.is_nan() || backward.is_infinite();
+//         !forward_ng && !backward_ng
+//     })
+// }
+
 const UPPER_COPY_NUM: usize = 8;
 fn clustering_on_pileup(
     units: &mut [&mut Node],
@@ -91,16 +115,16 @@ fn clustering_on_pileup(
     coverage: f64,
 ) -> (u64, (Vec<u8>, f64, usize)) {
     use kmeans::*;
+    let refseq = ref_unit.seq();
+    let band_width = read_type.band_width(ref_unit.seq().len());
     let unit_id = ref_unit.id;
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 3490);
     let (seqs, mut ops): (Vec<_>, Vec<_>) = units
         .iter()
         .map(|node| (node.seq(), crate::misc::ops_to_kiley(&node.cigar)))
         .unzip();
-    let band_width = read_type.band_width(ref_unit.seq().len());
     let start = std::time::Instant::now();
     let copy_num = ref_unit.copy_num;
-    let refseq = ref_unit.seq();
     let (cons, hmm) = prep_consensus(&hmm, refseq, &seqs, &mut ops, band_width);
     let polished = std::time::Instant::now();
     let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
@@ -256,6 +280,18 @@ fn update_by_clusterings(
         node.cigar = crate::misc::kiley_op_to_ops(ops);
     }
 }
+
+// fn update_by_removed_nodes(units: &mut [&mut Node], cl_num: usize, template: &[u8]) {
+//     for node in units.iter_mut() {
+//         node.posterior = vec![(cl_num as f64).recip().ln(); cl_num];
+//         node.cluster = 0;
+//         let mode = edlib_sys::AlignMode::Global;
+//         let task = edlib_sys::AlignTask::Alignment;
+//         let aln = edlib_sys::align(node.seq(), template, mode, task);
+//         let aln = crate::misc::edlib_to_kiley(aln.operations().unwrap());
+//         node.cigar = crate::misc::kiley_op_to_ops(&aln);
+//     }
+// }
 
 // TODO: this function is, very very slow. Please fasten this function, please.
 type Phmm = kiley::hmm::guided::PairHiddenMarkovModel;

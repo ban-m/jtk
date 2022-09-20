@@ -470,6 +470,9 @@ impl std::fmt::Display for EncodedRead {
                 edge.label().len()
             )?;
         }
+        if let Some(node) = self.nodes.last() {
+            write!(f, "{}-{}", node.unit, node.cluster)?;
+        }
         write!(f, " | {} bp gap", self.trailing_gap.len())
     }
 }

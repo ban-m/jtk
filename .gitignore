@@ -27,7 +27,6 @@ python/jtk_definitions.egg-info
 *.ipynb
 !script/alntv_prepare.sh
 !script/phase_by_longphase.sh
-!script/benchmark_clustering.job
 !script/extract_cox_pgf.sh
 !script/phase_mock_reads_from_mock_genome_baseline.sh
 !script/phase_mock_reads_from_mhc_baseline.sh
@@ -41,3 +40,6 @@ python/jtk_definitions.egg-info
 !script/generate_mock_reads_from_mock_genome.sh
 !script/generate_mock_reads_from_mhc.sh
 !script/extract_cox_pgf.sh
+!script/benchmark_clustering.sh
+!script/benchmark_mcmc.sh
+!script/see_metric.sh

@@ -1,19 +1,21 @@
 fn main() -> std::io::Result<()> {
     env_logger::init();
-    let args: Vec<_> = std::env::args().collect();
-    use definitions::*;
-    use std::io::*;
-    let mut ds: DataSet =
-        serde_json::de::from_reader(BufReader::new(std::fs::File::open(&args[1]).unwrap()))
-            .unwrap();
-
-    use std::collections::HashSet;
-    let selection: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
-    use haplotyper::local_clustering::*;
-    local_clustering_selected(&mut ds, &selection);
-    // use haplotyper::{AlignmentCorrection, CorrectionConfig};
-    // let config = CorrectionConfig::default();
-    // ds.correct_clustering_selected(&selection, &config);
-    println!("{}", serde_json::ser::to_string(&ds).unwrap());
+    let mode = edlib_sys::AlignMode::Global;
+    let task = edlib_sys::AlignTask::Alignment;
+    for len in [100, 1000, 10_000, 100_000, 1_000_000] {
+        let mut rng = rand::thread_rng();
+        let seq = kiley::gen_seq::generate_seq(&mut rng, len);
+        let prof = kiley::gen_seq::Profile::new(0.001, 0.001, 0.001);
+        let seq2 = kiley::gen_seq::introduce_randomness(&seq, &mut rng, &prof);
+        let start = std::time::Instant::now();
+        let aln = edlib_sys::align(&seq, &seq2, mode, task);
+        let path = haplotyper::misc::edlib_to_kiley(&aln.operations().unwrap());
+        let path =
+            kiley::bialignment::guided::global_guided(&seq2, &seq, &path, 10, (1, -1, -1, -1)).1;
+        let dist = path.iter().filter(|&&op| op != kiley::Op::Match).count();
+        let end = std::time::Instant::now();
+        let time = (end - start).as_millis();
+        println!("{dist}\t{time}");
+    }
     Ok(())
 }

@@ -697,7 +697,6 @@ fn align_to_contigs<R: Rng>(
     rng: &mut R,
 ) -> Vec<Alignment> {
     let mut chains = enumerate_chain(read, encs);
-    // let chain_len = chains.len();
     let mut alns = vec![];
     while !chains.is_empty() {
         let choises: Vec<_> = (0..chains.len()).collect();
@@ -741,6 +740,9 @@ fn enumerate_chain(read: &EncodedRead, encs: &[ContigEncoding]) -> Vec<Chain> {
     for enc in encs.iter() {
         chains.extend(enumerate_chain_norev(&nodes_run, enc, false));
     }
+    for c in chains.iter() {
+        assert_eq!(c.query_nodes_len, read.nodes.len());
+    }
     chains
 }
 
@@ -783,7 +785,10 @@ fn enumerate_chain_norev(nodes: &[LightNode], enc: &ContigEncoding, direction: b
         let chain_indices = min_chain(&chain_nodes);
         let first = chain_indices.first().map(|&i| chain_nodes[i]).unwrap();
         let last = chain_indices.last().map(|&i| chain_nodes[i]).unwrap();
-        chains.push(align_in_chunk_space(nodes, enc, direction, first, last));
+        let chain = align_in_chunk_space(nodes, enc, direction, first, last);
+        if !chain.ops.is_empty() {
+            chains.push(chain);
+        }
         let mut idx = 0;
         chain_nodes.retain(|_| {
             idx += 1;
@@ -1046,6 +1051,9 @@ fn base_pair_alignment(
 ) -> Alignment {
     let seg_seq = seg.sequence.as_ref().unwrap().as_bytes();
     let tiles = convert_into_tiles(read, chain, encs);
+    if tiles.is_empty() {
+        eprintln!("{chain:?}\n{read}\n{}", read.nodes.len());
+    }
     let (mut query, mut ops, tip_len) = match chain.contig_start_idx {
         0 => align_tip(seq, seg, chain, tiles.first().unwrap()),
         _ => (vec![], vec![], 0),

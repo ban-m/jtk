@@ -103,28 +103,10 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     if config.copy_num < 2 {
         return (vec![0; reads.len()], vec![vec![0f64]; reads.len()], 0f64, 1);
     }
-    let profiles = modification_table(template, reads, ops, config.band_width, hmm);
-    let profiles = compress_small_gains(profiles, template, config.gains);
-    let probes = filter_profiles(template, &profiles, strands, config, rng);
-    let op_and_homop = operation_and_homopolymer_length(template, &probes);
-    let variants = filter_by(&profiles, &probes);
-    let feature_vectors = (variants.as_slice(), op_and_homop.as_slice());
-    let clustering_result = cluster_filtered_variants(feature_vectors, config, rng);
+    let feature_vectors = search_variants(template, reads, ops, strands, rng, hmm, config);
+    let clustering_result = cluster_filtered_variants(&feature_vectors, config, rng);
     let (mut assignments, mut likelihood_gains, max, max_k) = clustering_result;
     if log_enabled!(log::Level::Trace) {
-        for (i, (pos, lk)) in probes.iter().enumerate() {
-            let sum: f64 = profiles.iter().map(|prof| prof[*pos].max(0f64)).sum();
-            let (pos, ed) = (pos / NUM_ROW, pos % NUM_ROW);
-            trace!("DUMP\t{i}\t{pos}\t{ed}\t{lk:.1}\t{sum:.1}");
-        }
-        for (i, prof) in variants.iter().enumerate() {
-            for (idx, x) in prof.iter().enumerate() {
-                trace!("VARS\t{i}\t{idx}\t{x}");
-            }
-        }
-        for (i, &strand) in strands.iter().enumerate() {
-            trace!("VARS\t{i}\t-1\t{}", strand as usize)
-        }
         for (i, asn) in assignments.iter().enumerate() {
             trace!("VARS\t{i}\t-2\t{asn}");
         }
@@ -139,6 +121,42 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     }
     to_posterior_probability(&mut likelihood_gains);
     (assignments, likelihood_gains, max, max_k as usize)
+}
+
+type FeatureVector = (
+    Vec<Vec<f64>>,
+    Vec<(usize, crate::likelihood_gains::DiffType)>,
+);
+pub fn search_variants<R: Rng, T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    ops: &[Vec<kiley::Op>],
+    strands: &[bool],
+    rng: &mut R,
+    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    config: &ClusteringConfig,
+) -> FeatureVector {
+    let profiles = modification_table(template, reads, ops, config.band_width, hmm);
+    let profiles = compress_small_gains(profiles, template, config.gains);
+    let probes = filter_profiles(template, &profiles, strands, config, rng);
+    let op_and_homop = operation_and_homopolymer_length(template, &probes);
+    let variants = filter_by(&profiles, &probes);
+    if log_enabled!(log::Level::Trace) {
+        for (i, (pos, lk)) in probes.iter().enumerate() {
+            let sum: f64 = profiles.iter().map(|prof| prof[*pos].max(0f64)).sum();
+            let (pos, ed) = (pos / NUM_ROW, pos % NUM_ROW);
+            trace!("DUMP\t{i}\t{pos}\t{ed}\t{lk:.1}\t{sum:.1}");
+        }
+        for (i, prof) in variants.iter().enumerate() {
+            for (idx, x) in prof.iter().enumerate() {
+                trace!("VARS\t{i}\t{idx}\t{x}");
+            }
+        }
+        for (i, &strand) in strands.iter().enumerate() {
+            trace!("VARS\t{i}\t-1\t{}", strand as usize)
+        }
+    }
+    (variants, op_and_homop)
 }
 
 const MIN_REQ_FRACTION: f64 = 0.5;
@@ -214,8 +232,8 @@ fn homopolymer_length(xs: &[u8]) -> Vec<usize> {
     homop
 }
 
-fn cluster_filtered_variants<R: Rng>(
-    (variants, variant_type): (&[Vec<f64>], &[(usize, DiffType)]),
+pub fn cluster_filtered_variants<R: Rng>(
+    (variants, variant_type): &FeatureVector,
     config: &ClusteringConfig,
     rng: &mut R,
 ) -> ClusteringDevResult {
@@ -229,11 +247,6 @@ fn cluster_filtered_variants<R: Rng>(
     }
     let datasize = variants.len();
     let per_cluster_cov = config.local_coverage;
-    // let per_cluster_cov = match copy_num {
-    //     0 | 1 | 2 => datasize as f64 / copy_num as f64,
-    //     _ => (datasize as f64 / copy_num as f64).max(coverage),
-    // };
-    //    let coverage_imp_thr = get_read_thr(variants.len() as f64 / copy_num as f64, 3f64);
     let (mut assignments, mut max, mut max_k, mut read_lk_gains) =
         (vec![0; datasize], 0f64, 1, vec![0f64; datasize]);
     let mut prev_used_columns = vec![false; variants[0].len()];
@@ -892,6 +905,79 @@ fn get_used_columns(lks: &[Vec<LKCount>]) -> Vec<bool> {
         *to_use &= pos_in_neg as f64 * IN_POS_RATIO < pos_in_use as f64;
     }
     to_uses
+}
+
+pub fn cluster_filtered_variants_exact(
+    (variants, variant_type): &FeatureVector,
+    config: &ClusteringConfig,
+) -> ClusteringDevResult {
+    let copy_num = config.copy_num as usize;
+    let feature_dim = variant_type.len();
+    let mut selected_variants: Vec<_> = vec![0; copy_num];
+    let choises = 1 << feature_dim;
+    let last_loop = vec![choises - 1; copy_num];
+    let mut max = 0f64;
+    let mut argmax = get_result(&selected_variants, &variants);
+    while selected_variants != last_loop {
+        let score = calc_score(&selected_variants, &variants);
+        if max < score {
+            argmax = get_result(&selected_variants, &variants);
+            max = score;
+        }
+        increment_one(&mut selected_variants, choises);
+    }
+    argmax
+}
+
+fn get_result(vars: &[usize], variants: &[Vec<f64>]) -> ClusteringDevResult {
+    let score = calc_score(vars, variants);
+    let (assignments, lk_gain): (Vec<_>, Vec<_>) = variants
+        .iter()
+        .map(|xs| {
+            let lk_gain: Vec<_> = vars
+                .iter()
+                .map(|&selection| get_exact_score(selection, xs))
+                .collect();
+            let (max_id, _) = lk_gain
+                .iter()
+                .enumerate()
+                .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
+                .unwrap();
+            (max_id, lk_gain)
+        })
+        .unzip();
+    (assignments, lk_gain, score, vars.len())
+}
+
+fn get_exact_score(selection: usize, xs: &[f64]) -> f64 {
+    xs.iter()
+        .enumerate()
+        .filter_map(|(i, x)| (((1 << i) & selection) != 0).then(|| x))
+        .sum()
+}
+
+fn calc_score(vars: &[usize], variants: &[Vec<f64>]) -> f64 {
+    fn max_gain(vars: &[usize], xs: &[f64]) -> f64 {
+        vars.iter()
+            .map(|&selection| get_exact_score(selection, xs))
+            .max_by(|x, y| x.partial_cmp(y).unwrap())
+            .unwrap()
+    }
+    variants.iter().map(|xs| max_gain(vars, xs)).sum()
+}
+
+fn increment_one(vars: &mut [usize], max: usize) {
+    let mut idx = 0;
+    while max == vars[idx] + 1 {
+        idx += 1;
+    }
+    vars[idx] += 1;
+    for j in 0..idx {
+        vars[j] = vars[idx];
+    }
+    for w in vars.windows(2) {
+        assert!(w[1] <= w[0]);
+    }
 }
 
 #[cfg(test)]
