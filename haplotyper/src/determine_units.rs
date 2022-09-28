@@ -80,7 +80,9 @@ impl DetermineUnit for definitions::DataSet {
         remove_overlapping_units(self, overlap_identity_thr, config).unwrap();
         compaction_units(self);
         // 1st polishing.
+        use crate::repeat_masking::RepeatMask;
         use crate::stats::Stats;
+        let repetitive_kmer = self.get_repetitive_kmer();
         let mut sim_thr = self.read_type.sim_thr();
         {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
@@ -94,12 +96,9 @@ impl DetermineUnit for definitions::DataSet {
         }
         // 2nd polishing.
         {
-            use crate::repeat_masking::RepeatMask;
-            let repetitive_kmer = self.get_repetitive_kmer();
             self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
-
             let fill_config = crate::encode::deletion_fill::CorrectDeletionConfig::new(
                 false,
                 Some(sim_thr),
@@ -146,6 +145,8 @@ impl DetermineUnit for definitions::DataSet {
             let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, CONS_COV);
             dump_histogram(self);
             self.polish_unit(&polish_config);
+            self.selected_chunks
+                .retain(|c| repetitive_kmer.repetitiveness(c.seq()) < config.exclude_repeats);
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
         {
@@ -216,7 +217,6 @@ fn pick_random<R: Rng>(ds: &DataSet, config: &DetermineUnitConfig, rng: &mut R) 
     subseqs
         .choose_multiple_weighted(rng, config.unit_num, |(_, repet)| (1f64 - repet).max(SMALL))
         .unwrap()
-        // .choose_multiple(rng, config.unit_num)
         .enumerate()
         .map(|(idx, (seq, _))| {
             let mut seq = seq.to_vec();

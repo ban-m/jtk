@@ -31,7 +31,7 @@ kmersize = 12
 ### Upper [top_freq] k-mers would be masked as repeats.
 top_freq = 0.001
 ### Purge chunks having more than [purge_copy_num] phases.
-purge_copy_num = 9
+purge_copy_num = 8
 ### Discard chunks with occurence more than or equal to [upper].
 upper = 400
 ### Discard chunks with occurence less than or equal to [lower].
@@ -46,7 +46,7 @@ verbose = 2
 
 ## Parameters for reproducibility. Usually, you do not need to modify them.
 ### Seed for a pseudorandom number generator.
-seed = 32149380
+seed = 19090432890
 ### The length of chunks.
 chunk_len = 2000
 ### The margin between adjacent chunks in base pair.
