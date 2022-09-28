@@ -224,8 +224,9 @@ pub fn fill_edges_by_new_units(
     }
     for (idx, window) in read.nodes.windows(2).enumerate() {
         let start = window[0].position_from_start + window[0].seq().len();
+        let start = (start.max(MARGIN) - MARGIN).min(len);
         let end = window[1].position_from_start;
-        let (start, end) = (start.max(MARGIN) - MARGIN, (end + MARGIN).min(len));
+        let end = (end + MARGIN).min(len);
         let forward = get_forward_d_edge_from_window(window);
         let reverse = get_reverse_d_edge_from_window(window);
         let (unit_info, direction) = if edges.contains_key(&forward) {
@@ -239,7 +240,14 @@ pub fn fill_edges_by_new_units(
             let start = window[0].position_from_start;
             let end = window[1].position_from_start;
             let seqlen = window[0].seq().len();
-            panic!("{}\t{}\t{}\t{}\t{}", read.id, start, end, seqlen, len);
+            warn!(
+                "TooNear\t{}\t{}\t{}\t{}\t{}",
+                read.id, start, end, seqlen, len
+            );
+            let from = (window[0].unit, window[0].cluster);
+            let to = (window[1].unit, window[1].cluster);
+            warn!("Dump\t{}\t{:?}\t{:?}", read.id, from, to);
+            continue;
         }
         let encoded = encode_edge(seq, start, end, direction, unit_info, read_type);
         for node in encoded {

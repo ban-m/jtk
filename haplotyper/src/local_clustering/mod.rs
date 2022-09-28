@@ -281,18 +281,6 @@ fn update_by_clusterings(
     }
 }
 
-// fn update_by_removed_nodes(units: &mut [&mut Node], cl_num: usize, template: &[u8]) {
-//     for node in units.iter_mut() {
-//         node.posterior = vec![(cl_num as f64).recip().ln(); cl_num];
-//         node.cluster = 0;
-//         let mode = edlib_sys::AlignMode::Global;
-//         let task = edlib_sys::AlignTask::Alignment;
-//         let aln = edlib_sys::align(node.seq(), template, mode, task);
-//         let aln = crate::misc::edlib_to_kiley(aln.operations().unwrap());
-//         node.cigar = crate::misc::kiley_op_to_ops(&aln);
-//     }
-// }
-
 // TODO: this function is, very very slow. Please fasten this function, please.
 type Phmm = kiley::hmm::guided::PairHiddenMarkovModel;
 fn prep_consensus(
