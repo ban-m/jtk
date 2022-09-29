@@ -2,6 +2,7 @@ use definitions::DataSet;
 use serde::{Deserialize, Serialize};
 extern crate log;
 use log::*;
+const COVERAGE: usize = 2;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PipelineConfig {
     input_file: String,
@@ -11,12 +12,10 @@ pub struct PipelineConfig {
     verbose: usize,
     threads: usize,
     seed: u64,
+    region_size: String,
     chunk_len: usize,
-    take_num: usize,
     margin: usize,
     exclude: f64,
-    upper: usize,
-    lower: usize,
     kmersize: usize,
     top_freq: f64,
     min_count: u32,
@@ -46,11 +45,9 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         seed,
         verbose,
         chunk_len,
-        take_num,
+        region_size,
         margin,
         exclude,
-        upper,
-        lower,
         kmersize,
         top_freq,
         min_count,
@@ -89,9 +86,23 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     std::fs::create_dir_all(&out_dir)?;
     assert!(std::path::Path::new(&out_dir).is_dir());
     // Configurations.
+    let genome_size = match parse_si(&region_size) {
+        Ok(res) => res,
+        Err(why) => {
+            error!("{} can not be parsed!", region_size);
+            panic!("{}", why);
+        }
+    };
+    let take_num = COVERAGE * genome_size / chunk_len;
     let repeat_mask_config = RepeatMaskConfig::new(kmersize, top_freq, min_count);
-    let select_unit_config =
-        DetermineUnitConfig::new(chunk_len, take_num, margin, threads, exclude, upper, lower);
+    let select_unit_config = DetermineUnitConfig::new(
+        chunk_len,
+        take_num,
+        margin,
+        threads,
+        exclude,
+        purge_copy_num,
+    );
     let pick_component_config = ComponentPickingConfig::new(component_num);
     let draft = format!("{file_stem}.draft.gfa");
     let multp_config = MultiplicityEstimationConfig::new(seed, Some(&draft));
@@ -198,4 +209,21 @@ fn parse_input(input_file: &str, read_type: &str) -> std::io::Result<DataSet> {
         _ => panic!("file type:{} not supported", input_file),
     };
     Ok(DataSet::entry(input_file, seqs, read_type))
+}
+
+fn parse_si(input: &str) -> Result<usize, std::num::ParseIntError> {
+    assert!(!input.is_empty(), "Please specify genome size.");
+    let mut input = input.to_string();
+    let last = input.chars().last().unwrap();
+    let mult = match last {
+        'k' | 'K' => 1_000,
+        'm' | 'M' => 1_000_000,
+        'g' | 'G' => 1_000_000_000,
+        '0'..='9' => 1,
+        _ => panic!("si prefix {} is not supported yet.", last),
+    };
+    if last.is_ascii_alphabetic() {
+        input.pop();
+    }
+    input.parse::<usize>().map(|digit| digit * mult)
 }

@@ -23,6 +23,7 @@ pub fn minimap2(
         .output()
         .unwrap();
     if !aln.status.success() {
+        error!("Minimap2 is not available. Please install minimap2(https://github.com/lh3/minimap2) first.");
         panic!("Minimap2,{:?}", String::from_utf8_lossy(&aln.stderr));
     } else {
         aln.stdout
@@ -43,6 +44,7 @@ pub fn minimap2_args(target: &str, query: &str, args: &[&str]) -> Vec<u8> {
         }
     };
     if !aln.status.success() {
+        error!("Minimap2 is not available. Please install minimap2(https://github.com/lh3/minimap2) first.");
         panic!("Minimap2,{}", std::str::from_utf8(&aln.stderr).unwrap());
     } else {
         aln.stdout

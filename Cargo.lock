@@ -394,6 +394,7 @@ dependencies = [
 [[package]]
 name = "kiley"
 version = "0.1.0"
+source = "git+https://github.com/ban-m/kiley.git?branch=master#60d1b9bc95a430ec0956339db89699c54318a519"
 dependencies = [
  "bytecount",
  "clap 2.34.0",

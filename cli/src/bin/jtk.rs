@@ -126,18 +126,14 @@ fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("exclude")
         .and_then(|e| e.parse().ok())
         .expect("exclude");
-    let upper: usize = matches
-        .value_of("upper")
-        .and_then(|e| e.parse::<usize>().ok())
-        .unwrap();
-    let lower: usize = matches
-        .value_of("lower")
+    let purge_copy_num: usize = matches
+        .value_of("purge_copy_num")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
     set_threads(matches);
     use haplotyper::determine_units::{DetermineUnit, DetermineUnitConfig};
     let (cl, tn) = (chunk_len, take_num);
-    let config = DetermineUnitConfig::new(cl, tn, margin, thrds, filter, upper, lower);
+    let config = DetermineUnitConfig::new(cl, tn, margin, thrds, filter, purge_copy_num);
     dataset.select_chunks(&config);
 }
 

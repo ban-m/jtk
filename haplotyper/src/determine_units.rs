@@ -18,8 +18,7 @@ pub struct DetermineUnitConfig {
     pub threads: usize,
     pub min_cluster: usize,
     pub exclude_repeats: f64,
-    pub upper_count: usize,
-    pub lower_count: usize,
+    pub purge_copy_num: usize,
 }
 
 pub const STDDEV_OR_ERROR: f64 = 0.01;
@@ -33,8 +32,7 @@ impl DetermineUnitConfig {
         margin: usize,
         threads: usize,
         exclude_repeats: f64,
-        upper_count: usize,
-        lower_count: usize,
+        purge_copy_num: usize,
     ) -> Self {
         Self {
             chunk_len,
@@ -43,8 +41,7 @@ impl DetermineUnitConfig {
             threads,
             min_cluster: 2,
             exclude_repeats,
-            upper_count,
-            lower_count,
+            purge_copy_num,
         }
     }
 }
@@ -55,7 +52,7 @@ pub trait DetermineUnit {
 
 const FIRST_CONS_COV: usize = 20;
 const CONS_COV: usize = 30;
-
+const COPY_NUM_OFFSET: usize = 3;
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
     // TOOD: Maybe we can remove some low-quality reads?
@@ -88,7 +85,10 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self.encode(config.threads, FIRST_RELAX * sim_thr, STDDEV_OR_ERROR);
             debug!("ERRORRATE\t{}", self.error_rate());
-            remove_frequent_units(self, config.upper_count);
+            crate::misc::update_coverage(self);
+            let upper_count = (self.coverage.unwrap().ceil() as usize)
+                * (config.purge_copy_num + COPY_NUM_OFFSET);
+            remove_frequent_units(self, upper_count);
             dump_histogram(self);
             let polish_config = PolishUnitConfig::new(self.read_type, filter_size, FIRST_CONS_COV);
             self.consensus_unit(&polish_config);
@@ -116,8 +116,11 @@ impl DetermineUnit for definitions::DataSet {
             // Here we usually see almost no errors in the reference chunk,
             // thus using very conservative and threshold for removing reference chunks.
             let ovlp_thr = 0.95;
+            crate::misc::update_coverage(self);
+            let upper_count = (self.coverage.unwrap().ceil() as usize)
+                * (config.purge_copy_num + COPY_NUM_OFFSET);
             remove_overlapping_units(self, ovlp_thr, config).unwrap();
-            remove_frequent_units(self, config.upper_count);
+            remove_frequent_units(self, upper_count);
             filter_unit_by_ovlp(self, config);
             debug!("UNITNUM\t{}\tFILTERED\t1", self.selected_chunks.len());
             let polish_config = PolishUnitConfig::new(self.read_type, filter_size, CONS_COV);
@@ -130,16 +133,19 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
             use crate::encode::encode_by_mm2;
             encode_by_mm2(self, config.threads, sim_thr).unwrap();
-            remove_frequent_units(self, config.upper_count);
+            crate::misc::update_coverage(self);
+            let upper_count = (self.coverage.unwrap().ceil() as usize)
+                * (config.purge_copy_num + COPY_NUM_OFFSET);
+            remove_frequent_units(self, upper_count);
             filter_unit_by_ovlp(self, config);
             self.encode(config.threads, sim_thr, self.read_type.sd_of_error());
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
-            remove_frequent_units(self, config.upper_count);
+            remove_frequent_units(self, upper_count);
             filter_unit_by_ovlp(self, config);
             compaction_units(self);
             debug!("UNITNUM\t{}\tFILTERED\t2", self.selected_chunks.len());
-            remove_frequent_units(self, config.upper_count);
+            remove_frequent_units(self, upper_count);
             sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             let polish_config = PolishUnitConfig::new(self.read_type, 2 * filter_size, CONS_COV);
@@ -150,9 +156,12 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tPOLISHED\t3", self.selected_chunks.len());
         }
         {
+            crate::misc::update_coverage(self);
+            let upper_count = (self.coverage.unwrap().ceil() as usize)
+                * (config.purge_copy_num + COPY_NUM_OFFSET);
             self.encode(config.threads, sim_thr, self.read_type.sd_of_error());
             debug!("ERRORRATE\t{}", self.error_rate());
-            remove_frequent_units(self, config.upper_count);
+            remove_frequent_units(self, upper_count);
             dump_histogram(self);
         }
         // If half of the coverage supports large deletion, remove them.

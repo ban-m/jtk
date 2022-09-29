@@ -16,7 +16,7 @@ fi
 
 echo -ne "$REGION & $NAME"
 if [ $# -ge 9 ]; then
-    cargo run --release --bin compare_haplotypes -- "$REFERENCE" "$ASM" "$REF_HAP1" "$REF_HAP2" "$ASM_HAP1" "$ASM_HAP2" "$9"
+    "$PWD"/target/release/compare_haplotypes "$REFERENCE" "$ASM" "$REF_HAP1" "$REF_HAP2" "$ASM_HAP1" "$ASM_HAP2" "$9"
 else
-    cargo run --release --bin compare_haplotypes -- "$REFERENCE" "$ASM" "$REF_HAP1" "$REF_HAP2" "$ASM_HAP1" "$ASM_HAP2"
+    "$PWD"/target/release/compare_haplotypes "$REFERENCE" "$ASM" "$REF_HAP1" "$REF_HAP2" "$ASM_HAP1" "$ASM_HAP2"
 fi

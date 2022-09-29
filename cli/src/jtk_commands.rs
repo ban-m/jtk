@@ -130,20 +130,12 @@ fn subcommand_select_unit() -> Command<'static> {
                 .help("filter out unit having more than [exclude] repetitiveness."),
         )
         .arg(
-            Arg::new("upper")
+            Arg::new("purge_copy_num")
                 .short('u')
-                .long("upper")
-                .help("Discard units with occurence more than or equal to [upper].")
+                .long("purge_copy_num")
+                .help("Discard units with copy_number more than or equal to [upper].")
                 .takes_value(true)
-                .default_value("150"),
-        )
-        .arg(
-            Arg::new("lower")
-                .short('l')
-                .long("lower")
-                .help("Discard units with occurence less than or equal to [upper].")
-                .takes_value(true)
-                .default_value("4"),
+                .default_value("10"),
         )
 }
 

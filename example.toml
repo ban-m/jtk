@@ -5,7 +5,8 @@
 input_file = "input.fa" 
 ### The sequencing platform. ONT, CCS, or CLR.
 read_type = "ONT"
-
+### The size of the target region, should be <10M. It is OK to use SI suffix, such as M or K.
+region_size = "5M"
 
 ## Recommended parameters. Please set them if you have (any) estimation.
 ### Output directory
@@ -14,8 +15,6 @@ out_dir = "./"
 prefix = "temp"
 ### The number of threads.
 threads = 1
-### The number of the chunks. Usually, 2 x (Genome size) / (chunk_len) would be OK.
-take_num = 2500
 ### If true, the consensus would be polished by JTK.
 to_polish = true
 ### Resuming. If `out_dir` have JSON files with the specified prefix, JTK re-uses it.
@@ -32,10 +31,6 @@ kmersize = 12
 top_freq = 0.001
 ### Purge chunks having more than [purge_copy_num] phases.
 purge_copy_num = 8
-### Discard chunks with occurence more than or equal to [upper].
-upper = 400
-### Discard chunks with occurence less than or equal to [lower].
-lower = 4
 ### # of reads required to span homozygous region.
 ### Lowering this value would produce more "phased" assembly.
 ### But they would more likely to switching errors.
