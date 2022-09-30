@@ -17,7 +17,7 @@ prefix = "temp"
 threads = 1
 ### If true, the consensus would be polished by JTK.
 to_polish = true
-### Resuming. If `out_dir` have JSON files with the specified prefix, JTK re-uses it.
+### Resuming. If `out_dir` have JSON files with the specified prefix, JTK re-uses them.
 resume = false
 
 
@@ -33,9 +33,9 @@ top_freq = 0.001
 purge_copy_num = 8
 ### # of reads required to span homozygous region.
 ### Lowering this value would produce more "phased" assembly.
-### But they would more likely to switching errors.
+### But they would be more likely to cause switching errors.
 min_span = 2
-### Verbose level. 2 is debug more, 3 is trace mode. I recommend to use 2.
+### Verbose level. 2 is debug more, 3 is trace mode (very slow).
 verbose = 2
 
 

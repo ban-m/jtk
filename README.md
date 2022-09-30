@@ -29,6 +29,12 @@ Then, move `./target/release/jtk` at the location you want.
 
 ## Usage
 
+0. Prepare the reads to be assembled.
+    - Align your reads to the reference and index the bam file. 
+    - Use `bash ./script/extract_region.sh $REFERENCE $BAM $REGION > reads.fastq`
+    - `$REFERENCE` should be a fasta file, `$BAM` should be an indexed bam file, and `$REGION` should be a region specification, such as `chr1:10000000-15000000`.
+    - It is the same as `samtools view -OBAM $BAM $REGION | samtools fastq `
+    - A region should be smaller than 10Mbp. We have not tested regions longer than 10Mbp.
 1. Modify `example.toml` as you want.
     - See `example.toml` for the explanation of the parameters.
     - I recommend to use absolute path for the input and the output directory.

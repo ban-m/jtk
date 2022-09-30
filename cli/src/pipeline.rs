@@ -2,7 +2,6 @@ use definitions::DataSet;
 use serde::{Deserialize, Serialize};
 extern crate log;
 use log::*;
-const COVERAGE: usize = 2;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PipelineConfig {
     input_file: String,
@@ -93,7 +92,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
             panic!("{}", why);
         }
     };
-    let take_num = COVERAGE * genome_size / chunk_len;
+    let take_num = genome_size / chunk_len;
     let repeat_mask_config = RepeatMaskConfig::new(kmersize, top_freq, min_count);
     let select_unit_config = DetermineUnitConfig::new(
         chunk_len,
