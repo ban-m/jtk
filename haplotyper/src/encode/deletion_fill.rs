@@ -154,7 +154,7 @@ pub fn correct_unit_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) -
     find_new_node
 }
 
-const INNER_LOOP: usize = 15;
+const INNER_LOOP: usize = 12;
 fn filling_until(
     ds: &mut DataSet,
     consensi: &HashMap<(u64, u64), Vec<u8>>,

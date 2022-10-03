@@ -158,6 +158,7 @@ impl Assemble for DataSet {
     }
 }
 
+const LOWER_FRAC: f64 = 0.15;
 /// ASSEMBLEIMPL
 pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     assert!(c.to_resolve);
@@ -165,11 +166,9 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let cov = ds.coverage.unwrap();
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     debug!("GRAPH\t{graph}");
-    match ds.read_type {
-        ReadType::CCS => graph.remove_lightweight_edges(1, false),
-        ReadType::ONT | ReadType::None | ReadType::CLR => graph.remove_lightweight_edges(2, true),
-    };
-    graph.remove_lightweight_edges(1, false);
+    let thr = (cov * LOWER_FRAC).round() as usize;
+    graph.remove_lightweight_edges(thr / 2, true);
+    graph.remove_lightweight_edges(thr, false);
     graph.clean_up_graph_for_assemble(cov, &reads, c, ds.read_type);
     let (mut segments, mut edges, _, summaries, encodings) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();

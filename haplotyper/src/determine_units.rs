@@ -50,20 +50,35 @@ pub trait DetermineUnit {
     fn select_chunks(&mut self, config: &DetermineUnitConfig);
 }
 
+fn show_minimap2_version() {
+    let version = std::process::Command::new("minimap2")
+        .args(&["--version"])
+        .output()
+        .unwrap();
+    if !version.status.success() {
+        error!("Minimap2 is not available. Please install minimap2(https://github.com/lh3/minimap2) first.");
+        panic!("Minimap2,{:?}", String::from_utf8_lossy(&version.stderr));
+    } else {
+        let version = std::str::from_utf8(&version.stdout).unwrap();
+        debug!("MINIMAP2\tVERSION\t{}", version);
+    }
+}
+fn update_get_coverage(ds: &mut DataSet) -> f64 {
+    crate::misc::update_coverage(ds);
+    ds.coverage.unwrap()
+}
+
 const FIRST_CONS_COV: usize = 20;
 const CONS_COV: usize = 30;
 const COPY_NUM_OFFSET: usize = 3;
+const LOWER_FRAC: f64 = 0.1;
 impl DetermineUnit for definitions::DataSet {
     // TODO: We can make this process much faster, by just skipping the needless re-encoding.
     // TOOD: Maybe we can remove some low-quality reads?
     fn select_chunks(&mut self, config: &DetermineUnitConfig) {
+        show_minimap2_version();
         self.selected_chunks.clear();
         self.encoded_reads.clear();
-        let filter_size = match self.read_type {
-            ReadType::CCS => 2,
-            ReadType::None | ReadType::CLR => 5,
-            ReadType::ONT => 3,
-        };
         debug!("Select Unit: Configuration:{:?}", config);
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
         self.selected_chunks = pick_random(self, config, &mut rng);
@@ -85,9 +100,10 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self.encode(config.threads, FIRST_RELAX * sim_thr, STDDEV_OR_ERROR);
             debug!("ERRORRATE\t{}", self.error_rate());
-            crate::misc::update_coverage(self);
-            let upper_count = (self.coverage.unwrap().ceil() as usize)
-                * (config.purge_copy_num + COPY_NUM_OFFSET);
+            let haploid_coverage = update_get_coverage(self);
+            let upper_count =
+                haploid_coverage.ceil() as usize * (config.purge_copy_num + COPY_NUM_OFFSET);
+            let filter_size = (haploid_coverage * LOWER_FRAC).ceil() as usize;
             remove_frequent_units(self, upper_count);
             dump_histogram(self);
             let polish_config = PolishUnitConfig::new(self.read_type, filter_size, FIRST_CONS_COV);
@@ -116,9 +132,10 @@ impl DetermineUnit for definitions::DataSet {
             // Here we usually see almost no errors in the reference chunk,
             // thus using very conservative and threshold for removing reference chunks.
             let ovlp_thr = 0.95;
-            crate::misc::update_coverage(self);
-            let upper_count = (self.coverage.unwrap().ceil() as usize)
-                * (config.purge_copy_num + COPY_NUM_OFFSET);
+            let haploid_coverage = update_get_coverage(self);
+            let upper_count =
+                haploid_coverage.ceil() as usize * (config.purge_copy_num + COPY_NUM_OFFSET);
+            let filter_size = (haploid_coverage * LOWER_FRAC).ceil() as usize;
             remove_overlapping_units(self, ovlp_thr, config).unwrap();
             remove_frequent_units(self, upper_count);
             filter_unit_by_ovlp(self, config);
@@ -133,9 +150,10 @@ impl DetermineUnit for definitions::DataSet {
             debug!("UNITNUM\t{}\tRAWUNIT", self.selected_chunks.len());
             use crate::encode::encode_by_mm2;
             encode_by_mm2(self, config.threads, sim_thr).unwrap();
-            crate::misc::update_coverage(self);
-            let upper_count = (self.coverage.unwrap().ceil() as usize)
-                * (config.purge_copy_num + COPY_NUM_OFFSET);
+            let haploid_coverage = update_get_coverage(self);
+            let upper_count =
+                haploid_coverage.ceil() as usize * (config.purge_copy_num + COPY_NUM_OFFSET);
+            let filter_size = (haploid_coverage * LOWER_FRAC).ceil() as usize;
             remove_frequent_units(self, upper_count);
             filter_unit_by_ovlp(self, config);
             self.encode(config.threads, sim_thr, self.read_type.sd_of_error());

@@ -33,7 +33,10 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
     let reads: Vec<_> = ds.encoded_reads.iter().collect();
     use haplotyper::assemble::ditch_graph::DitchGraph;
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
-    graph.remove_lightweight_edges(2, true);
+    let cov = ds.coverage.unwrap();
+    let thr = (cov * 0.1).round() as usize;
+    graph.remove_lightweight_edges((thr / 2).max(1), false);
+    graph.remove_lightweight_edges(thr, true);
     graph.remove_tips(0.8, 4);
     if ds.coverage.is_available() {
         let cov = ds.coverage.unwrap();

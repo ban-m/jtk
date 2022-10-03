@@ -24,6 +24,7 @@ pub trait MultiplicityEstimation {
     fn purge_multiplicity(&mut self, upper: usize);
 }
 
+const LOWER_FRAC: f64 = 0.15;
 impl MultiplicityEstimation for DataSet {
     fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig) {
         crate::misc::update_coverage(self);
@@ -33,13 +34,9 @@ impl MultiplicityEstimation for DataSet {
         let rt = self.read_type;
         let mut graph =
             ditch_graph::DitchGraph::new(&reads, &self.selected_chunks, rt, &assemble_config);
-        let thr = match self.read_type {
-            definitions::ReadType::CCS => 1,
-            definitions::ReadType::CLR => 2,
-            definitions::ReadType::ONT => 2,
-            definitions::ReadType::None => 1,
-        };
-        graph.remove_lightweight_edges(1, false);
+        let thr = (cov * LOWER_FRAC).round() as usize;
+        debug!("MULTIP\tTHR\t{} ", thr);
+        graph.remove_lightweight_edges((thr / 2).max(1), false);
         graph.remove_lightweight_edges(thr, true);
         debug!("SQUISHED\t{graph}");
         use rand::SeedableRng;

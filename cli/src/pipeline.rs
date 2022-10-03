@@ -210,7 +210,7 @@ fn parse_input(input_file: &str, read_type: &str) -> std::io::Result<DataSet> {
     Ok(DataSet::entry(input_file, seqs, read_type))
 }
 
-fn parse_si(input: &str) -> Result<usize, std::num::ParseIntError> {
+fn parse_si(input: &str) -> Result<usize, std::num::ParseFloatError> {
     assert!(!input.is_empty(), "Please specify genome size.");
     let mut input = input.to_string();
     let last = input.chars().last().unwrap();
@@ -224,5 +224,6 @@ fn parse_si(input: &str) -> Result<usize, std::num::ParseIntError> {
     if last.is_ascii_alphabetic() {
         input.pop();
     }
-    input.parse::<usize>().map(|digit| digit * mult)
+    let number = input.parse::<f64>();
+    number.map(|x| (x * mult as f64).round() as usize)
 }

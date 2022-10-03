@@ -27,7 +27,10 @@ impl ComponentPicking for DataSet {
         let mut graph =
             crate::assemble::ditch_graph::DitchGraph::new(reads, units, read_type, &asm_config);
         debug!("CC\t{}", graph.cc());
-        graph.remove_lightweight_edges(2, true);
+        const LOWER_FRAC: f64 = 0.08;
+        let cov = self.coverage.unwrap();
+        let thr = (cov * LOWER_FRAC).round() as usize;
+        graph.remove_lightweight_edges(thr, true);
         debug!("CC\t{}\tAfterRm", graph.cc());
         let mut components = graph.connected_components();
         for (i, cc) in components.iter().enumerate() {
