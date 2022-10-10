@@ -36,8 +36,18 @@ impl MultiplicityEstimation for DataSet {
             ditch_graph::DitchGraph::new(&reads, &self.selected_chunks, rt, &assemble_config);
         let thr = (cov * LOWER_FRAC).round() as usize;
         debug!("MULTIP\tTHR\t{} ", thr);
-        graph.remove_lightweight_edges((thr / 2).max(1), false);
-        graph.remove_lightweight_edges(thr, true);
+        graph.remove_lightweight_edges((thr / 2 + 1).max(1), false);
+        graph = {
+            let mut old = graph.clone();
+            old.remove_lightweight_edges(thr, true);
+            graph.remove_lightweight_edges(thr, false);
+            debug!("CC\t{}", graph.cc());
+            match graph.cc() {
+                1 => graph,
+                _ => old,
+            }
+        };
+        // graph.remove_lightweight_edges(thr, false);
         debug!("SQUISHED\t{graph}");
         use rand::SeedableRng;
         use rand_xoshiro::Xoroshiro128PlusPlus;

@@ -167,8 +167,18 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let mut graph = DitchGraph::new(&reads, &ds.selected_chunks, ds.read_type, c);
     debug!("GRAPH\t{graph}");
     let thr = (cov * LOWER_FRAC).round() as usize;
-    graph.remove_lightweight_edges(thr / 2, true);
-    graph.remove_lightweight_edges(thr, false);
+    graph.remove_lightweight_edges(thr / 2 + 1, false);
+    graph.remove_lightweight_edges(thr, true);
+    // graph = {
+    //     let mut old = graph.clone();
+    //     old.remove_lightweight_edges(thr, true);
+    //     graph.remove_lightweight_edges(thr, false);
+    //     match graph.cc() {
+    //         1 => graph,
+    //         _ => old,
+    //     }
+    // };
+    // graph.remove_lightweight_edges(thr, false);
     graph.clean_up_graph_for_assemble(cov, &reads, c, ds.read_type);
     let (mut segments, mut edges, _, summaries, encodings) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();

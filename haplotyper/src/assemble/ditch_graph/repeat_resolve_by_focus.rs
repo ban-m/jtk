@@ -3,6 +3,9 @@ use std::collections::HashMap;
 type NodeWithTraverseInfo = (usize, usize, usize, NodeIndex, Position);
 // TODO: Tune this parameter.
 const ERROR_PROB: f64 = 0.1;
+// Minimum probability of the null distribution.
+// This is fallback parameter used when there are too many branches.
+const MIN_PROB: f64 = 0.2;
 
 use super::super::AssembleConfig;
 use super::DitchGraph;
@@ -728,17 +731,12 @@ fn to_btree_map(nodes: &GraphBoundary) -> BTreeMap<GraphNode, usize> {
 fn normalize_coverage_array(nodes: &[&DitchNode]) -> Vec<f64> {
     let mut probs: Vec<_> = nodes.iter().map(|n| n.occ as f64).collect();
     let sum: f64 = probs.iter().sum();
-    probs.iter_mut().for_each(|x| *x = (*x / sum).ln());
+    probs
+        .iter_mut()
+        .for_each(|x| *x = (*x / sum).max(MIN_PROB).ln());
     assert!(probs.iter().all(|x| !x.is_nan()), "{:?}", probs);
     probs
 }
-
-// fn normalize_occs(occs: &[usize]) -> Vec<f64> {
-//     let mut occs: Vec<_> = occs.iter().map(|&x| (x as f64).max(0.00001)).collect();
-//     let sum: f64 = occs.iter().sum();
-//     occs.iter_mut().for_each(|x| *x /= sum);
-//     occs
-// }
 
 fn lk_of_counts(occs: &[usize], distr: &[f64]) -> f64 {
     occs.iter()

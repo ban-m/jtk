@@ -57,7 +57,7 @@ function liftover_by_liftoff () {
     rm -r "$TEMP"
 }
 
-cargo run --release --bin filter_gff3 -- "$ANNOTATION" "$CHR" "$START" "$END" ref > "$PREFIX"/filtered.gff3
+"$PWD"/target/release/filter_gff3 "$ANNOTATION" "$CHR" "$START" "$END" ref > "$PREFIX"/filtered.gff3
 grep -v "^#" "$PREFIX"/filtered.gff3 |\
     awk 'BEGIN{OFS="\t"}($3 ~ /gene/){if ($7 == "+"){ dir = "1"} else { dir = "-1"};print($1,$4,$5,dir,"gene")}' > "$PREFIX"/filtered.tsv
 for CTG in "$DIPLO_NAME"_h1.fa "$DIPLO_NAME"_h2.fa "$JTK_NAME"_h1.fa "$JTK_NAME"_h2.fa

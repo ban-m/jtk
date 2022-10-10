@@ -1299,7 +1299,7 @@ fn convert_into_tiles<'a, 'b>(
     chain: &Chain,
     encs: &'b ContigEncoding,
 ) -> Vec<Tile<'a, 'b>> {
-    let mut tiles = vec![];
+    let mut tiles: Vec<Tile> = vec![];
     let (mut read_idx, mut seg_idx) = (chain.query_start_idx, chain.contig_start_idx);
     let mut prev_r_pos = None;
     for &op in chain.ops.iter() {
@@ -1309,15 +1309,34 @@ fn convert_into_tiles<'a, 'b>(
                     true => &read.nodes[read_idx],
                     false => &read.nodes[read.nodes.len() - read_idx - 1],
                 };
+                // Determine where the alignment occured.
                 let node_start = read_node.position_from_start;
                 let seg_node = &encs.tiles()[seg_idx];
                 let (start, end) = convert_to_read_coordinate(read_node, seg_node);
+                assert!(end <= read_node.seq().len());
                 let (read_start, read_end) = (node_start + start, node_start + end);
                 let (read_start, read_end) = match (chain.is_forward, prev_r_pos) {
                     (_, None) => (read_start, read_end),
                     (true, Some((_, e))) => (read_start.max(e), read_end.max(e)),
                     (false, Some((s, _))) => (read_start.min(s), read_end.min(s)),
                 };
+                if read_end - node_start > read_node.seq().len() {
+                    error!("{}", chain.is_forward);
+                    error!("{chain:?}");
+                    for t in tiles.iter() {
+                        let len = t.node.seq().len();
+                        error!(
+                            "{}-{},{len},{}-{}",
+                            t.read_start, t.read_end, t.ctg_start, t.ctg_end
+                        );
+                    }
+                    let (ctg_start, ctg_end) = seg_node.contig_range();
+                    error!(
+                        "{read_start}-{read_end},{start}-{end},{},{ctg_start}-{ctg_end}",
+                        read_node.is_forward
+                    );
+                }
+                assert!(read_end - node_start <= read_node.seq().len());
                 assert!(
                     node_start <= read_start,
                     "{},{},{},{:?},{}",
@@ -1411,7 +1430,13 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
         true => (r_start - offset, r_end - offset),
         false => (seqlen + offset - r_end, seqlen + offset - r_start),
     };
-    assert!(r_end <= tile.node.seq().len());
+    assert!(
+        r_end <= tile.node.seq().len(),
+        "{},{},{}",
+        r_end,
+        tile.node.seq().len(),
+        tile.node.is_forward,
+    );
     let (start, end) = match tile.encoding.unit_range() {
         (true, start, end) => (start, end),
         (false, start, end) => (

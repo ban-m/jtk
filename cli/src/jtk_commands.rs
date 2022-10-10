@@ -3,7 +3,7 @@ fn subcommand_entry() -> Command<'static> {
     Command::new("entry")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Entry point. It encodes a fasta file into HLA-class file.")
+        .about("Entry point. It encodes a fasta file into JSON file.")
         .arg(
             Arg::new("verbose")
                 .short('v')
@@ -41,7 +41,7 @@ fn subcommand_extract() -> Command<'static> {
     Command::new("extract")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Extract (unfold) all the information in the packed file into one tsv file")
+        .about("Extract all the information in the packed file into one tsv")
         .arg(
             Arg::new("verbose")
                 .short('v')
