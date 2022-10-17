@@ -107,6 +107,29 @@ pub fn logsumexp_str<I: Iterator<Item = f64>>(xs: I) -> f64 {
     }
 }
 
+/// Return the k-mer entropy, i.e., \sum_{kmer} -1 *  frac_of_kmer * ln (frac_of_kmer)
+pub fn entropy(seq: &[u8], k: usize) -> f64 {
+    if seq.len() < k {
+        return 0f64;
+    } else {
+        use std::collections::HashMap;
+        let mut counts: HashMap<_, u32> = HashMap::new();
+        for kmer in seq.windows(k) {
+            let id = crate::repeat_masking::to_idx(kmer);
+            *counts.entry(id).or_default() += 1;
+        }
+        let total = counts.values().sum::<u32>() as f64;
+        counts
+            .values()
+            .map(|&count| {
+                assert!(count > 0);
+                let f = (count as f64) / total;
+                f * f.ln() * -1f64
+            })
+            .sum()
+    }
+}
+
 const EDLIB2KILEY: [kiley::Op; 4] = [
     kiley::Op::Match,
     kiley::Op::Ins,

@@ -188,7 +188,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
         use crate::consensus::Polish;
         let seed = 394802;
         let radius = 50;
-        let round = 4;
+        let round = 3;
         let config =
             consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, round);
         segments = ds.polish_segment(&segments, &encodings, &config);

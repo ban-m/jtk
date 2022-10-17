@@ -39,25 +39,25 @@ Then, move `./target/release/jtk` at the location you want.
     - See `example.toml` for the explanation of the parameters.
     - I recommend to use absolute path for the input and the output directory.
     - `JTK` would create the temporary file at the *current directory*. Please exec at the location where you have a write permission.
-    - `sed` is useful. For example, `cat example.toml | sed -e "/^input_file/c input_file = \""$DATA"\"" ... > profile.toml` would replace the input file with $DATA.
+    - `sed` is useful. For example, `cat example.toml | sed -e "/^input_file/c input_file = \""$DATA"\"" ... > profile.toml` would replace the input file with `$DATA`.
 2. Run `jtk pipeline -p example.toml`
     - Several JSON files and assmbly graphs would be created.
-
-If you stoped or a panic occured in `JTK`, you can resume the execution by 
-
-1. Edit the TOML file by `sed -i -e "/resume/c resume = true"`
-2. Run `jtk pipeline -p foo.toml`
 
 
 Also, there is an agnostic subcommend, `jtk stats -f out.stat $JSON_FILE > /dev/null` and `out.stat` contains some useful information. 
 (Caution: This command dumps the input file to the output file as-is. So do not forget to redirect to the `/dev/null`. )
 
-## Reproduce/Test dataset
+## Test dataset
 
 ```
-wget 
-./target/release/jtk pipeline -p example.toml
+minimap2 --version # Should be larger than 2.23 
+wget https://mlab.cb.k.u-tokyo.ac.jp/~ban-m/jtk/COX_PGF.fastq.tar.gz
+gunzip COX_PGF.fastq.tar.gz
+wget https://mlab.cb.k.u-tokyo.ac.jp/~ban-m/jtk/COX_PGF.toml
+jtk pipeline -p COX_PGF.toml 2> log # This commend uses 20 threads.
 ```
+
+Then, the assembly graph is available at `cox_pgf/temp.gfa`.
 
 
 ## *Caution*

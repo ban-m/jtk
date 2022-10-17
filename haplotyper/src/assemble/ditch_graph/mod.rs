@@ -344,7 +344,8 @@ fn take_representative<R: std::borrow::Borrow<EncodedRead>>(
     node_to_idx: &HashMap<Node, NodeIndex>,
 ) -> Vec<DitchEdge> {
     use std::collections::BTreeMap;
-    let mut edges: BTreeMap<_, (i64, i64, Vec<u8>)> = BTreeMap::new();
+    let mut edges: BTreeMap<_, Vec<(&definitions::Edge, bool)>> = BTreeMap::new();
+    // let mut edges: BTreeMap<_, (i64, i64, Vec<u8>)> = BTreeMap::new();
     use Position::*;
     for read in reads.iter().map(|r| r.borrow()) {
         for (i, edge) in read.edges.iter().enumerate() {
@@ -363,24 +364,41 @@ fn take_representative<R: std::borrow::Borrow<EncodedRead>>(
                 false => (((to, to_node, to_pos), (from, from_node, from_pos)), false),
             };
             let lab = edges.entry(key).or_default();
-            lab.0 += edge.offset;
-            lab.1 += 1;
-            if lab.2.len() < edge.label().len() {
-                lab.2 = match is_forward {
-                    true => edge.label().to_vec(),
-                    false => bio_utils::revcmp(edge.label()),
-                };
-            }
+            lab.push((edge, is_forward));
         }
     }
     edges
         .into_iter()
-        .map(|(key, (offset, edge_num, seq))| {
-            let seq = match seq.is_empty() {
-                true => EdgeLabel::Ovlp(offset / edge_num),
-                false => EdgeLabel::Seq(seq),
+        .map(|(key, mut edges)| {
+            edges.sort_by_key(|(e, _)| e.offset);
+            let seq = match edges.get(edges.len() / 2) {
+                Some((edge, _)) if edge.label().is_empty() => EdgeLabel::Ovlp(edge.offset),
+                Some((edge, is_forward)) => {
+                    let seq = match is_forward {
+                        true => edge.label().to_vec(),
+                        false => bio_utils::revcmp(edge.label()),
+                    };
+                    EdgeLabel::Seq(seq)
+                }
+                None => EdgeLabel::Seq(vec![]),
             };
-            (key, seq, edge_num)
+            // if key.0 .1 == (1, 1) || key.1 .1 == (1, 1) {
+            //     let edges: Vec<_> = edges
+            //         .iter()
+            //         .map(|(edge, is_forward)| match is_forward {
+            //             true => edge.label().to_vec(),
+            //             false => bio_utils::revcmp(edge.label()),
+            //         })
+            //         .collect();
+            //     eprintln!("--------------");
+            //     let seq = seq.to_string();
+            //     eprintln!("{key:?}\t{}\t{}", edges.len(), seq);
+            //     for edge in edges.iter() {
+            //         let seq = std::str::from_utf8(edge).unwrap();
+            //         eprintln!("EDGEDUMP\t{}\t{}", edge.len(), seq);
+            //     }
+            // }
+            (key, seq, edges.len() as i64)
         })
         .map(|((from_elm, to_elm), seq, occ)| DitchEdge::new(from_elm, to_elm, seq, occ))
         .collect()

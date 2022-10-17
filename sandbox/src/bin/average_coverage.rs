@@ -50,7 +50,7 @@ fn main() -> std::io::Result<()> {
             .map(|(i, x)| (i * CHUNK_SIZE, x));
         if let Some((start, end)) = region {
             for (pos, (total, num)) in coverages.filter(|&(pos, _)| start <= pos && pos <= end) {
-                println!("{ctgname}\t{pos}\t{}", total / num);
+                println!("{ctgname}\t{}\t{}", pos - start, total / num);
             }
         } else {
             for (pos, (total, num)) in coverages {

@@ -206,6 +206,51 @@ pub fn polish(
                 }
             })
             .collect();
+        // let identity_thr = calc_identity_threshold(&pileups);
+        // pileups
+        //     .iter_mut()
+        //     .zip(polished_seg.iter_mut())
+        //     .enumerate()
+        //     .for_each(|(i, (pileup, seg))| {
+        //         let pos = i * config.window_size;
+        //         let cov = pileup.len();
+        //         let percent: f64 = pileup
+        //             .iter()
+        //             .map(|(_, _, _, ops)| {
+        //                 let mat = ops.iter().filter(|&&x| x == Op::Match).count();
+        //                 mat as f64 / (ops.len() as f64 + 0.1) / cov as f64
+        //             })
+        //             .sum();
+        //         if percent < identity_thr {
+        //             let prev = seg.len();
+        //             if pos < 600000 {
+        //                 for (_, _, seq, _) in pileup.iter() {
+        //                     for seq in seq.chunks(200) {
+        //                         eprintln!("{}", std::str::from_utf8(seq).unwrap());
+        //                     }
+        //                     eprintln!("");
+        //                 }
+        //             }
+        //             use kiley::bialignment::guided::polish_by_pileup_until;
+        //             let (seqs, mut temp_ops): (Vec<&[u8]>, Vec<_>) = pileup
+        //                 .iter()
+        //                 .map(|(_, _, seq, op)| (seq, op.to_vec()))
+        //                 .unzip();
+        //             *seg = polish_by_pileup_until(&seg, &seqs, &mut temp_ops, config.radius, 30);
+        //             for (op, new) in pileup.iter_mut().zip(temp_ops) {
+        //                 op.3 = new;
+        //             }
+        //             let after: f64 = pileup
+        //                 .iter()
+        //                 .map(|(_, _, _, ops)| {
+        //                     let mat = ops.iter().filter(|&&x| x == Op::Match).count();
+        //                     mat as f64 / (ops.len() as f64 + 0.1) / cov as f64
+        //                 })
+        //                 .sum();
+        //             let af = seg.len();
+        //             debug!("POLISH\t{pos}\t{cov}\t{percent:.3}\t{after:.3}\t{prev}\t{af}");
+        //         }
+        //     });
         let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
             let len = len + x.len();
             xs.push(len);
@@ -239,6 +284,35 @@ pub fn polish(
     }
     polished
 }
+
+// fn calc_identity_threshold(pileup: &[SeqOpsOnWindow]) -> f64 {
+//     let mut identity: Vec<_> = pileup
+//         .par_iter()
+//         .flat_map(|pileup| {
+//             pileup
+//                 .iter()
+//                 .map(|(_, _, _, ops)| {
+//                     let mat = ops.iter().filter(|&&op| op == Op::Match).count();
+//                     mat as f64 / (ops.len() as f64 + 0.00001)
+//                 })
+//                 .collect::<Vec<_>>()
+//         })
+//         .collect();
+//     identity.sort_unstable_by(|x, y| x.partial_cmp(&y).unwrap());
+//     let median = identity[identity.len() / 2];
+//     identity.sort_unstable_by(|x, y| {
+//         let x = (x - median).abs();
+//         let y = (y - median).abs();
+//         x.partial_cmp(&y).unwrap()
+//     });
+//     let mad = identity
+//         .get(identity.len() / 2)
+//         .map(|x| (x - median).abs())
+//         .unwrap();
+//     let thr = median - 8f64 * mad;
+//     debug!("IdentityThr\t{median:.3}\t{mad:.3}\t{thr:.3}");
+//     thr
+// }
 
 #[derive(Debug, Clone)]
 struct Buffer {
@@ -388,7 +462,6 @@ fn train_hmm(
 fn length_median(seqs: &[&[u8]]) -> usize {
     let mut len: Vec<_> = seqs.iter().map(|x| x.len()).collect();
     let idx = seqs.len() / 2;
-    // +1 to avoid underflow.
     *len.select_nth_unstable(idx).1
 }
 
@@ -543,7 +616,10 @@ fn fix_alignment(
         aln.contig_start,
         aln.contig_end,
         acc_len[first_pos + 1]
-    )
+    );
+    let refr = &polished[aln.contig_start..aln.contig_end];
+    use kiley::bialignment::guided;
+    aln.ops = guided::global_guided(&refr, &aln.query, &aln.ops, 10, crate::ALN_PARAMETER).1;
 }
 
 fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {

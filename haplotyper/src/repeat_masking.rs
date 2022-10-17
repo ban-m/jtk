@@ -103,7 +103,7 @@ pub fn kmer_counting(reads: &[RawRead], k: usize) -> HashMap<u64, u32> {
     counts
 }
 
-fn to_idx(w: &[u8]) -> u64 {
+pub fn to_idx(w: &[u8]) -> u64 {
     // Determine if this k-mer is canonical.
     let is_canonical = {
         let mut idx = 0;
