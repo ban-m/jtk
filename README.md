@@ -51,8 +51,9 @@ Also, there is an agnostic subcommend, `jtk stats -f out.stat $JSON_FILE > /dev/
 
 ```
 minimap2 --version # Should be larger than 2.23 
-wget https://mlab.cb.k.u-tokyo.ac.jp/~ban-m/jtk/COX_PGF.fastq.tar.gz
-gunzip COX_PGF.fastq.tar.gz
+jtk --version
+wget https://mlab.cb.k.u-tokyo.ac.jp/~ban-m/jtk/COX_PGF.fastq.gz
+gunzip COX_PGF.fastq.gz
 wget https://mlab.cb.k.u-tokyo.ac.jp/~ban-m/jtk/COX_PGF.toml
 jtk pipeline -p COX_PGF.toml 2> log # This commend uses 20 threads.
 ```
