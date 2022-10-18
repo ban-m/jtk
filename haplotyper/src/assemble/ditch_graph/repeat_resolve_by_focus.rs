@@ -350,6 +350,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 Some(res) => res,
                 None => continue,
             };
+            debug!("{}\t{}\t{}", index, head_childs.len(), tail_childs.len());
             if head_childs.len() != 2 || tail_childs.len() != 2 || head_childs == tail_childs {
                 continue;
             }

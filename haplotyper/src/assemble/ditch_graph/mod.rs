@@ -691,6 +691,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.assign_copy_number(cov, &mut rng);
         self.zip_up_overclustering_dev();
         self.resolve_repeats(reads, c, min_llr, false, true);
+        self.assign_copy_number(cov, &mut rng);
         if c.to_bypass_contigs {
             self.bypass_repeats(reads, c, min_llr);
         }
@@ -1306,6 +1307,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// Note that a node is added when the node is consumed in the simple path, i.e., we moved
     /// from a position to the opposite position.
     pub fn simple_path_from(&self, edge: &DitchEdge) -> Vec<NodeIndex> {
+        let start_node = edge.to;
         let mut current_node = edge.to;
         let mut current_pos = edge.to_position;
         let mut nodes = vec![];
@@ -1333,9 +1335,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             if outdeg != 1 {
                 break;
             }
-            // Move node. Unwrap never panics here.
             let mut edge = self.node(current_node).unwrap().edges.iter();
             let traced_edge = edge.find(|e| e.from_position == current_pos).unwrap();
+            if traced_edge.to == start_node {
+                break;
+            }
+            // Move node. Unwrap never panics here.
             current_node = traced_edge.to;
             current_pos = traced_edge.to_position;
         }
@@ -1345,11 +1350,13 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// Note that the given node would be in the path, and traversal first traverse the given path.
     /// The position is the position after using an edge. So, for example, ((0,1),H) -- ((0,1),T) -> ((2,0),T) -- ((2,0), H), then,
     /// the path would be ((0,1), H), ((2,0),T).
+    /// If this simple path consist a loop, then return that loop.
     pub fn simple_path_and_dest(
         &self,
-        mut node: NodeIndex,
+        start_node: NodeIndex,
         mut position: Position,
     ) -> (Vec<GraphNode>, Vec<GraphNode>) {
+        let mut node = start_node;
         let mut nodes = vec![];
         loop {
             nodes.push((node, position));
@@ -1371,6 +1378,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             let indeg = self.count_edges(edge.to, edge.to_position);
             assert!(1 <= indeg);
             if 1 < indeg {
+                break;
+            }
+            // If the destination node is the start position, break.
+            if edge.to == start_node {
                 break;
             }
             // Move node.

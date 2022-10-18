@@ -131,7 +131,7 @@ pub const HIFI_BAND_WIDTH: usize = 80;
 pub const ONT_BAND_WIDTH: usize = 100;
 
 pub const CLR_CTG_SIM: f64 = 0.15;
-pub const CLR_CLR_SIM: f64 = 0.20;
+pub const CLR_CLR_SIM: f64 = 0.15;
 pub const HIFI_SIM_THR: f64 = 0.05;
 pub const ONT_SIM_THR: f64 = 0.15;
 

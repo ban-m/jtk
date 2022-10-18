@@ -872,7 +872,10 @@ struct Pileup {
 fn mean_cov(pileups: &[Pileup]) -> Option<usize> {
     let len = pileups.len();
     let sum: usize = pileups.iter().map(|p| p.coverage).sum();
-    (len != 0).then_some(sum / len)
+    match len {
+        0 => None,
+        _ => Some(sum / len),
+    }
 }
 
 impl Pileup {

@@ -143,7 +143,7 @@ fn dump_alignments(
     dump_sam_header(polished, &mut sam_file)?;
     dump_sam_records(ds, alignments_on_contigs, &mut sam_file)?;
     let mut coverage_file =
-        std::fs::File::create(format!("{dump_path}.tsv")).map(BufWriter::new)?;
+        std::fs::File::create(format!("{dump_path}.coverage.tsv")).map(BufWriter::new)?;
     dump_coverages(polished, alignments_on_contigs, &mut coverage_file)?;
     Ok(())
 }
@@ -435,7 +435,8 @@ fn split_sequences<'a, 'b>(
     let mut update_indices = vec![];
     assert_eq!(seqs.len(), ops.len());
     for (idx, (seq, ops)) in seqs.iter().zip(ops).enumerate() {
-        if within_range(length_median, seq.len(), 0.2) {
+        // TODO: Here check the validity of the pHMM.
+        if within_range(length_median, seq.len(), 0.15) {
             use_seqs.push(*seq);
             use_ops.push(ops);
         } else {
@@ -529,7 +530,8 @@ fn fix_alignment(
         return;
     }
     if start != 0 {
-        let first_pos_bp = acc_len[first_pos + 1];
+        // let first_pos_bp = acc_len[first_pos + 1];
+        let first_pos_bp = acc_len[first_pos];
         let (ops, contig_len) = align_leading(&aln.query[..start], &polished[..first_pos_bp]);
         aln.contig_start = first_pos_bp - contig_len;
         aln.ops.extend(ops);
@@ -545,6 +547,16 @@ fn fix_alignment(
     } else {
         aln.contig_end = acc_len[last_pos];
     }
+    while aln.ops.last() == Some(&Op::Del) {
+        aln.ops.pop();
+        aln.contig_end -= 1;
+    }
+    aln.ops.reverse();
+    while aln.ops.last() == Some(&Op::Del) {
+        aln.ops.pop();
+        aln.contig_start += 1;
+    }
+    aln.ops.reverse();
     let reflen = aln.ops.iter().filter(|&&op| op != Op::Ins).count();
     assert_eq!(
         reflen,
@@ -557,7 +569,7 @@ fn fix_alignment(
         aln.query.len(),
         aln.contig_start,
         aln.contig_end,
-        acc_len[first_pos + 1]
+        acc_len[first_pos]
     );
     let refr = &polished[aln.contig_start..aln.contig_end];
     use kiley::bialignment::guided;
@@ -636,10 +648,10 @@ fn split(
         "{},{}",
         alignment.is_forward, alignment.read_id
     );
-    let start_chunk_id = alignment.contig_start / window;
+    //    let start_chunk_id = alignment.contig_start / window;
     let start_pos_in_contig = match alignment.contig_start % window == 0 {
-        true => start_chunk_id * window,
-        false => (start_chunk_id + 1) * window,
+        true => (alignment.contig_start / window) * window,
+        false => (alignment.contig_start / window + 1) * window,
     };
     let (mut qpos, mut cpos) = (0, alignment.contig_start);
     let mut ops = alignment.ops.iter();
@@ -655,6 +667,7 @@ fn split(
             None => break,
         }
     }
+    let start_chunk_id = cpos / window;
     let start_pos_in_query = qpos;
     if cpos < start_pos_in_contig {
         let start = (start_pos_in_query, start_chunk_id);
@@ -720,13 +733,13 @@ fn align_to_contigs<R: Rng>(
         let choises: Vec<_> = (0..chains.len()).collect();
         let max = chains
             .iter()
-            .map(|chain| chain.apporox_score())
+            .map(|chain| chain.score)
+            // .map(|chain| chain.apporox_score())
             .max()
             .unwrap();
+        //                ((chains[idx].apporox_score() - max) as f64).exp()
         let picked = choises
-            .choose_weighted(rng, |&idx| {
-                ((chains[idx].apporox_score() - max) as f64).exp()
-            })
+            .choose_weighted(rng, |&idx| ((chains[idx].score - max) as f64).exp())
             .unwrap();
         let chain = chains.remove(*picked);
         chains.retain(|c| c.overlap_frac(&chain) < 0.5);
@@ -792,7 +805,6 @@ fn enumerate_chain_norev(nodes: &[LightNode], enc: &ContigEncoding, direction: b
             chain_nodes.push(ChainNode::new(q_idx, node, r_idx, target));
         }
     }
-    // log::debug!("EnumChain\t{}", chain_nodes.len());
     if chain_nodes.is_empty() {
         return Vec::new();
     }
@@ -860,7 +872,7 @@ fn align_in_chunk_space(
 ) -> Chain {
     let query = &nodes[first.read_index..last.read_index + 1];
     let refr = &enc.tiles()[first.contig_index..last.contig_index + 1];
-    let mut ops = alignment(query, refr);
+    let (mut ops, score) = alignment(query, refr);
     let (start_position, end_position) = get_range(first, &mut ops);
     Chain::new(
         enc.id.clone(),
@@ -869,13 +881,14 @@ fn align_in_chunk_space(
         nodes.len(),
         is_forward,
         ops,
+        score,
     )
 }
 
-const MIS_CLUSTER: i64 = 2;
-const MISM: i64 = 100;
-const GAP: i64 = 4;
-const MATCH: i64 = -10;
+const MIS_CLUSTER: i64 = -2;
+const MISM: i64 = -100;
+const GAP: i64 = -4;
+const MATCH: i64 = 10;
 fn match_score(n: &LightNode, m: &UnitAlignmentInfo) -> (i64, Op) {
     let ((unit, cluster), dir) = m.unit_and_dir_info();
     let (n_unit, n_cluster) = n.node;
@@ -888,7 +901,10 @@ fn match_score(n: &LightNode, m: &UnitAlignmentInfo) -> (i64, Op) {
         (MATCH, Op::Match)
     }
 }
-fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> Vec<Op> {
+// TODO: this function should return alignment score.
+// Note that the posterior probabiltiy of the node is not available anymore
+// but if we have that, this program would be much correct. Also, the copy number of the clsuter should be considered as well....
+fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> (Vec<Op>, i64) {
     let mut dp = vec![vec![0; refr.len() + 1]; query.len() + 1];
     for (i, row) in dp.iter_mut().enumerate() {
         row[0] = i as i64 * GAP;
@@ -902,12 +918,13 @@ fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> Vec<Op> {
             let j = j + 1;
             let (mat, _) = match_score(n, unit);
             dp[i][j] = (dp[i - 1][j] + GAP)
-                .min(dp[i][j - 1] + GAP)
-                .min(dp[i - 1][j - 1] + mat);
+                .max(dp[i][j - 1] + GAP)
+                .max(dp[i - 1][j - 1] + mat);
         }
     }
     let mut ops = vec![];
     let (mut qpos, mut rpos) = (query.len(), refr.len());
+    let score = dp[qpos][rpos];
     while 0 < qpos && 0 < rpos {
         let current = dp[qpos][rpos];
         let (mat, op) = match_score(&query[qpos - 1], &refr[rpos - 1]);
@@ -927,7 +944,7 @@ fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> Vec<Op> {
     ops.extend(std::iter::repeat(Op::Del).take(rpos));
     ops.extend(std::iter::repeat(Op::Ins).take(qpos));
     ops.reverse();
-    ops
+    (ops, score)
 }
 
 fn get_range(start: ChainNode, ops: &mut Vec<Op>) -> ((usize, usize), (usize, usize)) {
@@ -991,9 +1008,11 @@ impl ChainNode {
         }
     }
     fn to(&self, to: &Self) -> Option<i64> {
-        (self.read_start < to.read_start && self.contig_start < to.contig_start).then_some(
-            (to.read_start - self.read_start + to.contig_start - self.contig_start) as i64,
-        )
+        if self.read_start < to.read_start && self.contig_start < to.contig_start {
+            Some((to.read_start - self.read_start + to.contig_start - self.contig_start) as i64)
+        } else {
+            None
+        }
     }
 }
 
@@ -1001,6 +1020,7 @@ impl ChainNode {
 struct Chain {
     id: String,
     contig_start_idx: usize,
+    #[allow(dead_code)]
     contig_end_idx: usize,
     // If false, query indices are after rev-comped.
     is_forward: bool,
@@ -1008,20 +1028,21 @@ struct Chain {
     query_end_idx: usize,
     query_nodes_len: usize,
     ops: Vec<Op>,
+    score: i64,
 }
 
 impl Chain {
-    fn apporox_score(&self) -> i64 {
-        self.ops
-            .iter()
-            .map(|&op| match op {
-                Op::Mismatch => -10,
-                Op::Match => 10,
-                Op::Ins => -5,
-                Op::Del => -5,
-            })
-            .sum()
-    }
+    // fn apporox_score(&self) -> i64 {
+    //     self.ops
+    //         .iter()
+    //         .map(|&op| match op {
+    //             Op::Mismatch => -10,
+    //             Op::Match => 10,
+    //             Op::Ins => -5,
+    //             Op::Del => -5,
+    //         })
+    //         .sum()
+    // }
     fn coord(&self) -> (usize, usize) {
         match self.is_forward {
             true => (self.query_start_idx, self.query_end_idx),
@@ -1046,6 +1067,7 @@ impl Chain {
         query_nodes_len: usize,
         is_forward: bool,
         ops: Vec<Op>,
+        score: i64,
     ) -> Self {
         Self {
             id,
@@ -1056,6 +1078,7 @@ impl Chain {
             query_start_idx,
             query_end_idx,
             query_nodes_len,
+            score,
         }
     }
 }
@@ -1074,10 +1097,6 @@ fn base_pair_alignment(
         eprintln!("{chain:?}\n{read}\n{}", read.nodes.len());
     }
     let (mut query, mut ops, tip_len, head_clip) = align_tip(seq, seg, chain, &tiles[0], read.id);
-    // let (mut query, mut ops, tip_len, head_clip) = match chain.contig_start_idx {
-    //     0 => align_tip(seq, seg, chain, tiles.first().unwrap(), read.id),
-    //     _ => (vec![], vec![], 0, 0),
-    // };
     for (_, w) in tiles.windows(2).enumerate() {
         append_range(&mut query, &mut ops, &w[0]);
         let seg_start = w[0].ctg_end;
@@ -1099,10 +1118,11 @@ fn base_pair_alignment(
         }
     }
     append_range(&mut query, &mut ops, tiles.last().unwrap());
-    let (tail, tail_ops, tail_len) = match chain.contig_end_idx == encs.tiles().len() {
-        true => align_tail(seq, seg, chain, tiles.last().unwrap()),
-        false => (Vec::new(), Vec::new(), 0),
-    };
+    let (tail, tail_ops, tail_len) = align_tail(seq, seg, chain, tiles.last().unwrap());
+    // let (tail, tail_ops, tail_len) = match chain.contig_end_idx == encs.tiles().len() {
+    //     true => align_tail(seq, seg, chain, tiles.last().unwrap()),
+    //     false => (Vec::new(), Vec::new(), 0),
+    // };
     query.extend(tail);
     ops.extend(tail_ops);
     let contig_start = tiles.first().map(|t| t.ctg_start).unwrap() - tip_len;
@@ -1121,6 +1141,9 @@ fn base_pair_alignment(
     let tail_clip = seq.len() - head_clip - query.len();
     let clips = (head_clip, tail_clip);
     let is_forward = chain.is_forward;
+    let contig_len = contig_end - contig_start;
+    let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+    assert_eq!(contig_len, reflen);
     Alignment::new(read.id, id, contig_range, clips, query, ops, is_forward)
 }
 
@@ -1174,14 +1197,17 @@ fn align_tail(
     if seg_start == seg.len() {
         return (Vec::new(), Vec::new(), 0);
     }
-    let seg_seq = &seg[seg_start..];
     let (query, ops) = if chain.is_forward {
         let read_start = tile.read_end;
         let trailing_seq = &seq[read_start..];
+        let seg_end = (seg_start + trailing_seq.len()).min(seg.len());
+        let seg_seq = &seg[seg_start..seg_end];
         align_tail_inner(seg_seq, trailing_seq)
     } else {
         let read_end = tile.read_start;
         let trailing_seq = bio_utils::revcmp(&seq[..read_end]);
+        let seg_end = (seg_start + trailing_seq.len()).min(seg.len());
+        let seg_seq = &seg[seg_start..seg_end];
         align_tail_inner(seg_seq, &trailing_seq)
     };
     let len_seg = ops.iter().filter(|&&op| op != Op::Ins).count();
@@ -1212,15 +1238,6 @@ fn align_tip(
         let seg_seq = &seg.sequence.as_ref().unwrap().as_bytes()[seg_start..seg_end];
         align_tip_inner(seg_seq, &leading_seq)
     };
-    // let (query, ops) = if chain.is_forward {
-    //     let read_end = tile.read_start;
-    //     let leading_seq = &seq[..read_end];
-    //     align_tip_inner(seg_seq, leading_seq)
-    // } else {
-    //     let read_start = tile.read_end;
-    //     let leading_seq = bio_utils::revcmp(&seq[read_start..]);
-    //     align_tip_inner(seg_seq, &leading_seq)
-    // };
     let head_clip = match chain.is_forward {
         true => tile.read_start - query.len(),
         false => seq.len() - tile.read_end - query.len(),
@@ -1238,8 +1255,6 @@ fn align_tip_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
     if len == 0 {
         return (Vec::new(), Vec::new());
     }
-    let seg = &seg[seg.len() - len..];
-    let query = &query[query.len() - len..];
     let aln = edlib_sys::align(query, seg, mode, task);
     let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
     let ops = kiley::bialignment::guided::global_guided(seg, query, &ops, BAND, ALN_PARAMETER).1;
@@ -1268,8 +1283,6 @@ fn align_tail_inner(seg: &[u8], query: &[u8]) -> (Vec<u8>, Vec<Op>) {
     if len == 0 {
         return (Vec::new(), Vec::new());
     }
-    let seg = &seg[..len];
-    let query = &query[..len];
     let aln = edlib_sys::align(query, seg, mode, task);
     let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
     let ops = kiley::bialignment::guided::global_guided(seg, query, &ops, BAND, ALN_PARAMETER).1;
@@ -1661,7 +1674,7 @@ mod align_test {
             unit_aln_info((3, 1), true),
             unit_aln_info((6, 0), true),
         ];
-        let ops = alignment(&query, &refr);
+        let ops = alignment(&query, &refr).0;
         use Op::*;
         assert_eq!(ops, vec![Del, Ins, Match, Match, Match, Del, Ins]);
     }

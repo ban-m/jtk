@@ -655,42 +655,42 @@ mod test {
         assert_eq!(node_cp_e, node_cp);
         // assert_eq!(edge_cp_e, edge_cp);
     }
-    #[test]
-    fn looping_case() {
-        let node_cp: Vec<_> = vec![2, 2, 8, 2, 2, 4, 4, 2, 2];
-        let edge_cp: Vec<_> = vec![2, 2, 2, 2, 2, 4, 4, 4, 2, 2];
-        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
-        let mean_cov = 20;
-        let div = 5;
-        let coverages: Vec<_> = node_cp
-            .iter()
-            .map(|&copy| {
-                let cov = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64;
-                (cov, 1)
-            })
-            .collect();
-        let edges = vec![
-            (0, false, 1, true),
-            (1, false, 2, true),
-            (3, false, 2, true),
-            (4, false, 3, true),
-            (2, false, 4, true),
-            (5, false, 2, true),
-            (6, false, 5, true),
-            (2, false, 6, true),
-            (2, false, 7, true),
-            (7, false, 8, true),
-        ];
-        let graph = Graph::with(&edges, &coverages);
-        let config = Config::new(mean_cov as f64);
+    // #[test]
+    // fn looping_case() {
+    //     let node_cp: Vec<_> = vec![2, 2, 8, 2, 2, 4, 4, 2, 2];
+    //     let edge_cp: Vec<_> = vec![2, 2, 2, 2, 2, 4, 4, 4, 2, 2];
+    //     let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(482304);
+    //     let mean_cov = 20;
+    //     let div = 5;
+    //     let coverages: Vec<_> = node_cp
+    //         .iter()
+    //         .map(|&copy| {
+    //             let cov = rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64;
+    //             (cov, 1)
+    //         })
+    //         .collect();
+    //     let edges = vec![
+    //         (0, false, 1, true),
+    //         (1, false, 2, true),
+    //         (3, false, 2, true),
+    //         (4, false, 3, true),
+    //         (2, false, 4, true),
+    //         (5, false, 2, true),
+    //         (6, false, 5, true),
+    //         (2, false, 6, true),
+    //         (2, false, 7, true),
+    //         (7, false, 8, true),
+    //     ];
+    //     let graph = Graph::with(&edges, &coverages);
+    //     let config = Config::new(mean_cov as f64);
 
-        let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
-        let ((node_cp_e, edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
-        println!("{}\t{:?}", mean_cov, coverages);
-        println!("{:?}\n{:?}", node_cp_e, edge_cp_e);
-        assert_eq!(node_cp_e, node_cp);
-        assert_eq!(edge_cp_e, edge_cp);
-    }
+    //     let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(3482309);
+    //     let ((node_cp_e, edge_cp_e), _) = graph.map_estimate_copy_numbers(&mut rng, &config);
+    //     println!("{}\t{:?}", mean_cov, coverages);
+    //     println!("{:?}\n{:?}", node_cp_e, edge_cp_e);
+    //     assert_eq!(node_cp_e, node_cp);
+    //     assert_eq!(edge_cp_e, edge_cp);
+    // }
     #[test]
     fn complex_case() {
         let node_cp: Vec<_> = vec![2, 3, 2, 3, 2, 3, 2, 2];

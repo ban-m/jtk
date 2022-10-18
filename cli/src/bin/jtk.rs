@@ -326,8 +326,8 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         use haplotyper::model_tune::update_model;
         update_model(dataset);
     }
-    let mut file = std::fs::File::create(format!("{file}.gfa")).map(BufWriter::new)?;
     let gfa = dataset.assemble(&config);
+    let mut file = std::fs::File::create(format!("{file}.gfa")).map(BufWriter::new)?;
     writeln!(file, "{}", gfa)?;
     Ok(())
 }

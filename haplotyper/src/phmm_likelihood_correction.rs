@@ -98,7 +98,7 @@ fn supress_threshold(clusterings: &[CorrectionResult]) -> f64 {
     let mut adj_rand_indicies: Vec<_> = clusterings.iter().map(|x| x.1).collect();
     adj_rand_indicies.sort_by(|x, y| x.partial_cmp(y).unwrap());
     let pick = (adj_rand_indicies.len() as f64 * ADJ_RAND_QUANTILE).ceil() as usize;
-    adj_rand_indicies[pick]
+    adj_rand_indicies.get(pick).copied().unwrap_or(1f64)
 }
 
 const PROTECT_FACTOR: f64 = 1f64;

@@ -68,12 +68,9 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         .filter(|(_, units)| !units.is_empty())
         .map(|(unit_id, mut units)| {
             let ref_unit = chunks.get(&unit_id).unwrap();
-            // let (mut units, mut unused_units) =
-            //     partition_by_lk_capability(ref_unit, units, read_type, &hmm);
             assert!(!units.is_empty());
             let (uid, (template, score, cl_num)) =
                 clustering_on_pileup(&mut units, ref_unit, read_type, &hmm, coverage);
-            // update_by_removed_nodes(&mut unused_units, cl_num, &template);
             (uid, (template, score, cl_num))
         })
         .collect();
@@ -282,6 +279,7 @@ fn update_by_clusterings(
 }
 
 // TODO: this function is, very very slow. Please fasten this function, please.
+// Or, maybe we do not need to tune a pHMM on each chunk. We can just use one pHMM across all the chunks.
 type Phmm = kiley::hmm::guided::PairHiddenMarkovModel;
 fn prep_consensus(
     hmm: &Phmm,

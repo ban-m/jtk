@@ -85,7 +85,7 @@ impl DetermineUnit for definitions::DataSet {
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
         let overlap_identity_thr = match self.read_type {
             ReadType::CCS => 0.95,
-            ReadType::CLR => 0.75,
+            ReadType::CLR => 0.85,
             ReadType::ONT => 0.85,
             ReadType::None => 0.85,
         };
@@ -731,9 +731,9 @@ fn split_into<'a>(r: &'a RawRead, c: &DetermineUnitConfig) -> Vec<&'a [u8]> {
 fn filter_unit_by_ovlp(ds: &mut DataSet, config: &DetermineUnitConfig) {
     let overlap_thr: usize = match ds.read_type {
         ReadType::CCS => config.chunk_len / 2,
-        ReadType::CLR => config.chunk_len / 4,
+        ReadType::CLR => config.chunk_len / 3,
         ReadType::ONT => config.chunk_len / 3,
-        ReadType::None => config.chunk_len / 4,
+        ReadType::None => config.chunk_len / 3,
     };
     let unit_len = ds.selected_chunks.iter().map(|u| u.id).max().unwrap();
     let unit_len = unit_len as usize + 1;
