@@ -185,7 +185,7 @@ impl Graph {
         let one_degree_nodes: Vec<_> = graph
             .iter()
             .enumerate()
-            .filter_map(|(i, eds)| (eds.len() == 1).then(|| i))
+            .filter_map(|(i, eds)| (eds.len() == 1).then_some(i))
             .collect();
         Self {
             hap_coverage,
@@ -612,7 +612,7 @@ pub mod tests {
         let one_degree_nodes: Vec<_> = graph
             .iter()
             .enumerate()
-            .filter_map(|(i, eds)| (eds.len() == 1).then(|| i))
+            .filter_map(|(i, eds)| (eds.len() == 1).then_some(i))
             .collect();
         assert_eq!(one_degree_nodes, vec![0, 13]);
         Graph {
@@ -650,7 +650,7 @@ pub mod tests {
         let one_degree_nodes: Vec<_> = graph
             .iter()
             .enumerate()
-            .filter_map(|(i, eds)| (eds.len() == 1).then(|| i))
+            .filter_map(|(i, eds)| (eds.len() == 1).then_some(i))
             .collect();
         assert_eq!(one_degree_nodes, vec![0, 13]);
         Graph {
@@ -681,7 +681,7 @@ pub mod tests {
         let one_degree_nodes: Vec<_> = graph
             .iter()
             .enumerate()
-            .filter_map(|(i, eds)| (eds.len() == 1).then(|| i))
+            .filter_map(|(i, eds)| (eds.len() == 1).then_some(i))
             .collect();
         assert_eq!(one_degree_nodes, vec![0, 7]);
         Graph {

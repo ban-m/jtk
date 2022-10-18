@@ -165,7 +165,7 @@ impl Graph {
         } else {
             let mut weights: Vec<_> = self.coverages.clone();
             let position = weights.len() / 2;
-            (*weights.select_nth_unstable(position).1).0 as f64 / 2f64
+            (weights.select_nth_unstable(position).1).0 as f64 / 2f64
         }
     }
     // Rounding p into p.trunc() + 1/0 depending on the p.fract().

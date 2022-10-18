@@ -291,6 +291,7 @@ dependencies = [
 name = "haplotyper"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "bio_utils",
  "bytecount",
  "definitions",

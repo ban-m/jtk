@@ -325,7 +325,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
     use crate::assemble::*;
     let msr = ds.read_type.weak_span_reads();
     let min_lk = ds.read_type.weak_llr();
-    let config = AssembleConfig::new(1000, false, true, msr, min_lk, false);
+    let config = AssembleConfig::new(1000, false, true, msr, min_lk, false, None);
     let (records, summaries) = assemble(ds, &config);
     write_to_file(&records, &summaries, de_config);
     let multicopy_contigs: HashMap<_, _> = summaries
@@ -504,7 +504,7 @@ fn take_consensus_to_multitig(
         }
     }
     into_multitig_edges.retain(|_, tos| {
-        let to = tos.get(0).map(|((u, _, s), cp)| (*u, *s, *cp)).unwrap();
+        let to = tos.first().map(|((u, _, s), cp)| (*u, *s, *cp)).unwrap();
         tos.iter().all(|((u, _, s), cp)| (*u, *s, *cp) == to)
     });
     into_multitig_edges
@@ -564,7 +564,7 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
         kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, &mut ops, band_width);
     let cons =
         kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, &mut ops, band_width);
-    (CONS_MIN_LENGTH < cons.len()).then(|| cons)
+    (CONS_MIN_LENGTH < cons.len()).then_some(cons)
 }
 
 // w: windows of nodes with 2 length.

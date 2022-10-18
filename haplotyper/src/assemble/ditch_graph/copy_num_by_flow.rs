@@ -409,7 +409,7 @@ impl Graph {
                 .and_then(|path| self.eval(&path).map(|score| (path, score)))
                 .filter(|&(_, score)| score < min);
             let path = (!has_cycle)
-                .then(|| ())
+                .then_some(())
                 .and_then(|_| bellman.path())
                 .and_then(|path| self.eval(&path).map(|score| (path, score)))
                 .filter(|&(_, score)| score < min)
@@ -604,7 +604,7 @@ impl Graph {
             .enumerate()
             .filter_map(|(i, edges)| {
                 assert!(!edges.0.is_empty());
-                (edges.0.len() == 1).then(|| ResIndex(i))
+                (edges.0.len() == 1).then_some(ResIndex(i))
             })
             .collect()
     }

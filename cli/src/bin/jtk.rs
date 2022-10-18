@@ -311,14 +311,22 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
         .unwrap();
     let skip_polish = matches.is_present("no_polish");
     let file = matches.value_of("output").unwrap();
-    let mut file = std::fs::File::create(file).map(BufWriter::new)?;
     use haplotyper::assemble::*;
-    let config = AssembleConfig::new(window_size, !skip_polish, true, min_span, min_llr, true);
+    let config = AssembleConfig::new(
+        window_size,
+        !skip_polish,
+        true,
+        min_span,
+        min_llr,
+        true,
+        Some(file),
+    );
     debug!("START\tFinal assembly");
     if !skip_polish {
         use haplotyper::model_tune::update_model;
         update_model(dataset);
     }
+    let mut file = std::fs::File::create(format!("{file}.gfa")).map(BufWriter::new)?;
     let gfa = dataset.assemble(&config);
     writeln!(file, "{}", gfa)?;
     Ok(())

@@ -110,7 +110,7 @@ fn main() -> std::io::Result<()> {
     let start = std::time::Instant::now();
     use haplotyper::local_clustering::kmeans;
     let clustering =
-        kmeans::clustering_dev(&draft, &reads, &mut ops, &strands, &mut rng, &hmm, &config);
+        kmeans::clustering_dev(&draft, &reads, &ops, &strands, &mut rng, &hmm, &config);
     let (preds, _, _, _) = clustering;
     debug!("\n{answer:?}\n{preds:?}");
     let end = std::time::Instant::now();

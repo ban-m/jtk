@@ -107,7 +107,10 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
     for (&(u1, u2), _) in unit_pairs.iter() {
         touch_units.entry(u1).or_default().push(u2);
     }
-    let stiff_units = classify(&adj_rand_indices, config);
+    let stiff_units = match adj_rand_indices.is_empty() {
+        true => HashSet::new(),
+        false => classify(&adj_rand_indices, config),
+    };
     ds.selected_chunks
         .iter()
         .map(|c| {
@@ -199,7 +202,7 @@ fn classify(adj_rand_indices: &[(u64, u64, (f64, usize))], config: &SquishConfig
     let assignments = classify_nodes(&graph, nodes.len(), &param);
     nodes
         .iter()
-        .filter_map(|(&uid, &node)| assignments[node].then(|| uid))
+        .filter_map(|(&uid, &node)| assignments[node].then_some(uid))
         .collect()
 }
 

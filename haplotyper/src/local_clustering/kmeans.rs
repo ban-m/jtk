@@ -60,8 +60,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         template = hmm.polish_until_converge_with(&template, reads, &mut ops, band / t);
     }
     let strands = vec![true; reads.len()];
-    let (asn, gains, lk, _) =
-        clustering_dev(&template, reads, &mut ops, &strands, rng, &hmm, &config);
+    let (asn, gains, lk, _) = clustering_dev(&template, reads, &ops, &strands, rng, &hmm, &config);
     (asn, gains, lk, template)
 }
 
@@ -608,7 +607,7 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
     probes
         .iter()
         .zip(is_selected)
-        .filter_map(|(x, y)| (y == 1).then(|| *x))
+        .filter_map(|(x, y)| (y == 1).then_some(*x))
         .collect()
 }
 
@@ -896,11 +895,11 @@ fn get_used_columns(lks: &[Vec<LKCount>]) -> Vec<bool> {
         let column = lks.iter().map(|lks| &lks[d]);
         let pos_in_use: usize = column
             .clone()
-            .filter_map(|x| (0f64 < x.total_gain).then(|| x.num_pos))
+            .filter_map(|x| (0f64 < x.total_gain).then_some(x.num_pos))
             .sum();
         let pos_in_neg: usize = column
             .clone()
-            .filter_map(|x| (x.total_gain <= 0f64).then(|| x.num_pos))
+            .filter_map(|x| (x.total_gain <= 0f64).then_some(x.num_pos))
             .sum();
         *to_use &= pos_in_neg as f64 * IN_POS_RATIO < pos_in_use as f64;
     }
@@ -917,11 +916,11 @@ pub fn cluster_filtered_variants_exact(
     let choises = 1 << feature_dim;
     let last_loop = vec![choises - 1; copy_num];
     let mut max = 0f64;
-    let mut argmax = get_result(&selected_variants, &variants);
+    let mut argmax = get_result(&selected_variants, variants);
     while selected_variants != last_loop {
-        let score = calc_score(&selected_variants, &variants);
+        let score = calc_score(&selected_variants, variants);
         if max < score {
-            argmax = get_result(&selected_variants, &variants);
+            argmax = get_result(&selected_variants, variants);
             max = score;
         }
         increment_one(&mut selected_variants, choises);
@@ -952,7 +951,7 @@ fn get_result(vars: &[usize], variants: &[Vec<f64>]) -> ClusteringDevResult {
 fn get_exact_score(selection: usize, xs: &[f64]) -> f64 {
     xs.iter()
         .enumerate()
-        .filter_map(|(i, x)| (((1 << i) & selection) != 0).then(|| x))
+        .filter_map(|(i, x)| (((1 << i) & selection) != 0).then_some(x))
         .sum()
 }
 

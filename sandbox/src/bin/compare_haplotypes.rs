@@ -90,7 +90,7 @@ fn compare_dev(
                 }
             }
             eprintln!();
-            let paf = bio_utils::paf::PAF::new(&line).unwrap();
+            let paf = bio_utils::paf::PAF::new(line).unwrap();
             let dist = paf.get_tag("NM").unwrap().1.parse::<usize>().unwrap();
             let covered = paf.blocklen;
             if filter < covered {

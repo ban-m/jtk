@@ -288,7 +288,7 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
     diverged_clusters
         .iter()
         .enumerate()
-        .filter_map(|(id, is_div)| is_div.iter().any(|&x| x).then(|| id as u64))
+        .filter_map(|(id, is_div)| is_div.iter().any(|&x| x).then_some(id as u64))
         .collect()
 }
 

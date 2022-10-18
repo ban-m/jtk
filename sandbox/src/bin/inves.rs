@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
     let squished: HashSet<_> = ds
         .selected_chunks
         .iter()
-        .filter_map(|c| (c.cluster_num == 1).then(|| c.id))
+        .filter_map(|c| (c.cluster_num == 1).then_some(c.id))
         .collect();
     for (i, &unit1) in units.iter().enumerate() {
         for &unit2 in units.iter().skip(i + 1) {

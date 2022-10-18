@@ -16,6 +16,7 @@ pub trait Polish: private::Sealed {
         segments: &[Segment],
         encs: &[ContigEncoding],
         config: &PolishConfig,
+        dump_path: &Option<String>,
     ) -> Vec<Segment>;
     fn distribute_to_contig(
         &self,
@@ -76,24 +77,31 @@ impl Polish for DataSet {
         segments: &[Segment],
         encs: &[ContigEncoding],
         config: &PolishConfig,
+        dump_path: &Option<String>,
     ) -> Vec<Segment> {
         let mut alignments_on_contigs = self.distribute_to_contig(segments, encs, config);
         let hmm = get_model(self).unwrap();
-        let polished = alignments_on_contigs.iter_mut().map(|(sid, alignments)| {
-            log::debug!("POLISH\t{sid}");
-            let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
-            let seg = seg.sequence.as_ref().unwrap().as_bytes();
-            let seq = polish(sid, seg, alignments, &hmm, config);
-            (sid.clone(), seq)
-        });
-        polished
-            .into_iter()
+        let polished: Vec<_> = alignments_on_contigs
+            .iter_mut()
+            .map(|(sid, alignments)| {
+                log::debug!("POLISH\t{sid}");
+                let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
+                let seg = seg.sequence.as_ref().unwrap().as_bytes();
+                let seq = polish(sid, seg, alignments, &hmm, config);
+                (sid.clone(), seq)
+            })
             .map(|(sid, seq)| {
                 let slen = seq.len();
                 let sequence = String::from_utf8(seq).ok();
                 Segment::from(sid, slen, sequence)
             })
-            .collect()
+            .collect();
+        if let Some(path) = dump_path.as_ref() {
+            if let Err(why) = dump_alignments(self, &alignments_on_contigs, &polished, path) {
+                warn!("{why:?}");
+            }
+        }
+        polished
     }
     fn distribute_to_contig(
         &self,
@@ -124,6 +132,118 @@ impl Polish for DataSet {
     }
 }
 
+fn dump_alignments(
+    ds: &DataSet,
+    alignments_on_contigs: &BTreeMap<String, Vec<Alignment>>,
+    polished: &[Segment],
+    dump_path: &str,
+) -> std::io::Result<()> {
+    use std::io::*;
+    let mut sam_file = std::fs::File::create(format!("{dump_path}.sam")).map(BufWriter::new)?;
+    dump_sam_header(polished, &mut sam_file)?;
+    dump_sam_records(ds, alignments_on_contigs, &mut sam_file)?;
+    let mut coverage_file =
+        std::fs::File::create(format!("{dump_path}.tsv")).map(BufWriter::new)?;
+    dump_coverages(polished, alignments_on_contigs, &mut coverage_file)?;
+    Ok(())
+}
+
+fn dump_sam_header<W: std::io::Write>(polished: &[Segment], wtr: &mut W) -> std::io::Result<()> {
+    writeln!(wtr, "@HD\tVN:1.6")?;
+    for seg in polished {
+        writeln!(wtr, "@SQ\tSN:{}\tLN:{}", seg.sid, seg.slen)?;
+    }
+    writeln!(wtr, "@PG\tID:jtk\tPN:jtk\tVN:0.1")?;
+    Ok(())
+}
+fn dump_sam_records<W: std::io::Write>(
+    ds: &DataSet,
+    alignments_on_contigs: &BTreeMap<String, Vec<Alignment>>,
+    wtr: &mut W,
+) -> std::io::Result<()> {
+    use std::collections::HashSet;
+    let mut is_secondary = HashSet::new();
+    let raw_reads: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r)).collect();
+    for (sid, alignments) in alignments_on_contigs {
+        for aln in alignments {
+            let read = match raw_reads.get(&aln.read_id) {
+                Some(res) => res,
+                _ => {
+                    warn!("NOALN\t{sid},{}", aln.read_id,);
+                    continue;
+                }
+            };
+            let secondary = is_secondary.contains(&aln.read_id);
+            is_secondary.insert(aln.read_id);
+            writeln!(wtr, "{}", sam_record(sid, aln, read, secondary))?;
+        }
+    }
+    Ok(())
+}
+fn sam_record(sid: &str, aln: &Alignment, read: &definitions::RawRead, secondary: bool) -> String {
+    let mut records = String::new();
+    records.push_str(&read.name);
+    records.push('\t');
+    let flag = match aln.is_forward {
+        true => 0,
+        false => 0x10,
+    };
+    let flag = match secondary {
+        true => flag + 0x800,
+        false => flag,
+    };
+    records.push_str(&format!("{flag}\t"));
+    records.push_str(sid);
+    records.push('\t');
+    records.push_str(&format!("{}\t", aln.contig_start + 1));
+    records.push_str("60\t");
+    records.push_str(&aln.cigar());
+    records.push('\t');
+    records.push_str("*\t0\t0\t");
+    records.push_str(std::str::from_utf8(&aln.query).unwrap());
+    records.push_str("\t*");
+    records
+}
+
+const SMOOTH_WINDOW: usize = 1_000;
+fn dump_coverages<W: std::io::Write>(
+    polished: &[Segment],
+    alignments_on_contigs: &BTreeMap<String, Vec<Alignment>>,
+    wtr: &mut W,
+) -> std::io::Result<()> {
+    let mut coverages: HashMap<_, _> = polished
+        .iter()
+        .map(|seg| {
+            let len = (seg.slen as usize) / SMOOTH_WINDOW + 1;
+            (seg.sid.clone(), vec![0; len])
+        })
+        .collect();
+    for (sid, alns) in alignments_on_contigs.iter() {
+        let coverage = coverages.get_mut(sid).unwrap();
+        for aln in alns.iter() {
+            let mut rpos = aln.contig_start;
+            for op in aln.ops.iter() {
+                match op {
+                    Op::Mismatch | Op::Match | Op::Del => {
+                        rpos += 1;
+                        coverage[rpos / SMOOTH_WINDOW] += 1;
+                    }
+                    Op::Ins => {}
+                }
+            }
+        }
+    }
+    writeln!(wtr, "contig\tposition\tcoverage")?;
+    for (sid, coverages) in coverages.iter() {
+        for (i, &cov) in coverages.iter().enumerate() {
+            let pos = i * SMOOTH_WINDOW;
+            let cov = cov as f64 / SMOOTH_WINDOW as f64;
+            writeln!(wtr, "{sid}\t{pos}\t{cov:.3}")?
+        }
+    }
+    Ok(())
+}
+
 fn log_identity(sid: &str, alignments: &[Alignment]) {
     if log_enabled!(log::Level::Debug) {
         let (mut mat, mut len) = (0, 0);
@@ -132,7 +252,6 @@ fn log_identity(sid: &str, alignments: &[Alignment]) {
             let aln_len = aln.ops.len();
             mat += match_num;
             len += aln_len;
-            // assert!(len < 2 * mat, "{},{}", len, mat);
         }
         log::debug!("ALN\t{sid}\t{mat}\t{len}\t{}", mat as f64 / len as f64);
     }
@@ -206,51 +325,6 @@ pub fn polish(
                 }
             })
             .collect();
-        // let identity_thr = calc_identity_threshold(&pileups);
-        // pileups
-        //     .iter_mut()
-        //     .zip(polished_seg.iter_mut())
-        //     .enumerate()
-        //     .for_each(|(i, (pileup, seg))| {
-        //         let pos = i * config.window_size;
-        //         let cov = pileup.len();
-        //         let percent: f64 = pileup
-        //             .iter()
-        //             .map(|(_, _, _, ops)| {
-        //                 let mat = ops.iter().filter(|&&x| x == Op::Match).count();
-        //                 mat as f64 / (ops.len() as f64 + 0.1) / cov as f64
-        //             })
-        //             .sum();
-        //         if percent < identity_thr {
-        //             let prev = seg.len();
-        //             if pos < 600000 {
-        //                 for (_, _, seq, _) in pileup.iter() {
-        //                     for seq in seq.chunks(200) {
-        //                         eprintln!("{}", std::str::from_utf8(seq).unwrap());
-        //                     }
-        //                     eprintln!("");
-        //                 }
-        //             }
-        //             use kiley::bialignment::guided::polish_by_pileup_until;
-        //             let (seqs, mut temp_ops): (Vec<&[u8]>, Vec<_>) = pileup
-        //                 .iter()
-        //                 .map(|(_, _, seq, op)| (seq, op.to_vec()))
-        //                 .unzip();
-        //             *seg = polish_by_pileup_until(&seg, &seqs, &mut temp_ops, config.radius, 30);
-        //             for (op, new) in pileup.iter_mut().zip(temp_ops) {
-        //                 op.3 = new;
-        //             }
-        //             let after: f64 = pileup
-        //                 .iter()
-        //                 .map(|(_, _, _, ops)| {
-        //                     let mat = ops.iter().filter(|&&x| x == Op::Match).count();
-        //                     mat as f64 / (ops.len() as f64 + 0.1) / cov as f64
-        //                 })
-        //                 .sum();
-        //             let af = seg.len();
-        //             debug!("POLISH\t{pos}\t{cov}\t{percent:.3}\t{after:.3}\t{prev}\t{af}");
-        //         }
-        //     });
         let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
             let len = len + x.len();
             xs.push(len);
@@ -277,139 +351,8 @@ pub fn polish(
             }
         });
         log_identity(sid, alignments);
-        const TRUNCATE_LEN: usize = 10;
-        alignments
-            .iter_mut()
-            .for_each(|aln| truncate_long_homopolymers(aln, &polished, TRUNCATE_LEN));
     }
     polished
-}
-
-// fn calc_identity_threshold(pileup: &[SeqOpsOnWindow]) -> f64 {
-//     let mut identity: Vec<_> = pileup
-//         .par_iter()
-//         .flat_map(|pileup| {
-//             pileup
-//                 .iter()
-//                 .map(|(_, _, _, ops)| {
-//                     let mat = ops.iter().filter(|&&op| op == Op::Match).count();
-//                     mat as f64 / (ops.len() as f64 + 0.00001)
-//                 })
-//                 .collect::<Vec<_>>()
-//         })
-//         .collect();
-//     identity.sort_unstable_by(|x, y| x.partial_cmp(&y).unwrap());
-//     let median = identity[identity.len() / 2];
-//     identity.sort_unstable_by(|x, y| {
-//         let x = (x - median).abs();
-//         let y = (y - median).abs();
-//         x.partial_cmp(&y).unwrap()
-//     });
-//     let mad = identity
-//         .get(identity.len() / 2)
-//         .map(|x| (x - median).abs())
-//         .unwrap();
-//     let thr = median - 8f64 * mad;
-//     debug!("IdentityThr\t{median:.3}\t{mad:.3}\t{thr:.3}");
-//     thr
-// }
-
-#[derive(Debug, Clone)]
-struct Buffer {
-    op: Op,
-    bases: Vec<u8>,
-    ops: Vec<Op>,
-}
-impl Buffer {
-    fn new() -> Self {
-        Self {
-            op: Op::Match,
-            bases: vec![],
-            ops: vec![],
-        }
-    }
-    fn flush(&mut self, aln: &mut Alignment, max_len: usize) {
-        assert_eq!(self.ops.len(), self.bases.len());
-        let length = self.bases.len();
-        let is_homop = (0 < length) && self.bases.iter().all(|&x| x == self.bases[0]);
-        if self.op == Op::Del && max_len < length && is_homop {
-            aln.ops.extend(std::iter::repeat(Op::Match).take(length));
-            aln.query.append(&mut self.bases);
-        } else if self.op == Op::Del {
-            aln.ops.extend(std::iter::repeat(Op::Del).take(length));
-        } else if self.op == Op::Ins && max_len < length && is_homop {
-            // Just discard the insertions.
-        } else if self.op == Op::Ins {
-            aln.query.append(&mut self.bases);
-            aln.ops.extend(std::iter::repeat(Op::Ins).take(length));
-        } else {
-            // Match. Do nothing.
-        }
-        self.bases.clear();
-        self.ops.clear();
-    }
-    fn add(&mut self, op: Op, base: u8) {
-        self.bases.push(base);
-        self.ops.push(op);
-    }
-}
-
-// Truncate homopolymers longer than the contig by `max_allowed` length, truncate them to `max_allowed` length.
-// In other words, if the contig is TAAA, the query is TAAAAAAA, and the max_allowed is 2, the query would be TAAAAA.
-fn truncate_long_homopolymers(aln: &mut Alignment, contig: &[u8], max_allowed: usize) {
-    let (base_len, ops_len) = (aln.query.len(), aln.ops.len());
-    let mut buffer = Buffer::new();
-    let (mut qpos, mut rpos) = (0, aln.contig_start);
-    let op_len = aln.ops.len();
-    for op_idx in 0..op_len {
-        let op = aln.ops[op_idx];
-        match op {
-            Op::Mismatch | Op::Match => {
-                buffer.flush(aln, max_allowed);
-                aln.query.push(aln.query[qpos]);
-                aln.ops.push(op);
-                buffer.op = op;
-                qpos += 1;
-                rpos += 1;
-            }
-            Op::Ins => {
-                if buffer.op != Op::Ins {
-                    buffer.flush(aln, max_allowed);
-                }
-                buffer.op = op;
-                buffer.add(op, aln.query[qpos]);
-                qpos += 1;
-            }
-            Op::Del => {
-                if buffer.op != Op::Del {
-                    buffer.flush(aln, max_allowed);
-                }
-                buffer.op = op;
-                buffer.add(op, contig[rpos]);
-                rpos += 1;
-            }
-        }
-    }
-    buffer.flush(aln, max_allowed);
-    {
-        let mut idx = 0;
-        aln.query.retain(|_| {
-            idx += 1;
-            base_len < idx
-        });
-    }
-    {
-        let mut idx = 0;
-        aln.ops.retain(|_| {
-            idx += 1;
-            ops_len < idx
-        })
-    }
-    // Check consistency.
-    let reflen = aln.ops.iter().filter(|&&op| op != Op::Ins).count();
-    let querylen = aln.ops.iter().filter(|&&op| op != Op::Del).count();
-    assert_eq!(reflen, aln.contig_end - aln.contig_start);
-    assert_eq!(querylen, aln.query.len());
 }
 
 fn train_hmm(
@@ -427,7 +370,7 @@ fn train_hmm(
     let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
     let range = 2 * window / 3..4 * window / 3;
     let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
-    debug!("MEDIAN\t{med_cov}");
+    // debug!("MEDIAN\t{med_cov}");
     let iterator = draft
         .chunks(window)
         .zip(pileups.iter())
@@ -456,7 +399,6 @@ fn train_hmm(
     for (template, seqs, ops) in iterator {
         hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius);
     }
-    debug!("Tuned");
 }
 
 fn length_median(seqs: &[&[u8]]) -> usize {
@@ -619,7 +561,7 @@ fn fix_alignment(
     );
     let refr = &polished[aln.contig_start..aln.contig_end];
     use kiley::bialignment::guided;
-    aln.ops = guided::global_guided(&refr, &aln.query, &aln.ops, 10, crate::ALN_PARAMETER).1;
+    aln.ops = guided::global_guided(refr, &aln.query, &aln.ops, 10, crate::ALN_PARAMETER).1;
 }
 
 fn align_infix(query: &[u8], seg: &[u8]) -> (usize, Vec<Op>, usize) {
@@ -1049,8 +991,9 @@ impl ChainNode {
         }
     }
     fn to(&self, to: &Self) -> Option<i64> {
-        (self.read_start < to.read_start && self.contig_start < to.contig_start)
-            .then(|| (to.read_start - self.read_start + to.contig_start - self.contig_start) as i64)
+        (self.read_start < to.read_start && self.contig_start < to.contig_start).then_some(
+            (to.read_start - self.read_start + to.contig_start - self.contig_start) as i64,
+        )
     }
 }
 
@@ -1130,10 +1073,11 @@ fn base_pair_alignment(
     if tiles.is_empty() {
         eprintln!("{chain:?}\n{read}\n{}", read.nodes.len());
     }
-    let (mut query, mut ops, tip_len) = match chain.contig_start_idx {
-        0 => align_tip(seq, seg, chain, tiles.first().unwrap()),
-        _ => (vec![], vec![], 0),
-    };
+    let (mut query, mut ops, tip_len, head_clip) = align_tip(seq, seg, chain, &tiles[0], read.id);
+    // let (mut query, mut ops, tip_len, head_clip) = match chain.contig_start_idx {
+    //     0 => align_tip(seq, seg, chain, tiles.first().unwrap(), read.id),
+    //     _ => (vec![], vec![], 0, 0),
+    // };
     for (_, w) in tiles.windows(2).enumerate() {
         append_range(&mut query, &mut ops, &w[0]);
         let seg_start = w[0].ctg_end;
@@ -1174,7 +1118,10 @@ fn base_pair_alignment(
     }
     let contig_range = (contig_start, contig_end);
     let id = encs.id.to_string();
-    Alignment::new(read.id, id, contig_range, query, ops, chain.is_forward)
+    let tail_clip = seq.len() - head_clip - query.len();
+    let clips = (head_clip, tail_clip);
+    let is_forward = chain.is_forward;
+    Alignment::new(read.id, id, contig_range, clips, query, ops, is_forward)
 }
 
 fn check(query: &[u8], seq: &[u8], is_forward: bool) {
@@ -1246,23 +1193,40 @@ fn align_tip(
     seg: &gfa::Segment,
     chain: &Chain,
     tile: &Tile,
-) -> (Vec<u8>, Vec<Op>, usize) {
+    _id: u64,
+) -> (Vec<u8>, Vec<Op>, usize, usize) {
     let seg_end = tile.ctg_start;
     if seg_end == 0 {
-        return (vec![], vec![], 0);
+        return (vec![], vec![], 0, 0);
     }
-    let seg_seq = &seg.sequence.as_ref().unwrap().as_bytes()[..seg_end];
     let (query, ops) = if chain.is_forward {
         let read_end = tile.read_start;
         let leading_seq = &seq[..read_end];
+        let seg_start = seg_end.saturating_sub(leading_seq.len());
+        let seg_seq = &seg.sequence.as_ref().unwrap().as_bytes()[seg_start..seg_end];
         align_tip_inner(seg_seq, leading_seq)
     } else {
         let read_start = tile.read_end;
         let leading_seq = bio_utils::revcmp(&seq[read_start..]);
+        let seg_start = seg_end.saturating_sub(leading_seq.len());
+        let seg_seq = &seg.sequence.as_ref().unwrap().as_bytes()[seg_start..seg_end];
         align_tip_inner(seg_seq, &leading_seq)
     };
+    // let (query, ops) = if chain.is_forward {
+    //     let read_end = tile.read_start;
+    //     let leading_seq = &seq[..read_end];
+    //     align_tip_inner(seg_seq, leading_seq)
+    // } else {
+    //     let read_start = tile.read_end;
+    //     let leading_seq = bio_utils::revcmp(&seq[read_start..]);
+    //     align_tip_inner(seg_seq, &leading_seq)
+    // };
+    let head_clip = match chain.is_forward {
+        true => tile.read_start - query.len(),
+        false => seq.len() - tile.read_end - query.len(),
+    };
     let len_seg = ops.iter().filter(|&&op| op != Op::Ins).count();
-    (query, ops, len_seg)
+    (query, ops, len_seg, head_clip)
 }
 
 use crate::ALN_PARAMETER;
@@ -1564,18 +1528,33 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
 pub struct Alignment {
     read_id: u64,
     contig: String,
+    // 0-based.
     contig_start: usize,
     contig_end: usize,
     query: Vec<u8>,
+    query_head_clip: usize,
+    query_tail_clip: usize,
     ops: Vec<Op>,
     is_forward: bool,
 }
 
 impl Alignment {
+    pub fn cigar(&self) -> String {
+        let mut cigar = String::new();
+        if self.query_head_clip != 0 {
+            cigar.push_str(&format!("{}H", self.query_head_clip));
+        }
+        cigar.push_str(&format!("{}", crate::misc::kiley_op_to_ops(&self.ops)));
+        if self.query_tail_clip != 0 {
+            cigar.push_str(&format!("{}H", self.query_tail_clip));
+        }
+        cigar
+    }
     pub fn new(
         read_id: u64,
         contig: String,
         (mut contig_start, mut contig_end): (usize, usize),
+        (mut query_head_clip, mut query_tail_clip): (usize, usize),
         mut query: Vec<u8>,
         mut ops: Vec<Op>,
         is_forward: bool,
@@ -1587,6 +1566,7 @@ impl Alignment {
                 Some(&Op::Ins) => {
                     assert!(ops.pop().is_some());
                     assert!(query.pop().is_some());
+                    query_tail_clip += 1;
                 }
                 _ => break,
             }
@@ -1600,6 +1580,7 @@ impl Alignment {
                 Some(&Op::Ins) => {
                     assert!(ops.pop().is_some());
                     assert!(query.pop().is_some());
+                    query_head_clip += 1;
                 }
                 _ => break,
             }
@@ -1616,6 +1597,8 @@ impl Alignment {
             contig_start,
             contig_end,
             query,
+            query_head_clip,
+            query_tail_clip,
             ops,
             is_forward,
         }

@@ -778,7 +778,6 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
         let group = gfa::Content::Group(gfa::Group::Set(group));
         gfa::Record::from_contents(group, vec![].into())
     });
-    // let group = gfa::Record::from_contents(gfa::Content::Group(group), vec![].into());
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![].into());
     let records = std::iter::once(header)
@@ -787,7 +786,11 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
         .chain(edges)
         .collect();
     let gfa = gfa::GFA::from_records(records);
-    if let Ok(mut wtr) = std::fs::File::create(format!("{}.gfa", i)).map(std::io::BufWriter::new) {
+    let dump_file_name = match &c.dump_path {
+        Some(path) => format!("{path}/{i}.gfa"),
+        None => format!("{i}.gfa"),
+    };
+    if let Ok(mut wtr) = std::fs::File::create(dump_file_name).map(std::io::BufWriter::new) {
         use std::io::Write;
         if let Err(why) = writeln!(wtr, "{}", gfa) {
             trace!("{:?}", why);
@@ -1919,7 +1922,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / hap.len() / 2) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false, None);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -1976,7 +1979,7 @@ mod tests {
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
-        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false, None);
         let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
@@ -2031,7 +2034,7 @@ mod tests {
         println!("(1,2)\t{}", count);
         let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
         let cov = (total_units / (hap1.len() + hap2.len())) as f64;
-        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false);
+        let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false, None);
         let mut graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
         assert!(graph.sanity_check());
         println!("graph:{graph:?}");

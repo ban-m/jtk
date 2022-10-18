@@ -17,7 +17,7 @@ pub fn minimap2(
     } else {
         args.push("-c")
     }
-    args.extend(&["-t", &thr, target, query]);
+    args.extend(["-t", &thr, target, query]);
     let aln = std::process::Command::new("minimap2")
         .args(&args)
         .output()

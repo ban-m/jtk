@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
                 // GFF3 is 1-index.
                 let beg = format!("{}", beg - start + 1);
                 let stop = format!("{}", stop - start + 1);
-                line[0] = &chr_output;
+                line[0] = chr_output;
                 line[3] = &beg;
                 line[4] = &stop;
                 println!("{}", line.join("\t"));

@@ -125,7 +125,7 @@ fn clustering_on_pileup(
         .unzip();
     let start = std::time::Instant::now();
     let copy_num = ref_unit.copy_num;
-    let (cons, hmm) = prep_consensus(&hmm, refseq, &seqs, &mut ops, band_width);
+    let (cons, hmm) = prep_consensus(hmm, refseq, &seqs, &mut ops, band_width);
     let polished = std::time::Instant::now();
     let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
     let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
@@ -157,14 +157,14 @@ fn clustering_recursive<R: rand::Rng>(
 ) -> ClusteringDevResult {
     use kmeans::*;
     if config.copy_num < UPPER_COPY_NUM {
-        clustering_dev(cons, seqs, ops, &strands, rng, hmm, config)
+        clustering_dev(cons, seqs, ops, strands, rng, hmm, config)
     } else {
         trace!("RECURSE");
         const BRANCH_NUM: usize = 4;
-        let mut rec_config = config.clone();
+        let mut rec_config = *config;
         rec_config.copy_num = BRANCH_NUM;
         let band_width = config.band_width;
-        let (asn, pss, score, k) = clustering_dev(cons, seqs, ops, &strands, rng, hmm, &rec_config);
+        let (asn, pss, score, k) = clustering_dev(cons, seqs, ops, strands, rng, hmm, &rec_config);
         let copy_numbers = estim_copy_num(&asn, k, config.copy_num, config.coverage);
         trace!("RECURSE\tCOPYNUM\t{:?}", copy_numbers);
         if k <= 1 {
@@ -175,8 +175,8 @@ fn clustering_recursive<R: rand::Rng>(
             .enumerate()
             .map(|(k, &cp)| {
                 let (seqs, mut ops, strands) = filter_sub_clusters(seqs, ops, strands, &asn, k);
-                let (cons, hmm) = prep_consensus(hmm, &cons, &seqs, &mut ops, band_width);
-                let mut config = config.clone();
+                let (cons, hmm) = prep_consensus(hmm, cons, &seqs, &mut ops, band_width);
+                let mut config = *config;
                 config.copy_num = cp;
                 clustering_recursive(&cons, &seqs, &ops, &strands, rng, &hmm, &config)
             })

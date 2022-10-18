@@ -110,7 +110,7 @@ pub fn logsumexp_str<I: Iterator<Item = f64>>(xs: I) -> f64 {
 /// Return the k-mer entropy, i.e., \sum_{kmer} -1 *  frac_of_kmer * ln (frac_of_kmer)
 pub fn entropy(seq: &[u8], k: usize) -> f64 {
     if seq.len() < k {
-        return 0f64;
+        0f64
     } else {
         use std::collections::HashMap;
         let mut counts: HashMap<_, u32> = HashMap::new();

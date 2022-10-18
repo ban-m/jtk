@@ -18,7 +18,7 @@ fn main() -> std::io::Result<()> {
             .for_each(|n| n.cluster = 0);
     }
     haplotyper::misc::update_coverage(&mut ds);
-    let config = AssembleConfig::new(100, false, false, 3, 4f64, false);
+    let config = AssembleConfig::new(100, false, false, 3, 4f64, false, None);
     let records = assemble_draft(&ds, &config);
     let header = gfa::Content::Header(gfa::Header::default());
     let header = gfa::Record::from_contents(header, vec![].into());

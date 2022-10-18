@@ -119,7 +119,7 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
             let cov = *coverage.get(&c.id)? as f64;
             let cluster_num = c.cluster_num as f64;
             let improve_frac = (cluster_num - 1f64) / cluster_num;
-            (cov * improve_frac * gain < c.score).then(|| c.id)
+            (cov * improve_frac * gain < c.score).then_some(c.id)
         })
         .collect()
 }
@@ -214,13 +214,13 @@ fn adj_rand_on_biased(reads: &[(usize, &EncodedRead)], asns: &[usize]) -> (f64, 
     assert_eq!(asns.len(), reads.len());
     let prev: Vec<_> = reads
         .iter()
-        .map(|&(i, ref r)| r.nodes[i].cluster as usize)
+        .map(|&(i, r)| r.nodes[i].cluster as usize)
         .collect();
-    let adj_raw = crate::misc::adjusted_rand_index(&prev, &asns);
+    let adj_raw = crate::misc::adjusted_rand_index(&prev, asns);
     let (prev, asns): (Vec<_>, Vec<_>) = std::iter::zip(reads, asns)
-        .filter_map(|(&(i, ref read), &asn)| {
+        .filter_map(|(&(i, read), &asn)| {
             let n = &read.nodes[i];
-            n.is_biased(BIAS_THR).then(|| (n.cluster as usize, asn))
+            n.is_biased(BIAS_THR).then_some((n.cluster as usize, asn))
         })
         .unzip();
     let adj = crate::misc::adjusted_rand_index(&prev, &asns);

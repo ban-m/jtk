@@ -54,7 +54,7 @@ pub fn encode_by_mm2(ds: &mut definitions::DataSet, p: usize, sim_thr: f64) -> s
                 _ => unreachable!(),
             });
             let percent_identity = mat_num as f64 / aln_len as f64;
-            (1f64 - sim_thr < percent_identity).then(|| aln)
+            (1f64 - sim_thr < percent_identity).then_some(aln)
         })
         .collect();
     encode_by(ds, &alignments);

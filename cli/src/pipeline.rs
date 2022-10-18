@@ -110,8 +110,16 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     let dense_encode_config = DenseEncodingConfig::new(compress_contig, Some(&de));
     let correction_config = CorrectionConfig::default();
     use haplotyper::determine_units::STDDEV_OR_ERROR;
-    let assemble_config =
-        AssembleConfig::new(polish_window_size, to_polish, true, min_span, min_llr, true);
+    let dump = Some(file_stem.as_str());
+    let assemble_config = AssembleConfig::new(
+        polish_window_size,
+        to_polish,
+        true,
+        min_span,
+        min_llr,
+        true,
+        dump,
+    );
     let correct_deletion_config = CorrectDeletionConfig::new(false, None, Some(STDDEV_OR_ERROR));
     let correct_deletion_config_recluster =
         CorrectDeletionConfig::new(true, None, Some(STDDEV_OR_ERROR));
@@ -171,7 +179,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
 
 fn parse_json(filename: &str) -> std::io::Result<DataSet> {
     debug!("RESUME\t{filename}");
-    std::fs::File::open(&filename)
+    std::fs::File::open(filename)
         .map(std::io::BufReader::new)
         .map(serde_json::de::from_reader)
         .map(|x| x.unwrap())

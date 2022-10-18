@@ -52,7 +52,7 @@ pub trait DetermineUnit {
 
 fn show_minimap2_version() {
     let version = std::process::Command::new("minimap2")
-        .args(&["--version"])
+        .args(["--version"])
         .output()
         .unwrap();
     if !version.status.success() {

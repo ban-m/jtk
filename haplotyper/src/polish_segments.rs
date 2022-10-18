@@ -156,6 +156,8 @@ fn sam_to_aln(id: u64, read: &[u8], aln: &bio_utils::sam::Sam) -> Alignment {
     };
     let is_forward = aln.is_forward();
     let mut ops = vec![];
+    let mut saw_head_clip = false;
+    let (mut head_clip, mut tail_clip) = (0, 0);
     for op in aln.cigar() {
         use bio_utils::sam;
         match op {
@@ -164,10 +166,16 @@ fn sam_to_aln(id: u64, read: &[u8], aln: &bio_utils::sam::Sam) -> Alignment {
             sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => {
                 ops.extend(std::iter::repeat(kiley::Op::Match).take(l))
             }
+            sam::Op::HardClip(l) | sam::Op::SoftClip(l) if !saw_head_clip => {
+                saw_head_clip = true;
+                head_clip = l;
+            }
+            sam::Op::HardClip(l) | sam::Op::SoftClip(l) => tail_clip = l,
             _ => {}
         }
     }
-    Alignment::new(id, contig, ctg_range, query, ops, is_forward)
+    let clips = (head_clip, tail_clip);
+    Alignment::new(id, contig, ctg_range, clips, query, ops, is_forward)
 }
 
 fn parse_paf(
@@ -264,6 +272,10 @@ fn paf_to_aln(id: u64, read: &[u8], aln: &bio_utils::paf::PAF) -> Alignment {
         true => read[start..end].to_vec(),
         false => bio_utils::revcmp(&read[start..end]),
     };
+    let clips = match aln.relstrand {
+        true => (start, read.len() - end),
+        false => (read.len() - end, start),
+    };
     let is_forward = aln.relstrand;
     let mut ops = vec![];
     let cigar = aln.get_tag("cg").unwrap().1;
@@ -278,7 +290,7 @@ fn paf_to_aln(id: u64, read: &[u8], aln: &bio_utils::paf::PAF) -> Alignment {
             _ => {}
         }
     }
-    Alignment::new(id, contig, ctg_range, query, ops, is_forward)
+    Alignment::new(id, contig, ctg_range, clips, query, ops, is_forward)
 }
 
 #[derive(Debug, Clone)]

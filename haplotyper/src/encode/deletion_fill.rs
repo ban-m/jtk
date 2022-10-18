@@ -203,7 +203,7 @@ fn filling_until(
 }
 
 fn updates_updated_reads(
-    skeltons: &mut Vec<ReadSkelton>,
+    skeltons: &mut [ReadSkelton],
     reads: &[EncodedRead],
     failed_updates: &[FailedUpdates],
 ) {
@@ -309,7 +309,7 @@ fn correct_deletion_error(
             try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, stddev);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
-            None => ft.extend(head_cand.into_iter().map(|(n, _)| (idx, n))),
+            None => ft.extend(head_cand.keys().map(|&n| (idx, n))),
         }
         let mut tail_cand = pileup.check_insertion_tail(nodes, ins_thr, idx);
         tail_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
@@ -633,7 +633,7 @@ fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton)
     keys.sort_unstable();
     let reverse_match = count_match(units, &keys);
     let min_match = MIN_MATCH.min(units.len());
-    (min_match <= forward_match.max(reverse_match)).then(|| reverse_match <= forward_match)
+    (min_match <= forward_match.max(reverse_match)).then_some(reverse_match <= forward_match)
 }
 
 // Align read skeltons to read, return the pileup sumamries.
@@ -715,7 +715,7 @@ fn alignment(_: u64, read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Opti
     };
     let match_num = get_match_units(&ops);
     let min_match = MIN_MATCH.min(read.nodes.len()).min(query.nodes.len());
-    (min_match <= match_num && SCORE_THR <= score && is_proper(&ops)).then(|| ops)
+    (min_match <= match_num && SCORE_THR <= score && is_proper(&ops)).then_some(ops)
 }
 
 // Return true if the alignment is proper dovetail.
@@ -800,11 +800,7 @@ fn pairwise_alignment_gotoh(read: &ReadSkelton, query: &ReadSkelton) -> (i32, Ve
             q_pos -= 1;
         } else if state == 1 {
             let prev_pos = read_row * r_pos + 3 * (q_pos - 1);
-            state = if current_dist == dp[prev_pos] - 1 {
-                0
-            } else {
-                1
-            };
+            state = (current_dist != dp[prev_pos] - 1) as usize;
             ops.push(Op::Ins(1));
             q_pos -= 1;
         } else {
@@ -876,7 +872,7 @@ struct Pileup {
 fn mean_cov(pileups: &[Pileup]) -> Option<usize> {
     let len = pileups.len();
     let sum: usize = pileups.iter().map(|p| p.coverage).sum();
-    (len != 0).then(|| sum / len)
+    (len != 0).then_some(sum / len)
 }
 
 impl Pileup {
@@ -922,8 +918,14 @@ impl Pileup {
                 after_total += len;
             }
         }
-        let prev_offset = (prev_count != 0).then(|| prev_total / prev_count);
-        let after_offset = (after_count != 0).then(|| after_total / after_count);
+        let prev_offset = match prev_count {
+            0 => None,
+            _ => Some(prev_total / prev_count),
+        };
+        let after_offset = match after_count {
+            0 => None,
+            _ => Some(after_total / after_count),
+        };
         (prev_offset, after_offset)
     }
     fn add_head(&mut self, node: LightNode) {

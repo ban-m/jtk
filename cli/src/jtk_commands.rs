@@ -24,7 +24,7 @@ fn subcommand_entry() -> Command<'static> {
                 .long("read_type")
                 .takes_value(true)
                 .default_value("CLR")
-                .possible_values(&["CCS", "CLR", "ONT"])
+                .possible_values(["CCS", "CLR", "ONT"])
                 .help("Read type. CCS, CLR, or ONT."),
         )
         .arg(
@@ -666,7 +666,7 @@ fn subcommand_polish() -> Command<'static> {
                 .long("format")
                 .takes_value(true)
                 .required(true)
-                .possible_values(&["sam", "paf"])
+                .possible_values(["sam", "paf"])
                 .help("Format of the alignments")
                 .default_value("sam"),
         )

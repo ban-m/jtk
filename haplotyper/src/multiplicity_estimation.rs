@@ -30,7 +30,7 @@ impl MultiplicityEstimation for DataSet {
         crate::misc::update_coverage(self);
         let cov = self.coverage.unwrap();
         let reads: Vec<_> = self.encoded_reads.iter().collect();
-        let assemble_config = AssembleConfig::new(100, false, false, 4, 0f64, false);
+        let assemble_config = AssembleConfig::new(100, false, false, 4, 0f64, false, None);
         let rt = self.read_type;
         let mut graph =
             ditch_graph::DitchGraph::new(&reads, &self.selected_chunks, rt, &assemble_config);
@@ -107,7 +107,7 @@ impl MultiplicityEstimation for DataSet {
         let to_remove: HashSet<_> = self
             .selected_chunks
             .iter()
-            .filter_map(|c| (upper <= c.copy_num || c.copy_num == 0).then(|| c.id))
+            .filter_map(|c| (upper <= c.copy_num || c.copy_num == 0).then_some(c.id))
             .collect();
         {
             let mut counts: HashMap<_, u32> = HashMap::new();

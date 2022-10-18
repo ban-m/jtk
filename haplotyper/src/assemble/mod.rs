@@ -57,7 +57,7 @@ impl Graph {
                     self.nodes
                         .iter()
                         .enumerate()
-                        .filter_map(|(i, node)| (fu.find(i).unwrap() == index).then(|| node))
+                        .filter_map(|(i, node)| (fu.find(i).unwrap() == index).then_some(node))
                         .collect::<Vec<&Node>>()
                 })
             })
@@ -73,6 +73,7 @@ pub struct AssembleConfig {
     min_span_reads: usize,
     span_likelihood_ratio: f64,
     to_bypass_contigs: bool,
+    dump_path: Option<String>,
 }
 
 impl std::default::Default for AssembleConfig {
@@ -84,6 +85,7 @@ impl std::default::Default for AssembleConfig {
             min_span_reads: 6,
             span_likelihood_ratio: 3f64,
             to_bypass_contigs: false,
+            dump_path: None,
         }
     }
 }
@@ -95,7 +97,9 @@ impl AssembleConfig {
         min_span_reads: usize,
         span_likelihood_ratio: f64,
         to_bypass_contigs: bool,
+        dump_path: Option<&str>,
     ) -> Self {
+        let dump_path = dump_path.map(|x| x.to_string());
         Self {
             window_size,
             to_polish,
@@ -103,6 +107,7 @@ impl AssembleConfig {
             min_span_reads,
             span_likelihood_ratio,
             to_bypass_contigs,
+            dump_path,
         }
     }
 }
@@ -169,16 +174,6 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
     let thr = (cov * LOWER_FRAC).round() as usize;
     graph.remove_lightweight_edges(thr / 2 + 1, false);
     graph.remove_lightweight_edges(thr, true);
-    // graph = {
-    //     let mut old = graph.clone();
-    //     old.remove_lightweight_edges(thr, true);
-    //     graph.remove_lightweight_edges(thr, false);
-    //     match graph.cc() {
-    //         1 => graph,
-    //         _ => old,
-    //     }
-    // };
-    // graph.remove_lightweight_edges(thr, false);
     graph.clean_up_graph_for_assemble(cov, &reads, c, ds.read_type);
     let (mut segments, mut edges, _, summaries, encodings) = graph.spell(c);
     let total_base = segments.iter().map(|x| x.slen).sum::<u64>();
@@ -191,7 +186,7 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
         let round = 3;
         let config =
             consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, round);
-        segments = ds.polish_segment(&segments, &encodings, &config);
+        segments = ds.polish_segment(&segments, &encodings, &config, &c.dump_path);
         let lengths: HashMap<_, _> = segments
             .iter()
             .map(|seg| (seg.sid.clone(), seg.slen))

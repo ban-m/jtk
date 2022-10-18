@@ -50,7 +50,7 @@ fn gen_haploids<R: rand::Rng>(rng: &mut R, refr: &[u8]) -> (Vec<u8>, Vec<u8>) {
         .take(200_000)
         .enumerate()
         .filter_map(|(pos, b)| {
-            (!(50_000..80_000).contains(&pos) && !(100_000..120_000).contains(&pos)).then(|| b)
+            (!(50_000..80_000).contains(&pos) && !(100_000..120_000).contains(&pos)).then_some(b)
         });
     let inv_seq = bio_utils::revcmp(&refr[320_000..370_000]);
     let seq2 = refr[200_000..320_000]
@@ -60,7 +60,7 @@ fn gen_haploids<R: rand::Rng>(rng: &mut R, refr: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let seq3_a = refr[400_000..600_000]
         .iter()
         .enumerate()
-        .filter_map(|(pos, b)| (!(130_000..180_000).contains(&pos)).then(|| b));
+        .filter_map(|(pos, b)| (!(130_000..180_000).contains(&pos)).then_some(b));
     let seq3_b = refr[400_000..600_000].iter();
     let inserted_seq = gen_seq::generate_seq(rng, MOD_LEN);
     let seq4 = refr[600_000..700_000]

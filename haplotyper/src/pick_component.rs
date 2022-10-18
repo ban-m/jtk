@@ -20,7 +20,7 @@ impl ComponentPicking for DataSet {
     fn pick_top_n_component(&mut self, c: &ComponentPickingConfig) {
         use crate::assemble::AssembleConfig;
         // The last two parameter is not needed.
-        let asm_config = AssembleConfig::new(100, false, false, 6, 3f64, false);
+        let asm_config = AssembleConfig::new(100, false, false, 6, 3f64, false, None);
         let read_type = self.read_type;
         let reads = &self.encoded_reads;
         let units = &self.selected_chunks;
