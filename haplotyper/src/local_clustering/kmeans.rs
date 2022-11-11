@@ -74,11 +74,15 @@ fn modification_table<T: std::borrow::Borrow<[u8]>>(
     reads
         .iter()
         .zip(ops.iter())
-        .map(|(seq, op)| {
-            let (mut table, lk) = hmm.modification_table(template, seq.borrow(), band, op);
-            table.iter_mut().for_each(|x| *x -= lk);
-            table
-        })
+        .map(
+            |(seq, op)| match hmm.modification_table(template, seq.borrow(), band, op) {
+                Some((mut table, lk)) => {
+                    table.iter_mut().for_each(|x| *x -= lk);
+                    table
+                }
+                None => vec![0f64; NUM_ROW * (template.len() + 1)],
+            },
+        )
         .collect()
 }
 

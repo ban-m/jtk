@@ -586,37 +586,6 @@ pub fn revert_fix_homopolymers(
     assert_eq!(querylen, query.len());
 }
 
-pub fn check_compress_and_recover(ds: &DataSet) {
-    use std::collections::HashMap;
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        let unit = units.get(&node.unit).unwrap();
-        let (_, ar, _) = node.recover(unit);
-        let orig_iden = ar.iter().filter(|&&x| x == b'|').count() as f64 / ar.len() as f64;
-        let orig_seq = node.seq().to_vec();
-        let orig_ops = ops_to_kiley(&node.cigar);
-        let mut ops = orig_ops.clone();
-        let mut seq = orig_seq.clone();
-        let fixes = fix_long_homopolymers(&mut seq, unit.seq(), &mut ops, 2);
-        revert_fix_homopolymers(&mut seq, &mut ops, &fixes);
-        let seq = std::str::from_utf8(&seq).unwrap();
-        let orig_seq = std::str::from_utf8(&orig_seq).unwrap();
-        if seq != orig_seq {
-            let ops = kiley::bialignment::edit_dist_ops(orig_seq.as_bytes(), seq.as_bytes()).1;
-            let (xr, ar, yr) = kiley::recover(orig_seq.as_bytes(), seq.as_bytes(), &ops);
-            for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
-                eprintln!("{}", std::str::from_utf8(xr).unwrap());
-                eprintln!("{}", std::str::from_utf8(ar).unwrap());
-                eprintln!("{}\n", std::str::from_utf8(yr).unwrap());
-            }
-        }
-        assert_eq!(seq, orig_seq);
-        let (_, ar, _) = node.recover(unit);
-        let iden = ar.iter().filter(|&&x| x == b'|').count() as f64 / ar.len() as f64;
-        assert!(orig_iden - iden < 0.05);
-    }
-}
-
 // The maximum value of sum of a range in xs,
 // If the sequence is empty, return i64::MIN
 pub fn max_region<T: std::iter::Iterator<Item = i64>>(xs: T) -> i64 {

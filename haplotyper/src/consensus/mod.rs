@@ -36,6 +36,7 @@ mod private {
 pub struct PolishConfig {
     seed: u64,
     min_coverage: usize,
+    max_coverage: usize,
     window_size: usize,
     radius: usize,
     round_num: usize,
@@ -44,12 +45,14 @@ impl PolishConfig {
     pub fn new(
         seed: u64,
         min_coverage: usize,
+        max_coverage: usize,
         window_size: usize,
         radius: usize,
         round_num: usize,
     ) -> PolishConfig {
         Self {
             seed,
+            max_coverage,
             min_coverage,
             window_size,
             radius,
@@ -63,6 +66,7 @@ impl std::default::Default for PolishConfig {
         Self {
             seed: Default::default(),
             min_coverage: 3,
+            max_coverage: 40,
             window_size: 2000,
             radius: 100,
             round_num: 2,
@@ -300,6 +304,7 @@ pub fn polish(
     config: &PolishConfig,
 ) -> Vec<u8> {
     let window = config.window_size;
+    debug!("POLISH\tWINDOW\t{window}");
     let mut hmm = hmm.clone();
     let hmm = &mut hmm;
     let radius = config.radius;
@@ -321,15 +326,22 @@ pub fn polish(
                     .unzip();
                 match seqs.len() < min_coverage {
                     true => draft.to_vec(),
-                    false => polish_seg(hmm, draft, &seqs, ops, radius, to_refresh),
+                    false => polish_seg(hmm, draft, &seqs, ops, config, to_refresh),
                 }
             })
             .collect();
-        let (acc_len, _) = polished_seg.iter().fold((vec![0], 0), |(mut xs, len), x| {
-            let len = len + x.len();
-            xs.push(len);
-            (xs, len)
-        });
+        let (acc_len, _) =
+            polished_seg
+                .iter()
+                .enumerate()
+                .fold((vec![0], 0), |(mut xs, len), (i, x)| {
+                    if window * 3 < x.len() {
+                        debug!("{i}\t{len}\t{}", x.len());
+                    }
+                    let len = len + x.len();
+                    xs.push(len);
+                    (xs, len)
+                });
         assert_eq!(acc_len.len(), polished_seg.len() + 1);
         polished = polished_seg.iter().flatten().copied().collect();
         // Fix alignment.
@@ -343,18 +355,78 @@ pub fn polish(
             .values_mut()
             .for_each(|xs| xs.sort_by_key(|x| x.0));
         assert_eq!(alignments.len(), used_ranges.len());
-        alignments.iter_mut().enumerate().for_each(|(idx, aln)| {
-            let used_range = used_ranges[&idx];
-            match recovered.get(&idx) {
-                Some(aloc_pos) => fix_alignment(aln, used_range, aloc_pos, &polished, &acc_len),
-                None => fix_alignment(aln, used_range, &[], &polished, &acc_len),
-            }
-        });
+        alignments
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(idx, aln)| {
+                let used_range = used_ranges[&idx];
+                match recovered.get(&idx) {
+                    Some(aloc_pos) => fix_alignment(aln, used_range, aloc_pos, &polished, &acc_len),
+                    None => fix_alignment(aln, used_range, &[], &polished, &acc_len),
+                }
+            });
         log_identity(sid, alignments);
     }
     polished
 }
 
+#[allow(dead_code)]
+fn get_threshold(pileups: &[SeqOpsOnWindow]) -> f64 {
+    let identity_rates: Vec<_> = pileups
+        .iter()
+        .filter(|pileup| !pileup.is_empty())
+        .map(|pileup| {
+            let matches: f64 = pileup
+                .iter()
+                .map(|(_, _, _, ops)| {
+                    let mat = ops.iter().filter(|&&op| op == Op::Match).count();
+                    mat as f64 / ops.len() as f64
+                })
+                .sum();
+            matches / pileup.len() as f64
+        })
+        .collect();
+    let identity_rate = identity_rates.iter().sum::<f64>() / identity_rates.len() as f64;
+    let var = identity_rates
+        .iter()
+        .map(|e| (e - identity_rate).powi(2))
+        .sum::<f64>()
+        / identity_rates.len() as f64;
+    let sd = var.sqrt().min(0.02);
+    let thr = identity_rate - 5f64 * sd;
+    debug!("TRAIN\t{identity_rate:.3}\t{sd:.3}\t{thr:.3}");
+    thr
+}
+
+#[allow(dead_code)]
+fn train_hmm_dev(
+    hmm: &mut PairHiddenMarkovModel,
+    draft: &[u8],
+    window: usize,
+    pileups: &[SeqOpsOnWindow],
+) {
+    let identity_threshold = get_threshold(pileups);
+    let mut transitions = [[1f64; 3]; 3];
+    let mut mat_emit = [1f64; 16];
+    let mut ins_emit = [1f64; 20];
+    for (template, pileup) in draft.chunks_exact(window).zip(pileups.iter()) {
+        let filtered = pileup.iter().filter_map(|(_, _, seq, ops)| {
+            let mat = ops.iter().filter(|&&op| op == Op::Match).count();
+            (identity_threshold < (mat as f64 / ops.len() as f64)).then_some((seq, ops.as_slice()))
+        });
+        for (seq, ops) in filtered {
+            let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
+            crate::model_tune::register_alignments(template, seq, ops, params);
+        }
+    }
+    let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
+    let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
+    let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
+    *hmm = PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit);
+    debug!("TRAIN\n{hmm}");
+}
+
+#[allow(dead_code)]
 fn train_hmm(
     hmm: &mut PairHiddenMarkovModel,
     draft: &[u8],
@@ -370,7 +442,6 @@ fn train_hmm(
     let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
     let range = 2 * window / 3..4 * window / 3;
     let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
-    // debug!("MEDIAN\t{med_cov}");
     let iterator = draft
         .chunks(window)
         .zip(pileups.iter())
@@ -431,18 +502,22 @@ fn split_sequences<'a, 'b>(
     ops: Vec<&'b mut Vec<Op>>,
     length_median: usize,
 ) -> SplitQuery<'a, 'b> {
-    let (mut use_seqs, mut use_ops) = (vec![], vec![]);
+    let mut will_be_use = vec![];
     let mut update_indices = vec![];
     assert_eq!(seqs.len(), ops.len());
     for (idx, (seq, ops)) in seqs.iter().zip(ops).enumerate() {
         // TODO: Here check the validity of the pHMM.
         if within_range(length_median, seq.len(), 0.15) {
-            use_seqs.push(*seq);
-            use_ops.push(ops);
+            will_be_use.push((*seq, ops));
         } else {
             update_indices.push((idx, ops));
         }
     }
+    // will_be_use.sort_by_cached_key(|(_, ops)| {
+    //     let num_match = ops.iter().filter(|&&x| x == Op::Match).count();
+    //     std::cmp::Reverse(num_match)
+    // });
+    let (use_seqs, use_ops): (Vec<_>, Vec<_>) = will_be_use.into_iter().unzip();
     (use_seqs, use_ops, update_indices)
 }
 
@@ -467,15 +542,16 @@ fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Ve
     kiley::bialignment::guided::polish_until_converge_with(&draft, seqs, ops, radius)
 }
 
-const MAX_COV: usize = 30;
 fn polish_seg(
     hmm: &PairHiddenMarkovModel,
     draft: &[u8],
     seqs: &[&[u8]],
     ops: Vec<&mut Vec<Op>>,
-    radius: usize,
+    config: &PolishConfig,
     refresh: bool,
 ) -> Vec<u8> {
+    let radius = config.radius;
+    let max_cov = config.max_coverage;
     let length_median = length_median(seqs);
     if length_median == 0 {
         remove_refernece(ops, seqs);
@@ -487,16 +563,17 @@ fn polish_seg(
     }
     let (use_seqs, use_ops, update_indices) = split_sequences(seqs, ops, length_median);
     assert_eq!(seqs.len(), use_seqs.len() + update_indices.len());
-    use kiley::bialignment::guided::polish_until_converge_with;
     let mut polished = draft.to_vec();
     let mut temp_ops: Vec<_> = use_ops.iter().map(|x| x.to_vec()).collect();
+    use kiley::bialignment::guided::polish_until_converge_with;
     polished = match within_range(draft.len(), length_median, 0.2) {
         true if refresh => polish_until_converge_with(&polished, &use_seqs, &mut temp_ops, radius),
         true => polished,
         false => bootstrap_consensus(&use_seqs, &mut temp_ops, radius),
     };
+    //    let hmm = crate::model_tune::fine_tune(hmm, &polished, &use_seqs, &temp_ops);
     polished =
-        hmm.polish_until_converge_with_take(&polished, &use_seqs, &mut temp_ops, radius, MAX_COV);
+        hmm.polish_until_converge_with_take(&polished, &use_seqs, &mut temp_ops, radius, max_cov);
     assert_eq!(temp_ops.len(), use_ops.len());
     for (old, new) in std::iter::zip(use_ops, temp_ops) {
         *old = new;
@@ -1119,10 +1196,6 @@ fn base_pair_alignment(
     }
     append_range(&mut query, &mut ops, tiles.last().unwrap());
     let (tail, tail_ops, tail_len) = align_tail(seq, seg, chain, tiles.last().unwrap());
-    // let (tail, tail_ops, tail_len) = match chain.contig_end_idx == encs.tiles().len() {
-    //     true => align_tail(seq, seg, chain, tiles.last().unwrap()),
-    //     false => (Vec::new(), Vec::new(), 0),
-    // };
     query.extend(tail);
     ops.extend(tail_ops);
     let contig_start = tiles.first().map(|t| t.ctg_start).unwrap() - tip_len;

@@ -291,6 +291,7 @@ fn prep_consensus(
     let mut hmm = hmm.clone();
     let mut cons = draft.to_vec();
     for _t in 0..2 {
+        // TODO: Tune here.
         hmm.fit_naive_with(&cons, seqs, ops, band_width / 2);
         cons = hmm.polish_until_converge_with(&cons, seqs, ops, band_width / 2);
     }

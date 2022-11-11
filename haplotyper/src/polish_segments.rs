@@ -44,7 +44,7 @@ fn polish_segment(
     window_size: usize,
     seed: u64,
 ) -> Vec<u8> {
-    let config = crate::consensus::PolishConfig::new(seed, 2, window_size, 50, 2);
+    let config = crate::consensus::PolishConfig::new(seed, 2, 50, window_size, 50, 2);
     let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
     crate::consensus::polish(sid, draft, alns, &hmm, &config)
 }

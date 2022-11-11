@@ -29,7 +29,5 @@ pub fn generate_test_data<T: Rng>(
         .map(|&idx| kiley::gen_seq::introduce_randomness(&templates[idx], rng, profile))
         .collect();
     assert_eq!(dataset.len(), answer.len());
-    // debug!("Index1\tIndex2\tDist");
-    // let answer: Vec<u8> = answer.iter().map(|&x| x ).collect();
     (dataset, answer)
 }

@@ -341,23 +341,6 @@ fn correct_deletion_error(
     new_inserts
 }
 
-// fn remove_highly_erroneous(
-//     read: &mut EncodedRead,
-//     read_error: f64,
-//     (units, unit_error_rate, _): UnitInfo,
-//     stddev: f64,
-// ) -> bool {
-//     let orig_len = read.nodes.len();
-//     read.nodes.retain(|node| {
-//         let (_, aln, _) = node.recover(units[&node.unit]);
-//         let diff = aln.iter().filter(|&&x| x != b'|').count();
-//         let error_rate = diff as f64 / aln.len() as f64;
-//         let expected = read_error + unit_error_rate.unit((node.unit, node.cluster));
-//         let threshold = (expected + THR * stddev).max(0f64);
-//         error_rate < threshold
-//     });
-//     read.nodes.len() != orig_len
-// }
 
 const THR: f64 = 10f64;
 fn try_encoding_head(

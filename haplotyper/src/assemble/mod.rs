@@ -164,6 +164,7 @@ impl Assemble for DataSet {
 }
 
 const LOWER_FRAC: f64 = 0.15;
+const MAX_COV: f64 = 50.0;
 /// ASSEMBLEIMPL
 pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<ContigSummary>) {
     assert!(c.to_resolve);
@@ -182,10 +183,11 @@ pub fn assemble(ds: &DataSet, c: &AssembleConfig) -> (Vec<gfa::Record>, Vec<Cont
         use crate::consensus;
         use crate::consensus::Polish;
         let seed = 394802;
-        let radius = 50;
+        let radius = ds.read_type.band_width(c.window_size).max(20) - 10;
         let round = 3;
-        let config =
-            consensus::PolishConfig::new(seed, c.min_span_reads, c.window_size, radius, round);
+        let (min_cov, max_cov) = (c.min_span_reads, (cov * 2f64).min(MAX_COV) as usize);
+        use consensus::PolishConfig;
+        let config = PolishConfig::new(seed, min_cov, max_cov, c.window_size, radius, round);
         segments = ds.polish_segment(&segments, &encodings, &config, &c.dump_path);
         let lengths: HashMap<_, _> = segments
             .iter()

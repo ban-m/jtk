@@ -69,12 +69,25 @@ done
 ### 2. All vs All alignments
 cat "$PREFIX"/"$DIPLO_NAME"_h1.fa "$PREFIX"/"$DIPLO_NAME"_h2.fa\
     "$PREFIX"/"$JTK_NAME"_h1.fa "$PREFIX"/"$JTK_NAME"_h2.fa \
-    "$PREFIX"/reference.fa |
-    sed -e 's/>\(.*\)/>db_\1/g'> "$PREFIX"/seqs.fa
+    "$PREFIX"/reference.fa > "$PREFIX"/queries.fa
+sed -e 's/>\(.*\)/>db_\1/g' "$PREFIX"/queries.fa > "$PREFIX"/seqs.fa
 lastdb "$PREFIX"/seqs.db "$PREFIX"/seqs.fa
-for seq in "$DIPLO_NAME"_h1.fa "$DIPLO_NAME"_h2.fa "$JTK_NAME"_h1.fa "$JTK_NAME"_h2.fa reference.fa
-do
-    outfile="$PREFIX"/${seq%.fa}.maf
-    echo "##maf version=1 scoring=lastz.v1.03.73" > "$outfile"
-    lastal -E0.0001 "$PREFIX"/seqs.db "$PREFIX"/"$seq" | last-split -r >> "$outfile"
-done
+last-train "$PREFIX"/seqs.db "$PREFIX"/queries.fa > "$PREFIX"/param.par
+echo "##maf version=1 scoring=lastz.v1.03.73" > "$PREFIX"/alignments.maf
+lastal -P5 -p "$PREFIX"/param.par "$PREFIX"/seqs.db  "$PREFIX"/queries.fa | grep -v '#' | paste - - - - |\
+    awk -F'\t' '{
+        split($2, refs, " +")
+        split($3, query, " +")
+        refname = substr(refs[2], 4)
+        refaln = refs[4]
+        qname=query[2]
+        qaln = query[4]
+        if (refname < qname && 1000 < refaln && 1000 < qaln){
+            print $0
+        }}' | tr '\t' '\n' >> "$PREFIX"/alignments.maf
+# for seq in "$DIPLO_NAME"_h1.fa "$DIPLO_NAME"_h2.fa "$JTK_NAME"_h1.fa "$JTK_NAME"_h2.fa reference.fa
+# do
+#     outfile="$PREFIX"/${seq%.fa}.maf
+#     echo "##maf version=1 scoring=lastz.v1.03.73" > "$outfile"
+#     lastal -E0.0001 "$PREFIX"/seqs.db "$PREFIX"/"$seq" | last-split -r >> "$outfile"
+# done

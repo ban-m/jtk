@@ -126,16 +126,16 @@ pub enum ReadType {
     None,
 }
 
-pub const CLR_BAND_WIDTH: usize = 100;
+pub const CLR_BAND_WIDTH: usize = 200;
 pub const HIFI_BAND_WIDTH: usize = 80;
 pub const ONT_BAND_WIDTH: usize = 100;
 
-pub const CLR_CTG_SIM: f64 = 0.15;
-pub const CLR_CLR_SIM: f64 = 0.15;
+pub const CLR_CTG_SIM: f64 = 0.20;
+pub const CLR_CLR_SIM: f64 = 0.20;
 pub const HIFI_SIM_THR: f64 = 0.05;
 pub const ONT_SIM_THR: f64 = 0.15;
 
-pub const CLR_BAND_FRAC: f64 = 0.03;
+pub const CLR_BAND_FRAC: f64 = 0.05;
 pub const ONT_BAND_FRAC: f64 = 0.03;
 pub const HIFI_BAND_FRAC: f64 = 0.01;
 
@@ -150,7 +150,7 @@ impl ReadType {
     pub fn sd_of_error(&self) -> f64 {
         match *self {
             ReadType::CCS => 0.005,
-            ReadType::CLR => 0.01,
+            ReadType::CLR => 0.02,
             ReadType::ONT => 0.01,
             ReadType::None => 0.01,
         }

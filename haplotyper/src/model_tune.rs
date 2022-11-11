@@ -111,3 +111,110 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     debug!("HMM\n{}", hmm);
     hmm
 }
+
+use kiley::Op;
+const PRIOR: f64 = 10f64;
+pub fn fine_tune(
+    hmm: &PairHiddenMarkovModel,
+    template: &[u8],
+    seqs: &[&[u8]],
+    ops: &[Vec<Op>],
+) -> PairHiddenMarkovModel {
+    let PairHiddenMarkovModel {
+        mat_mat,
+        mat_ins,
+        mat_del,
+        ins_mat,
+        ins_ins,
+        ins_del,
+        del_mat,
+        del_ins,
+        del_del,
+        mut mat_emit,
+        mut ins_emit,
+    } = hmm.clone();
+    let mut transitions = [
+        [mat_mat, mat_ins, mat_del],
+        [ins_mat, ins_ins, ins_del],
+        [del_mat, del_ins, del_del],
+    ];
+    transitions.iter_mut().flatten().for_each(|x| *x *= PRIOR);
+    mat_emit.iter_mut().for_each(|x| *x *= PRIOR);
+    ins_emit.iter_mut().for_each(|x| *x *= PRIOR);
+    for (seq, ops) in seqs.iter().zip(ops.iter()) {
+        let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
+        register_alignments(template, seq, ops, params);
+    }
+    let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
+    let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
+    let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
+    PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit)
+}
+
+pub fn register_alignments(
+    template: &[u8],
+    xs: &[u8],
+    ops: &[Op],
+    (transitions, mat_emit, ins_emit): (&mut [[f64; 3]; 3], &mut [f64; 16], &mut [f64; 20]),
+) {
+    fn op_to_state(op: Op) -> usize {
+        match op {
+            Op::Mismatch => 0,
+            Op::Match => 0,
+            Op::Ins => 1,
+            Op::Del => 2,
+        }
+    }
+    fn base_to_idx(base: u8) -> usize {
+        match base {
+            b'A' | b'a' => 0,
+            b'C' | b'c' => 1,
+            b'G' | b'g' => 2,
+            b'T' | b't' => 3,
+            _ => panic!(),
+        }
+    }
+    let mut state = op_to_state(ops[0]);
+    let (mut rpos, mut qpos) = (0, 0);
+    let rbase = base_to_idx(template[rpos]) << 2;
+    let qbase = base_to_idx(xs[qpos]);
+    match state {
+        0 => {
+            mat_emit[rbase | qbase] += 1f64;
+            rpos += 1;
+            qpos += 1;
+        }
+        1 => {
+            ins_emit[rbase | qbase] += 1f64;
+            qpos += 1;
+        }
+        _ => {
+            rpos += 1;
+        }
+    }
+    for op in ops.iter().skip(1) {
+        let next = op_to_state(*op);
+        transitions[state][next] += 1f64;
+        state = next;
+        if state == 2 {
+            rpos += 1;
+            continue;
+        }
+        let rbase = base_to_idx(template[rpos]) << 2;
+        let qbase = base_to_idx(xs[qpos]);
+        match state {
+            0 => {
+                mat_emit[rbase | qbase] += 1f64;
+                rpos += 1;
+                qpos += 1;
+            }
+            _ => {
+                ins_emit[rbase | qbase] += 1f64;
+                qpos += 1;
+            }
+        }
+    }
+    for &base in template.iter() {
+        ins_emit[16 + base_to_idx(base)] += 1.0;
+    }
+}
