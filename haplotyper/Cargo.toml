@@ -22,5 +22,5 @@ histgram_viz = {git = "https://github.com/ban-m/histgram_viz", branch = "master"
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 bytecount = "0.6.2"
-# kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master"}
-kiley = {path = "../../kiley"}
+kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master"}
+# kiley = {path = "../../kiley"}
