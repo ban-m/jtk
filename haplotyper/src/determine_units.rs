@@ -1,5 +1,4 @@
 use crate::ALN_PARAMETER;
-const SEED: u64 = 394;
 const MIN_REQ_NEW_UNIT: usize = 10;
 use super::encode::Encode;
 use super::polish_units::PolishUnit;
@@ -19,6 +18,7 @@ pub struct DetermineUnitConfig {
     pub min_cluster: usize,
     pub exclude_repeats: f64,
     pub purge_copy_num: usize,
+    pub seed: u64,
 }
 
 pub const STDDEV_OR_ERROR: f64 = 0.01;
@@ -33,6 +33,7 @@ impl DetermineUnitConfig {
         threads: usize,
         exclude_repeats: f64,
         purge_copy_num: usize,
+        seed: u64,
     ) -> Self {
         Self {
             chunk_len,
@@ -42,6 +43,7 @@ impl DetermineUnitConfig {
             min_cluster: 2,
             exclude_repeats,
             purge_copy_num,
+            seed,
         }
     }
 }
@@ -80,7 +82,7 @@ impl DetermineUnit for definitions::DataSet {
         self.selected_chunks.clear();
         self.encoded_reads.clear();
         debug!("Select Unit: Configuration:{:?}", config);
-        let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(SEED);
+        let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(config.seed);
         self.selected_chunks = pick_random(self, config, &mut rng);
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
         let overlap_identity_thr = match self.read_type {

@@ -101,6 +101,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         threads,
         exclude,
         purge_copy_num,
+        seed,
     );
     let pick_component_config = ComponentPickingConfig::new(component_num);
     let draft = format!("{file_stem}.draft.gfa");

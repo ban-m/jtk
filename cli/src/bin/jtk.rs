@@ -130,10 +130,14 @@ fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .value_of("purge_copy_num")
         .and_then(|e| e.parse::<usize>().ok())
         .unwrap();
+    let seed: u64 = matches
+        .value_of("seed")
+        .and_then(|e| e.parse::<u64>().ok())
+        .unwrap();
     set_threads(matches);
     use haplotyper::determine_units::{DetermineUnit, DetermineUnitConfig};
     let (cl, tn) = (chunk_len, take_num);
-    let config = DetermineUnitConfig::new(cl, tn, margin, thrds, filter, purge_copy_num);
+    let config = DetermineUnitConfig::new(cl, tn, margin, thrds, filter, purge_copy_num, seed);
     dataset.select_chunks(&config);
 }
 

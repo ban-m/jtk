@@ -788,36 +788,21 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
         .collect();
     let gfa = gfa::GFA::from_records(records);
     let dump_file_name = match &c.dump_path {
-        Some(path) => format!("{path}/{i}.gfa"),
+        Some(path) => format!("{path}_{i}.gfa"),
         None => format!("{i}.gfa"),
     };
-    if let Ok(mut wtr) = std::fs::File::create(dump_file_name).map(std::io::BufWriter::new) {
-        use std::io::Write;
-        if let Err(why) = writeln!(wtr, "{}", gfa) {
-            trace!("{:?}", why);
+    match std::fs::File::create(&dump_file_name).map(std::io::BufWriter::new) {
+        Ok(mut wtr) => {
+            use std::io::Write;
+            if let Err(why) = writeln!(wtr, "{}", gfa) {
+                trace!("{:?}", why);
+            }
         }
+        Err(why) => warn!("{why:?},{dump_file_name}"),
     }
 }
 
 impl<'b, 'a: 'b> DitchGraph<'a> {
-    // Return primary node.
-    // fn get_primary_node(&'b self, node: Node) -> &'b DitchNode<'a> {
-    //     self.nodes_index
-    //         .get(&node)
-    //         .and_then(|&i| self.node(i))
-    //         .unwrap_or_else(|| panic!("{:?} does not exists.", node))
-    // }
-    // // Return iterator yeilding the edge from a specified node and position.
-    // fn get_primary_edges(
-    //     &self,
-    //     node: Node,
-    //     pos: Position,
-    // ) -> impl std::iter::Iterator<Item = &DitchEdge> {
-    //     self.get_primary_node(node)
-    //         .edges
-    //         .iter()
-    //         .filter(move |e| e.from_position == pos)
-    // }
     fn count_edges(&self, node_idx: NodeIndex, position: Position) -> usize {
         self.node(node_idx)
             .unwrap()

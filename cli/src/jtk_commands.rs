@@ -137,6 +137,13 @@ fn subcommand_select_unit() -> Command<'static> {
                 .takes_value(true)
                 .default_value("10"),
         )
+        .arg(
+            Arg::new("seed")
+                .long("seed")
+                .help("Seed value for random number generators")
+                .takes_value(true)
+                .default_value("42"),
+        )
 }
 
 fn subcommand_mask_repeats() -> Command<'static> {
