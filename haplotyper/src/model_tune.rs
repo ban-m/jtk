@@ -1,6 +1,23 @@
 use definitions::*;
-use kiley::hmm::guided::PairHiddenMarkovModel;
 use std::collections::HashMap;
+
+use kiley::hmm::guided::PairHiddenMarkovModel;
+use kiley::hmm::guided::PairHiddenMarkovModelOnStrands;
+
+pub trait ModelFit {
+    fn fit_models_on_both_strands(&self) -> Option<PairHiddenMarkovModelOnStrands>;
+    fn get_model(&self) -> Option<PairHiddenMarkovModel>;
+}
+
+impl ModelFit for DataSet {
+    fn fit_models_on_both_strands(&self) -> Option<PairHiddenMarkovModelOnStrands> {
+        estimate_model_parameters_on_both_strands(self)
+    }
+    fn get_model(&self) -> Option<PairHiddenMarkovModel> {
+        get_model(self)
+    }
+}
+
 pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovModel> {
     ds.model_param.as_ref().map(|param| {
         let &HMMParam {
@@ -70,6 +87,79 @@ pub fn update_model(ds: &mut DataSet) {
     });
 }
 
+const TRAIN_UNIT_SIZE: usize = 2;
+const TRAIN_ROUND: usize = 3;
+fn estimate_model_parameters_on_both_strands(
+    ds: &DataSet,
+) -> Option<PairHiddenMarkovModelOnStrands> {
+    let model = ds.get_model()?;
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    let (fpileups, rpileups) = {
+        let mut fpileups: HashMap<_, _> = chunks.keys().map(|&k| (k, vec![])).collect();
+        let mut rpileups: HashMap<_, _> = fpileups.clone();
+        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            let bucket = match node.is_forward {
+                true => fpileups.get_mut(&node.unit),
+                false => rpileups.get_mut(&node.unit),
+            };
+            if let Some(bucket) = bucket {
+                bucket.push(node);
+            }
+        }
+        (truncate_bucket(fpileups), truncate_bucket(rpileups))
+    };
+    fn truncate_bucket<T>(pileups: HashMap<u64, Vec<T>>) -> Vec<(u64, Vec<T>)> {
+        let mut covs: Vec<_> = pileups.values().map(|x| x.len()).collect();
+        let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
+        pileups
+            .into_iter()
+            .filter(|(_, us)| (cov.max(2) - 2..cov + 2).contains(&us.len()))
+            .take(TRAIN_UNIT_SIZE)
+            .collect()
+    }
+    for (uid, seqs) in fpileups.iter() {
+        debug!("LOCAL\tSAMPLE\t{uid}\t{}\tFORWARD", seqs.len());
+    }
+    for (uid, seqs) in rpileups.iter() {
+        debug!("LOCAL\tSAMPLE\t{uid}\t{}\tREVERSE", seqs.len());
+    }
+    fn train_inner(
+        read_type: ReadType,
+        chunks: &HashMap<u64, &Unit>,
+        pileups: &[(u64, Vec<&Node>)],
+        model: &PairHiddenMarkovModel,
+    ) -> PairHiddenMarkovModel {
+        let mut model = model.clone();
+        let mut polishing_pairs: Vec<_> = pileups
+            .iter()
+            .filter_map(|(uid, nodes)| {
+                let ref_unit = chunks.get(uid)?;
+                let band_width = read_type.band_width(ref_unit.seq().len());
+                let ops: Vec<Vec<_>> = nodes
+                    .iter()
+                    .map(|n| crate::misc::ops_to_kiley(&n.cigar))
+                    .collect();
+                let seqs: Vec<_> = nodes.iter().map(|n| n.seq()).collect();
+                let chunk_seq = ref_unit.seq().to_vec();
+                Some((chunk_seq, seqs, ops, band_width))
+            })
+            .collect();
+        for _ in 0..TRAIN_ROUND {
+            for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
+                use kiley::bialignment::guided;
+                *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
+                *consensus = model.polish_until_converge_with(consensus, seqs, ops, *bw);
+                model.fit_naive_with_par(consensus, seqs, ops, *bw);
+            }
+        }
+        debug!("HMM\n{}", model);
+        model
+    }
+    let forward = train_inner(ds.read_type, &chunks, &fpileups, &model);
+    let reverse = train_inner(ds.read_type, &chunks, &rpileups, &model);
+    Some(PairHiddenMarkovModelOnStrands::new(forward, reverse))
+}
+
 fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     read_type: ReadType,
     pileups: &HashMap<(u64, u64), Vec<N>>,
@@ -83,7 +173,7 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
         .map(|((unit, _), us)| (chunks.get(unit).unwrap(), us))
         .collect();
     seqs_and_ref_units.sort_by_cached_key(|c| c.0.id);
-    seqs_and_ref_units.truncate(2);
+    seqs_and_ref_units.truncate(TRAIN_UNIT_SIZE);
     for (chunk, units) in seqs_and_ref_units.iter() {
         debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
     }
@@ -100,7 +190,7 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
             (ref_unit.seq().to_vec(), seqs, ops, band_width)
         })
         .collect();
-    for _ in 0..3 {
+    for _ in 0..TRAIN_ROUND {
         for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
             use kiley::bialignment::guided;
             *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
@@ -112,109 +202,109 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     hmm
 }
 
-use kiley::Op;
-const PRIOR: f64 = 10f64;
-pub fn fine_tune(
-    hmm: &PairHiddenMarkovModel,
-    template: &[u8],
-    seqs: &[&[u8]],
-    ops: &[Vec<Op>],
-) -> PairHiddenMarkovModel {
-    let PairHiddenMarkovModel {
-        mat_mat,
-        mat_ins,
-        mat_del,
-        ins_mat,
-        ins_ins,
-        ins_del,
-        del_mat,
-        del_ins,
-        del_del,
-        mut mat_emit,
-        mut ins_emit,
-    } = hmm.clone();
-    let mut transitions = [
-        [mat_mat, mat_ins, mat_del],
-        [ins_mat, ins_ins, ins_del],
-        [del_mat, del_ins, del_del],
-    ];
-    transitions.iter_mut().flatten().for_each(|x| *x *= PRIOR);
-    mat_emit.iter_mut().for_each(|x| *x *= PRIOR);
-    ins_emit.iter_mut().for_each(|x| *x *= PRIOR);
-    for (seq, ops) in seqs.iter().zip(ops.iter()) {
-        let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
-        register_alignments(template, seq, ops, params);
-    }
-    let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
-    let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
-    let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
-    PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit)
-}
+// use kiley::Op;
+// const PRIOR: f64 = 10f64;
+// pub fn fine_tune(
+//     hmm: &PairHiddenMarkovModel,
+//     template: &[u8],
+//     seqs: &[&[u8]],
+//     ops: &[Vec<Op>],
+// ) -> PairHiddenMarkovModel {
+//     let PairHiddenMarkovModel {
+//         mat_mat,
+//         mat_ins,
+//         mat_del,
+//         ins_mat,
+//         ins_ins,
+//         ins_del,
+//         del_mat,
+//         del_ins,
+//         del_del,
+//         mut mat_emit,
+//         mut ins_emit,
+//     } = hmm.clone();
+//     let mut transitions = [
+//         [mat_mat, mat_ins, mat_del],
+//         [ins_mat, ins_ins, ins_del],
+//         [del_mat, del_ins, del_del],
+//     ];
+//     transitions.iter_mut().flatten().for_each(|x| *x *= PRIOR);
+//     mat_emit.iter_mut().for_each(|x| *x *= PRIOR);
+//     ins_emit.iter_mut().for_each(|x| *x *= PRIOR);
+//     for (seq, ops) in seqs.iter().zip(ops.iter()) {
+//         let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
+//         register_alignments(template, seq, ops, params);
+//     }
+//     let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
+//     let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
+//     let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
+//     PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit)
+// }
 
-pub fn register_alignments(
-    template: &[u8],
-    xs: &[u8],
-    ops: &[Op],
-    (transitions, mat_emit, ins_emit): (&mut [[f64; 3]; 3], &mut [f64; 16], &mut [f64; 20]),
-) {
-    fn op_to_state(op: Op) -> usize {
-        match op {
-            Op::Mismatch => 0,
-            Op::Match => 0,
-            Op::Ins => 1,
-            Op::Del => 2,
-        }
-    }
-    fn base_to_idx(base: u8) -> usize {
-        match base {
-            b'A' | b'a' => 0,
-            b'C' | b'c' => 1,
-            b'G' | b'g' => 2,
-            b'T' | b't' => 3,
-            _ => panic!(),
-        }
-    }
-    let mut state = op_to_state(ops[0]);
-    let (mut rpos, mut qpos) = (0, 0);
-    let rbase = base_to_idx(template[rpos]) << 2;
-    let qbase = base_to_idx(xs[qpos]);
-    match state {
-        0 => {
-            mat_emit[rbase | qbase] += 1f64;
-            rpos += 1;
-            qpos += 1;
-        }
-        1 => {
-            ins_emit[rbase | qbase] += 1f64;
-            qpos += 1;
-        }
-        _ => {
-            rpos += 1;
-        }
-    }
-    for op in ops.iter().skip(1) {
-        let next = op_to_state(*op);
-        transitions[state][next] += 1f64;
-        state = next;
-        if state == 2 {
-            rpos += 1;
-            continue;
-        }
-        let rbase = base_to_idx(template[rpos]) << 2;
-        let qbase = base_to_idx(xs[qpos]);
-        match state {
-            0 => {
-                mat_emit[rbase | qbase] += 1f64;
-                rpos += 1;
-                qpos += 1;
-            }
-            _ => {
-                ins_emit[rbase | qbase] += 1f64;
-                qpos += 1;
-            }
-        }
-    }
-    for &base in template.iter() {
-        ins_emit[16 + base_to_idx(base)] += 1.0;
-    }
-}
+// pub fn register_alignments(
+//     template: &[u8],
+//     xs: &[u8],
+//     ops: &[Op],
+//     (transitions, mat_emit, ins_emit): (&mut [[f64; 3]; 3], &mut [f64; 16], &mut [f64; 20]),
+// ) {
+//     fn op_to_state(op: Op) -> usize {
+//         match op {
+//             Op::Mismatch => 0,
+//             Op::Match => 0,
+//             Op::Ins => 1,
+//             Op::Del => 2,
+//         }
+//     }
+//     fn base_to_idx(base: u8) -> usize {
+//         match base {
+//             b'A' | b'a' => 0,
+//             b'C' | b'c' => 1,
+//             b'G' | b'g' => 2,
+//             b'T' | b't' => 3,
+//             _ => panic!(),
+//         }
+//     }
+//     let mut state = op_to_state(ops[0]);
+//     let (mut rpos, mut qpos) = (0, 0);
+//     let rbase = base_to_idx(template[rpos]) << 2;
+//     let qbase = base_to_idx(xs[qpos]);
+//     match state {
+//         0 => {
+//             mat_emit[rbase | qbase] += 1f64;
+//             rpos += 1;
+//             qpos += 1;
+//         }
+//         1 => {
+//             ins_emit[rbase | qbase] += 1f64;
+//             qpos += 1;
+//         }
+//         _ => {
+//             rpos += 1;
+//         }
+//     }
+//     for op in ops.iter().skip(1) {
+//         let next = op_to_state(*op);
+//         transitions[state][next] += 1f64;
+//         state = next;
+//         if state == 2 {
+//             rpos += 1;
+//             continue;
+//         }
+//         let rbase = base_to_idx(template[rpos]) << 2;
+//         let qbase = base_to_idx(xs[qpos]);
+//         match state {
+//             0 => {
+//                 mat_emit[rbase | qbase] += 1f64;
+//                 rpos += 1;
+//                 qpos += 1;
+//             }
+//             _ => {
+//                 ins_emit[rbase | qbase] += 1f64;
+//                 qpos += 1;
+//             }
+//         }
+//     }
+//     for &base in template.iter() {
+//         ins_emit[16 + base_to_idx(base)] += 1.0;
+//     }
+// }

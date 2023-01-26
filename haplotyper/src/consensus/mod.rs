@@ -1,9 +1,9 @@
 use crate::assemble::ditch_graph::ContigEncoding;
 use crate::assemble::ditch_graph::UnitAlignmentInfo;
-use crate::model_tune::get_model;
+use crate::model_tune::ModelFit;
 use definitions::*;
 use gfa::Segment;
-use kiley::hmm::guided::PairHiddenMarkovModel;
+use kiley::hmm::guided::PairHiddenMarkovModelOnStrands;
 use kiley::Op;
 use rand::prelude::SliceRandom;
 use rand::Rng;
@@ -84,14 +84,14 @@ impl Polish for DataSet {
         dump_path: &Option<String>,
     ) -> Vec<Segment> {
         let mut alignments_on_contigs = self.distribute_to_contig(segments, encs, config);
-        let hmm = get_model(self).unwrap();
+        let models = self.fit_models_on_both_strands().unwrap();
         let polished: Vec<_> = alignments_on_contigs
             .iter_mut()
             .map(|(sid, alignments)| {
                 log::debug!("POLISH\t{sid}");
                 let seg = segments.iter().find(|seg| &seg.sid == sid).unwrap();
                 let seg = seg.sequence.as_ref().unwrap().as_bytes();
-                let seq = polish(sid, seg, alignments, &hmm, config);
+                let seq = polish(sid, seg, alignments, &models, config);
                 (sid.clone(), seq)
             })
             .map(|(sid, seq)| {
@@ -261,8 +261,8 @@ fn log_identity(sid: &str, alignments: &[Alignment]) {
     }
 }
 
-// (alignment index, node index, operations, seq)
-type SeqOps<'a> = (usize, usize, &'a [u8], Vec<Op>);
+// (alignment index, node index, direction, operations, seq)
+type SeqOps<'a> = (usize, usize, bool, &'a [u8], Vec<Op>);
 type SeqOpsOnWindow<'a> = Vec<SeqOps<'a>>;
 type UsedRange = (TipPos, TipPos);
 use std::collections::HashMap;
@@ -283,14 +283,14 @@ fn allocate_on_windows(
                 assert!(start.0 == end.0 || start.0 + 1 == end.0);
             }
             for (idx, (pos, seq, ops)) in chunks.into_iter().enumerate() {
-                slots[pos].push((aln_idx, idx, seq, ops));
+                slots[pos].push((aln_idx, idx, aln.is_forward, seq, ops));
             }
             (aln_idx, (start, end))
         })
         .collect();
     if round != 0 {
         for pileup in slots.iter_mut() {
-            pileup.sort_by_cached_key(|x| x.3.iter().filter(|&&op| op != Op::Match).count());
+            pileup.sort_by_cached_key(|x| x.4.iter().filter(|&&op| op != Op::Match).count());
         }
     }
     (slots, used_range)
@@ -300,14 +300,11 @@ pub fn polish(
     sid: &str,
     draft: &[u8],
     alignments: &mut [Alignment],
-    hmm: &PairHiddenMarkovModel,
+    models: &PairHiddenMarkovModelOnStrands,
     config: &PolishConfig,
 ) -> Vec<u8> {
     let window = config.window_size;
     debug!("POLISH\tWINDOW\t{window}");
-    let mut hmm = hmm.clone();
-    let hmm = &mut hmm;
-    let radius = config.radius;
     let mut polished = draft.to_vec();
     log_identity(sid, alignments);
     let min_coverage = config.min_coverage;
@@ -315,18 +312,19 @@ pub fn polish(
         let to_refresh = 0 == round;
         let (mut pileups, used_ranges) =
             allocate_on_windows(alignments, round, window, polished.len());
-        train_hmm(hmm, &polished, window, &pileups, radius);
         let polished_seg: Vec<_> = polished
             .par_chunks(window)
             .zip(pileups.par_iter_mut())
             .map(|(draft, pileup)| {
-                let (seqs, ops): (Vec<_>, Vec<_>) = pileup
-                    .iter_mut()
-                    .map(|(_, _, seq, ops)| (*seq, ops))
-                    .unzip();
+                let (mut seqs, mut opss, mut strands) = (vec![], vec![], vec![]);
+                for (_, _, strand, seq, ops) in pileup.iter_mut() {
+                    strands.push(*strand);
+                    seqs.push(*seq);
+                    opss.push(ops);
+                }
                 match seqs.len() < min_coverage {
                     true => draft.to_vec(),
-                    false => polish_seg(hmm, draft, &seqs, ops, config, to_refresh),
+                    false => polish_seg(models, draft, &strands, &seqs, opss, config, to_refresh),
                 }
             })
             .collect();
@@ -347,7 +345,7 @@ pub fn polish(
         // Fix alignment.
         let mut recovered: HashMap<_, Vec<_>> = HashMap::new();
         for pileup in pileups {
-            for (idx, pos, _, ops) in pileup {
+            for (idx, pos, _, _, ops) in pileup {
                 recovered.entry(idx).or_default().push((pos, ops));
             }
         }
@@ -370,107 +368,106 @@ pub fn polish(
     polished
 }
 
-#[allow(dead_code)]
-fn get_threshold(pileups: &[SeqOpsOnWindow]) -> f64 {
-    let identity_rates: Vec<_> = pileups
-        .iter()
-        .filter(|pileup| !pileup.is_empty())
-        .map(|pileup| {
-            let matches: f64 = pileup
-                .iter()
-                .map(|(_, _, _, ops)| {
-                    let mat = ops.iter().filter(|&&op| op == Op::Match).count();
-                    mat as f64 / ops.len() as f64
-                })
-                .sum();
-            matches / pileup.len() as f64
-        })
-        .collect();
-    let identity_rate = identity_rates.iter().sum::<f64>() / identity_rates.len() as f64;
-    let var = identity_rates
-        .iter()
-        .map(|e| (e - identity_rate).powi(2))
-        .sum::<f64>()
-        / identity_rates.len() as f64;
-    let sd = var.sqrt().min(0.02);
-    let thr = identity_rate - 5f64 * sd;
-    debug!("TRAIN\t{identity_rate:.3}\t{sd:.3}\t{thr:.3}");
-    thr
-}
+// #[allow(dead_code)]
+// fn get_threshold(pileups: &[SeqOpsOnWindow]) -> f64 {
+//     let identity_rates: Vec<_> = pileups
+//         .iter()
+//         .filter(|pileup| !pileup.is_empty())
+//         .map(|pileup| {
+//             let matches: f64 = pileup
+//                 .iter()
+//                 .map(|(_, _, _, ops)| {
+//                     let mat = ops.iter().filter(|&&op| op == Op::Match).count();
+//                     mat as f64 / ops.len() as f64
+//                 })
+//                 .sum();
+//             matches / pileup.len() as f64
+//         })
+//         .collect();
+//     let identity_rate = identity_rates.iter().sum::<f64>() / identity_rates.len() as f64;
+//     let var = identity_rates
+//         .iter()
+//         .map(|e| (e - identity_rate).powi(2))
+//         .sum::<f64>()
+//         / identity_rates.len() as f64;
+//     let sd = var.sqrt().min(0.02);
+//     let thr = identity_rate - 5f64 * sd;
+//     debug!("TRAIN\t{identity_rate:.3}\t{sd:.3}\t{thr:.3}");
+//     thr
+// }
 
-#[allow(dead_code)]
-fn train_hmm_dev(
-    hmm: &mut PairHiddenMarkovModel,
-    draft: &[u8],
-    window: usize,
-    pileups: &[SeqOpsOnWindow],
-) {
-    let identity_threshold = get_threshold(pileups);
-    let mut transitions = [[1f64; 3]; 3];
-    let mut mat_emit = [1f64; 16];
-    let mut ins_emit = [1f64; 20];
-    for (template, pileup) in draft.chunks_exact(window).zip(pileups.iter()) {
-        let filtered = pileup.iter().filter_map(|(_, _, seq, ops)| {
-            let mat = ops.iter().filter(|&&op| op == Op::Match).count();
-            (identity_threshold < (mat as f64 / ops.len() as f64)).then_some((seq, ops.as_slice()))
-        });
-        for (seq, ops) in filtered {
-            let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
-            crate::model_tune::register_alignments(template, seq, ops, params);
-        }
-    }
-    let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
-    let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
-    let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
-    *hmm = PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit);
-    debug!("TRAIN\n{hmm}");
-}
+// #[allow(dead_code)]
+// fn train_hmm_dev(
+//     hmm: &mut PairHiddenMarkovModel,
+//     draft: &[u8],
+//     window: usize,
+//     pileups: &[SeqOpsOnWindow],
+// ) {
+//     let identity_threshold = get_threshold(pileups);
+//     let mut transitions = [[1f64; 3]; 3];
+//     let mut mat_emit = [1f64; 16];
+//     let mut ins_emit = [1f64; 20];
+//     for (template, pileup) in draft.chunks_exact(window).zip(pileups.iter()) {
+//         let filtered = pileup.iter().filter_map(|(_, _, seq, ops)| {
+//             let mat = ops.iter().filter(|&&op| op == Op::Match).count();
+//             (identity_threshold < (mat as f64 / ops.len() as f64)).then_some((seq, ops.as_slice()))
+//         });
+//         for (seq, ops) in filtered {
+//             let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
+//             crate::model_tune::register_alignments(template, seq, ops, params);
+//         }
+//     }
+//     let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
+//     let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
+//     let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
+//     *hmm = PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit);
+//     debug!("TRAIN\n{hmm}");
+// }
 
-#[allow(dead_code)]
-fn train_hmm(
-    hmm: &mut PairHiddenMarkovModel,
-    draft: &[u8],
-    window: usize,
-    pileups: &[SeqOpsOnWindow],
-    radius: usize,
-) {
-    let mut coverages: Vec<_> = pileups.iter().map(|x| x.len()).collect();
-    if coverages.is_empty() {
-        return;
-    }
-    let idx = coverages.len() / 2;
-    let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
-    let range = 2 * window / 3..4 * window / 3;
-    let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
-    let iterator = draft
-        .chunks(window)
-        .zip(pileups.iter())
-        .map(|(template, pileup)| {
-            let (seqs, ops): (Vec<&[u8]>, Vec<&[Op]>) = pileup
-                .iter()
-                .filter_map(|(_, _, seq, ops)| {
-                    let indel = ops.iter().map(|op| match op {
-                        Op::Mismatch => 1,
-                        Op::Match => -1,
-                        Op::Ins => 1,
-                        Op::Del => 1,
-                    });
-                    if crate::misc::max_region(indel) < 30 {
-                        Some((seq, ops.as_slice()))
-                    } else {
-                        None
-                    }
-                })
-                .unzip();
-            (template, seqs, ops)
-        })
-        .filter(|(draft, _, _)| range.contains(&draft.len()))
-        .filter(|(_, _, ops)| cov_range.contains(&ops.len()))
-        .take(3);
-    for (template, seqs, ops) in iterator {
-        hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius);
-    }
-}
+// fn train_hmm(
+//     hmm: &mut PairHiddenMarkovModel,
+//     draft: &[u8],
+//     window: usize,
+//     pileups: &[SeqOpsOnWindow],
+//     radius: usize,
+// ) {
+//     let mut coverages: Vec<_> = pileups.iter().map(|x| x.len()).collect();
+//     if coverages.is_empty() {
+//         return;
+//     }
+//     let idx = coverages.len() / 2;
+//     let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
+//     let range = 2 * window / 3..4 * window / 3;
+//     let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
+//     let iterator = draft
+//         .chunks(window)
+//         .zip(pileups.iter())
+//         .map(|(template, pileup)| {
+//             let (seqs, ops): (Vec<&[u8]>, Vec<&[Op]>) = pileup
+//                 .iter()
+//                 .filter_map(|(_, _, _, seq, ops)| {
+//                     let indel = ops.iter().map(|op| match op {
+//                         Op::Mismatch => 1,
+//                         Op::Match => -1,
+//                         Op::Ins => 1,
+//                         Op::Del => 1,
+//                     });
+//                     if crate::misc::max_region(indel) < 30 {
+//                         Some((seq, ops.as_slice()))
+//                     } else {
+//                         None
+//                     }
+//                 })
+//                 .unzip();
+//             (template, seqs, ops)
+//         })
+//         .filter(|(draft, _, _)| range.contains(&draft.len()))
+//         .filter(|(_, _, ops)| cov_range.contains(&ops.len()))
+//         .take(3);
+//     for (template, seqs, ops) in iterator {
+//         hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius);
+//     }
+// }
 
 fn length_median(seqs: &[&[u8]]) -> usize {
     let mut len: Vec<_> = seqs.iter().map(|x| x.len()).collect();
@@ -493,11 +490,13 @@ fn remove_refernece(ops: Vec<&mut Vec<Op>>, seqs: &[&[u8]]) {
 }
 
 type SplitQuery<'a, 'b> = (
+    Vec<bool>,
     Vec<&'a [u8]>,
     Vec<&'b mut Vec<Op>>,
     Vec<(usize, &'b mut Vec<Op>)>,
 );
 fn split_sequences<'a, 'b>(
+    strands: &[bool],
     seqs: &[&'a [u8]],
     ops: Vec<&'b mut Vec<Op>>,
     length_median: usize,
@@ -505,20 +504,21 @@ fn split_sequences<'a, 'b>(
     let mut will_be_use = vec![];
     let mut update_indices = vec![];
     assert_eq!(seqs.len(), ops.len());
-    for (idx, (seq, ops)) in seqs.iter().zip(ops).enumerate() {
-        // TODO: Here check the validity of the pHMM.
+    for (idx, ((seq, ops), strand)) in seqs.iter().zip(ops).zip(strands).enumerate() {
         if within_range(length_median, seq.len(), 0.15) {
-            will_be_use.push((*seq, ops));
+            will_be_use.push((*seq, ops, *strand));
         } else {
             update_indices.push((idx, ops));
         }
     }
-    // will_be_use.sort_by_cached_key(|(_, ops)| {
-    //     let num_match = ops.iter().filter(|&&x| x == Op::Match).count();
-    //     std::cmp::Reverse(num_match)
-    // });
-    let (use_seqs, use_ops): (Vec<_>, Vec<_>) = will_be_use.into_iter().unzip();
-    (use_seqs, use_ops, update_indices)
+    let (mut use_seqs, mut use_ops, mut use_strands) = (vec![], vec![], vec![]);
+    for (seq, ops, strand) in will_be_use {
+        use_seqs.push(seq);
+        use_ops.push(ops);
+        use_strands.push(strand);
+    }
+    // let (use_seqs, use_ops): (Vec<_>, Vec<_>) = will_be_use.into_iter().unzip();
+    (use_strands, use_seqs, use_ops, update_indices)
 }
 
 fn global_align(query: &[u8], target: &[u8]) -> Vec<Op> {
@@ -543,8 +543,9 @@ fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Ve
 }
 
 fn polish_seg(
-    hmm: &PairHiddenMarkovModel,
+    models: &PairHiddenMarkovModelOnStrands,
     draft: &[u8],
+    strands: &[bool],
     seqs: &[&[u8]],
     ops: Vec<&mut Vec<Op>>,
     config: &PolishConfig,
@@ -561,7 +562,8 @@ fn polish_seg(
         let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
         assert_eq!(reflen, draft.len());
     }
-    let (use_seqs, use_ops, update_indices) = split_sequences(seqs, ops, length_median);
+    let (use_strands, use_seqs, use_ops, update_indices) =
+        split_sequences(strands, seqs, ops, length_median);
     assert_eq!(seqs.len(), use_seqs.len() + update_indices.len());
     let mut polished = draft.to_vec();
     let mut temp_ops: Vec<_> = use_ops.iter().map(|x| x.to_vec()).collect();
@@ -571,9 +573,14 @@ fn polish_seg(
         true => polished,
         false => bootstrap_consensus(&use_seqs, &mut temp_ops, radius),
     };
-    //    let hmm = crate::model_tune::fine_tune(hmm, &polished, &use_seqs, &temp_ops);
-    polished =
-        hmm.polish_until_converge_with_take(&polished, &use_seqs, &mut temp_ops, radius, max_cov);
+    let config = kiley::hmm::guided::HMMConfig::new(radius, max_cov, 0);
+    polished = models.polish_until_converge_with_conf(
+        &polished,
+        &use_seqs,
+        &mut temp_ops,
+        &use_strands,
+        &config,
+    );
     assert_eq!(temp_ops.len(), use_ops.len());
     for (old, new) in std::iter::zip(use_ops, temp_ops) {
         *old = new;

@@ -11,10 +11,6 @@ fn main() -> std::io::Result<()> {
         .collect();
     for record in records.iter() {
         let mut qpos = 0;
-        // let mut qpos = match record.relstrand {
-        //     true => record.qstart,
-        //     false => record.qend,
-        // };
         let mut rpos = record.tstart;
         let qname = &record.qname;
         let rname = &record.tname;
