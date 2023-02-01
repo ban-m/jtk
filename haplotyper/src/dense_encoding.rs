@@ -548,7 +548,8 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
     if seqs.len() <= cov_thr {
         return None;
     }
-    let draft = kiley::polish_by_pileup(&seqs[0], &seqs[1..]);
+    let draft = seqs[0].to_vec();
+    // let draft = kiley::polish_by_pileup(&seqs[0], &seqs[1..]);
     let task = edlib_sys::AlignTask::Alignment;
     let mode = edlib_sys::AlignMode::Global;
     let mut ops: Vec<_> = seqs

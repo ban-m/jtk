@@ -45,15 +45,16 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     cluster_num: usize,
     band: usize,
 ) -> ClusteringResult {
-    let mut template = kiley::ternary_consensus_by_chunk(reads, band);
-    let mut hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    let mut template =
+        kiley::bialignment::guided::polish_until_converge(reads[0].borrow(), reads, band);
+    let mut hmm = kiley::hmm::PairHiddenMarkovModel::default();
     hmm.fit_naive(&template, reads, band);
     let gains = crate::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let cov = reads.len() as f64 / cluster_num as f64;
     let config = ClusteringConfig::new(band, cluster_num, cov, cov, &gains);
     let mut ops: Vec<_> = reads
         .iter()
-        .map(|x| hmm.align(&template, x.borrow(), band).1)
+        .map(|x| hmm.align_guided(&template, x.borrow(), band).1)
         .collect();
     for t in 1..3 {
         hmm.fit_naive_with(&template, reads, &ops, band / t);
@@ -69,7 +70,7 @@ fn modification_table<T: std::borrow::Borrow<[u8]>>(
     reads: &[T],
     ops: &[Vec<kiley::Op>],
     band: usize,
-    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    hmm: &kiley::hmm::PairHiddenMarkovModel,
 ) -> Vec<Vec<f64>> {
     reads
         .iter()
@@ -100,7 +101,7 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     ops: &[Vec<kiley::Op>],
     strands: &[bool],
     rng: &mut R,
-    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    hmm: &kiley::hmm::PairHiddenMarkovModel,
     config: &ClusteringConfig,
 ) -> ClusteringDevResult {
     if config.copy_num < 2 {
@@ -136,7 +137,7 @@ pub fn search_variants<R: Rng, T: std::borrow::Borrow<[u8]>>(
     ops: &[Vec<kiley::Op>],
     strands: &[bool],
     rng: &mut R,
-    hmm: &kiley::hmm::guided::PairHiddenMarkovModel,
+    hmm: &kiley::hmm::PairHiddenMarkovModel,
     config: &ClusteringConfig,
 ) -> FeatureVector {
     let profiles = modification_table(template, reads, ops, config.band_width, hmm);

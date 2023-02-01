@@ -47,7 +47,6 @@ impl MultiplicityEstimation for DataSet {
                 _ => old,
             }
         };
-        // graph.remove_lightweight_edges(thr, false);
         debug!("SQUISHED\t{graph}");
         use rand::SeedableRng;
         use rand_xoshiro::Xoroshiro128PlusPlus;

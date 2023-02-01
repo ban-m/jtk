@@ -56,7 +56,7 @@ fn show_minimap2_version() {
     let version = std::process::Command::new("minimap2")
         .args(["--version"])
         .output()
-        .unwrap();
+        .expect("Minimap2 is unavailable.");
     if !version.status.success() {
         error!("Minimap2 is not available. Please install minimap2(https://github.com/lh3/minimap2) first.");
         panic!("Minimap2,{:?}", String::from_utf8_lossy(&version.stderr));
@@ -429,10 +429,10 @@ fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
         .par_iter()
         .map(|(key, seqs)| {
             let radius = read_type.band_width(config.chunk_len);
-            let mut draft = pick_median_length(seqs.as_slice());
-            for _ in 0..2 {
-                draft = kiley::polish_by_pileup(&draft, seqs);
-            }
+            let draft = pick_median_length(seqs.as_slice());
+            // for _ in 0..2 {
+            //     draft = kiley::polish_by_pileup(&draft, seqs);
+            // }
             let consensus = kiley::bialignment::guided::polish_until_converge(&draft, seqs, radius);
             (key.clone(), consensus)
         })

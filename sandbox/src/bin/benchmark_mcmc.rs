@@ -92,7 +92,7 @@ fn main() -> std::io::Result<()> {
                 .collect()
         })
         .collect();
-    let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    let hmm = kiley::hmm::PairHiddenMarkovModel::default();
     let template = hmm.polish_until_converge(&template, &reads, command_arg.radius);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;
@@ -101,7 +101,7 @@ fn main() -> std::io::Result<()> {
     use haplotyper::local_clustering::kmeans;
     let ops: Vec<_> = reads
         .iter()
-        .map(|x| hmm.align(&template, x, band).1)
+        .map(|x| hmm.align_guided(&template, x, band).1)
         .collect();
     let feature_vectors =
         kmeans::search_variants(&template, &reads, &ops, &strands, &mut rng, &hmm, &config);

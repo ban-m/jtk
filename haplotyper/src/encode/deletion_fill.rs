@@ -341,7 +341,6 @@ fn correct_deletion_error(
     new_inserts
 }
 
-
 const THR: f64 = 10f64;
 fn try_encoding_head(
     nodes: &[Node],
@@ -496,7 +495,7 @@ fn fine_mapping<'a>(
         // let mut ops = vec![kiley::Op::Del; start];
         // ops.extend(edlib_op_to_kiley_op(aln.operations().unwrap()));
         // ops.extend(vec![kiley::Op::Del; orig_query.len() - end - 1]);
-        let (xr, ar, yr) = kiley::recover(unitseq, query, &ops);
+        let (xr, ar, yr) = kiley::op::recover(unitseq, query, &ops);
         for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
             eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
             eprintln!("ALN\t{}", String::from_utf8_lossy(ar));

@@ -45,8 +45,8 @@ fn polish_segment(
     seed: u64,
 ) -> Vec<u8> {
     let config = crate::consensus::PolishConfig::new(seed, 2, 50, window_size, 50, 2);
-    let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
-    let models = kiley::hmm::guided::PairHiddenMarkovModelOnStrands::new(hmm.clone(), hmm);
+    let hmm = kiley::hmm::PairHiddenMarkovModel::default();
+    let models = kiley::hmm::PairHiddenMarkovModelOnStrands::new(hmm.clone(), hmm);
     warn!("TODO: Train parameters.");
     crate::consensus::polish(sid, draft, alns, &models, &config)
 }

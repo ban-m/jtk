@@ -1,7 +1,7 @@
 use rand::{prelude::SliceRandom, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
-pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) -> f64 {
+pub fn estimate_minimum_gain(hmm: &kiley::hmm::PairHiddenMarkovModel) -> f64 {
     const SEED: u64 = 23908;
     const SAMPLE_NUM: usize = 1000;
     const SEQ_NUM: usize = 500;
@@ -18,8 +18,8 @@ pub fn estimate_minimum_gain(hmm: &kiley::hmm::guided::PairHiddenMarkovModel) ->
             let mut lks: Vec<_> = (0..SEQ_NUM)
                 .map(|_| {
                     let read = hmm.gen(&hap1, &mut rng);
-                    let lk_base = hmm.likelihood(&hap1, &read, BAND);
-                    let lk_diff = hmm.likelihood(&hap2, &read, BAND);
+                    let lk_base = hmm.likelihood_bootstrap(&hap1, &read, BAND);
+                    let lk_diff = hmm.likelihood_bootstrap(&hap2, &read, BAND);
                     lk_base - lk_diff
                 })
                 .collect();
@@ -152,7 +152,7 @@ impl Pvalues {
     }
 }
 
-use kiley::hmm::guided::PairHiddenMarkovModel;
+use kiley::hmm::PairHiddenMarkovModel;
 pub fn estimate_gain(
     hmm: &PairHiddenMarkovModel,
     seed: u64,
@@ -261,8 +261,8 @@ fn gain_of(
             let mut lk_diff: Vec<_> = (0..SEQ_NUM)
                 .map(|_| {
                     let read = hmm.gen(&diff, &mut rng);
-                    let lk_base = hmm.likelihood(&template, &read, band);
-                    let lk_diff = hmm.likelihood(&diff, &read, band);
+                    let lk_base = hmm.likelihood_bootstrap(&template, &read, band);
+                    let lk_diff = hmm.likelihood_bootstrap(&diff, &read, band);
                     lk_diff - lk_base
                 })
                 .collect();
@@ -276,8 +276,8 @@ fn gain_of(
             let null_prob = (0..SEQ_NUM)
                 .filter(|_| {
                     let read = hmm.gen(&template, &mut rng);
-                    let lk_base = hmm.likelihood(&template, &read, band);
-                    let lk_diff = hmm.likelihood(&diff, &read, band);
+                    let lk_base = hmm.likelihood_bootstrap(&template, &read, band);
+                    let lk_diff = hmm.likelihood_bootstrap(&diff, &read, band);
                     lk_base + min_gain < lk_diff
                 })
                 .count();

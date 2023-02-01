@@ -1,8 +1,9 @@
 use definitions::*;
+use kiley::hmm::guided::HMMConfig;
 use std::collections::HashMap;
 
-use kiley::hmm::guided::PairHiddenMarkovModel;
-use kiley::hmm::guided::PairHiddenMarkovModelOnStrands;
+use kiley::hmm::PairHiddenMarkovModel;
+use kiley::hmm::PairHiddenMarkovModelOnStrands;
 
 pub trait ModelFit {
     fn fit_models_on_both_strands(&self) -> Option<PairHiddenMarkovModelOnStrands>;
@@ -18,7 +19,7 @@ impl ModelFit for DataSet {
     }
 }
 
-pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::guided::PairHiddenMarkovModel> {
+pub fn get_model(ds: &DataSet) -> Option<kiley::hmm::PairHiddenMarkovModel> {
     ds.model_param.as_ref().map(|param| {
         let &HMMParam {
             mat_mat,
@@ -87,27 +88,11 @@ pub fn update_model(ds: &mut DataSet) {
     });
 }
 
-const TRAIN_UNIT_SIZE: usize = 2;
+const TRAIN_UNIT_SIZE: usize = 3;
 const TRAIN_ROUND: usize = 3;
 fn estimate_model_parameters_on_both_strands(
     ds: &DataSet,
 ) -> Option<PairHiddenMarkovModelOnStrands> {
-    let model = ds.get_model()?;
-    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
-    let (fpileups, rpileups) = {
-        let mut fpileups: HashMap<_, _> = chunks.keys().map(|&k| (k, vec![])).collect();
-        let mut rpileups: HashMap<_, _> = fpileups.clone();
-        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            let bucket = match node.is_forward {
-                true => fpileups.get_mut(&node.unit),
-                false => rpileups.get_mut(&node.unit),
-            };
-            if let Some(bucket) = bucket {
-                bucket.push(node);
-            }
-        }
-        (truncate_bucket(fpileups), truncate_bucket(rpileups))
-    };
     fn truncate_bucket<T>(pileups: HashMap<u64, Vec<T>>) -> Vec<(u64, Vec<T>)> {
         let mut covs: Vec<_> = pileups.values().map(|x| x.len()).collect();
         let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
@@ -117,19 +102,24 @@ fn estimate_model_parameters_on_both_strands(
             .take(TRAIN_UNIT_SIZE)
             .collect()
     }
-    for (uid, seqs) in fpileups.iter() {
-        debug!("LOCAL\tSAMPLE\t{uid}\t{}\tFORWARD", seqs.len());
-    }
-    for (uid, seqs) in rpileups.iter() {
-        debug!("LOCAL\tSAMPLE\t{uid}\t{}\tREVERSE", seqs.len());
-    }
-    fn train_inner(
+    let model = ds.get_model()?;
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|c| (c.id, c)).collect();
+    let models = PairHiddenMarkovModelOnStrands::new(model.clone(), model);
+    let pileups = {
+        let mut pileups: HashMap<_, _> = chunks.keys().map(|&k| (k, vec![])).collect();
+        for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
+            pileups.entry(node.unit).or_default().push(node);
+        }
+        truncate_bucket(pileups)
+    };
+    let models = train(ds.read_type, &chunks, &pileups, &models);
+    fn train(
         read_type: ReadType,
         chunks: &HashMap<u64, &Unit>,
         pileups: &[(u64, Vec<&Node>)],
-        model: &PairHiddenMarkovModel,
-    ) -> PairHiddenMarkovModel {
-        let mut model = model.clone();
+        models: &PairHiddenMarkovModelOnStrands,
+    ) -> PairHiddenMarkovModelOnStrands {
+        let mut models = models.clone();
         let mut polishing_pairs: Vec<_> = pileups
             .iter()
             .filter_map(|(uid, nodes)| {
@@ -140,31 +130,42 @@ fn estimate_model_parameters_on_both_strands(
                     .map(|n| crate::misc::ops_to_kiley(&n.cigar))
                     .collect();
                 let seqs: Vec<_> = nodes.iter().map(|n| n.seq()).collect();
+                let strands: Vec<_> = nodes.iter().map(|n| n.is_forward).collect();
                 let chunk_seq = ref_unit.seq().to_vec();
-                Some((chunk_seq, seqs, ops, band_width))
+                Some((chunk_seq, seqs, ops, strands, band_width))
             })
             .collect();
+        assert!(!polishing_pairs.is_empty());
+        use rayon::prelude::*;
+        let bw = polishing_pairs.iter().map(|x| x.4).max().unwrap();
         for _ in 0..TRAIN_ROUND {
-            for (consensus, seqs, ops, bw) in polishing_pairs.iter_mut() {
-                use kiley::bialignment::guided;
-                *consensus = guided::polish_until_converge_with(consensus, seqs, ops, *bw);
-                *consensus = model.polish_until_converge_with(consensus, seqs, ops, *bw);
-                model.fit_naive_with_par(consensus, seqs, ops, *bw);
-            }
+            polishing_pairs
+                .par_iter_mut()
+                .for_each(|(cons, seqs, ops, strands, bw)| {
+                    let config = HMMConfig::new(*bw, seqs.len(), 0);
+                    *cons =
+                        models.polish_until_converge_with_conf(cons, seqs, ops, strands, &config);
+                });
+            let training_datapack: Vec<_> = polishing_pairs
+                .iter()
+                .map(|(cons, seqs, ops, strands, _)| {
+                    kiley::hmm::TrainingDataPack::new(cons, strands, seqs, ops)
+                })
+                .collect();
+            models.fit_multiple_with_par(&training_datapack, bw);
         }
-        debug!("HMM\n{}", model);
-        model
+        debug!("FORWARD\tHMM\n{}", models.forward());
+        debug!("REVERSE\tHMM\n{}", models.reverse());
+        models.clone()
     }
-    let forward = train_inner(ds.read_type, &chunks, &fpileups, &model);
-    let reverse = train_inner(ds.read_type, &chunks, &rpileups, &model);
-    Some(PairHiddenMarkovModelOnStrands::new(forward, reverse))
+    Some(models)
 }
 
 fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     read_type: ReadType,
     pileups: &HashMap<(u64, u64), Vec<N>>,
     chunks: &HashMap<u64, &Unit>,
-) -> kiley::hmm::guided::PairHiddenMarkovModel {
+) -> kiley::hmm::PairHiddenMarkovModel {
     let mut covs: Vec<_> = pileups.iter().map(|x| x.1.len()).collect();
     let (_, &mut cov, _) = covs.select_nth_unstable(pileups.len() / 2);
     let mut seqs_and_ref_units: Vec<_> = pileups
@@ -177,7 +178,7 @@ fn estimate_model_parameters<N: std::borrow::Borrow<Node>>(
     for (chunk, units) in seqs_and_ref_units.iter() {
         debug!("LOCAL\tSAMPLE\t{}\t{}", chunk.id, units.len());
     }
-    let mut hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
+    let mut hmm = kiley::hmm::PairHiddenMarkovModel::default();
     let mut polishing_pairs: Vec<_> = seqs_and_ref_units
         .iter()
         .map(|(ref_unit, nodes)| {

@@ -99,9 +99,12 @@ fn main() -> std::io::Result<()> {
                 .collect()
         })
         .collect();
-    let mut draft = kiley::ternary_consensus_by_chunk(&reads, band);
-    let hmm = kiley::hmm::guided::PairHiddenMarkovModel::default();
-    let mut ops: Vec<_> = reads.iter().map(|x| hmm.align(&draft, x, band).1).collect();
+    let mut draft = reads[0].to_vec();
+    let hmm = kiley::hmm::PairHiddenMarkovModel::default();
+    let mut ops: Vec<_> = reads
+        .iter()
+        .map(|x| hmm.align_guided(&draft, x, band).1)
+        .collect();
     draft = hmm.polish_until_converge_with(&draft, &reads, &mut ops, band);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;

@@ -3,7 +3,7 @@ use crate::assemble::ditch_graph::UnitAlignmentInfo;
 use crate::model_tune::ModelFit;
 use definitions::*;
 use gfa::Segment;
-use kiley::hmm::guided::PairHiddenMarkovModelOnStrands;
+use kiley::hmm::PairHiddenMarkovModelOnStrands;
 use kiley::Op;
 use rand::prelude::SliceRandom;
 use rand::Rng;
@@ -535,7 +535,8 @@ fn global_align(query: &[u8], target: &[u8]) -> Vec<Op> {
 }
 
 fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Vec<u8> {
-    let draft = kiley::ternary_consensus_by_chunk(seqs, radius);
+    // let draft = kiley::ternary_consensus_by_chunk(seqs, radius);
+    let draft = seqs[0].to_vec();
     for (seq, ops) in std::iter::zip(seqs, ops.iter_mut()) {
         *ops = global_align(seq, &draft);
     }
@@ -1239,7 +1240,7 @@ fn check(query: &[u8], seq: &[u8], is_forward: bool) {
             let (start, end) = aln.location().unwrap();
             let ops: Vec<_> = crate::misc::edlib_to_kiley(aln.operations().unwrap());
             let refr = &seq[start..end + 1];
-            let (r, a, q) = kiley::recover(refr, query, &ops);
+            let (r, a, q) = kiley::op::recover(refr, query, &ops);
             for ((r, a), q) in r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200)) {
                 eprintln!("{}", std::str::from_utf8(r).unwrap());
                 eprintln!("{}", std::str::from_utf8(a).unwrap());
@@ -1255,7 +1256,7 @@ fn check(query: &[u8], seq: &[u8], is_forward: bool) {
             let (start, end) = aln.location().unwrap();
             let ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
             let refr = &rev[start..end + 1];
-            let (r, a, q) = kiley::recover(refr, query, &ops);
+            let (r, a, q) = kiley::op::recover(refr, query, &ops);
             for ((r, a), q) in r.chunks(200).zip(a.chunks(200)).zip(q.chunks(200)) {
                 eprintln!("{}", std::str::from_utf8(r).unwrap());
                 eprintln!("{}", std::str::from_utf8(a).unwrap());

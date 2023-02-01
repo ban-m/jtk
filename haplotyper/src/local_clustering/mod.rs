@@ -280,7 +280,7 @@ fn update_by_clusterings(
 
 // TODO: this function is, very very slow. Please fasten this function, please.
 // Or, maybe we do not need to tune a pHMM on each chunk. We can just use one pHMM across all the chunks.
-type Phmm = kiley::hmm::guided::PairHiddenMarkovModel;
+type Phmm = kiley::hmm::PairHiddenMarkovModel;
 fn prep_consensus(
     hmm: &Phmm,
     draft: &[u8],

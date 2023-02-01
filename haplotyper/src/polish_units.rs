@@ -108,24 +108,23 @@ impl PolishUnit for DataSet {
                 let med_idx = pileup.len() / 2;
                 pileup.select_nth_unstable_by_key(med_idx, |x| x.seq().len());
                 pileup.swap(0, med_idx);
-                let draft = {
-                    let seqs: Vec<_> = pileup
-                        .iter()
-                        .map(|x| x.seq())
-                        .take(c.consensus_size)
-                        .collect();
-                    let median_len: usize = seqs[0].len();
-                    let radius = c.read_type().band_width(median_len);
-                    kiley::ternary_consensus_by_chunk(&seqs, radius)
-                };
-                pileup.iter_mut().for_each(|node| {
-                    let mode = edlib_sys::AlignMode::Global;
-                    let task = edlib_sys::AlignTask::Alignment;
-                    let aln = edlib_sys::align(node.seq(), &draft, mode, task);
-                    let k_ops = crate::misc::edlib_to_kiley(aln.operations().unwrap());
-                    node.cigar = crate::misc::kiley_op_to_ops(&k_ops);
+                let draft = pileup[0].seq();
+                let (seqs, mut ops): (Vec<_>, Vec<Vec<kiley::op::Op>>) = pileup
+                    .iter()
+                    .map(|x| {
+                        let ops = crate::misc::ops_to_kiley(&x.cigar);
+                        (x.seq(), ops)
+                    })
+                    .unzip();
+                use kiley::bialignment::guided::polish_until_converge_with_take;
+                let radius = c.read_type().band_width(draft.len());
+                let cov = c.consensus_size;
+                let consensus =
+                    polish_until_converge_with_take(draft, &seqs, &mut ops, radius, cov);
+                pileup.iter_mut().zip(ops).for_each(|(node, ops)| {
+                    node.cigar = crate::misc::kiley_op_to_ops(&ops);
                 });
-                (id, draft)
+                (id, consensus)
             })
             .collect();
         self.selected_chunks
