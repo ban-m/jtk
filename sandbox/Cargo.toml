@@ -21,7 +21,6 @@ gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
 rayon = "1.5.3"
 bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
-nalgebra = "0.31.0"
 clap = {version = "3.1.18", features = ["derive"]}
 kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.2.0"}
 # kiley = {path = "../../kiley"}

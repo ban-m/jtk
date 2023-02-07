@@ -36,35 +36,6 @@ impl<'a> ClusteringConfig<'a> {
     }
 }
 
-// Assignments, posterior, likelihood, consensus.
-type ClusteringResult = (Vec<usize>, Vec<Vec<f64>>, f64, Vec<u8>);
-/// Clustering given sequences. Return assignments, template, and LK.
-pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
-    reads: &[T],
-    rng: &mut R,
-    cluster_num: usize,
-    band: usize,
-) -> ClusteringResult {
-    let mut template =
-        kiley::bialignment::guided::polish_until_converge(reads[0].borrow(), reads, band);
-    let mut hmm = kiley::hmm::PairHiddenMarkovModel::default();
-    hmm.fit_naive(&template, reads, band);
-    let gains = crate::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
-    let cov = reads.len() as f64 / cluster_num as f64;
-    let config = ClusteringConfig::new(band, cluster_num, cov, cov, &gains);
-    let mut ops: Vec<_> = reads
-        .iter()
-        .map(|x| hmm.align_guided(&template, x.borrow(), band).1)
-        .collect();
-    for t in 1..3 {
-        hmm.fit_naive_with(&template, reads, &ops, band / t);
-        template = hmm.polish_until_converge_with(&template, reads, &mut ops, band / t);
-    }
-    let strands = vec![true; reads.len()];
-    let (asn, gains, lk, _) = clustering_dev(&template, reads, &ops, &strands, rng, &hmm, &config);
-    (asn, gains, lk, template)
-}
-
 fn modification_table<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],

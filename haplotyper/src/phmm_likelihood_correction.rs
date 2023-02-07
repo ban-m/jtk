@@ -1,6 +1,8 @@
 use definitions::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+
+use crate::model_tune::ModelFit;
 #[derive(Debug, Clone, Default)]
 pub struct CorrectionConfig {}
 pub trait AlignmentCorrection {
@@ -107,10 +109,10 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         *coverage.entry(node.unit).or_default() += 1;
     }
-    if ds.model_param.is_none() {
-        crate::model_tune::update_model(ds);
-    }
-    let hmm = crate::model_tune::get_model(ds).unwrap();
+    // if ds.model_param.is_none() {
+    // ds.update_models_on_both_strands();
+    // }
+    let hmm = ds.get_model();
     let gain = crate::likelihood_gains::estimate_minimum_gain(&hmm) * PROTECT_FACTOR;
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks
@@ -252,28 +254,11 @@ fn to_context<'a>(&(idx, read): &(usize, &'a EncodedRead)) -> Context<'a> {
     (up, center, tail)
 }
 
-// fn format_ctx(&(ref up, ref center, ref down): &Context) -> (Vec<String>, String, Vec<String>) {
-//     fn vec_to_str(xs: &[f64]) -> String {
-//         let xs: Vec<_> = xs.iter().map(|x| format!("{x:.2}")).collect();
-//         xs.join(",")
-//     }
-//     let up: Vec<_> = up
-//         .iter()
-//         .map(|(u, post)| format!("[{u}({})]", vec_to_str(post)))
-//         .collect();
-//     let donw: Vec<_> = down
-//         .iter()
-//         .map(|(u, post)| format!("[{u}({})]", vec_to_str(post)))
-//         .collect();
-//     let center = format!("{}({})", center.unit, vec_to_str(&center.posterior));
-//     (up, center, donw)
-// }
-
 fn clustering(
     reads: &[(usize, &EncodedRead)],
     (k, _upper_k): (usize, usize),
     copy_numbers: &[Vec<f64>],
-    unit: &Unit,
+    unit: &Chunk,
     _: &CorrectionConfig,
 ) -> (Vec<usize>, usize) {
     let id = unit.id;
@@ -286,7 +271,7 @@ fn clustering(
                 .iter()
                 .enumerate()
                 .map(|(j, dtx)| match i == j {
-                    false => alignment(ctx, dtx, copy_numbers, i, j),
+                    false => alignment(ctx, dtx, copy_numbers),
                     true => 0f64,
                 })
                 .collect()
@@ -476,8 +461,6 @@ fn alignment<'a>(
     (up1, center1, down1): &Context<'a>,
     ctx2: &Context<'a>,
     copy_numbers: &[Vec<f64>],
-    _i: usize,
-    _j: usize,
 ) -> f64 {
     let (up2, center2, down2) = ctx2;
     assert_eq!(center1.unit, center2.unit);
@@ -542,19 +525,19 @@ fn align_swg<'a>(
 }
 
 const MOCK_CP: f64 = 1.5;
-pub fn sim(xs: &[f64], ys: &[f64], cps: &[f64]) -> f64 {
+fn sim(xs: &[f64], ys: &[f64], cps: &[f64]) -> f64 {
     assert_eq!(xs.len(), cps.len());
     assert_eq!(xs.len(), ys.len());
     if cps.len() == 1 {
         let total: f64 = cps.iter().sum();
         return -(total.max(MOCK_CP) - 1f64).ln();
     }
-    let iter = xs
-        .iter()
-        .zip(ys.iter())
-        .zip(cps.iter())
-        .map(|((x, y), z)| x + y - z.ln());
-    let logp = crate::misc::logsumexp_str(iter);
+    let mut logsumexp = crate::misc::LogSumExp::new();
+    for ((&x, &y), &cp) in xs.iter().zip(ys.iter()).zip(cps.iter()) {
+        logsumexp += x + y - cp.ln();
+    }
+    // let logp = crate::misc::logsumexp_str(iter);
+    let logp: f64 = logsumexp.into();
     let logit = logit_from_lnp(logp);
     assert!(!logit.is_infinite(), "{},{}", logp, logit);
     logit

@@ -62,24 +62,24 @@ fn parse_sam(
     seed: u64,
 ) -> std::io::Result<AlignmentBucket> {
     let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
-    let mut alignments: Vec<_> = if alignments == "-" {
+    let mut alignments: Vec<bio_utils::sam::Record> = if alignments == "-" {
         let stdio = std::io::stdin();
         std::io::BufReader::new(stdio.lock())
             .lines()
             .filter_map(|l| l.ok())
-            .filter_map(|l| bio_utils::sam::Sam::new(&l))
+            .filter_map(|l| l.parse().ok())
             .collect()
     } else {
         std::fs::File::open(alignments)
             .map(std::io::BufReader::new)?
             .lines()
             .filter_map(|l| l.ok())
-            .filter_map(|l| bio_utils::sam::Sam::new(&l))
+            .filter_map(|l| l.parse().ok())
             .collect()
     };
     alignments.retain(|r| r.r_name() != "*");
     alignments.sort_by(|r1, r2| r1.q_name().cmp(r2.q_name()));
-    let mut buffer: Vec<&bio_utils::sam::Sam> = vec![];
+    let mut buffer: Vec<&bio_utils::sam::Record> = vec![];
     let mut prev = None;
     let mut alignments_on_contigs: HashMap<_, _> =
         segments.keys().map(|id| (id.clone(), vec![])).collect();
@@ -98,7 +98,7 @@ fn parse_sam(
 
 fn register_sam<R: Rng>(
     alignments: &mut AlignmentBucket,
-    buffer: &mut Vec<&bio_utils::sam::Sam>,
+    buffer: &mut Vec<&bio_utils::sam::Record>,
     id: u64,
     read: &Read,
     rng: &mut R,
@@ -134,12 +134,16 @@ fn register_sam<R: Rng>(
     }
 }
 
-fn overlap_frac_sam(aln1: &bio_utils::sam::Sam, aln2: &bio_utils::sam::Sam, len: usize) -> f64 {
-    let (s1, e1) = match (aln1.mapped_region(), aln1.is_forward()) {
+fn overlap_frac_sam(
+    aln1: &bio_utils::sam::Record,
+    aln2: &bio_utils::sam::Record,
+    len: usize,
+) -> f64 {
+    let (s1, e1) = match (aln1.query_aligned_region(), aln1.is_forward()) {
         ((start, end), true) => (start, end),
         ((start, end), false) => (len - end, len - start),
     };
-    let (s2, e2) = match (aln2.mapped_region(), aln2.is_forward()) {
+    let (s2, e2) = match (aln2.query_aligned_region(), aln2.is_forward()) {
         ((start, end), true) => (start, end),
         ((start, end), false) => (len - end, len - start),
     };
@@ -147,10 +151,10 @@ fn overlap_frac_sam(aln1: &bio_utils::sam::Sam, aln2: &bio_utils::sam::Sam, len:
     ((e1.min(e2).saturating_sub(s1.max(s2))) as f64) / aln_size as f64
 }
 
-fn sam_to_aln(id: u64, read: &[u8], aln: &bio_utils::sam::Sam) -> Alignment {
+fn sam_to_aln(id: u64, read: &[u8], aln: &bio_utils::sam::Record) -> Alignment {
     let contig = aln.r_name().to_string();
-    let ctg_range = aln.get_range();
-    let (start, end) = aln.mapped_region();
+    let ctg_range = aln.refr_aligned_region();
+    let (start, end) = aln.query_aligned_region();
     let len = read.len();
     let query = match aln.is_forward() {
         true => read[start..end].to_vec(),

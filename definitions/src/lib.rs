@@ -1,4 +1,4 @@
-//! Definitions -- A tiny interface for HLA-typing problem.
+//! Definitions of the JTK's serialized format.
 //! Roughly speaking, we incorporate with other programs, pass messages, or interact with other CLI via JSON object format. Specifically, the message is encoded only one, possibly large, structure named [DataSet](DataSet)
 
 use serde::{Deserialize, Serialize};
@@ -18,37 +18,43 @@ pub struct DataSet {
     /// The HiC reads.
     pub hic_pairs: Vec<HiCPair>,
     /// The chunks selected.
-    pub selected_chunks: Vec<Unit>,
+    pub selected_chunks: Vec<Chunk>,
     /// The reads encoded by selected chunks.
     pub encoded_reads: Vec<EncodedRead>,
     /// The edge of HiC.
     pub hic_edges: Vec<HiCEdge>,
-    /// Depricated: This value is previously assigned by `global_clustering` method.
-    /// As the research has proceed, we realize that `phasing` reads is unnessesary, or even harmful to
-    /// the assembly. So, in the future refactoring, this value and `global_clustering` method would be
-    /// removed.
-    pub assignments: Vec<Assignment>,
     /// The type of the reads.
     pub read_type: ReadType,
-    /// Estimated Hidden Markov model.
-    pub model_param: Option<HMMParam>,
+    /// Estimated Hidden Markov model. On both strands.
+    pub model_param: HMMParamOnStrands,
     /// Estimated error rate.
     pub error_rate: ErrorRate,
+    /// JTK consists of several stages. `processed stages` shows the list of stages JTK has processed so far.
+    pub processed_stages: Vec<ProcessedStage>,
 }
 
-/// Haploid coverage.
+/// The name and the argument in a stage (e.g., encoding, clustering, or assembling.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessedStage {
+    /// The name of the processed stage.
+    pub stage_name: String,
+    /// The argument used during the stage.
+    pub arg: Vec<String>,
+}
+
+/// Haploid coverage. To access the value, the easiest way is to use [`Coverage::unwrap`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Coverage {
-    /// Coverage is not available.
+    /// To indicate that the coverage is not available.
     NotAvailable,
-    /// Estimated coverage given as a command-line argument or other programs.
-    /// It can not be changed by JTK.
+    /// To indicate that the coverage is given as a command-line argument or other programs and it can not be changed.
     Protected(f64),
     /// Haploid coverage estimated by JTK.
     Estimated(f64),
 }
 
 impl Coverage {
+    /// Return true if the coverage is calculated ([`Coverage::Estimated`]) or given ([`Coverage::Protected`])
     pub fn is_available(&self) -> bool {
         match self {
             Coverage::NotAvailable => false,
@@ -56,12 +62,14 @@ impl Coverage {
             Coverage::Estimated(_) => true,
         }
     }
+    /// Create a new instance of a coverage.
     pub fn new(cov: f64, protect: bool) -> Self {
         match protect {
             true => Self::Protected(cov),
             false => Self::Estimated(cov),
         }
     }
+    /// Unwrap
     pub fn unwrap(&self) -> f64 {
         match self {
             Coverage::NotAvailable => panic!("Please estimate the haploid coverage first."),
@@ -82,6 +90,12 @@ impl Coverage {
             Coverage::NotAvailable => false,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HMMParamOnStrands {
+    pub forward: HMMParam,
+    pub reverse: HMMParam,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +123,24 @@ pub struct HMMParam {
     /// A->0, C->1, G->2, T->3
     pub mat_emit: [f64; 16],
     pub ins_emit: [f64; 20],
+}
+
+impl std::default::Default for HMMParam {
+    fn default() -> Self {
+        Self {
+            mat_mat: 0.97,
+            mat_ins: 0.01,
+            mat_del: 0.01,
+            ins_mat: 0.97,
+            ins_ins: 0.01,
+            ins_del: 0.01,
+            del_mat: 0.97,
+            del_ins: 0.01,
+            del_del: 0.01,
+            mat_emit: [0.25; 16],
+            ins_emit: [0.25; 20],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -209,11 +241,11 @@ impl std::default::Default for DataSet {
             selected_chunks: vec![],
             encoded_reads: vec![],
             hic_edges: vec![],
-            assignments: vec![],
             read_type: ReadType::None,
             masked_kmers: MaskInfo::default(),
-            model_param: None,
+            model_param: HMMParamOnStrands::default(),
             error_rate: ErrorRate::default(),
+            processed_stages: vec![],
         }
     }
 }
@@ -228,13 +260,6 @@ impl DataSet {
         raw_reads: Vec<RawRead>,
         read_type: ReadType,
     ) -> Self {
-        let assignments: Vec<_> = raw_reads
-            .iter()
-            .map(|r| Assignment {
-                id: r.id,
-                cluster: 0,
-            })
-            .collect();
         Self {
             input_file: input_file.to_string(),
             coverage: Coverage::NotAvailable,
@@ -243,11 +268,11 @@ impl DataSet {
             selected_chunks: vec![],
             encoded_reads: vec![],
             hic_edges: vec![],
-            assignments,
             read_type,
             masked_kmers: MaskInfo::default(),
-            model_param: None,
+            model_param: HMMParamOnStrands::default(),
             error_rate: ErrorRate::guess(read_type),
+            processed_stages: vec![],
         }
     }
     /// Sanity check function. Call it to ensure that some properties indeed holds.
@@ -365,7 +390,7 @@ impl HiCPair {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Unit {
+pub struct Chunk {
     pub id: u64,
     /// Unit sequence.
     pub seq: DNASeq,
@@ -432,7 +457,7 @@ impl std::convert::From<DNASeq> for Vec<u8> {
     }
 }
 
-impl Unit {
+impl Chunk {
     pub fn new(id: u64, seq: Vec<u8>, copy_num: usize) -> Self {
         Self {
             id,
@@ -724,7 +749,7 @@ impl Node {
             .sum::<usize>()
     }
     /// Return (match length, alignment length). Match length does not include mismatches.
-    pub fn aln_info(&self, unit: &Unit) -> (usize, usize) {
+    pub fn aln_info(&self, unit: &Chunk) -> (usize, usize) {
         let (_, ops, _) = self.recover(unit);
         ops.iter().fold((0, 0), |(mat, aln), x| match x {
             b' ' | b'X' => (mat, aln + 1),
@@ -733,7 +758,7 @@ impl Node {
         })
     }
     /// Return (node path, alignment, unit path)
-    pub fn recover(&self, unit: &Unit) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    pub fn recover(&self, unit: &Chunk) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let (read, unit) = (self.seq(), unit.seq());
         let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
         let (mut q_pos, mut r_pos) = (0, 0);
@@ -816,11 +841,6 @@ impl std::convert::From<Ops> for Vec<Op> {
         ops.0
     }
 }
-// impl std::convert::Into<Vec<Op>> for Ops {
-//     fn into(self) -> Vec<Op> {
-//         self.0
-//     }
-// }
 
 impl std::str::FromStr for Ops {
     type Err = u64;

@@ -1,6 +1,6 @@
 use super::AssembleConfig;
 use definitions::DNASeq;
-use definitions::{EncodedRead, Unit};
+use definitions::{Chunk, EncodedRead};
 mod copy_num_by_flow;
 mod copy_num_by_mst;
 pub mod sequence_generation;
@@ -407,7 +407,7 @@ fn take_representative<R: std::borrow::Borrow<EncodedRead>>(
 impl<'b, 'a: 'b> DitchGraph<'a> {
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(
         reads: &'a [R],
-        units: &[Unit],
+        units: &[Chunk],
         _read_type: definitions::ReadType,
         c: &AssembleConfig,
     ) -> Self {
@@ -1907,7 +1907,7 @@ mod tests {
         let units: Vec<_> = node_cp
             .iter()
             .enumerate()
-            .map(|(id, &cp)| Unit::new(id as u64, vec![], cp))
+            .map(|(id, &cp)| Chunk::new(id as u64, vec![], cp))
             .collect();
         let hap: Vec<_> = vec![0, 1, 2, 4, 3, 2, 6, 5, 2, 6, 5, 2, 7, 8];
         let read_num = 2 * 2_000 * 30 * hap.len() / 10_000;
@@ -1933,7 +1933,7 @@ mod tests {
         let units: Vec<_> = node_cp
             .iter()
             .enumerate()
-            .map(|(id, &cp)| Unit::new(id as u64, vec![], cp))
+            .map(|(id, &cp)| Chunk::new(id as u64, vec![], cp))
             .collect();
         let hap1: Vec<_> = vec![0, 1, 3, 5, 6, 7];
         let hap2: Vec<_> = vec![0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 7];
@@ -1989,7 +1989,7 @@ mod tests {
         let units: Vec<_> = node_cp
             .iter()
             .enumerate()
-            .map(|(id, &cp)| Unit::new(id as u64, vec![], cp))
+            .map(|(id, &cp)| Chunk::new(id as u64, vec![], cp))
             .collect();
         let hap1: Vec<_> = vec![0, 1, 3, 5, 6, 7];
         let hap2: Vec<_> = vec![0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 7];

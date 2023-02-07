@@ -5,11 +5,14 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 mod config;
 pub use config::*;
+
+use crate::model_tune::ModelFit;
 pub mod kmeans;
 pub mod normalize;
 
 pub trait LocalClustering {
     fn local_clustering(&mut self);
+    fn local_clustering_selected(&mut self, selection: &HashSet<u64>);
 }
 
 impl LocalClustering for DataSet {
@@ -17,12 +20,15 @@ impl LocalClustering for DataSet {
         let selection: HashSet<_> = self.selected_chunks.iter().map(|x| x.id).collect();
         local_clustering_selected(self, &selection);
     }
+    fn local_clustering_selected(&mut self, selection: &HashSet<u64>) {
+        local_clustering_selected(self, selection)
+    }
 }
 
 fn pileup_nodes<'a>(
     ds: &'a mut DataSet,
     selection: &HashSet<u64>,
-) -> (HashMap<u64, Vec<&'a mut Node>>, HashMap<u64, &'a Unit>) {
+) -> (HashMap<u64, Vec<&'a mut Node>>, HashMap<u64, &'a Chunk>) {
     let chunks: HashMap<u64, _> = ds
         .selected_chunks
         .iter()
@@ -51,17 +57,15 @@ const SEQ_LEN: usize = 100;
 const BAND: usize = 10;
 const HOMOP_LEN: usize = 3;
 /// Selection: HashSet of the chunk ID to be clustered on.
-pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
+fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     if selection.is_empty() {
         return;
     }
     crate::misc::update_coverage(ds);
-    if ds.model_param.is_none() {
-        crate::model_tune::update_model(ds);
-    }
+    ds.update_models_on_both_strands();
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
-    let hmm = crate::model_tune::get_model(ds).unwrap();
+    let hmm = ds.get_model();
     let (pileups, chunks) = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .into_par_iter()
@@ -85,28 +89,10 @@ pub fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     normalize::normalize_local_clustering(ds);
 }
 
-// fn partition_by_lk_capability<'a>(
-//     ref_unit: &Unit,
-//     units: Vec<&'a mut Node>,
-//     read_type: ReadType,
-//     hmm: &Phmm,
-// ) -> (Vec<&'a mut Node>, Vec<&'a mut Node>) {
-//     let refseq = ref_unit.seq();
-//     let band_width = read_type.band_width(ref_unit.seq().len());
-//     units.into_iter().partition(|node| {
-//         let ops = crate::misc::ops_to_kiley(&node.cigar);
-//         let forward = hmm.likelihood_guided(refseq, node.seq(), &ops, band_width / 2);
-//         let forward_ng = forward.is_nan() || forward.is_infinite();
-//         let backward = hmm.likelihood_guided_post(refseq, node.seq(), &ops, band_width / 2);
-//         let backward_ng = backward.is_nan() || backward.is_infinite();
-//         !forward_ng && !backward_ng
-//     })
-// }
-
 const UPPER_COPY_NUM: usize = 8;
 fn clustering_on_pileup(
     units: &mut [&mut Node],
-    ref_unit: &Unit,
+    ref_unit: &Chunk,
     read_type: ReadType,
     hmm: &Phmm,
     coverage: f64,

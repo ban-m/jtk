@@ -28,7 +28,6 @@ pub mod repeat_masking;
 pub mod seq;
 pub mod squish_erroneous_clusters;
 pub mod stats;
-pub mod view;
 /// Re-imports.
 pub use assemble::{Assemble, AssembleConfig};
 pub use dense_encoding::{DenseEncoding, DenseEncodingConfig};

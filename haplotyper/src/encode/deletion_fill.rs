@@ -81,7 +81,8 @@ impl CorrectDeletion for DataSet {
                     recover_original_assignments(read, &log, &selection);
                 });
             // Reclustering.
-            crate::local_clustering::local_clustering_selected(self, &selection);
+            use crate::local_clustering::LocalClustering;
+            self.local_clustering_selected(&selection);
             // By the way, removing zero-copy units. Give the upper bound a very large value.
             self.purge_multiplicity(10000000);
         }
@@ -247,7 +248,7 @@ impl FailedUpdates {
 // UnitID->(clsuterID, its consensus).
 // fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<(u64, u64), Vec<u8>> {
-    fn polish(xs: &[&[u8]], unit: &Unit, band: usize) -> Vec<u8> {
+    fn polish(xs: &[&[u8]], unit: &Chunk, band: usize) -> Vec<u8> {
         kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
     }
     let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
@@ -284,7 +285,7 @@ const OFFSET_FACTOR: f64 = 0.1;
 // returns the ids of the units newly encoded.
 // Maybe each (unit,cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
-    &'a HashMap<u64, &'a Unit>,
+    &'a HashMap<u64, &'a Chunk>,
     &'a crate::estimate_error_rate::ErrorRate,
     &'a HashMap<(u64, u64), Vec<u8>>,
 );
@@ -426,7 +427,7 @@ fn try_encoding_tail(
 fn encode_node(
     query: &[u8],
     (start, end, is_forward): (usize, usize, bool),
-    (unit, cluster, unitseq): (&Unit, u64, &[u8]),
+    (unit, cluster, unitseq): (&Chunk, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<(Node, i32)> {
     // Initial filter.
@@ -468,7 +469,7 @@ type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
 // const EDLIB_OFS: f64 = 0.10;
 fn fine_mapping<'a>(
     orig_query: &'a [u8],
-    (unit, cluster, unitseq): (&Unit, u64, &[u8]),
+    (unit, cluster, unitseq): (&Chunk, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<FineMapping<'a>> {
     let (query, trim_head, trim_tail, ops, band) =

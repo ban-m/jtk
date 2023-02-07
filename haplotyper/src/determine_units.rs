@@ -58,7 +58,7 @@ fn show_minimap2_version() {
         .output()
         .expect("Minimap2 is unavailable.");
     if !version.status.success() {
-        error!("Minimap2 is not available. Please install minimap2(https://github.com/lh3/minimap2) first.");
+        error!("Minimap2 is not available. Please install minimap2 (https://github.com/lh3/minimap2) first.");
         panic!("Minimap2,{:?}", String::from_utf8_lossy(&version.stderr));
     } else {
         let version = std::str::from_utf8(&version.stdout).unwrap();
@@ -231,7 +231,7 @@ fn compaction_units(ds: &mut DataSet) {
 }
 
 use rand::Rng;
-fn pick_random<R: Rng>(ds: &DataSet, config: &DetermineUnitConfig, rng: &mut R) -> Vec<Unit> {
+fn pick_random<R: Rng>(ds: &DataSet, config: &DetermineUnitConfig, rng: &mut R) -> Vec<Chunk> {
     use crate::RepeatMask;
     use rand::prelude::*;
     let mask = ds.get_repetitive_kmer();
@@ -250,7 +250,7 @@ fn pick_random<R: Rng>(ds: &DataSet, config: &DetermineUnitConfig, rng: &mut R) 
         .map(|(idx, (seq, _))| {
             let mut seq = seq.to_vec();
             seq.iter_mut().for_each(u8::make_ascii_uppercase);
-            Unit::new(idx as u64, seq, config.min_cluster)
+            Chunk::new(idx as u64, seq, config.min_cluster)
         })
         .collect()
 }
@@ -384,7 +384,7 @@ fn normalize_edge(w: &[Node]) -> (NormedEdge, bool) {
 type FilledEdge = ((u64, bool), (u64, bool));
 // Offset from the `from` position.
 const SKIP_OFFSET: usize = 5;
-type FilledEdges = HashMap<FilledEdge, Unit>;
+type FilledEdges = HashMap<FilledEdge, Chunk>;
 fn enumerate_filled_edges(
     ds: &DataSet,
     config: &DetermineUnitConfig,
@@ -501,7 +501,7 @@ fn fill_gap(
     start: usize,
     end: usize,
     direction: bool,
-    unit: &Unit,
+    unit: &Chunk,
     readtype: ReadType,
 ) -> Option<Node> {
     let unit_len = unit.seq().len();
@@ -566,7 +566,7 @@ fn fill_sparse_region_dev(
         .filter(|(_, seq)| repetitive_kmers.repetitiveness(seq) < config.exclude_repeats)
         .enumerate()
         .map(|(idx, (key, seq))| {
-            let unit = Unit::new(max_idx + 1 + idx as u64, seq, 2);
+            let unit = Chunk::new(max_idx + 1 + idx as u64, seq, 2);
             (key, unit)
         })
         .collect();
@@ -582,7 +582,7 @@ fn fill_sparse_region_dev(
     len
 }
 
-type FilledTips = HashMap<(u64, bool), Unit>;
+type FilledTips = HashMap<(u64, bool), Chunk>;
 fn fill_tips_dev(
     ds: &mut DataSet,
     repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
@@ -594,7 +594,7 @@ fn fill_tips_dev(
         .filter(|(_, seq)| repetitive_kmers.repetitiveness(seq) < config.exclude_repeats)
         .enumerate()
         .map(|(idx, (key, seq))| {
-            let unit = Unit::new(max_idx + 1 + idx as u64, seq, 2);
+            let unit = Chunk::new(max_idx + 1 + idx as u64, seq, 2);
             (key, unit)
         })
         .collect();
@@ -795,7 +795,7 @@ fn approx_vertex_cover(mut edges: Vec<Vec<usize>>, nodes: usize) -> Vec<bool> {
     to_be_removed
 }
 
-fn error(node: &definitions::Node, ref_unit: &Unit) -> f64 {
+fn error(node: &definitions::Node, ref_unit: &Chunk) -> f64 {
     let (query, aln, refr) = node.recover(ref_unit);
     let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
     let del = query.iter().filter(|&&x| x == b' ').count() as f64;

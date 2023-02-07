@@ -90,20 +90,53 @@ pub fn logsumexp(xs: &[f64]) -> f64 {
     max + sum
 }
 
-pub fn logsumexp_str<I: Iterator<Item = f64>>(xs: I) -> f64 {
-    let (mut max, mut accum, mut count) = (std::f64::NEG_INFINITY, 0f64, 0);
-    for x in xs {
-        count += 1;
-        if x <= max {
-            accum += (x - max).exp();
-        } else {
-            accum = (max - x).exp() * accum + 1f64;
-            max = x;
+/// Stream version of LogSumExp.
+/// It implements `+` operator for f64 (log-value).
+/// Thus, for an instance of LogSumExp (`y`) and a log-probability (`log(Pr)`),
+/// `y + log(Pr)` would return `log(exp(y) + Pr)`.
+/// In other words, `logsumexp(&[x,y,z])` is equal to `(((LogSumExp::new() + x) + y) + z).into::<f64>()`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LogSumExp {
+    accum: f64,
+    max: f64,
+}
+
+impl LogSumExp {
+    pub fn new() -> Self {
+        Self {
+            accum: 0f64,
+            max: std::f64::NEG_INFINITY,
         }
     }
-    match count {
-        1 => max,
-        _ => accum.ln() + max,
+}
+
+impl std::ops::Add<f64> for LogSumExp {
+    type Output = Self;
+    fn add(self, rhs: f64) -> Self::Output {
+        let Self { accum, max } = self;
+        if rhs < max {
+            Self {
+                accum: accum + (rhs - max).exp(),
+                max,
+            }
+        } else {
+            Self {
+                accum: accum * (max - rhs).exp() + 1f64,
+                max: rhs,
+            }
+        }
+    }
+}
+
+impl std::ops::AddAssign<f64> for LogSumExp {
+    fn add_assign(&mut self, rhs: f64) {
+        *self = *self + rhs;
+    }
+}
+
+impl std::convert::From<LogSumExp> for f64 {
+    fn from(LogSumExp { accum, max }: LogSumExp) -> Self {
+        accum.ln() + max
     }
 }
 
@@ -220,10 +253,7 @@ pub fn kmeans<R: Rng, D: std::borrow::Borrow<[f64]>>(
             dist = new_dist;
         }
     }
-    // for (i, (center, c)) in centers.iter().zip(counts.iter()).enumerate() {
-    //     let cs: Vec<_> = center.iter().map(|x| format!("{x:.1}")).collect();
-    //     debug!("KMEANS\t{c}\t{i}\t{}", cs.join("\t"));
-    // }
+
     (dist, assignments)
 }
 
@@ -309,282 +339,275 @@ fn suggest_first<R: Rng, D: std::borrow::Borrow<[f64]>>(
     assignments
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Fix {
-    position: usize,
-    base: u8,
-    length: usize,
-    op_type: kiley::Op,
-}
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// struct Fix {
+//     position: usize,
+//     base: u8,
+//     length: usize,
+//     op_type: kiley::Op,
+// }
 
-impl Fix {
-    // fn hit(&self, (qpos, rpos): (usize, usize)) -> bool {
-    //     match self.op_type {
-    //         kiley::Op::Ins => qpos == self.position,
-    //         kiley::Op::Del => rpos == self.position,
-    //         _ => unreachable!(),
-    //     }
-    // }
-    fn new(position: usize, base: u8, length: usize, op_type: kiley::Op) -> Self {
-        Self {
-            position,
-            base,
-            length,
-            op_type,
-        }
-    }
-}
-#[derive(Debug, Clone)]
-pub struct Fixes(Vec<Fix>);
+// impl Fix {
+//     fn new(position: usize, base: u8, length: usize, op_type: kiley::Op) -> Self {
+//         Self {
+//             position,
+//             base,
+//             length,
+//             op_type,
+//         }
+//     }
+// }
+// #[derive(Debug, Clone)]
+// pub struct Fixes(Vec<Fix>);
 
-/// Fix long homopolymer insertion/deletion.
-/// Return the information about the location the truncation/elongation happened.
-pub fn fix_long_homopolymers(
-    query: &mut Vec<u8>,
-    refr: &[u8],
-    ops: &mut Vec<kiley::Op>,
-    max_allowed: usize,
-) -> Fixes {
-    use kiley::Op;
-    let orig_q_len = query.len();
-    let orig_op_len = ops.len();
-    let (mut qpos, mut rpos) = (0, 0);
-    let mut state: Option<(Op, u8, usize)> = None;
-    let mut fixes = vec![];
-    for op_pos in 0..orig_op_len {
-        state = match (state, ops[op_pos]) {
-            (Some((Op::Del, base, len)), op @ (Op::Match | Op::Mismatch)) => {
-                if max_allowed < len {
-                    let op_len = len - max_allowed;
-                    let start_pos = query.len() - orig_q_len - op_len;
-                    fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
-                }
-                ops.push(op);
-                query.push(query[qpos]);
-                rpos += 1;
-                qpos += 1;
-                None
-            }
-            (Some((Op::Del, base, len)), Op::Del) if base == refr[rpos] => {
-                if len < max_allowed {
-                    ops.push(Op::Del);
-                } else {
-                    ops.push(Op::Match);
-                    query.push(base);
-                }
-                rpos += 1;
-                Some((Op::Del, base, len + 1))
-            }
-            (Some((Op::Del, base, len)), Op::Del) => {
-                if max_allowed < len {
-                    let op_len = len - max_allowed;
-                    let start_pos = query.len() - orig_q_len - op_len;
-                    fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
-                }
-                rpos += 1;
-                ops.push(Op::Del);
-                Some((Op::Del, refr[rpos - 1], 1))
-            }
-            (Some((Op::Del, base, len)), Op::Ins) => {
-                if max_allowed < len {
-                    let op_len = len - max_allowed;
-                    let start_pos = query.len() - orig_q_len - op_len;
-                    fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
-                }
-                let qbase = query[qpos];
-                ops.push(Op::Ins);
-                query.push(qbase);
-                qpos += 1;
-                Some((Op::Ins, qbase, 1))
-            }
-            (Some((Op::Ins, base, len)), op @ (Op::Match | Op::Mismatch)) => {
-                if max_allowed < len {
-                    let op_len = len - max_allowed;
-                    let start_pos = query.len() - orig_q_len - max_allowed;
-                    fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
-                }
-                ops.push(op);
-                query.push(query[qpos]);
-                qpos += 1;
-                rpos += 1;
-                None
-            }
-            (Some((Op::Ins, base, len)), Op::Ins) if base == query[qpos] => {
-                if len < max_allowed {
-                    ops.push(Op::Ins);
-                    query.push(query[qpos]);
-                }
-                qpos += 1;
-                Some((Op::Ins, base, len + 1))
-            }
-            (Some((Op::Ins, base, len)), Op::Ins) => {
-                if max_allowed < len {
-                    let op_len = len - max_allowed;
-                    let start_pos = query.len() - orig_q_len - max_allowed;
-                    fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
-                }
-                let qbase = query[qpos];
-                ops.push(Op::Ins);
-                query.push(qbase);
-                qpos += 1;
-                Some((Op::Ins, qbase, 1))
-            }
-            (Some((Op::Ins, base, len)), Op::Del) => {
-                if max_allowed < len {
-                    let op_len = len - max_allowed;
-                    let start_pos = query.len() - orig_q_len - max_allowed;
-                    fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
-                }
-                ops.push(Op::Del);
-                rpos += 1;
-                Some((Op::Del, refr[rpos - 1], 1))
-            }
-            (None, op @ (Op::Match | Op::Mismatch)) => {
-                ops.push(op);
-                query.push(query[qpos]);
-                qpos += 1;
-                rpos += 1;
-                None
-            }
-            (None, Op::Del) => {
-                ops.push(Op::Del);
-                rpos += 1;
-                Some((Op::Del, refr[rpos - 1], 1))
-            }
-            (None, Op::Ins) => {
-                ops.push(Op::Ins);
-                let qbase = query[qpos];
-                query.push(qbase);
-                qpos += 1;
-                Some((Op::Ins, qbase, 1))
-            }
-            (Some((Op::Mismatch | Op::Match, _, _)), _) => unreachable!(),
-        };
-    }
-    assert_eq!(orig_q_len, qpos);
-    assert_eq!(refr.len(), rpos);
-    match state {
-        Some((Op::Ins, base, len)) if max_allowed < len => {
-            let op_len = len - max_allowed;
-            let start_pos = query.len() - orig_q_len - op_len;
-            fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
-        }
-        Some((Op::Del, base, len)) if max_allowed < len => {
-            let op_len = len - max_allowed;
-            let start_pos = query.len() - orig_q_len - op_len;
-            fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
-        }
-        _ => {}
-    }
-    // Remove original sequences.
-    {
-        let mut idx = 0;
-        query.retain(|_| {
-            idx += 1;
-            orig_q_len < idx
-        });
-        let mut idx = 0;
-        ops.retain(|_| {
-            idx += 1;
-            orig_op_len < idx
-        });
-    }
-    // Check consistency.
-    let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
-    let querylen = ops.iter().filter(|&&op| op != Op::Del).count();
-    assert_eq!(reflen, refr.len());
-    assert_eq!(querylen, query.len());
-    Fixes(fixes)
-}
+// /// Fix long homopolymer insertion/deletion.
+// /// Return the information about the location the truncation/elongation happened.
+// pub fn fix_long_homopolymers(
+//     query: &mut Vec<u8>,
+//     refr: &[u8],
+//     ops: &mut Vec<kiley::Op>,
+//     max_allowed: usize,
+// ) -> Fixes {
+//     use kiley::Op;
+//     let orig_q_len = query.len();
+//     let orig_op_len = ops.len();
+//     let (mut qpos, mut rpos) = (0, 0);
+//     let mut state: Option<(Op, u8, usize)> = None;
+//     let mut fixes = vec![];
+//     for op_pos in 0..orig_op_len {
+//         state = match (state, ops[op_pos]) {
+//             (Some((Op::Del, base, len)), op @ (Op::Match | Op::Mismatch)) => {
+//                 if max_allowed < len {
+//                     let op_len = len - max_allowed;
+//                     let start_pos = query.len() - orig_q_len - op_len;
+//                     fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
+//                 }
+//                 ops.push(op);
+//                 query.push(query[qpos]);
+//                 rpos += 1;
+//                 qpos += 1;
+//                 None
+//             }
+//             (Some((Op::Del, base, len)), Op::Del) if base == refr[rpos] => {
+//                 if len < max_allowed {
+//                     ops.push(Op::Del);
+//                 } else {
+//                     ops.push(Op::Match);
+//                     query.push(base);
+//                 }
+//                 rpos += 1;
+//                 Some((Op::Del, base, len + 1))
+//             }
+//             (Some((Op::Del, base, len)), Op::Del) => {
+//                 if max_allowed < len {
+//                     let op_len = len - max_allowed;
+//                     let start_pos = query.len() - orig_q_len - op_len;
+//                     fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
+//                 }
+//                 rpos += 1;
+//                 ops.push(Op::Del);
+//                 Some((Op::Del, refr[rpos - 1], 1))
+//             }
+//             (Some((Op::Del, base, len)), Op::Ins) => {
+//                 if max_allowed < len {
+//                     let op_len = len - max_allowed;
+//                     let start_pos = query.len() - orig_q_len - op_len;
+//                     fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
+//                 }
+//                 let qbase = query[qpos];
+//                 ops.push(Op::Ins);
+//                 query.push(qbase);
+//                 qpos += 1;
+//                 Some((Op::Ins, qbase, 1))
+//             }
+//             (Some((Op::Ins, base, len)), op @ (Op::Match | Op::Mismatch)) => {
+//                 if max_allowed < len {
+//                     let op_len = len - max_allowed;
+//                     let start_pos = query.len() - orig_q_len - max_allowed;
+//                     fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
+//                 }
+//                 ops.push(op);
+//                 query.push(query[qpos]);
+//                 qpos += 1;
+//                 rpos += 1;
+//                 None
+//             }
+//             (Some((Op::Ins, base, len)), Op::Ins) if base == query[qpos] => {
+//                 if len < max_allowed {
+//                     ops.push(Op::Ins);
+//                     query.push(query[qpos]);
+//                 }
+//                 qpos += 1;
+//                 Some((Op::Ins, base, len + 1))
+//             }
+//             (Some((Op::Ins, base, len)), Op::Ins) => {
+//                 if max_allowed < len {
+//                     let op_len = len - max_allowed;
+//                     let start_pos = query.len() - orig_q_len - max_allowed;
+//                     fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
+//                 }
+//                 let qbase = query[qpos];
+//                 ops.push(Op::Ins);
+//                 query.push(qbase);
+//                 qpos += 1;
+//                 Some((Op::Ins, qbase, 1))
+//             }
+//             (Some((Op::Ins, base, len)), Op::Del) => {
+//                 if max_allowed < len {
+//                     let op_len = len - max_allowed;
+//                     let start_pos = query.len() - orig_q_len - max_allowed;
+//                     fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
+//                 }
+//                 ops.push(Op::Del);
+//                 rpos += 1;
+//                 Some((Op::Del, refr[rpos - 1], 1))
+//             }
+//             (None, op @ (Op::Match | Op::Mismatch)) => {
+//                 ops.push(op);
+//                 query.push(query[qpos]);
+//                 qpos += 1;
+//                 rpos += 1;
+//                 None
+//             }
+//             (None, Op::Del) => {
+//                 ops.push(Op::Del);
+//                 rpos += 1;
+//                 Some((Op::Del, refr[rpos - 1], 1))
+//             }
+//             (None, Op::Ins) => {
+//                 ops.push(Op::Ins);
+//                 let qbase = query[qpos];
+//                 query.push(qbase);
+//                 qpos += 1;
+//                 Some((Op::Ins, qbase, 1))
+//             }
+//             (Some((Op::Mismatch | Op::Match, _, _)), _) => unreachable!(),
+//         };
+//     }
+//     assert_eq!(orig_q_len, qpos);
+//     assert_eq!(refr.len(), rpos);
+//     match state {
+//         Some((Op::Ins, base, len)) if max_allowed < len => {
+//             let op_len = len - max_allowed;
+//             let start_pos = query.len() - orig_q_len - op_len;
+//             fixes.push(Fix::new(start_pos, base, op_len, Op::Ins));
+//         }
+//         Some((Op::Del, base, len)) if max_allowed < len => {
+//             let op_len = len - max_allowed;
+//             let start_pos = query.len() - orig_q_len - op_len;
+//             fixes.push(Fix::new(start_pos, base, op_len, Op::Del))
+//         }
+//         _ => {}
+//     }
+//     // Remove original sequences.
+//     {
+//         let mut idx = 0;
+//         query.retain(|_| {
+//             idx += 1;
+//             orig_q_len < idx
+//         });
+//         let mut idx = 0;
+//         ops.retain(|_| {
+//             idx += 1;
+//             orig_op_len < idx
+//         });
+//     }
+//     // Check consistency.
+//     let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+//     let querylen = ops.iter().filter(|&&op| op != Op::Del).count();
+//     assert_eq!(reflen, refr.len());
+//     assert_eq!(querylen, query.len());
+//     Fixes(fixes)
+// }
 
-/// Recover the original sequence.
-pub fn revert_fix_homopolymers(
-    query: &mut Vec<u8>,
-    ops: &mut Vec<kiley::Op>,
-    Fixes(ref modifs): &Fixes,
-) {
-    let refrlen = ops.iter().filter(|&&op| op != Op::Ins).count();
-    let orig_q_len = query.len();
-    let orig_op_len = ops.len();
-    use kiley::Op;
-    let mut qpos = 0;
-    let mut skip = 0;
-    let mut modifs = modifs.iter();
-    let mut next_modif = modifs.next();
-    for op_pos in 0..orig_op_len {
-        match next_modif {
-            Some(fix) if fix.position == qpos => {
-                match fix.op_type {
-                    Op::Del => {
-                        skip += fix.length;
-                    }
-                    Op::Ins => {
-                        ops.extend(std::iter::repeat(Op::Ins).take(fix.length));
-                        query.extend(std::iter::repeat(fix.base).take(fix.length));
-                    }
-                    _ => unreachable!(),
-                }
-                next_modif = modifs.next();
-            }
-            _ => {}
-        }
-        match ops[op_pos] {
-            Op::Mismatch | Op::Match if 0 < skip => {
-                qpos += 1;
-                skip -= 1;
-                ops.push(Op::Del);
-            }
-            Op::Ins if 0 < skip => {
-                skip -= 1;
-                qpos += 1;
-            }
-            Op::Mismatch | Op::Match | Op::Ins => {
-                query.push(query[qpos]);
-                ops.push(ops[op_pos]);
-                qpos += 1;
-            }
-            Op::Del => {
-                ops.push(ops[op_pos]);
-            }
-        }
-    }
-    // Fix remaining operations.
-    loop {
-        match next_modif {
-            Some(fix) if fix.position == qpos => {
-                match fix.op_type {
-                    Op::Del => {
-                        skip += fix.length;
-                    }
-                    Op::Ins => {
-                        ops.extend(std::iter::repeat(Op::Ins).take(fix.length));
-                        query.extend(std::iter::repeat(fix.base).take(fix.length));
-                    }
-                    _ => unreachable!(),
-                }
-                next_modif = modifs.next();
-            }
-            _ => break,
-        }
-    }
-    // Revemo original sequences.
-    {
-        let mut idx = 0;
-        query.retain(|_| {
-            idx += 1;
-            orig_q_len < idx
-        });
-        let mut idx = 0;
-        ops.retain(|_| {
-            idx += 1;
-            orig_op_len < idx
-        });
-    }
-    let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
-    let querylen = ops.iter().filter(|&&op| op != Op::Del).count();
-    assert_eq!(reflen, refrlen);
-    assert_eq!(querylen, query.len());
-}
+// /// Recover the original sequence.
+// pub fn revert_fix_homopolymers(
+//     query: &mut Vec<u8>,
+//     ops: &mut Vec<kiley::Op>,
+//     Fixes(ref modifs): &Fixes,
+// ) {
+//     let refrlen = ops.iter().filter(|&&op| op != Op::Ins).count();
+//     let orig_q_len = query.len();
+//     let orig_op_len = ops.len();
+//     use kiley::Op;
+//     let mut qpos = 0;
+//     let mut skip = 0;
+//     let mut modifs = modifs.iter();
+//     let mut next_modif = modifs.next();
+//     for op_pos in 0..orig_op_len {
+//         match next_modif {
+//             Some(fix) if fix.position == qpos => {
+//                 match fix.op_type {
+//                     Op::Del => {
+//                         skip += fix.length;
+//                     }
+//                     Op::Ins => {
+//                         ops.extend(std::iter::repeat(Op::Ins).take(fix.length));
+//                         query.extend(std::iter::repeat(fix.base).take(fix.length));
+//                     }
+//                     _ => unreachable!(),
+//                 }
+//                 next_modif = modifs.next();
+//             }
+//             _ => {}
+//         }
+//         match ops[op_pos] {
+//             Op::Mismatch | Op::Match if 0 < skip => {
+//                 qpos += 1;
+//                 skip -= 1;
+//                 ops.push(Op::Del);
+//             }
+//             Op::Ins if 0 < skip => {
+//                 skip -= 1;
+//                 qpos += 1;
+//             }
+//             Op::Mismatch | Op::Match | Op::Ins => {
+//                 query.push(query[qpos]);
+//                 ops.push(ops[op_pos]);
+//                 qpos += 1;
+//             }
+//             Op::Del => {
+//                 ops.push(ops[op_pos]);
+//             }
+//         }
+//     }
+//     // Fix remaining operations.
+//     loop {
+//         match next_modif {
+//             Some(fix) if fix.position == qpos => {
+//                 match fix.op_type {
+//                     Op::Del => {
+//                         skip += fix.length;
+//                     }
+//                     Op::Ins => {
+//                         ops.extend(std::iter::repeat(Op::Ins).take(fix.length));
+//                         query.extend(std::iter::repeat(fix.base).take(fix.length));
+//                     }
+//                     _ => unreachable!(),
+//                 }
+//                 next_modif = modifs.next();
+//             }
+//             _ => break,
+//         }
+//     }
+//     // Revemo original sequences.
+//     {
+//         let mut idx = 0;
+//         query.retain(|_| {
+//             idx += 1;
+//             orig_q_len < idx
+//         });
+//         let mut idx = 0;
+//         ops.retain(|_| {
+//             idx += 1;
+//             orig_op_len < idx
+//         });
+//     }
+//     let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+//     let querylen = ops.iter().filter(|&&op| op != Op::Del).count();
+//     assert_eq!(reflen, refrlen);
+//     assert_eq!(querylen, query.len());
+// }
 
 // The maximum value of sum of a range in xs,
 // If the sequence is empty, return i64::MIN
@@ -655,87 +678,87 @@ pub fn update_coverage(ds: &mut DataSet) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kiley::Op;
-    #[test]
-    fn homop_compress() {
-        let mut query = b"AAAAAACCTTTTTGTT".to_vec();
-        let refr = b"CCTTCCCCCCCCCGTT";
-        let mut ops = vec![
-            vec![Op::Ins; 6],
-            vec![Op::Match; 4],
-            vec![Op::Ins; 3],
-            vec![Op::Del; 9],
-            vec![Op::Match; 3],
-        ]
-        .concat();
-        let original_q = String::from_utf8(query.clone()).unwrap();
-        let original_op = ops.clone();
-        let fix_ops = fix_long_homopolymers(&mut query, refr, &mut ops, 2);
-        let query_str = std::str::from_utf8(&query).unwrap();
-        assert_eq!(query_str, "AACCTTTTCCCCCCCGTT");
-        let ans_ops = vec![
-            vec![Op::Ins; 2],
-            vec![Op::Match; 4],
-            vec![Op::Ins; 2],
-            vec![Op::Del; 2],
-            vec![Op::Match; 7],
-            vec![Op::Match; 3],
-        ]
-        .concat();
-        assert_eq!(ans_ops, ops);
-        let ans_fix_ops = vec![
-            Fix::new(0, b'A', 4, Op::Ins),
-            Fix::new(6, b'T', 1, Op::Ins),
-            Fix::new(8, b'C', 7, Op::Del),
-        ];
-        assert_eq!(ans_fix_ops, fix_ops.0);
-        revert_fix_homopolymers(&mut query, &mut ops, &fix_ops);
-        assert_eq!(ops, original_op);
-        assert_eq!(original_q, std::str::from_utf8(&query).unwrap());
-    }
+    // use kiley::Op;
+    // #[test]
+    // fn homop_compress() {
+    //     let mut query = b"AAAAAACCTTTTTGTT".to_vec();
+    //     let refr = b"CCTTCCCCCCCCCGTT";
+    //     let mut ops = vec![
+    //         vec![Op::Ins; 6],
+    //         vec![Op::Match; 4],
+    //         vec![Op::Ins; 3],
+    //         vec![Op::Del; 9],
+    //         vec![Op::Match; 3],
+    //     ]
+    //     .concat();
+    //     let original_q = String::from_utf8(query.clone()).unwrap();
+    //     let original_op = ops.clone();
+    //     let fix_ops = fix_long_homopolymers(&mut query, refr, &mut ops, 2);
+    //     let query_str = std::str::from_utf8(&query).unwrap();
+    //     assert_eq!(query_str, "AACCTTTTCCCCCCCGTT");
+    //     let ans_ops = vec![
+    //         vec![Op::Ins; 2],
+    //         vec![Op::Match; 4],
+    //         vec![Op::Ins; 2],
+    //         vec![Op::Del; 2],
+    //         vec![Op::Match; 7],
+    //         vec![Op::Match; 3],
+    //     ]
+    //     .concat();
+    //     assert_eq!(ans_ops, ops);
+    //     let ans_fix_ops = vec![
+    //         Fix::new(0, b'A', 4, Op::Ins),
+    //         Fix::new(6, b'T', 1, Op::Ins),
+    //         Fix::new(8, b'C', 7, Op::Del),
+    //     ];
+    //     assert_eq!(ans_fix_ops, fix_ops.0);
+    //     revert_fix_homopolymers(&mut query, &mut ops, &fix_ops);
+    //     assert_eq!(ops, original_op);
+    //     assert_eq!(original_q, std::str::from_utf8(&query).unwrap());
+    // }
 
-    #[test]
-    fn homop_compress2() {
-        let mut query = b"GTAATAAAAAA".to_vec();
-        let refr = b"GCACAGAA";
-        let mut ops = vec![
-            vec![Op::Match, Op::Mismatch, Op::Match],
-            vec![Op::Del],
-            vec![Op::Ins; 4],
-            vec![Op::Match, Op::Mismatch, Op::Match, Op::Match],
-        ]
-        .concat();
-        let original_q = String::from_utf8(query.clone()).unwrap();
-        let original_op = ops.clone();
-        let fix_ops = fix_long_homopolymers(&mut query, refr, &mut ops, 2);
-        eprintln!("{:?}", fix_ops.0);
-        revert_fix_homopolymers(&mut query, &mut ops, &fix_ops);
-        assert_eq!(ops, original_op);
-        assert_eq!(original_q, std::str::from_utf8(&query).unwrap());
-    }
-    use rand::SeedableRng;
-    use rand_xoshiro::Xoroshiro128PlusPlus;
-    #[test]
-    fn homop_compress_check_random() {
-        let profile = kiley::gen_seq::Profile::new(0.05, 0.05, 0.05);
-        for seed in 0..100 {
-            // println!("{seed}");
-            let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
-            let seq = kiley::gen_seq::generate_seq(&mut rng, 100);
-            let query = kiley::gen_seq::introduce_randomness(&seq, &mut rng, &profile);
-            // println!("{}", std::str::from_utf8(&seq).unwrap());
-            // println!("{}", std::str::from_utf8(&query).unwrap());
-            let ops = kiley::bialignment::edit_dist_ops(&seq, &query).1;
-            let mut modif_q = query.clone();
-            let mut modif_ops = ops.clone();
-            let fix_ops = fix_long_homopolymers(&mut modif_q, &seq, &mut modif_ops, 2);
-            revert_fix_homopolymers(&mut modif_q, &mut modif_ops, &fix_ops);
-            assert_eq!(ops, modif_ops);
-            let query = std::str::from_utf8(&query).unwrap();
-            let modif_q = std::str::from_utf8(&modif_q).unwrap();
-            assert_eq!(query, modif_q);
-        }
-    }
+    // #[test]
+    // fn homop_compress2() {
+    //     let mut query = b"GTAATAAAAAA".to_vec();
+    //     let refr = b"GCACAGAA";
+    //     let mut ops = vec![
+    //         vec![Op::Match, Op::Mismatch, Op::Match],
+    //         vec![Op::Del],
+    //         vec![Op::Ins; 4],
+    //         vec![Op::Match, Op::Mismatch, Op::Match, Op::Match],
+    //     ]
+    //     .concat();
+    //     let original_q = String::from_utf8(query.clone()).unwrap();
+    //     let original_op = ops.clone();
+    //     let fix_ops = fix_long_homopolymers(&mut query, refr, &mut ops, 2);
+    //     eprintln!("{:?}", fix_ops.0);
+    //     revert_fix_homopolymers(&mut query, &mut ops, &fix_ops);
+    //     assert_eq!(ops, original_op);
+    //     assert_eq!(original_q, std::str::from_utf8(&query).unwrap());
+    // }
+    // use rand::SeedableRng;
+    // use rand_xoshiro::Xoroshiro128PlusPlus;
+    // #[test]
+    // fn homop_compress_check_random() {
+    //     let profile = kiley::gen_seq::Profile::new(0.05, 0.05, 0.05);
+    //     for seed in 0..100 {
+    //         // println!("{seed}");
+    //         let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(seed);
+    //         let seq = kiley::gen_seq::generate_seq(&mut rng, 100);
+    //         let query = kiley::gen_seq::introduce_randomness(&seq, &mut rng, &profile);
+    //         // println!("{}", std::str::from_utf8(&seq).unwrap());
+    //         // println!("{}", std::str::from_utf8(&query).unwrap());
+    //         let ops = kiley::bialignment::edit_dist_ops(&seq, &query).1;
+    //         let mut modif_q = query.clone();
+    //         let mut modif_ops = ops.clone();
+    //         let fix_ops = fix_long_homopolymers(&mut modif_q, &seq, &mut modif_ops, 2);
+    //         revert_fix_homopolymers(&mut modif_q, &mut modif_ops, &fix_ops);
+    //         assert_eq!(ops, modif_ops);
+    //         let query = std::str::from_utf8(&query).unwrap();
+    //         let modif_q = std::str::from_utf8(&modif_q).unwrap();
+    //         assert_eq!(query, modif_q);
+    //     }
+    // }
     #[test]
     fn max_range_operation_test() {
         use definitions::Op;

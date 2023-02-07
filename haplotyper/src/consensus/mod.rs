@@ -368,107 +368,6 @@ pub fn polish(
     polished
 }
 
-// #[allow(dead_code)]
-// fn get_threshold(pileups: &[SeqOpsOnWindow]) -> f64 {
-//     let identity_rates: Vec<_> = pileups
-//         .iter()
-//         .filter(|pileup| !pileup.is_empty())
-//         .map(|pileup| {
-//             let matches: f64 = pileup
-//                 .iter()
-//                 .map(|(_, _, _, ops)| {
-//                     let mat = ops.iter().filter(|&&op| op == Op::Match).count();
-//                     mat as f64 / ops.len() as f64
-//                 })
-//                 .sum();
-//             matches / pileup.len() as f64
-//         })
-//         .collect();
-//     let identity_rate = identity_rates.iter().sum::<f64>() / identity_rates.len() as f64;
-//     let var = identity_rates
-//         .iter()
-//         .map(|e| (e - identity_rate).powi(2))
-//         .sum::<f64>()
-//         / identity_rates.len() as f64;
-//     let sd = var.sqrt().min(0.02);
-//     let thr = identity_rate - 5f64 * sd;
-//     debug!("TRAIN\t{identity_rate:.3}\t{sd:.3}\t{thr:.3}");
-//     thr
-// }
-
-// #[allow(dead_code)]
-// fn train_hmm_dev(
-//     hmm: &mut PairHiddenMarkovModel,
-//     draft: &[u8],
-//     window: usize,
-//     pileups: &[SeqOpsOnWindow],
-// ) {
-//     let identity_threshold = get_threshold(pileups);
-//     let mut transitions = [[1f64; 3]; 3];
-//     let mut mat_emit = [1f64; 16];
-//     let mut ins_emit = [1f64; 20];
-//     for (template, pileup) in draft.chunks_exact(window).zip(pileups.iter()) {
-//         let filtered = pileup.iter().filter_map(|(_, _, seq, ops)| {
-//             let mat = ops.iter().filter(|&&op| op == Op::Match).count();
-//             (identity_threshold < (mat as f64 / ops.len() as f64)).then_some((seq, ops.as_slice()))
-//         });
-//         for (seq, ops) in filtered {
-//             let params = (&mut transitions, &mut mat_emit, &mut ins_emit);
-//             crate::model_tune::register_alignments(template, seq, ops, params);
-//         }
-//     }
-//     let mat = (transitions[0][0], transitions[0][1], transitions[0][2]);
-//     let ins = (transitions[1][0], transitions[1][1], transitions[1][2]);
-//     let del = (transitions[2][0], transitions[2][1], transitions[2][2]);
-//     *hmm = PairHiddenMarkovModel::new(mat, ins, del, &mat_emit, &ins_emit);
-//     debug!("TRAIN\n{hmm}");
-// }
-
-// fn train_hmm(
-//     hmm: &mut PairHiddenMarkovModel,
-//     draft: &[u8],
-//     window: usize,
-//     pileups: &[SeqOpsOnWindow],
-//     radius: usize,
-// ) {
-//     let mut coverages: Vec<_> = pileups.iter().map(|x| x.len()).collect();
-//     if coverages.is_empty() {
-//         return;
-//     }
-//     let idx = coverages.len() / 2;
-//     let (_, &mut med_cov, _) = coverages.select_nth_unstable(idx);
-//     let range = 2 * window / 3..4 * window / 3;
-//     let cov_range = 2 * med_cov / 3..4 * med_cov / 3;
-//     let iterator = draft
-//         .chunks(window)
-//         .zip(pileups.iter())
-//         .map(|(template, pileup)| {
-//             let (seqs, ops): (Vec<&[u8]>, Vec<&[Op]>) = pileup
-//                 .iter()
-//                 .filter_map(|(_, _, _, seq, ops)| {
-//                     let indel = ops.iter().map(|op| match op {
-//                         Op::Mismatch => 1,
-//                         Op::Match => -1,
-//                         Op::Ins => 1,
-//                         Op::Del => 1,
-//                     });
-//                     if crate::misc::max_region(indel) < 30 {
-//                         Some((seq, ops.as_slice()))
-//                     } else {
-//                         None
-//                     }
-//                 })
-//                 .unzip();
-//             (template, seqs, ops)
-//         })
-//         .filter(|(draft, _, _)| range.contains(&draft.len()))
-//         .filter(|(_, _, ops)| cov_range.contains(&ops.len()))
-//         .take(3);
-//     for (template, seqs, ops) in iterator {
-//         hmm.fit_naive_with_par(template, &seqs, ops.as_slice(), radius);
-//     }
-// }
-
 fn length_median(seqs: &[&[u8]]) -> usize {
     let mut len: Vec<_> = seqs.iter().map(|x| x.len()).collect();
     let idx = seqs.len() / 2;
@@ -1117,17 +1016,6 @@ struct Chain {
 }
 
 impl Chain {
-    // fn apporox_score(&self) -> i64 {
-    //     self.ops
-    //         .iter()
-    //         .map(|&op| match op {
-    //             Op::Mismatch => -10,
-    //             Op::Match => 10,
-    //             Op::Ins => -5,
-    //             Op::Del => -5,
-    //         })
-    //         .sum()
-    // }
     fn coord(&self) -> (usize, usize) {
         match self.is_forward {
             true => (self.query_start_idx, self.query_end_idx),

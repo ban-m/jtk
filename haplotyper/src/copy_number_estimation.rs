@@ -78,7 +78,7 @@ impl CopyNumberEstimation for DataSet {
         // Reset copy numbers.
         self.selected_chunks.iter_mut().for_each(|c| c.copy_num = 0);
         // Update copy numbers.
-        let mut chunks: HashMap<u64, &mut definitions::Unit> =
+        let mut chunks: HashMap<u64, &mut definitions::Chunk> =
             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
         for ((unit, _), cp) in node_cp {
             if let Some(chunk) = chunks.get_mut(&unit) {

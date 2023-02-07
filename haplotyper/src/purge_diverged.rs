@@ -229,11 +229,12 @@ fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
         .chain(selection.iter().copied())
         .collect();
     debug!("PD\tReClustering\t{}", changed_units.len());
-    crate::local_clustering::local_clustering_selected(ds, &changed_units);
+    use crate::local_clustering::LocalClustering;
+    ds.local_clustering_selected(&changed_units);
 }
 
 fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> HashSet<u64> {
-    let diverged_clusters = get_diverged_clusters_dev(ds, thr, config);
+    let diverged_clusters = get_diverged_clusters(ds, thr, config);
     // If the all the cluster is labelled as "diverged", it is the fault of the consensus...,
     let diverged_clusters: Vec<_> = diverged_clusters
         .into_iter()
@@ -293,7 +294,7 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
 }
 
 // Unit -> Cluster -> If the cluster is very diverged.
-pub fn get_diverged_clusters_dev(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
+fn get_diverged_clusters(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
     use crate::estimate_error_rate::estimate_error_rate;
     let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
     debug!("PD\tFallback\t{fallback}");

@@ -1,5 +1,5 @@
 use definitions::DataSet;
-use definitions::{Edge, EncodedRead, Node, Op, RawRead, Unit};
+use definitions::{Chunk, Edge, EncodedRead, Node, Op, RawRead};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io::*;
@@ -81,7 +81,7 @@ pub fn encode_by(ds: &mut DataSet, alignments: &[bio_utils::paf::PAF]) {
 fn encode_read_by_paf(
     read: &RawRead,
     alns: &[&bio_utils::paf::PAF],
-    units: &HashMap<u64, &Unit>,
+    units: &HashMap<u64, &Chunk>,
 ) -> Option<EncodedRead> {
     let mut seq: Vec<_> = read.seq().to_vec();
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
@@ -119,7 +119,7 @@ pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<En
 fn encode_read_to_nodes_by_paf(
     seq: &[u8],
     alns: &[&bio_utils::paf::PAF],
-    units: &HashMap<u64, &Unit>,
+    units: &HashMap<u64, &Chunk>,
 ) -> Option<Vec<Node>> {
     let mut nodes: Vec<_> = alns
         .iter()
@@ -176,7 +176,7 @@ fn trailing_alignment(refr: &[u8], mut trailing: Vec<u8>) -> (Vec<Op>, Vec<u8>) 
     (crate::misc::kiley_op_to_ops(&tops).0, trailing)
 }
 
-fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Unit) -> Option<Node> {
+fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Chunk) -> Option<Node> {
     use bio_utils::sam;
     let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
     let (leading, aligned, trailing) = split_query(seq, aln);

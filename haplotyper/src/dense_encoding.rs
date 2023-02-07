@@ -72,11 +72,12 @@ impl DenseEncoding for DataSet {
             .filter(|c| original_cluster_num.contains_key(&c.id))
             .for_each(|c| c.cluster_num = original_cluster_num[&c.id]);
         self.sanity_check();
-        crate::local_clustering::local_clustering_selected(self, &new_units);
+        use crate::local_clustering::LocalClustering;
+        self.local_clustering_selected(&new_units);
     }
 }
 
-type TipAndUnit<'a> = HashMap<DTip, Vec<&'a [Unit]>>;
+type TipAndUnit<'a> = HashMap<DTip, Vec<&'a [Chunk]>>;
 fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> HashSet<u64> {
     let edge_units = enumerate_polyploid_edges(ds, config);
     let tip_units = {
@@ -320,7 +321,7 @@ fn write_to_file(
     }
 }
 
-type EdgeAndUnit = HashMap<DEdge, Vec<Unit>>;
+type EdgeAndUnit = HashMap<DEdge, Vec<Chunk>>;
 fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> EdgeAndUnit {
     use crate::assemble::*;
     let msr = ds.read_type.weak_span_reads();
@@ -385,7 +386,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
             .chunks(chunk_len)
             .map(|seq| {
                 max_unit_id += 1;
-                Unit::new(max_unit_id, seq.to_vec(), copy_num)
+                Chunk::new(max_unit_id, seq.to_vec(), copy_num)
             })
             .collect();
         let edge = format!("({},{})-({},{})", key.0 .0, key.0 .2, key.1 .0, key.1 .2);
@@ -403,7 +404,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
             .chunks(chunk_len)
             .map(|seq| {
                 max_unit_id += 1;
-                Unit::new(max_unit_id, seq.to_vec(), copy_num)
+                Chunk::new(max_unit_id, seq.to_vec(), copy_num)
             })
             .collect();
         let len = consensus.len();
@@ -582,7 +583,7 @@ fn get_reverse_d_edge_from_window(w: &[Node]) -> DEdge {
     (from, to)
 }
 
-fn merge_units(units: &[Unit]) -> (Vec<u8>, Vec<usize>) {
+fn merge_units(units: &[Chunk]) -> (Vec<u8>, Vec<usize>) {
     let contig: Vec<_> = units.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
         x.extend(y);
         x
@@ -619,7 +620,7 @@ fn encode_edge(
     start: usize,
     end: usize,
     is_forward: bool,
-    units: &[Unit],
+    units: &[Chunk],
     read_type: &definitions::ReadType,
 ) -> Vec<definitions::Node> {
     let (contig, break_points) = merge_units(units);

@@ -1,4 +1,5 @@
 use definitions::*;
+use haplotyper::model_tune::ModelFit;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
 #[macro_use]
@@ -327,8 +328,7 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     );
     debug!("START\tFinal assembly");
     if !skip_polish {
-        use haplotyper::model_tune::update_model;
-        update_model(dataset);
+        dataset.fit_models_on_both_strands();
     }
     let gfa = dataset.assemble(&config);
     let mut file = std::fs::File::create(format!("{file}.gfa")).map(BufWriter::new)?;
