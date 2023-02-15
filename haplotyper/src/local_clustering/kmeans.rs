@@ -5,7 +5,7 @@ const MASK_LENGTH: usize = 7;
 const MAX_HOMOP_LENGTH: usize = 2;
 const POS_THR: f64 = 0.00001;
 use crate::likelihood_gains::{Gains, Pvalues};
-use kiley::hmm::guided::NUM_ROW;
+use kiley::hmm::NUM_ROW;
 use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
@@ -36,16 +36,46 @@ impl<'a> ClusteringConfig<'a> {
     }
 }
 
+fn modification_table_dev<T: std::borrow::Borrow<[u8]>>(
+    template: &[u8],
+    reads: &[T],
+    ops: &[Vec<kiley::Op>],
+    strands: &[bool],
+    band: usize,
+    hmm: &kiley::hmm::PairHiddenMarkovModelOnStrands,
+) -> Vec<Vec<f64>> {
+    reads
+        .iter()
+        .zip(ops)
+        .zip(strands)
+        .map(|((seq, op), strand)| {
+            let hmm = match strand {
+                true => hmm.forward(),
+                false => hmm.reverse(),
+            };
+            match hmm.modification_table(template, seq.borrow(), band, op) {
+                Some((mut table, lk)) => {
+                    table.iter_mut().for_each(|x| *x -= lk);
+                    table
+                }
+                None => vec![0f64; NUM_ROW * (template.len() + 1)],
+            }
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
 fn modification_table<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
     ops: &[Vec<kiley::Op>],
+    _strands: &[bool],
     band: usize,
     hmm: &kiley::hmm::PairHiddenMarkovModel,
 ) -> Vec<Vec<f64>> {
     reads
         .iter()
-        .zip(ops.iter())
+        .zip(ops)
         .map(
             |(seq, op)| match hmm.modification_table(template, seq.borrow(), band, op) {
                 Some((mut table, lk)) => {
@@ -58,7 +88,7 @@ fn modification_table<T: std::borrow::Borrow<[u8]>>(
         .collect()
 }
 
-fn filter_by(profiles: &[Vec<f64>], probes: &[(usize, f64)]) -> Vec<Vec<f64>> {
+fn filter_by<_T>(profiles: &[Vec<f64>], probes: &[(usize, _T)]) -> Vec<Vec<f64>> {
     profiles
         .iter()
         .map(|xs| probes.iter().map(|&(pos, _)| xs[pos]).collect())
@@ -72,13 +102,13 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     ops: &[Vec<kiley::Op>],
     strands: &[bool],
     rng: &mut R,
-    hmm: &kiley::hmm::PairHiddenMarkovModel,
+    hmm: &kiley::hmm::PairHiddenMarkovModelOnStrands,
     config: &ClusteringConfig,
 ) -> ClusteringDevResult {
     if config.copy_num < 2 {
         return (vec![0; reads.len()], vec![vec![0f64]; reads.len()], 0f64, 1);
     }
-    let feature_vectors = search_variants(template, reads, ops, strands, rng, hmm, config);
+    let feature_vectors = search_variants(template, reads, ops, strands, hmm, config);
     let clustering_result = cluster_filtered_variants(&feature_vectors, config, rng);
     let (mut assignments, mut likelihood_gains, max, max_k) = clustering_result;
     if log_enabled!(log::Level::Trace) {
@@ -102,18 +132,18 @@ type FeatureVector = (
     Vec<Vec<f64>>,
     Vec<(usize, crate::likelihood_gains::DiffType)>,
 );
-pub fn search_variants<R: Rng, T: std::borrow::Borrow<[u8]>>(
+
+pub fn search_variants<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
     ops: &[Vec<kiley::Op>],
     strands: &[bool],
-    rng: &mut R,
-    hmm: &kiley::hmm::PairHiddenMarkovModel,
+    hmm: &kiley::hmm::PairHiddenMarkovModelOnStrands,
     config: &ClusteringConfig,
 ) -> FeatureVector {
-    let profiles = modification_table(template, reads, ops, config.band_width, hmm);
+    let profiles = modification_table_dev(template, reads, ops, strands, config.band_width, hmm);
     let profiles = compress_small_gains(profiles, template, config.gains);
-    let probes = filter_profiles(template, &profiles, strands, config, rng);
+    let probes = filter_profiles(template, &profiles, strands, config);
     let op_and_homop = operation_and_homopolymer_length(template, &probes);
     let variants = filter_by(&profiles, &probes);
     if log_enabled!(log::Level::Trace) {
@@ -166,7 +196,7 @@ fn pos_to_bp_and_difftype(pos: usize) -> (usize, DiffType) {
     let (bp, op) = (pos / NUM_ROW, pos % NUM_ROW);
     let diff_type = if op < 4 {
         DiffType::Subst
-    } else if op < 8 + kiley::hmm::guided::COPY_SIZE {
+    } else if op < 8 + kiley::hmm::COPY_SIZE {
         DiffType::Ins
     } else {
         DiffType::Del
@@ -174,9 +204,9 @@ fn pos_to_bp_and_difftype(pos: usize) -> (usize, DiffType) {
     (bp, diff_type)
 }
 
-fn operation_and_homopolymer_length(
+fn operation_and_homopolymer_length<_T>(
     template: &[u8],
-    probes: &[(usize, f64)],
+    probes: &[(usize, _T)],
 ) -> Vec<(usize, crate::likelihood_gains::DiffType)> {
     let homop_length = homopolymer_length(template);
     probes
@@ -252,7 +282,6 @@ pub fn cluster_filtered_variants<R: Rng>(
         let expected_gain = expected_gain_per_read * per_cluster_cov + 0.1;
         trace!("LK\t{k}\t{score:.3}\t{expected_gain:.3}\t{improved_reads}");
         if expected_gain < score - max {
-            // && coverage_imp_thr < improved_reads {
             let mut counts = vec![0; k];
             for x in asn.iter() {
                 counts[*x] += 1;
@@ -281,7 +310,7 @@ fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[b
         .unwrap_or(1f64)
 }
 
-const EXPT_GAIN_FACTOR: f64 = 0.5;
+const EXPT_GAIN_FACTOR: f64 = 0.8;
 fn expected_gains(
     gains: &Gains,
     variant_type: &[(usize, DiffType)],
@@ -309,49 +338,31 @@ fn count_improved_reads(new_gains: &[f64], old_gains: &[f64], min_gain: f64) -> 
         .count()
 }
 
-fn is_explainable_by_strandedness<I, R: Rng>(
-    profiles: I,
-    rng: &mut R,
-    fprate: f64,
-    _pos: usize,
-) -> bool
-where
-    I: std::iter::Iterator<Item = (f64, bool)>,
-{
-    let (mut fcount, mut fsum, mut bcount, mut bsum) = (0, 0f64, 0, 0f64);
-    let mut lks = Vec::with_capacity(50);
-    for (lkdiff, strand) in profiles {
-        lks.push(lkdiff);
-        if strand {
-            fsum += lkdiff.max(0f64);
-            fcount += 1;
-        } else {
-            bsum += lkdiff.max(0f64);
-            bcount += 1;
-        }
+fn is_explainable_by_strandedness<I: std::iter::Iterator<Item = (f64, bool)>>(profiles: I) -> bool {
+    let mut strand_count = [0; 2];
+    let mut sign_count = [0; 2];
+    let mut obs_count = [[0; 2]; 2];
+    for (lkdiff, strand) in profiles.filter(|(lk, _)| lk.abs() > 0.0001f64) {
+        strand_count[strand as usize] += 1;
+        sign_count[lkdiff.is_sign_positive() as usize] += 1;
+        obs_count[strand as usize][lkdiff.is_sign_positive() as usize] += 1;
     }
-    if fcount == 0 || bcount == 0 {
-        return true;
+    let sum: usize = strand_count.iter().sum();
+    if sum == 0 {
+        return false;
     }
-    let diff = fsum - bsum;
-    const SAMPLE_NUM: usize = 3000;
-    let mut null_diffs: Vec<_> = (0..SAMPLE_NUM)
-        .map(|_| {
-            lks.shuffle(rng);
-            let fsum: f64 = lks[..fcount].iter().map(|x| x.max(0f64)).sum();
-            let bsum: f64 = lks[fcount..].iter().map(|x| x.max(0f64)).sum();
-            fsum - bsum
+    trace!("RAWCOUNT\t{obs_count:?}");
+    let chisq: f64 = std::iter::zip(&obs_count, &strand_count)
+        .map(|(obs_sign, strand)| {
+            std::iter::zip(obs_sign, &sign_count)
+                .map(|(&obs, sign)| {
+                    let expected = (strand * sign) as f64 / sum as f64;
+                    (obs as f64 - expected).powi(2) / expected
+                })
+                .sum::<f64>()
         })
-        .collect();
-    null_diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    let lower_thr_idx = (SAMPLE_NUM as f64 * fprate).ceil() as usize;
-    let upper_thr_idx = (SAMPLE_NUM as f64 * (1f64 - fprate)).ceil() as usize;
-    let (lower_thr, upper_thr) = (null_diffs[lower_thr_idx], null_diffs[upper_thr_idx]);
-    if log_enabled!(log::Level::Trace) {
-        let (pos, ed) = pos_to_bp_and_difftype(_pos);
-        trace!("STRAND\t{pos}\t{ed}\t{fsum:.2}\t{fcount}\t{bsum:.2}\t{bcount}\t{lower_thr:.2}\t{upper_thr:.2}");
-    }
-    lower_thr <= diff && diff <= upper_thr
+        .sum();
+    chisq < 10f64
 }
 
 // LK->LK-logsumexp(LK).
@@ -439,13 +450,11 @@ const PVALUE: f64 = 0.05;
 // False positive rate to determine the strand bias. In other words,
 // The probability that the variant is regarded as biased even if it is not
 // is 0.05. It essentially sacrifice 5% variants under the name of the strand bias.
-const FP_RATE: f64 = 0.05;
-fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
+fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     template: &[u8],
     profiles: &[T],
     strands: &[bool],
     config: &ClusteringConfig,
-    rng: &mut R,
 ) -> Vec<(usize, f64)> {
     let cluster_num = config.copy_num as usize;
     let coverage = config.coverage;
@@ -462,11 +471,16 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             let (pos, _) = pos_to_bp_and_difftype(pos);
             MASK_LENGTH <= pos && pos <= (temp_len - MASK_LENGTH)
         })
-        .filter(|&(pos, _)| pos % NUM_ROW < 8 || pos % NUM_ROW == 8 + kiley::hmm::guided::COPY_SIZE) // 8 -> 1 length copy = same as insertion
+        .filter(|&(pos, _)| pos % NUM_ROW < 8 || pos % NUM_ROW == 8 + kiley::hmm::COPY_SIZE) // 8 -> 1 length copy = same as insertion
         .filter(|&(_, &(gain, _))| 0f64 < gain)
         .filter(|&(pos, _)| is_in_short_homopolymer(pos, &homopolymer_length, template))
         .filter(|&(pos, &improve)| {
             has_small_pvalue(pos, improve, &homopolymer_length, &pvalues, gains, temp_len)
+        })
+        .filter(|&(pos, _)| {
+            let lks = profiles.iter().map(|p| p.borrow()[pos]);
+            let paired = lks.zip(strands.iter().copied());
+            is_explainable_by_strandedness(paired)
         })
         .map(|(pos, &(maxgain, count))| {
             let max_lk = (1..cluster_num + 1)
@@ -477,11 +491,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>, R: Rng>(
             (pos, total_lk)
         })
         .filter(|&(_, gain)| 0f64 < gain)
-        .filter(|&(pos, _)| {
-            let lks = profiles.iter().map(|p| p.borrow()[pos]);
-            let paired = lks.zip(strands.iter().copied());
-            is_explainable_by_strandedness(paired, rng, FP_RATE, pos)
-        })
         .collect();
     trace!("TOTAL\t{}", probes.len());
     for &(pos, lk) in probes.iter() {
@@ -504,10 +513,10 @@ fn has_small_pvalue(
     let homop_len = *homopolymer_length.get(bp_pos).unwrap_or(&0);
     let pvalue = pvalues.pvalue(homop_len, diff_type, count);
     let expt = gains.expected(homop_len, diff_type) * EXPT_GAIN_FACTOR;
-    if 10 < count {
-        let pvalue = template_len as f64 * pvalue;
-        let (pos, ed) = pos_to_bp_and_difftype(pos);
-        let homop = &homopolymer_length[pos - 1..=pos + 1];
+    let pvalue = template_len as f64 * pvalue;
+    let (pos, ed) = pos_to_bp_and_difftype(pos);
+    let homop = &homopolymer_length[pos - 1..=pos + 1];
+    if pvalue < PVALUE / template_len as f64 {
         trace!("PVALUE\t{pos}\t{ed}\t{gain:.3}\t{count}\t{expt:.3}\t{pvalue:.3}\t{homop:?}");
     }
     (count as f64) * expt < gain && pvalue < PVALUE / template_len as f64
@@ -565,9 +574,6 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
                         pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
                     let sok_sim = sokal_michener(profiles, picked_pos, pos);
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    if [45, 1743, 1942, 1993].contains(&pos_in_bp) {
-                        trace!("COSSIM\t{picked_pos_in_bp}\t{pos_in_bp}\t{cos_sim}\t{sok_sim}\t{diff_in_bp}");
-                    }
                     if 0.99 < sok_sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
                         *selected = 2;
                     } else if 0.8 < cos_sim.abs() {
@@ -579,7 +585,6 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
             }
         }
     }
-
     probes
         .iter()
         .zip(is_selected)
@@ -705,7 +710,6 @@ fn use_highest_gain(data: &[Vec<f64>]) -> (Vec<usize>, f64, Vec<f64>, Vec<bool>)
     (assignments, score, lk_gains, used_columns)
 }
 
-use rand::prelude::SliceRandom;
 use rand::seq::IteratorRandom;
 
 // Return the maximum likelihood.

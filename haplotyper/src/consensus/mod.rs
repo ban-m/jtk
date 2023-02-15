@@ -715,13 +715,7 @@ fn align_to_contigs<R: Rng>(
     let mut alns = vec![];
     while !chains.is_empty() {
         let choises: Vec<_> = (0..chains.len()).collect();
-        let max = chains
-            .iter()
-            .map(|chain| chain.score)
-            // .map(|chain| chain.apporox_score())
-            .max()
-            .unwrap();
-        //                ((chains[idx].apporox_score() - max) as f64).exp()
+        let max = chains.iter().map(|chain| chain.score).max().unwrap();
         let picked = choises
             .choose_weighted(rng, |&idx| ((chains[idx].score - max) as f64).exp())
             .unwrap();
@@ -1348,15 +1342,18 @@ fn convert_into_tiles<'a, 'b>(
                     for t in tiles.iter() {
                         let len = t.node.seq().len();
                         error!(
-                            "{}-{},{len},{}-{}",
+                            "TILE\t{}-{},{len},{}-{}",
                             t.read_start, t.read_end, t.ctg_start, t.ctg_end
                         );
                     }
                     let (ctg_start, ctg_end) = seg_node.contig_range();
                     error!(
-                        "{read_start}-{read_end},{start}-{end},{},{ctg_start}-{ctg_end}",
+                        "CORRESP\t{read_start}-{read_end},{start}-{end},{},{ctg_start}-{ctg_end}",
                         read_node.is_forward
                     );
+                    for (i, n) in read.nodes.iter().enumerate() {
+                        error!("FOCUS\t{i}\t{n}");
+                    }
                 }
                 assert!(read_end - node_start <= read_node.seq().len());
                 assert!(

@@ -332,11 +332,12 @@ fn correct_deletion_error(
     if ft.is_alive && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
-        use super::{nodes_to_encoded_read, remove_slippy_alignment};
+        use super::{nodes_to_encoded_read, remove_overlapping_encoding, remove_slippy_alignment};
         nodes.sort_by_key(|n| (n.unit, n.position_from_start));
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
+        nodes = remove_overlapping_encoding(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
     new_inserts

@@ -1,4 +1,6 @@
 use definitions::*;
+#[allow(unused_imports)]
+use kiley::hmm::{PairHiddenMarkovModel, PairHiddenMarkovModelOnStrands};
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
@@ -25,57 +27,44 @@ impl LocalClustering for DataSet {
     }
 }
 
-fn pileup_nodes<'a>(
-    ds: &'a mut DataSet,
-    selection: &HashSet<u64>,
-) -> (HashMap<u64, Vec<&'a mut Node>>, HashMap<u64, &'a Chunk>) {
-    let chunks: HashMap<u64, _> = ds
+type PileUp<'a> = (Vec<&'a mut Node>, &'a Chunk);
+fn pileup_nodes<'a>(ds: &'a mut DataSet, selection: &HashSet<u64>) -> HashMap<u64, PileUp<'a>> {
+    let mut pileups: HashMap<u64, _> = ds
         .selected_chunks
         .iter()
         .filter(|c| selection.contains(&c.id))
-        .map(|c| (c.id, c))
+        .map(|c| (c.id, (vec![], c)))
         .collect();
-    let mut pileups: HashMap<u64, Vec<&mut Node>> =
-        selection.iter().map(|&id| (id, vec![])).collect();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
         if let Some(bucket) = pileups.get_mut(&node.unit) {
-            bucket.push(node);
+            bucket.0.push(node);
         }
     }
-    pileups.iter_mut().for_each(|(unit_id, nodes)| {
+    pileups.iter_mut().for_each(|(_, nodes)| {
+        let (nodes, ref_unit) = nodes;
         nodes.sort_by_cached_key(|node| {
-            let ref_unit = chunks.get(unit_id).unwrap();
             let (_, aln, _) = node.recover(ref_unit);
             aln.iter().filter(|&&x| x != b'|').count()
         });
     });
-    (pileups, chunks)
+    pileups
 }
 
-const SEED: u64 = 309423;
-const SEQ_LEN: usize = 100;
-const BAND: usize = 10;
-const HOMOP_LEN: usize = 3;
 /// Selection: HashSet of the chunk ID to be clustered on.
 fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
-    if selection.is_empty() {
-        return;
-    }
     crate::misc::update_coverage(ds);
     ds.update_models_on_both_strands();
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
-    let hmm = ds.get_model();
-    let (pileups, chunks) = pileup_nodes(ds, selection);
+    let hmm = ds.get_model_on_both_strands();
+    let pileups = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .into_par_iter()
-        .filter(|(_, units)| !units.is_empty())
-        .map(|(unit_id, mut units)| {
-            let ref_unit = chunks.get(&unit_id).unwrap();
-            assert!(!units.is_empty());
-            let (uid, (template, score, cl_num)) =
-                clustering_on_pileup(&mut units, ref_unit, read_type, &hmm, coverage);
-            (uid, (template, score, cl_num))
+        .filter(|(_, (nodes, _))| !nodes.is_empty())
+        .map(|(chunk_id, (mut nodes, ref_chunk))| {
+            let consensus_and_scores =
+                clustering_on_pileup(&mut nodes, ref_chunk, read_type, &hmm, coverage);
+            (chunk_id, consensus_and_scores)
         })
         .collect();
     debug!("LC\t{}", consensus_and_clusternum.len());
@@ -91,41 +80,43 @@ fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
 
 const UPPER_COPY_NUM: usize = 8;
 fn clustering_on_pileup(
-    units: &mut [&mut Node],
-    ref_unit: &Chunk,
+    nodes: &mut [&mut Node],
+    ref_chunk: &Chunk,
     read_type: ReadType,
-    hmm: &Phmm,
+    hmm: &PairHiddenMarkovModelOnStrands,
     coverage: f64,
-) -> (u64, (Vec<u8>, f64, usize)) {
+) -> (Vec<u8>, f64, usize) {
     use kmeans::*;
-    let refseq = ref_unit.seq();
-    let band_width = read_type.band_width(ref_unit.seq().len());
-    let unit_id = ref_unit.id;
-    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(unit_id * 3490);
-    let (seqs, mut ops): (Vec<_>, Vec<_>) = units
+    let refseq = ref_chunk.seq();
+    let band_width = read_type.band_width(ref_chunk.seq().len());
+    let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_chunk.id * 3490);
+    let (seqs, mut ops): (Vec<_>, Vec<_>) = nodes
         .iter()
         .map(|node| (node.seq(), crate::misc::ops_to_kiley(&node.cigar)))
         .unzip();
     let start = std::time::Instant::now();
-    let copy_num = ref_unit.copy_num;
-    let (cons, hmm) = prep_consensus(hmm, refseq, &seqs, &mut ops, band_width);
+    let copy_num = ref_chunk.copy_num;
+    let strands: Vec<_> = nodes.iter().map(|n| n.is_forward).collect();
+    let config = kiley::hmm::guided::HMMConfig::new(band_width, seqs.len(), 3);
+    let cons = hmm.polish_until_converge_with_conf(refseq, &seqs, &mut ops, &strands, &config);
+    // let cons = hmm.polish_until_converge_with_conf(refseq, &seqs, &mut ops, &config);
     let polished = std::time::Instant::now();
-    let strands: Vec<_> = units.iter().map(|n| n.is_forward).collect();
-    let gains = crate::likelihood_gains::estimate_gain(&hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN);
+    let gains = crate::likelihood_gains::estimate_gain_default(hmm);
     let per_cluster_cov = match copy_num {
         0 | 1 | 2 => seqs.len() as f64 / copy_num as f64,
         _ => (seqs.len() as f64 / copy_num as f64).max(coverage),
     };
     let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, per_cluster_cov, &gains);
     let (asn, pss, score, k) =
-        clustering_recursive(&cons, &seqs, &ops, &strands, &mut rng, &hmm, &config);
-    update_by_clusterings(units, &asn, &ops, &pss);
+        clustering_recursive(&cons, &seqs, &ops, &strands, &mut rng, hmm, &config);
+    update_by_clusterings(nodes, &asn, &ops, &pss);
     let end = std::time::Instant::now();
     let polished_time = (polished - start).as_millis();
     let elapsed = (end - start).as_millis();
-    let (len, cov) = (cons.len(), units.len());
+    let (len, cov) = (cons.len(), nodes.len());
+    let unit_id = ref_chunk.id;
     debug!("RECORD\t{unit_id}\t{elapsed}\t{polished_time}\t{len}\t{score:.3}\t{cov}",);
-    (unit_id, (cons, score, k))
+    (cons, score, k)
 }
 
 type ClusteringDevResult = (Vec<usize>, Vec<Vec<f64>>, f64, usize);
@@ -135,14 +126,13 @@ fn clustering_recursive<R: rand::Rng>(
     ops: &[Vec<kiley::Op>],
     strands: &[bool],
     rng: &mut R,
-    hmm: &Phmm,
+    hmm: &PairHiddenMarkovModelOnStrands,
     config: &kmeans::ClusteringConfig,
 ) -> ClusteringDevResult {
     use kmeans::*;
     if config.copy_num < UPPER_COPY_NUM {
         clustering_dev(cons, seqs, ops, strands, rng, hmm, config)
     } else {
-        trace!("RECURSE");
         const BRANCH_NUM: usize = 4;
         let mut rec_config = *config;
         rec_config.copy_num = BRANCH_NUM;
@@ -158,10 +148,13 @@ fn clustering_recursive<R: rand::Rng>(
             .enumerate()
             .map(|(k, &cp)| {
                 let (seqs, mut ops, strands) = filter_sub_clusters(seqs, ops, strands, &asn, k);
-                let (cons, hmm) = prep_consensus(hmm, cons, &seqs, &mut ops, band_width);
+                let pconfig = kiley::hmm::guided::HMMConfig::new(band_width, seqs.len(), 0);
+                // let cons = hmm.polish_until_converge_with_conf(cons, &seqs, &mut ops, &pconfig);
+                let cons =
+                    hmm.polish_until_converge_with_conf(cons, &seqs, &mut ops, &strands, &pconfig);
                 let mut config = *config;
                 config.copy_num = cp;
-                clustering_recursive(&cons, &seqs, &ops, &strands, rng, &hmm, &config)
+                clustering_recursive(&cons, &seqs, &ops, &strands, rng, hmm, &config)
             })
             .collect();
         let sub_scores: f64 = recurred_clusterings.iter().map(|x| x.2).sum();
@@ -264,22 +257,20 @@ fn update_by_clusterings(
     }
 }
 
-// TODO: this function is, very very slow. Please fasten this function, please.
-// Or, maybe we do not need to tune a pHMM on each chunk. We can just use one pHMM across all the chunks.
-type Phmm = kiley::hmm::PairHiddenMarkovModel;
-fn prep_consensus(
-    hmm: &Phmm,
-    draft: &[u8],
-    seqs: &[&[u8]],
-    ops: &mut [Vec<kiley::Op>],
-    band_width: usize,
-) -> (Vec<u8>, Phmm) {
-    let mut hmm = hmm.clone();
-    let mut cons = draft.to_vec();
-    for _t in 0..2 {
-        // TODO: Tune here.
-        hmm.fit_naive_with(&cons, seqs, ops, band_width / 2);
-        cons = hmm.polish_until_converge_with(&cons, seqs, ops, band_width / 2);
-    }
-    (cons, hmm)
-}
+// type Phmm = kiley::hmm::PairHiddenMarkovModel;
+// fn prep_consensus(
+//     hmm: &Phmm,
+//     draft: &[u8],
+//     seqs: &[&[u8]],
+//     ops: &mut [Vec<kiley::Op>],
+//     band_width: usize,
+// ) -> (Vec<u8>, Phmm) {
+//     let mut hmm = hmm.clone();
+//     let mut cons = draft.to_vec();
+//     for _t in 0..2 {
+//         // TODO: Tune here.
+//         hmm.fit_naive_with(&cons, seqs, ops, band_width / 2);
+//         cons = hmm.polish_until_converge_with(&cons, seqs, ops, band_width / 2);
+//     }
+//     (cons, hmm)
+// }

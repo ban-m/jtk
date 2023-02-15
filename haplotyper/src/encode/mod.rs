@@ -243,6 +243,46 @@ fn semiglobal(refr: &[u8], query: &[u8]) -> Vec<kiley::Op> {
     leading.chain(aln).chain(trailing).collect()
 }
 
+pub fn remove_overlapping_encoding(mut nodes: Vec<Node>) -> Vec<Node> {
+    fn start_end_iden(node: &definitions::Node) -> (usize, usize, f64) {
+        let start = node.position_from_start;
+        let (total, indel): (usize, usize) =
+            node.cigar
+                .0
+                .iter()
+                .fold((0, 0), |(total, indel), op| match op {
+                    Op::Match(l) => (total + l, indel),
+                    Op::Del(l) => (total + l, indel + l),
+                    Op::Ins(l) => (total + l, indel + l),
+                });
+        let identity = 1f64 - indel as f64 / total as f64;
+        (start, start + node.seq().len(), identity)
+    }
+    loop {
+        let should_be_removed = nodes.windows(2).enumerate().find_map(|(i, w)| {
+            let (former_start, former_end, former_identity) = start_end_iden(&w[0]);
+            let (latter_start, latter_end, latter_identity) = start_end_iden(&w[1]);
+            if (former_start <= latter_start && latter_end < former_end)
+                || (latter_start <= former_start && former_end < latter_end)
+            {
+                if former_identity < latter_identity {
+                    Some(i)
+                } else {
+                    Some(i + 1)
+                }
+            } else {
+                None
+            }
+        });
+        if let Some(idx) = should_be_removed {
+            let _removed = nodes.remove(idx);
+        } else {
+            break;
+        }
+    }
+    nodes
+}
+
 pub fn remove_slippy_alignment(nodes: Vec<Node>) -> Vec<Node> {
     fn score(n: &Node) -> i32 {
         n.cigar

@@ -71,6 +71,15 @@ impl DenseEncoding for DataSet {
             .iter_mut()
             .filter(|c| original_cluster_num.contains_key(&c.id))
             .for_each(|c| c.cluster_num = original_cluster_num[&c.id]);
+        let raw_reads: HashMap<_, _> = self.raw_reads.iter().map(|r| (r.id, r)).collect();
+        self.encoded_reads.par_iter_mut().for_each(|read| {
+            let mut nodes = Vec::with_capacity(read.nodes.len());
+            nodes.append(&mut read.nodes);
+            use crate::encode::{nodes_to_encoded_read, remove_overlapping_encoding};
+            nodes = remove_overlapping_encoding(nodes);
+            let seq = raw_reads[&read.id].seq();
+            *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+        });
         self.sanity_check();
         use crate::local_clustering::LocalClustering;
         self.local_clustering_selected(&new_units);

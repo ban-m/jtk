@@ -112,7 +112,8 @@ fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
     // if ds.model_param.is_none() {
     // ds.update_models_on_both_strands();
     // }
-    let hmm = ds.get_model();
+    // let hmm = ds.get_model();
+    let hmm = ds.get_model_on_both_strands();
     let gain = crate::likelihood_gains::estimate_minimum_gain(&hmm) * PROTECT_FACTOR;
     debug!("POLISHED\tMinGain\t{gain:.3}");
     ds.selected_chunks

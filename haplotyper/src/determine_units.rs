@@ -123,8 +123,8 @@ impl DetermineUnit for definitions::DataSet {
                 Some(STDDEV_OR_ERROR),
             );
             for _ in 0..10 {
-                let new_unit = fill_sparse_region_dev(self, &repetitive_kmer, config)
-                    + fill_tips_dev(self, &repetitive_kmer, config);
+                let new_unit = fill_sparse_region(self, &repetitive_kmer, config)
+                    + fill_tips(self, &repetitive_kmer, config);
                 crate::encode::deletion_fill::correct_unit_deletion(self, &fill_config);
                 if new_unit < MIN_REQ_NEW_UNIT {
                     break;
@@ -387,6 +387,7 @@ const SKIP_OFFSET: usize = 5;
 type FilledEdges = HashMap<FilledEdge, Chunk>;
 fn enumerate_filled_edges(
     ds: &DataSet,
+    repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
     config: &DetermineUnitConfig,
 ) -> HashMap<FilledEdge, Vec<u8>> {
     let mut edge_count: HashMap<_, Vec<_>> = HashMap::new();
@@ -416,7 +417,12 @@ fn enumerate_filled_edges(
     // We fill units for each sparsed region.
     let count_thr = get_count_thr(ds, config);
     debug!("FillSparse\tEdge\tThreshold\t{}", count_thr);
-    edge_count.retain(|_, seq| count_thr < seq.len());
+    edge_count.retain(|_, seqs| {
+        count_thr < seqs.len()
+            && seqs
+                .iter()
+                .all(|s| repetitive_kmers.repetitiveness(s) < config.exclude_repeats)
+    });
     take_consensus(&edge_count, &ds.read_type, config)
 }
 
@@ -430,9 +436,6 @@ fn take_consensus<K: Hash + Clone + Eq + Sync + Send>(
         .map(|(key, seqs)| {
             let radius = read_type.band_width(config.chunk_len);
             let draft = pick_median_length(seqs.as_slice());
-            // for _ in 0..2 {
-            //     draft = kiley::polish_by_pileup(&draft, seqs);
-            // }
             let consensus = kiley::bialignment::guided::polish_until_converge(&draft, seqs, radius);
             (key.clone(), consensus)
         })
@@ -546,22 +549,25 @@ fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
     if !read.nodes.is_empty() {
         let mut nodes = vec![];
         nodes.append(&mut read.nodes);
-        use crate::encode::{nodes_to_encoded_read, remove_slippy_alignment};
+        use crate::encode::{
+            nodes_to_encoded_read, remove_overlapping_encoding, remove_slippy_alignment,
+        };
         nodes.sort_by_key(|n| n.unit);
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
+        nodes = remove_overlapping_encoding(nodes);
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
     }
 }
 
-fn fill_sparse_region_dev(
+fn fill_sparse_region(
     ds: &mut DataSet,
     repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
     config: &DetermineUnitConfig,
 ) -> usize {
     let max_idx: u64 = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
-    let edge_units: HashMap<_, _> = enumerate_filled_edges(ds, config)
+    let edge_units: HashMap<_, _> = enumerate_filled_edges(ds, repetitive_kmers, config)
         .into_iter()
         .filter(|(_, seq)| repetitive_kmers.repetitiveness(seq) < config.exclude_repeats)
         .enumerate()
@@ -572,18 +578,19 @@ fn fill_sparse_region_dev(
         .collect();
     let rawseq: HashMap<u64, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let readtype = ds.read_type;
+    let len = edge_units.len();
+    debug!("FillSparse\tEdge\tCosed\t{len}");
     ds.encoded_reads.par_iter_mut().for_each(|read| {
         let rawseq = &rawseq[&read.id];
         fill_edge(read, rawseq, &edge_units, readtype, config);
     });
-    let len = edge_units.len();
     debug!("FillSparse\tEdge\t{len}");
     ds.selected_chunks.extend(edge_units.into_values());
     len
 }
 
 type FilledTips = HashMap<(u64, bool), Chunk>;
-fn fill_tips_dev(
+fn fill_tips(
     ds: &mut DataSet,
     repetitive_kmers: &crate::repeat_masking::RepeatAnnot,
     config: &DetermineUnitConfig,
@@ -708,12 +715,6 @@ fn fill_tip(
         re_encode_read(read, seq);
     }
 }
-
-// fn is_repetitive(unit: &[u8], config: &DetermineUnitConfig) -> bool {
-//     let tot = unit.len();
-//     let lowercase = unit.iter().filter(|c| c.is_ascii_lowercase()).count();
-//     lowercase as f64 / tot as f64 > config.exclude_repeats
-// }
 
 // Or, something went wrong? Please check it out.
 fn split_into<'a>(r: &'a RawRead, c: &DetermineUnitConfig) -> Vec<&'a [u8]> {

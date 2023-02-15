@@ -1,6 +1,5 @@
 use clap::Parser;
-use haplotyper::local_clustering::kmeans::ClusteringConfig;
-use kiley::gen_seq::*;
+use kiley::{gen_seq::*, hmm::guided::HMMConfig};
 use log::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -100,16 +99,18 @@ fn main() -> std::io::Result<()> {
         })
         .collect();
     let mut draft = reads[0].to_vec();
-    let hmm = kiley::hmm::PairHiddenMarkovModel::default();
+    let hmm = kiley::hmm::PairHiddenMarkovModelOnStrands::default();
     let mut ops: Vec<_> = reads
         .iter()
-        .map(|x| hmm.align_guided(&draft, x, band).1)
+        .map(|x| hmm.forward().align_guided(&draft, x, band).1)
         .collect();
-    draft = hmm.polish_until_converge_with(&draft, &reads, &mut ops, band);
+    let strands = vec![true; reads.len()];
+    let h_config = HMMConfig::new(band, reads.len(), 4);
+    draft = hmm.polish_until_converge_with_conf(&draft, &reads, &mut ops, &strands, &h_config);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;
+    use haplotyper::local_clustering::kmeans::ClusteringConfig;
     let config = ClusteringConfig::new(band, cluster_num, coverage, coverage, &gains);
-    let strands = vec![true; reads.len()];
     let start = std::time::Instant::now();
     use haplotyper::local_clustering::kmeans;
     let clustering =

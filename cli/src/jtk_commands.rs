@@ -79,8 +79,8 @@ fn subcommand_stats() -> Command<'static> {
         )
 }
 
-fn subcommand_select_unit() -> Command<'static> {
-    Command::new("select_unit")
+fn subcommand_select_chunk() -> Command<'static> {
+    Command::new("select_chunk")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Pick subsequence from raw reads.")
@@ -104,7 +104,7 @@ fn subcommand_select_unit() -> Command<'static> {
                 .long("take_num")
                 .takes_value(true)
                 .default_value("500")
-                .help("Number of units; Genome size/chunk_len would be nice."),
+                .help("Number of chunks; Genome size/chunk_len would be nice."),
         )
         .arg(
             Arg::new("margin")
@@ -127,13 +127,13 @@ fn subcommand_select_unit() -> Command<'static> {
                 .long("exclude")
                 .takes_value(true)
                 .default_value("0.8")
-                .help("filter out unit having more than [exclude] repetitiveness."),
+                .help("filter out chunks having more than [exclude] repetitiveness."),
         )
         .arg(
             Arg::new("purge_copy_num")
                 .short('u')
                 .long("purge_copy_num")
-                .help("Discard units with copy_number more than or equal to [upper].")
+                .help("Discard chunks with copy_number more than or equal to [upper].")
                 .takes_value(true)
                 .default_value("10"),
         )
@@ -272,7 +272,7 @@ fn subcommand_estimate_multiplicity() -> Command<'static> {
     Command::new("estimate_multiplicity")
         .version("0.1")
         .author("Bansho Masutani")
-        .about("Determine multiplicities of units.")
+        .about("Determine multiplicities of chunks.")
         .arg(Arg::new("verbose").short('v').multiple_occurrences(true))
         .arg(
             Arg::new("threads")
@@ -373,7 +373,7 @@ fn subcommand_correct_deletion() -> Command<'static> {
     Command::new("correct_deletion")
         .version("0.1")
         .author("BanshoMasutani")
-        .about("Correct unit deletion")
+        .about("Correct deletions of chunks inside the reads.")
         .arg(
             Arg::new("verbose")
                 .short('v')
@@ -395,7 +395,7 @@ fn subcommand_correct_deletion() -> Command<'static> {
                 .short('r')
                 .long("re_cluster")
                 .required(false)
-                .help("Re-calculate the posterior probability of newly encoded units."),
+                .help("Re-calculate the posterior probability of newly encoded chunks."),
         )
 }
 
@@ -707,7 +707,7 @@ pub fn jtk_parser() -> clap::Command<'static> {
         .subcommand(subcommand_entry())
         .subcommand(subcommand_extract())
         .subcommand(subcommand_stats())
-        .subcommand(subcommand_select_unit())
+        .subcommand(subcommand_select_chunk())
         .subcommand(subcommand_encode())
         .subcommand(subcommand_polish_encoding())
         .subcommand(subcommand_estimate_multiplicity())

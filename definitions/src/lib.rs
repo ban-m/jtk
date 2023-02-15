@@ -137,7 +137,10 @@ impl std::default::Default for HMMParam {
             del_mat: 0.97,
             del_ins: 0.01,
             del_del: 0.01,
-            mat_emit: [0.25; 16],
+            mat_emit: [
+                0.97, 0.01, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01,
+                0.01, 0.97,
+            ],
             ins_emit: [0.25; 20],
         }
     }
@@ -673,14 +676,15 @@ pub struct Node {
 
 impl std::fmt::Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let start = self.position_from_start;
+        let end = start + self.seq.len();
         write!(
             f,
-            "{}-{}({}bp,{},{})",
+            "{}-{}({}bp,{},{start}-{end})",
             self.unit,
             self.cluster,
             self.seq.len(),
             self.is_forward as u8,
-            self.position_from_start,
         )
     }
 }
@@ -757,9 +761,9 @@ impl Node {
             _ => panic!("{}", x),
         })
     }
-    /// Return (node path, alignment, unit path)
-    pub fn recover(&self, unit: &Chunk) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        let (read, unit) = (self.seq(), unit.seq());
+    /// Return (node path, alignment, chunk path)
+    pub fn recover(&self, chunk: &Chunk) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let (read, unit) = (self.seq(), chunk.seq());
         let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
         let (mut q_pos, mut r_pos) = (0, 0);
         let match_char = |(x, y): (&u8, &u8)| {

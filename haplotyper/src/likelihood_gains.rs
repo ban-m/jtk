@@ -1,7 +1,7 @@
 use rand::{prelude::SliceRandom, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
-pub fn estimate_minimum_gain(hmm: &kiley::hmm::PairHiddenMarkovModel) -> f64 {
+pub fn estimate_minimum_gain(hmm: &PairHiddenMarkovModelOnStrands) -> f64 {
     const SEED: u64 = 23908;
     const SAMPLE_NUM: usize = 1000;
     const SEQ_NUM: usize = 500;
@@ -16,7 +16,11 @@ pub fn estimate_minimum_gain(hmm: &kiley::hmm::PairHiddenMarkovModel) -> f64 {
             let hap2 = kiley::gen_seq::introduce_errors(&hap1, &mut rng, 0, 1, 0);
             use kiley::gen_seq::Generate;
             let mut lks: Vec<_> = (0..SEQ_NUM)
-                .map(|_| {
+                .map(|t| {
+                    let hmm = match t % 2 == 0 {
+                        true => hmm.forward(),
+                        false => hmm.reverse(),
+                    };
                     let read = hmm.gen(&hap1, &mut rng);
                     let lk_base = hmm.likelihood_bootstrap(&hap1, &read, BAND);
                     let lk_diff = hmm.likelihood_bootstrap(&hap2, &read, BAND);
@@ -152,9 +156,9 @@ impl Pvalues {
     }
 }
 
-use kiley::hmm::PairHiddenMarkovModel;
+use kiley::hmm::PairHiddenMarkovModelOnStrands;
 pub fn estimate_gain(
-    hmm: &PairHiddenMarkovModel,
+    hmm: &PairHiddenMarkovModelOnStrands,
     seed: u64,
     seq_len: usize,
     band: usize,
@@ -175,6 +179,14 @@ pub fn estimate_gain(
         deletions,
         insertions,
     }
+}
+
+const SEED: u64 = 309423;
+const SEQ_LEN: usize = 100;
+const BAND: usize = 10;
+const HOMOP_LEN: usize = 3;
+pub fn estimate_gain_default(hmm: &PairHiddenMarkovModelOnStrands) -> Gains {
+    crate::likelihood_gains::estimate_gain(hmm, SEED, SEQ_LEN, BAND, HOMOP_LEN)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,7 +249,7 @@ fn gen_diff_haplotypes<R: Rng>(rng: &mut R, len: usize, diff_type: DiffType) -> 
 }
 
 fn gain_of(
-    hmm: &PairHiddenMarkovModel,
+    hmm: &PairHiddenMarkovModelOnStrands,
     seed: u64,
     seq_len: usize,
     band: usize,
@@ -259,7 +271,11 @@ fn gain_of(
             let template = vec![seg1.clone(), hap1, seg2.clone()].concat();
             let diff = vec![seg1, hap2, seg2].concat();
             let mut lk_diff: Vec<_> = (0..SEQ_NUM)
-                .map(|_| {
+                .map(|t| {
+                    let hmm = match t % 2 == 0 {
+                        true => hmm.forward(),
+                        false => hmm.reverse(),
+                    };
                     let read = hmm.gen(&diff, &mut rng);
                     let lk_base = hmm.likelihood_bootstrap(&template, &read, band);
                     let lk_diff = hmm.likelihood_bootstrap(&diff, &read, band);
@@ -274,7 +290,11 @@ fn gain_of(
                 DiffType::Ins => 0.0001,
             };
             let null_prob = (0..SEQ_NUM)
-                .filter(|_| {
+                .filter(|t| {
+                    let hmm = match t % 2 == 0 {
+                        true => hmm.forward(),
+                        false => hmm.reverse(),
+                    };
                     let read = hmm.gen(&template, &mut rng);
                     let lk_base = hmm.likelihood_bootstrap(&template, &read, band);
                     let lk_diff = hmm.likelihood_bootstrap(&diff, &read, band);
@@ -284,17 +304,10 @@ fn gain_of(
             (expected_gain, null_prob as f64 / SEQ_NUM as f64)
         })
         .collect();
-    // let dump: Vec<_> = probs.iter().map(|x| format!("{x:.3}")).collect();
-    // trace!("NULLPROB\t{diff_type}\t{len}\t{}", dump.join("\t"));
     let (_, &mut gain, _) =
         medians.select_nth_unstable_by(GAIN_POS, |x, y| x.partial_cmp(y).unwrap());
     let (_, &mut prob, _) =
         probs.select_nth_unstable_by(PROB_POS, |x, y| x.partial_cmp(y).unwrap());
     let prob = prob.max(0.000000001);
     GainProfile { gain, prob }
-}
-
-#[cfg(test)]
-mod tests {
-    // use super::*;
 }

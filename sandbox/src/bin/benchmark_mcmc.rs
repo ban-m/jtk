@@ -1,6 +1,6 @@
 use clap::Parser;
 use haplotyper::local_clustering::kmeans::ClusteringConfig;
-use kiley::gen_seq::*;
+use kiley::{gen_seq::*, hmm::guided::HMMConfig};
 use log::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -92,19 +92,20 @@ fn main() -> std::io::Result<()> {
                 .collect()
         })
         .collect();
-    let hmm = kiley::hmm::PairHiddenMarkovModel::default();
-    let template = hmm.polish_until_converge(&template, &reads, command_arg.radius);
+    let hmm = kiley::hmm::PairHiddenMarkovModelOnStrands::default();
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;
     let config = ClusteringConfig::new(band, cluster_num, coverage, coverage, &gains);
     let strands = vec![true; reads.len()];
     use haplotyper::local_clustering::kmeans;
-    let ops: Vec<_> = reads
+    let mut ops: Vec<_> = reads
         .iter()
-        .map(|x| hmm.align_guided(&template, x, band).1)
+        .map(|x| hmm.forward().align_guided(&template, x, band).1)
         .collect();
-    let feature_vectors =
-        kmeans::search_variants(&template, &reads, &ops, &strands, &mut rng, &hmm, &config);
+    let h_config = HMMConfig::new(command_arg.radius, reads.len(), 4);
+    let template =
+        hmm.polish_until_converge_with_conf(&template, &reads, &mut ops, &strands, &h_config);
+    let feature_vectors = kmeans::search_variants(&template, &reads, &ops, &strands, &hmm, &config);
     let mcmc_start = std::time::Instant::now();
     let mcmc_score = kmeans::cluster_filtered_variants(&feature_vectors, &config, &mut rng);
     let mcmc_score = mcmc_score.2;

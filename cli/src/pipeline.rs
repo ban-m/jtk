@@ -94,7 +94,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     };
     let take_num = genome_size / chunk_len;
     let repeat_mask_config = RepeatMaskConfig::new(kmersize, top_freq, min_count);
-    let select_unit_config = DetermineUnitConfig::new(
+    let select_chunk_config = DetermineUnitConfig::new(
         chunk_len,
         take_num,
         margin,
@@ -141,7 +141,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         ds = parse_json(&encoded)?
     } else {
         ds.mask_repeat(&repeat_mask_config);
-        ds.select_chunks(&select_unit_config);
+        ds.select_chunks(&select_chunk_config);
         ds.pick_top_n_component(&pick_component_config);
         ds.correct_deletion(&correct_deletion_config);
         ds.remove_erroneous_nodes();
