@@ -1,5 +1,6 @@
 use clap::Parser;
-use haplotyper::local_clustering::kmeans::ClusteringConfig;
+use haplotyper::local_clustering::exact_clustering;
+use haplotyper::local_clustering::pseudo_mcmc::ClusteringConfig;
 use kiley::{gen_seq::*, hmm::guided::HMMConfig};
 use log::*;
 use rand::Rng;
@@ -97,7 +98,7 @@ fn main() -> std::io::Result<()> {
     let coverage = coverage as f64;
     let config = ClusteringConfig::new(band, cluster_num, coverage, coverage, &gains);
     let strands = vec![true; reads.len()];
-    use haplotyper::local_clustering::kmeans;
+    use haplotyper::local_clustering::pseudo_mcmc;
     let mut ops: Vec<_> = reads
         .iter()
         .map(|x| hmm.forward().align_guided(&template, x, band).1)
@@ -105,13 +106,15 @@ fn main() -> std::io::Result<()> {
     let h_config = HMMConfig::new(command_arg.radius, reads.len(), 4);
     let template =
         hmm.polish_until_converge_with_conf(&template, &reads, &mut ops, &strands, &h_config);
-    let feature_vectors = kmeans::search_variants(&template, &reads, &ops, &strands, &hmm, &config);
+    let feature_vectors =
+        pseudo_mcmc::search_variants(&template, &reads, &ops, &strands, &hmm, &config);
     let mcmc_start = std::time::Instant::now();
-    let mcmc_score = kmeans::cluster_filtered_variants(&feature_vectors, &config, &mut rng);
+    let mcmc_score = pseudo_mcmc::cluster_filtered_variants(&feature_vectors, &config, &mut rng);
     let mcmc_score = mcmc_score.2;
     let mcmc_time = (std::time::Instant::now() - mcmc_start).as_millis();
     let exact_start = std::time::Instant::now();
-    let exact_score = kmeans::cluster_filtered_variants_exact(&feature_vectors, &config);
+    let exact_score =
+        exact_clustering::cluster_filtered_variants_exact(&feature_vectors, cluster_num);
     let exact_score = exact_score.2;
     let exact_time = (std::time::Instant::now() - exact_start).as_millis();
     let var_num = command_arg.variant_num;

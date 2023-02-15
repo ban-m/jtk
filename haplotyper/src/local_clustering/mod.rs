@@ -9,8 +9,9 @@ mod config;
 pub use config::*;
 
 use crate::model_tune::ModelFit;
-pub mod kmeans;
+pub mod exact_clustering;
 pub mod normalize;
+pub mod pseudo_mcmc;
 
 pub trait LocalClustering {
     fn local_clustering(&mut self);
@@ -54,9 +55,9 @@ fn pileup_nodes<'a>(ds: &'a mut DataSet, selection: &HashSet<u64>) -> HashMap<u6
 fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
     crate::misc::update_coverage(ds);
     ds.update_models_on_both_strands();
+    let hmm = ds.get_model_on_both_strands();
     let coverage = ds.coverage.unwrap();
     let read_type = ds.read_type;
-    let hmm = ds.get_model_on_both_strands();
     let pileups = pileup_nodes(ds, selection);
     let consensus_and_clusternum: HashMap<_, _> = pileups
         .into_par_iter()
@@ -87,7 +88,7 @@ fn clustering_on_pileup(
     hmm: &PairHiddenMarkovModelOnStrands,
     coverage: f64,
 ) -> (Vec<u8>, f64, usize) {
-    use kmeans::*;
+    use pseudo_mcmc::*;
     let refseq = ref_chunk.seq();
     let band_width = read_type.band_width(ref_chunk.seq().len());
     let mut rng: Xoshiro256StarStar = SeedableRng::seed_from_u64(ref_chunk.id * 3490);
@@ -100,7 +101,6 @@ fn clustering_on_pileup(
     let strands: Vec<_> = nodes.iter().map(|n| n.is_forward).collect();
     let config = kiley::hmm::guided::HMMConfig::new(band_width, seqs.len(), 3);
     let cons = hmm.polish_until_converge_with_conf(refseq, &seqs, &mut ops, &strands, &config);
-    // let cons = hmm.polish_until_converge_with_conf(refseq, &seqs, &mut ops, &config);
     let polished = std::time::Instant::now();
     let gains = crate::likelihood_gains::estimate_gain_default(hmm);
     let per_cluster_cov = match copy_num {
@@ -128,17 +128,17 @@ fn clustering_recursive<R: rand::Rng>(
     strands: &[bool],
     rng: &mut R,
     hmm: &PairHiddenMarkovModelOnStrands,
-    config: &kmeans::ClusteringConfig,
+    config: &pseudo_mcmc::ClusteringConfig,
 ) -> ClusteringDevResult {
-    use kmeans::*;
+    use pseudo_mcmc::*;
     if config.copy_num < UPPER_COPY_NUM {
-        clustering_dev(cons, seqs, ops, strands, rng, hmm, config)
+        clustering(cons, seqs, ops, strands, rng, hmm, config)
     } else {
         const BRANCH_NUM: usize = 4;
         let mut rec_config = *config;
         rec_config.copy_num = BRANCH_NUM;
         let band_width = config.band_width;
-        let (asn, pss, score, k) = clustering_dev(cons, seqs, ops, strands, rng, hmm, &rec_config);
+        let (asn, pss, score, k) = clustering(cons, seqs, ops, strands, rng, hmm, &rec_config);
         let copy_numbers = estim_copy_num(&asn, k, config.copy_num, config.coverage);
         trace!("RECURSE\tCOPYNUM\t{:?}", copy_numbers);
         if k <= 1 {
@@ -150,7 +150,6 @@ fn clustering_recursive<R: rand::Rng>(
             .map(|(k, &cp)| {
                 let (seqs, mut ops, strands) = filter_sub_clusters(seqs, ops, strands, &asn, k);
                 let pconfig = kiley::hmm::guided::HMMConfig::new(band_width, seqs.len(), 0);
-                // let cons = hmm.polish_until_converge_with_conf(cons, &seqs, &mut ops, &pconfig);
                 let cons =
                     hmm.polish_until_converge_with_conf(cons, &seqs, &mut ops, &strands, &pconfig);
                 let mut config = *config;

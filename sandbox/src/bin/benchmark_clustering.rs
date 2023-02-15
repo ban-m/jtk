@@ -109,12 +109,12 @@ fn main() -> std::io::Result<()> {
     draft = hmm.polish_until_converge_with_conf(&draft, &reads, &mut ops, &strands, &h_config);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;
-    use haplotyper::local_clustering::kmeans::ClusteringConfig;
+    use haplotyper::local_clustering::pseudo_mcmc::ClusteringConfig;
     let config = ClusteringConfig::new(band, cluster_num, coverage, coverage, &gains);
     let start = std::time::Instant::now();
-    use haplotyper::local_clustering::kmeans;
+    use haplotyper::local_clustering::pseudo_mcmc;
     let clustering =
-        kmeans::clustering_dev(&draft, &reads, &ops, &strands, &mut rng, &hmm, &config);
+        pseudo_mcmc::clustering(&draft, &reads, &ops, &strands, &mut rng, &hmm, &config);
     let (preds, _, _, _) = clustering;
     debug!("\n{answer:?}\n{preds:?}");
     let end = std::time::Instant::now();

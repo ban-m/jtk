@@ -8,6 +8,12 @@ use crate::likelihood_gains::{Gains, Pvalues};
 use kiley::hmm::NUM_ROW;
 use rand::Rng;
 
+type FeatureVector = (
+    Vec<Vec<f64>>,
+    Vec<(usize, crate::likelihood_gains::DiffType)>,
+);
+type ClusteringDevResult = (Vec<usize>, Vec<Vec<f64>>, f64, usize);
+
 #[derive(Debug, Clone, Copy)]
 pub struct ClusteringConfig<'a> {
     pub band_width: usize,
@@ -36,7 +42,7 @@ impl<'a> ClusteringConfig<'a> {
     }
 }
 
-fn modification_table_dev<T: std::borrow::Borrow<[u8]>>(
+fn modification_table<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
     ops: &[Vec<kiley::Op>],
@@ -64,30 +70,6 @@ fn modification_table_dev<T: std::borrow::Borrow<[u8]>>(
         .collect()
 }
 
-#[allow(dead_code)]
-fn modification_table<T: std::borrow::Borrow<[u8]>>(
-    template: &[u8],
-    reads: &[T],
-    ops: &[Vec<kiley::Op>],
-    _strands: &[bool],
-    band: usize,
-    hmm: &kiley::hmm::PairHiddenMarkovModel,
-) -> Vec<Vec<f64>> {
-    reads
-        .iter()
-        .zip(ops)
-        .map(
-            |(seq, op)| match hmm.modification_table(template, seq.borrow(), band, op) {
-                Some((mut table, lk)) => {
-                    table.iter_mut().for_each(|x| *x -= lk);
-                    table
-                }
-                None => vec![0f64; NUM_ROW * (template.len() + 1)],
-            },
-        )
-        .collect()
-}
-
 fn filter_by<_T>(profiles: &[Vec<f64>], probes: &[(usize, _T)]) -> Vec<Vec<f64>> {
     profiles
         .iter()
@@ -95,8 +77,7 @@ fn filter_by<_T>(profiles: &[Vec<f64>], probes: &[(usize, _T)]) -> Vec<Vec<f64>>
         .collect()
 }
 
-type ClusteringDevResult = (Vec<usize>, Vec<Vec<f64>>, f64, usize);
-pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
+pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
     ops: &[Vec<kiley::Op>],
@@ -128,11 +109,6 @@ pub fn clustering_dev<R: Rng, T: std::borrow::Borrow<[u8]>>(
     (assignments, likelihood_gains, max, max_k as usize)
 }
 
-type FeatureVector = (
-    Vec<Vec<f64>>,
-    Vec<(usize, crate::likelihood_gains::DiffType)>,
-);
-
 pub fn search_variants<T: std::borrow::Borrow<[u8]>>(
     template: &[u8],
     reads: &[T],
@@ -141,7 +117,7 @@ pub fn search_variants<T: std::borrow::Borrow<[u8]>>(
     hmm: &kiley::hmm::PairHiddenMarkovModelOnStrands,
     config: &ClusteringConfig,
 ) -> FeatureVector {
-    let profiles = modification_table_dev(template, reads, ops, strands, config.band_width, hmm);
+    let profiles = modification_table(template, reads, ops, strands, config.band_width, hmm);
     let profiles = compress_small_gains(profiles, template, config.gains);
     let probes = filter_profiles(template, &profiles, strands, config);
     let op_and_homop = operation_and_homopolymer_length(template, &probes);
@@ -472,7 +448,6 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
             MASK_LENGTH <= pos && pos <= (temp_len - MASK_LENGTH)
         })
         .filter(|&(pos, _)| pos % NUM_ROW < 8 || pos % NUM_ROW == 8 + kiley::hmm::COPY_SIZE) // 8 -> 1 length copy = same as insertion
-        .filter(|&(_, &(gain, _))| 0f64 < gain)
         .filter(|&(pos, _)| is_in_short_homopolymer(pos, &homopolymer_length, template))
         .filter(|&(pos, &improve)| {
             has_small_pvalue(pos, improve, &homopolymer_length, &pvalues, gains, temp_len)
@@ -884,79 +859,6 @@ fn get_used_columns(lks: &[Vec<LKCount>]) -> Vec<bool> {
         *to_use &= pos_in_neg as f64 * IN_POS_RATIO < pos_in_use as f64;
     }
     to_uses
-}
-
-pub fn cluster_filtered_variants_exact(
-    (variants, variant_type): &FeatureVector,
-    config: &ClusteringConfig,
-) -> ClusteringDevResult {
-    let copy_num = config.copy_num as usize;
-    let feature_dim = variant_type.len();
-    let mut selected_variants: Vec<_> = vec![0; copy_num];
-    let choises = 1 << feature_dim;
-    let last_loop = vec![choises - 1; copy_num];
-    let mut max = 0f64;
-    let mut argmax = get_result(&selected_variants, variants);
-    while selected_variants != last_loop {
-        let score = calc_score(&selected_variants, variants);
-        if max < score {
-            argmax = get_result(&selected_variants, variants);
-            max = score;
-        }
-        increment_one(&mut selected_variants, choises);
-    }
-    argmax
-}
-
-fn get_result(vars: &[usize], variants: &[Vec<f64>]) -> ClusteringDevResult {
-    let score = calc_score(vars, variants);
-    let (assignments, lk_gain): (Vec<_>, Vec<_>) = variants
-        .iter()
-        .map(|xs| {
-            let lk_gain: Vec<_> = vars
-                .iter()
-                .map(|&selection| get_exact_score(selection, xs))
-                .collect();
-            let (max_id, _) = lk_gain
-                .iter()
-                .enumerate()
-                .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
-                .unwrap();
-            (max_id, lk_gain)
-        })
-        .unzip();
-    (assignments, lk_gain, score, vars.len())
-}
-
-fn get_exact_score(selection: usize, xs: &[f64]) -> f64 {
-    xs.iter()
-        .enumerate()
-        .filter_map(|(i, x)| (((1 << i) & selection) != 0).then_some(x))
-        .sum()
-}
-
-fn calc_score(vars: &[usize], variants: &[Vec<f64>]) -> f64 {
-    fn max_gain(vars: &[usize], xs: &[f64]) -> f64 {
-        vars.iter()
-            .map(|&selection| get_exact_score(selection, xs))
-            .max_by(|x, y| x.partial_cmp(y).unwrap())
-            .unwrap()
-    }
-    variants.iter().map(|xs| max_gain(vars, xs)).sum()
-}
-
-fn increment_one(vars: &mut [usize], max: usize) {
-    let mut idx = 0;
-    while max == vars[idx] + 1 {
-        idx += 1;
-    }
-    vars[idx] += 1;
-    for j in 0..idx {
-        vars[j] = vars[idx];
-    }
-    for w in vars.windows(2) {
-        assert!(w[1] <= w[0]);
-    }
 }
 
 #[cfg(test)]
