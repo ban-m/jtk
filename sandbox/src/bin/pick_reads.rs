@@ -12,20 +12,8 @@ fn main() -> std::io::Result<()> {
         .iter()
         .map(|r| (r.id, r.name.clone()))
         .collect();
-    // let reads: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
-    // for read in ds.encoded_reads.iter().filter(|r| reads.contains(&r.id)) {
-    //     let dump: Vec<_> = read
-    //         .nodes
-    //         .iter()
-    //         .map(|n| (n.unit, n.cluster, n.is_forward, n.position_from_start))
-    //         .collect();
-    //     let is_hap1 = match IS_MOCK {
-    //         false => id2desc[&read.id].contains("251v2"),
-    //         true => id2desc[&read.id].contains("hapA"),
-    //     };
-    //     println!("{}\t{}\t{:?}", read.id, is_hap1, dump);
-    // }
-    let units: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
+
+    let chunks: HashSet<u64> = args[2..].iter().map(|x| x.parse().unwrap()).collect();
     let range = 14;
     for read in ds.encoded_reads.iter() {
         let len = read.original_length;
@@ -33,11 +21,11 @@ fn main() -> std::io::Result<()> {
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, n)| units.contains(&n.unit))
+            .filter(|(_, n)| chunks.contains(&n.chunk))
         {
             let mut dumps = vec![format!("{:<5}", 0); range];
             let (nodes, idx) = {
-                let mut nodes: Vec<_> = read.nodes.iter().map(|n| n.unit).collect();
+                let mut nodes: Vec<_> = read.nodes.iter().map(|n| n.chunk).collect();
                 match node.is_forward {
                     true => (nodes, idx),
                     false => {
@@ -48,8 +36,8 @@ fn main() -> std::io::Result<()> {
                 }
             };
             for i in (0..range).filter(|&i| range / 2 <= idx + i) {
-                if let Some(unit) = nodes.get(idx + i - range / 2) {
-                    dumps[i] = format!("{:<5}", unit);
+                if let Some(chunk) = nodes.get(idx + i - range / 2) {
+                    dumps[i] = format!("{:<5}", chunk);
                 }
             }
             let is_hap1 = match IS_MOCK {

@@ -8,9 +8,9 @@ fn main() -> std::io::Result<()> {
             .unwrap();
     use haplotyper::repeat_masking::RepeatMask;
     let repetitive_kmer = ds.get_repetitive_kmer();
-    for unit in ds.selected_chunks.iter() {
-        let repetitiveness = repetitive_kmer.repetitiveness(unit.seq());
-        println!("{}\t{}", unit.id, repetitiveness);
+    for chunk in ds.selected_chunks.iter() {
+        let repetitiveness = repetitive_kmer.repetitiveness(chunk.seq());
+        println!("{}\t{}", chunk.id, repetitiveness);
     }
     Ok(())
 }

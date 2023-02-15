@@ -111,22 +111,22 @@ fn estimate_model_parameters_on_both_strands(
     let pileups = {
         let mut pileups: HashMap<_, _> = chunks.keys().map(|&k| (k, vec![])).collect();
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            pileups.entry(node.unit).or_default().push(node);
+            pileups.entry(node.chunk).or_default().push(node);
         }
         truncate_bucket(pileups)
     };
     let mut polishing_pairs: Vec<_> = pileups
         .iter()
         .filter_map(|(uid, nodes)| {
-            let ref_unit = chunks.get(uid)?;
-            let band_width = ds.read_type.band_width(ref_unit.seq().len());
+            let ref_chunk = chunks.get(uid)?;
+            let band_width = ds.read_type.band_width(ref_chunk.seq().len());
             let ops: Vec<Vec<_>> = nodes
                 .iter()
                 .map(|n| crate::misc::ops_to_kiley(&n.cigar))
                 .collect();
             let seqs: Vec<_> = nodes.iter().map(|n| n.seq()).collect();
             let strands: Vec<_> = nodes.iter().map(|n| n.is_forward).collect();
-            let chunk_seq = ref_unit.seq().to_vec();
+            let chunk_seq = ref_chunk.seq().to_vec();
             Some((chunk_seq, seqs, ops, strands, band_width))
         })
         .collect();

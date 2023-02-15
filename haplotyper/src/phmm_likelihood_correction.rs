@@ -15,7 +15,7 @@ impl AlignmentCorrection for DataSet {
             .encoded_reads
             .iter()
             .flat_map(|r| r.nodes.iter())
-            .map(|n| n.unit)
+            .map(|n| n.chunk)
             .collect();
         self.selected_chunks.retain(|c| present.contains(&c.id));
         let selections: HashSet<_> = self
@@ -38,7 +38,7 @@ impl AlignmentCorrection for DataSet {
             .par_iter()
             .filter(|c| 1 < c.cluster_num && selections.contains(&c.id))
             .map(|c| (c.id, (c.cluster_num, c.copy_num)))
-            .map(|(id, cluster_copy)| correct_unit(self, id, cluster_copy, &copy_numbers, config))
+            .map(|(id, cluster_copy)| correct_chunk(self, id, cluster_copy, &copy_numbers, config))
             .collect();
         let protected = get_protected_clusterings(self);
         let supress_cluster = supress_threshold(&corrected_clusterings);
@@ -85,7 +85,7 @@ impl AlignmentCorrection for DataSet {
                 for &(pos, asn) in corrected.iter() {
                     let node = read.nodes.get_mut(pos).unwrap();
                     node.cluster = asn;
-                    let cl = cluster_num[&node.unit];
+                    let cl = cluster_num[&node.chunk];
                     node.posterior.clear();
                     node.posterior.extend(std::iter::repeat(-10000f64).take(cl));
                     node.posterior[asn as usize] = 0f64;
@@ -107,7 +107,7 @@ const PROTECT_FACTOR: f64 = 1f64;
 fn get_protected_clusterings(ds: &mut DataSet) -> HashSet<u64> {
     let mut coverage: HashMap<_, u32> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-        *coverage.entry(node.unit).or_default() += 1;
+        *coverage.entry(node.chunk).or_default() += 1;
     }
     // if ds.model_param.is_none() {
     // ds.update_models_on_both_strands();
@@ -138,9 +138,9 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
         }
         let mut obs_counts: Vec<Vec<f64>> = cls.into_iter().map(|k| vec![0f64; k]).collect();
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            let unit = node.unit as usize;
+            let chunk = node.chunk as usize;
             let total = crate::misc::logsumexp(&node.posterior);
-            obs_counts[unit]
+            obs_counts[chunk]
                 .iter_mut()
                 .zip(node.posterior.iter())
                 .for_each(|(o, p)| *o += (p - total).exp());
@@ -180,9 +180,9 @@ fn estimate_copy_number_of_cluster(ds: &DataSet) -> Vec<Vec<f64>> {
 }
 
 type CorrectionResult = (Vec<(u64, usize, u64)>, f64, (u64, usize));
-fn correct_unit(
+fn correct_chunk(
     ds: &DataSet,
-    unit_id: u64,
+    chunk_id: u64,
     cluster_and_copynum: (usize, usize),
     copy_numbers: &[Vec<f64>],
     config: &CorrectionConfig,
@@ -190,26 +190,30 @@ fn correct_unit(
     let mut reads = vec![];
     for read in ds.encoded_reads.iter() {
         for (idx, node) in read.nodes.iter().enumerate() {
-            if node.unit == unit_id {
+            if node.chunk == chunk_id {
                 reads.push((idx, read));
             }
         }
     }
     reads.sort_by_cached_key(|&(idx, read)| read.nodes[idx].cluster);
-    trace!("CENTER\t{:?}", copy_numbers[unit_id as usize]);
+    trace!("CENTER\t{:?}", copy_numbers[chunk_id as usize]);
     let len = reads.len();
-    trace!("Correction\t{unit_id}\t{cluster_and_copynum:?}\t{len}",);
-    let unit = ds.selected_chunks.iter().find(|u| u.id == unit_id).unwrap();
-    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, unit, config);
+    trace!("Correction\t{chunk_id}\t{cluster_and_copynum:?}\t{len}",);
+    let chunk = ds
+        .selected_chunks
+        .iter()
+        .find(|u| u.id == chunk_id)
+        .unwrap();
+    let (assignments, k) = clustering(&reads, cluster_and_copynum, copy_numbers, chunk, config);
     let (adj_rand_index, raw) = adj_rand_on_biased(&reads, &assignments);
-    debug!("ARI\t{}\t{k}\t{adj_rand_index:.3}\t{raw:.3}", unit.id);
+    debug!("ARI\t{}\t{k}\t{adj_rand_index:.3}\t{raw:.3}", chunk.id);
     assert_eq!(assignments.len(), reads.len());
     let assignments: Vec<_> = reads
         .into_iter()
         .zip(assignments)
         .map(|((idx, read), asn)| (read.id, idx, asn as u64))
         .collect();
-    (assignments, adj_rand_index, (unit_id, k))
+    (assignments, adj_rand_index, (chunk_id, k))
 }
 
 fn adj_rand_on_biased(reads: &[(usize, &EncodedRead)], asns: &[usize]) -> (f64, f64) {
@@ -238,7 +242,7 @@ type Context<'a> = (Vec<(u64, &'a [f64])>, &'a Node, Vec<(u64, &'a [f64])>);
 fn to_context<'a>(&(idx, read): &(usize, &'a EncodedRead)) -> Context<'a> {
     let center = &read.nodes[idx];
     fn get_tuple(n: &Node) -> (u64, &[f64]) {
-        (n.unit, n.posterior.as_slice())
+        (n.chunk, n.posterior.as_slice())
     }
     let (up, tail) = match center.is_forward {
         true => {
@@ -259,10 +263,10 @@ fn clustering(
     reads: &[(usize, &EncodedRead)],
     (k, _upper_k): (usize, usize),
     copy_numbers: &[Vec<f64>],
-    unit: &Chunk,
+    chunk: &Chunk,
     _: &CorrectionConfig,
 ) -> (Vec<usize>, usize) {
-    let id = unit.id;
+    let id = chunk.id;
     let contexts: Vec<_> = reads.iter().map(to_context).collect();
     let sims: Vec<Vec<_>> = contexts
         .iter()
@@ -285,7 +289,7 @@ fn clustering(
             trace!("LAP\t{i}\t{}\t{}", ids[i], line.join("\t"));
         }
     }
-    let cov_per_copy = reads.len() - reads.len() / unit.copy_num / 4;
+    let cov_per_copy = reads.len() - reads.len() / chunk.copy_num / 4;
     let sims = filter_similarity(sims, cov_per_copy);
     let (rowsum, laplacian) = get_graph_laplacian(&sims);
     let (mut eigens, pick_k) = get_eigenvalues(&laplacian, &rowsum, id);
@@ -464,10 +468,10 @@ fn alignment<'a>(
     copy_numbers: &[Vec<f64>],
 ) -> f64 {
     let (up2, center2, down2) = ctx2;
-    assert_eq!(center1.unit, center2.unit);
+    assert_eq!(center1.chunk, center2.chunk);
     let up_aln = align_swg(up1, up2, copy_numbers);
     let down_aln = align_swg(down1, down2, copy_numbers);
-    let center_copy_num = &copy_numbers[center1.unit as usize];
+    let center_copy_num = &copy_numbers[center1.chunk as usize];
     let center = sim(&center1.posterior, &center2.posterior, center_copy_num);
     let likelihood_ratio = up_aln + down_aln + center;
     (1f64 + (-likelihood_ratio).exp()).recip()

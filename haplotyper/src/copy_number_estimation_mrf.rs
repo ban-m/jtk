@@ -31,7 +31,7 @@ const CHOICES: [usize; 3] = [0, 1, 2];
 pub struct Graph {
     // (u,u_pos, v, v_pos).
     edges: Vec<(usize, bool, usize, bool)>,
-    // coverage of nodes, length(number of units) in nodes.
+    // coverage of nodes, length(number of chunks) in nodes.
     coverages: Vec<(u64, usize)>,
     // for each node, for each position, return the set of edge indices.
     edge_lists: Vec<[Vec<usize>; 2]>,
@@ -95,7 +95,7 @@ impl Graph {
     fn serialize_node<T: std::borrow::Borrow<EncodedRead>>(reads: &[T]) -> HashMap<Node, usize> {
         let nodes: HashSet<_> = reads
             .iter()
-            .flat_map(|r| r.borrow().nodes.iter().map(|n| (n.unit, n.cluster)))
+            .flat_map(|r| r.borrow().nodes.iter().map(|n| (n.chunk, n.cluster)))
             .collect();
         let mut nodes: Vec<_> = nodes.into_iter().collect();
         nodes.sort_unstable();
@@ -118,8 +118,8 @@ impl Graph {
     fn normalize(u: &definitions::Node, v: &definitions::Node) -> Edge {
         let u_is_head = !u.is_forward;
         let v_is_head = v.is_forward;
-        let u = ((u.unit, u.cluster), u_is_head);
-        let v = ((v.unit, v.cluster), v_is_head);
+        let u = ((u.chunk, u.cluster), u_is_head);
+        let v = ((v.chunk, v.cluster), v_is_head);
         (u.min(v), u.max(v))
     }
     pub fn new<T: std::borrow::Borrow<EncodedRead>>(
@@ -129,12 +129,12 @@ impl Graph {
         let edge_to_idx = Self::serialize_edge(reads);
         let mut coverages: Vec<u64> = vec![0; node_to_idx.len()];
         for node in reads.iter().flat_map(|r| r.borrow().nodes.iter()) {
-            coverages[node_to_idx[&(node.unit, node.cluster)]] += 1;
+            coverages[node_to_idx[&(node.chunk, node.cluster)]] += 1;
         }
         for read in reads.iter().map(|r| r.borrow()) {
             for (i, edge) in read.edges.iter().enumerate() {
-                assert_eq!(edge.from, read.nodes[i].unit);
-                assert_eq!(edge.to, read.nodes[i + 1].unit);
+                assert_eq!(edge.from, read.nodes[i].chunk);
+                assert_eq!(edge.to, read.nodes[i + 1].chunk);
             }
         }
         let mut edges: Vec<_> = edge_to_idx.keys().collect();
@@ -735,10 +735,10 @@ mod test {
             .skip(start_pos)
             .take(original_length / 2_000)
             .enumerate()
-            .map(|(idx, &unit)| {
+            .map(|(idx, &chunk)| {
                 let position = idx as usize * 2_000;
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, seq.clone(), cigar, position, 2)
+                definitions::Node::new(chunk, true, seq.clone(), cigar, position, 2)
             })
             .collect();
         let edges = nodes
@@ -752,8 +752,8 @@ mod test {
                 let start = to.position_from_start;
                 let label = vec![];
                 definitions::Edge {
-                    from: from.unit,
-                    to: to.unit,
+                    from: from.chunk,
+                    to: to.chunk,
                     offset: start as i64 - end as i64,
                     label: label.into(),
                 }
@@ -779,8 +779,8 @@ mod test {
         let reads: Vec<_> = (0..read_num)
             .map(|i| gen_read(i as u64, &mut rng, &hap))
             .collect();
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let mean_cov = total_units as f64 / hap.len() as f64 / 2f64;
+        let total_occs: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let mean_cov = total_occs as f64 / hap.len() as f64 / 2f64;
         let (graph, node_to_idx, _) = Graph::new(&reads);
         println!("{}", graph);
         let config = Config::new(mean_cov);
@@ -820,7 +820,7 @@ mod test {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 3)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 3)
                     .count()
             })
             .sum();
@@ -830,13 +830,13 @@ mod test {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 2)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 2)
                     .count()
             })
             .sum();
         println!("(1,2)\t{}", count);
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let mean_cov = total_units as f64 / (hap1.len() + hap2.len()) as f64;
+        let total_occs: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let mean_cov = total_occs as f64 / (hap1.len() + hap2.len()) as f64;
         let (graph, node_to_idx, _) = Graph::new(&reads);
         println!("{}", graph);
         let config = Config::new(mean_cov);

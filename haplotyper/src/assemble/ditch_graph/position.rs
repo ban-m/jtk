@@ -1,5 +1,5 @@
 //! Definition of the position of the contig.
-/// Position::Head is the up-stream position of a unit, and Tail is downstream by default.
+/// Position::Head is the up-stream position of a chunk, and Tail is downstream by default.
 #[derive(Debug, Clone, Eq, PartialEq, Copy, Hash, PartialOrd, Ord)]
 pub enum Position {
     Head,

@@ -122,29 +122,29 @@ impl Stats for definitions::DataSet {
         }
         // Unit statistics
         if !self.encoded_reads.is_empty() {
-            let mut units: Vec<(u64, usize)> = {
+            let mut chunks: Vec<(u64, usize)> = {
                 let mut count: HashMap<u64, usize> = HashMap::new();
                 for read in self.encoded_reads.iter() {
                     for node in read.nodes.iter() {
-                        *count.entry(node.unit).or_default() += 1;
+                        *count.entry(node.chunk).or_default() += 1;
                     }
                 }
                 let mut count: Vec<(u64, usize)> = count.into_iter().collect();
                 count.sort_by_key(|e| e.0);
                 count
             };
-            units.sort_by_key(|e| e.1);
-            let (argmax, max) = *units.last().unwrap_or(&(0, 0));
-            let (argmin, min) = *units.first().unwrap_or(&(0, 0));
-            let sum = units.iter().map(|e| e.1).sum::<usize>();
-            let ave = sum as f64 / units.len() as f64;
+            chunks.sort_by_key(|e| e.1);
+            let (argmax, max) = *chunks.last().unwrap_or(&(0, 0));
+            let (argmin, min) = *chunks.first().unwrap_or(&(0, 0));
+            let sum = chunks.iter().map(|e| e.1).sum::<usize>();
+            let ave = sum as f64 / chunks.len() as f64;
             writeln!(wtr, "ENCODING\tMin\t{min}\t{argmin}")?;
             writeln!(wtr, "ENCODING\tMax\t{max}\t{argmax}")?;
             writeln!(wtr, "ENCODING\tAve\t{ave:.2}")?;
-            let top_20: Vec<_> = units.iter().rev().take(20).copied().collect();
-            let take_len = units.len() - 20.min(units.len());
-            let units: Vec<_> = units.iter().take(take_len).map(|x| x.1).collect();
-            let hist = histgram_viz::Histgram::new(&units);
+            let top_20: Vec<_> = chunks.iter().rev().take(20).copied().collect();
+            let take_len = chunks.len() - 20.min(chunks.len());
+            let chunks: Vec<_> = chunks.iter().take(take_len).map(|x| x.1).collect();
+            let hist = histgram_viz::Histgram::new(&chunks);
             writeln!(wtr, "Top 20 Occurences:{:?}", top_20)?;
             writeln!(wtr, "The rest of the Units\n{}", hist.format(40, 20))?;
         }
@@ -156,14 +156,14 @@ impl Stats for definitions::DataSet {
         Ok(())
     }
     fn error_rate(&self) -> ErrorRate {
-        let ref_units: HashMap<_, _> = self.selected_chunks.iter().map(|c| (c.id, c)).collect();
+        let ref_chunks: HashMap<_, _> = self.selected_chunks.iter().map(|c| (c.id, c)).collect();
         let summaries: Vec<_> = self
             .encoded_reads
             .par_iter()
             .flat_map(|r| r.nodes.par_iter())
             .map(|node| {
-                let ref_unit = ref_units[&node.unit];
-                let (query, aln, refr) = node.recover(ref_unit);
+                let ref_chunk = ref_chunks[&node.chunk];
+                let (query, aln, refr) = node.recover(ref_chunk);
                 let mismat = aln.iter().filter(|&&x| x == b'X').count() as f64;
                 let del = query.iter().filter(|&&x| x == b' ').count() as f64;
                 let ins = refr.iter().filter(|&&x| x == b' ').count() as f64;

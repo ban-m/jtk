@@ -25,8 +25,8 @@ fn main() -> std::io::Result<()> {
     {
         assert_eq!(r_single.nodes.len(), r_both.nodes.len());
         for (n_single, n_both) in std::iter::zip(r_single.nodes.iter(), r_both.nodes.iter()) {
-            assert_eq!(n_single.unit, n_both.unit);
-            let slot = clusterings.entry(n_single.unit).or_default();
+            assert_eq!(n_single.chunk, n_both.chunk);
+            let slot = clusterings.entry(n_single.chunk).or_default();
             slot.0.push(n_single.cluster as usize);
             slot.1.push(n_both.cluster as usize);
         }

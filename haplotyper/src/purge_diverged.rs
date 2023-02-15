@@ -1,4 +1,4 @@
-//! This modeule includes methods to newly define units
+//! This modeule includes methods to newly define chunks
 //! From the result of local clustering.
 use definitions::*;
 use std::collections::{HashMap, HashSet};
@@ -30,7 +30,7 @@ impl PurgeLargeDelConfig {
 
 pub trait PurgeDivergent {
     fn purge(&mut self, config: &PurgeDivConfig);
-    // Return the ids of the units.
+    // Return the ids of the chunks.
     fn purge_largeindel(&mut self, config: &PurgeLargeDelConfig) -> HashSet<u64>;
 }
 
@@ -77,8 +77,8 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
             });
             let del_size = crate::misc::max_region(xs) / DEL_WEIGHT;
             let key = match config.compress {
-                true => (node.unit, 0),
-                false => (node.unit, node.cluster),
+                true => (node.chunk, 0),
+                false => (node.chunk, node.cluster),
             };
             let pointer = (read.id, idx, del_size);
             indel_size_distr.entry(key).or_default().push(pointer);
@@ -87,21 +87,21 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
     // TODO: If there are two more clusters, and all the read in one cluster
     // support large indel, we can .. ?
     crate::misc::update_coverage(ds);
-    indel_size_distr.retain(|&(unit, cluster), distr| {
-        let copy_num = copy_num[&unit];
+    indel_size_distr.retain(|&(chunk, cluster), distr| {
+        let copy_num = copy_num[&chunk];
         let hap_coverage = ds.coverage.unwrap();
         match copy_num {
-            0 | 1 => filter_single_copy(distr, unit, cluster, hap_coverage, config),
-            _ => filter_multi_copy(distr, unit, cluster, hap_coverage, config),
+            0 | 1 => filter_single_copy(distr, chunk, cluster, hap_coverage, config),
+            _ => filter_multi_copy(distr, chunk, cluster, hap_coverage, config),
         }
     });
     let mut read_bucket: HashMap<_, Vec<_>> = HashMap::new();
-    for (&(unit, cluster), distr) in indel_size_distr.iter() {
+    for (&(chunk, cluster), distr) in indel_size_distr.iter() {
         for &(readid, idx, _) in distr.iter() {
             read_bucket
                 .entry(readid)
                 .or_default()
-                .push((unit, cluster, idx));
+                .push((chunk, cluster, idx));
         }
     }
     read_bucket
@@ -112,12 +112,12 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
             Some(bucket) => bucket,
             None => continue,
         };
-        for &(unit, cluster, idx) in bucket {
+        for &(chunk, cluster, idx) in bucket {
             let node = &read.nodes[idx];
             if config.compress {
-                assert_eq!(unit, node.unit);
+                assert_eq!(chunk, node.chunk);
             } else {
-                assert_eq!((unit, cluster), (node.unit, node.cluster));
+                assert_eq!((chunk, cluster), (node.chunk, node.cluster));
             }
             read.remove(idx);
         }
@@ -127,7 +127,7 @@ fn purge_large_deletion_nodes(ds: &mut DataSet, config: &PurgeLargeDelConfig) ->
 
 fn filter_single_copy(
     distr: &mut Vec<(u64, usize, i64)>,
-    unit: u64,
+    chunk: u64,
     cluster: u64,
     _hap_coverage: f64,
     config: &PurgeLargeDelConfig,
@@ -144,7 +144,7 @@ fn filter_single_copy(
             .sum();
         let mean = sum / (num as i64).max(1);
         let cov = distr.len();
-        debug!("PLI\t{unit}\t{cluster}\t{mean}\t{num}\t{cov}\tSingle");
+        debug!("PLI\t{chunk}\t{cluster}\t{mean}\t{num}\t{cov}\tSingle");
         distr.retain(|&(_, _, size)| accept_size < size as usize);
         true
     } else {
@@ -154,7 +154,7 @@ fn filter_single_copy(
 
 fn filter_multi_copy(
     distr: &mut Vec<(u64, usize, i64)>,
-    unit: u64,
+    chunk: u64,
     cluster: u64,
     hap_coverage: f64,
     config: &PurgeLargeDelConfig,
@@ -165,8 +165,8 @@ fn filter_multi_copy(
     let upper_thr = (distr.len() as f64 - lower_thr as f64).max(0f64).ceil() as usize;
     let min_remove = distr.iter().filter(|&x| (indel_size as i64) < x.2).count();
     let max_remove = distr.iter().filter(|&x| (accept_size as i64) < x.2).count();
-    if unit == 1527 {
-        debug!("PLI\t{unit}\t{cluster}\t{min_remove}\t{max_remove}");
+    if chunk == 1527 {
+        debug!("PLI\t{chunk}\t{cluster}\t{min_remove}\t{max_remove}");
     }
     if lower_thr < min_remove && max_remove < upper_thr {
         let sum: i64 = distr
@@ -176,7 +176,7 @@ fn filter_multi_copy(
             .sum();
         let mean = sum / max_remove as i64;
         let cov = distr.len();
-        debug!("PLI\t{unit}\t{cluster}\t{mean}\t{min_remove}\t{max_remove}\t{cov}");
+        debug!("PLI\t{chunk}\t{cluster}\t{mean}\t{min_remove}\t{max_remove}\t{cov}");
         distr.retain(|&(_, _, size)| accept_size < size as usize);
         true
     } else {
@@ -217,7 +217,7 @@ fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
                 .for_each(|(n, cl)| n.cluster = cl);
         }
     }
-    let changed_units: HashSet<_> = ds
+    let changed_chunks: HashSet<_> = ds
         .selected_chunks
         .iter()
         .filter_map(|c| {
@@ -228,9 +228,9 @@ fn re_cluster(ds: &mut DataSet, selection: &HashSet<u64>) {
         })
         .chain(selection.iter().copied())
         .collect();
-    debug!("PD\tReClustering\t{}", changed_units.len());
+    debug!("PD\tReClustering\t{}", changed_chunks.len());
     use crate::local_clustering::LocalClustering;
-    ds.local_clustering_selected(&changed_units);
+    ds.local_clustering_selected(&changed_chunks);
 }
 
 fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> HashSet<u64> {
@@ -256,10 +256,10 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
         }
     }
     // Modify cluster number.
-    for unit in ds.selected_chunks.iter_mut() {
-        let id = unit.id as usize;
+    for chunk in ds.selected_chunks.iter_mut() {
+        let id = chunk.id as usize;
         let squished = diverged_clusters[id].iter().filter(|&&x| x).count();
-        unit.cluster_num -= squished;
+        chunk.cluster_num -= squished;
     }
     let removed_nodes: usize = ds
         .encoded_reads
@@ -267,9 +267,9 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
         .map(|read| {
             let orig = read.nodes.len();
             read.nodes
-                .retain(|node| !diverged_clusters[node.unit as usize][node.cluster as usize]);
+                .retain(|node| !diverged_clusters[node.chunk as usize][node.cluster as usize]);
             for node in read.nodes.iter_mut() {
-                let cluster_info = &diverged_clusters[node.unit as usize];
+                let cluster_info = &diverged_clusters[node.chunk as usize];
                 if cluster_info.iter().any(|&b| b) {
                     remove_diverged(node, cluster_info);
                 }
@@ -296,11 +296,11 @@ fn purge_diverged_nodes(ds: &mut DataSet, thr: f64, config: &PurgeDivConfig) -> 
 // Unit -> Cluster -> If the cluster is very diverged.
 fn get_diverged_clusters(ds: &DataSet, thr: f64, _: &PurgeDivConfig) -> Vec<Vec<bool>> {
     use crate::estimate_error_rate::estimate_error_rate;
-    let fallback = crate::determine_units::calc_sim_thr(ds, 0.5);
+    let fallback = crate::determine_chunks::calc_sim_thr(ds, 0.5);
     debug!("PD\tFallback\t{fallback}");
     let error_rates = estimate_error_rate(ds, fallback);
     error_rates
-        .unit_error_rate
+        .chunk_error_rate
         .iter()
         .map(|es| es.iter().map(|&x| thr < x).collect())
         .collect()

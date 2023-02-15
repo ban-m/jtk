@@ -527,10 +527,10 @@ impl Optimizer {
 /// should have `cv:i:` tag and `ln:i:` tag.
 /// The `cov` parameter is the haplotype coverage,
 /// the `len` parameter is the average length of the raw reads,
-/// and `unit_len` parameter is the length of the unit.
-/// If the assembly graph is gapless, `len` and `unit_len` would be 0.
+/// and `chunk_len` parameter is the length of the chunk.
+/// If the assembly graph is gapless, `len` and `chunk_len` would be 0.
 /// After estimation, the estimated copy number would be added to gfa as `cp:i:` tag.
-pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize], unit_len: usize) {
+pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize], chunk_len: usize) {
     let node_index: HashMap<_, _> = gfa
         .iter()
         .filter_map(|record| match &record.content {
@@ -542,7 +542,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
         .collect();
     let calibrator = CoverageCalibrator::new(lens);
     let old_cov = cov;
-    let cov = calibrator.calib_f64(cov, unit_len);
+    let cov = calibrator.calib_f64(cov, chunk_len);
     debug!("Coverage\t{}\t{}", old_cov, cov);
     let nodes: Vec<_> = gfa
         .iter()
@@ -554,8 +554,8 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .find(|tag| tag.inner.starts_with("cv"))
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|x| x.parse().ok())?;
-                let weight = calibrator.calib(coverage, unit_len) / cov;
-                let len = seg.slen as usize / unit_len;
+                let weight = calibrator.calib(coverage, chunk_len) / cov;
+                let len = seg.slen as usize / chunk_len;
                 Some((weight, len))
             } else {
                 None
@@ -584,7 +584,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|cov| cov.parse().ok())
                     .unwrap_or_else(|| panic!("{:?}", record.tags));
-                let gap_len = (gap_len + 2 * unit_len as isize).max(0) as usize;
+                let gap_len = (gap_len + 2 * chunk_len as isize).max(0) as usize;
                 let weight = calibrator.calib(coverage, gap_len) / cov;
                 // debug!("DUMP\t{}\t{:.2}\t{:.2}\tEdge", coverage, weight, gap_len);
                 Some((from, from_plus, to, to_plus, weight))

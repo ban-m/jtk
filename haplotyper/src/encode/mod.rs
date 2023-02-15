@@ -8,7 +8,7 @@ pub const MARGIN: usize = 50;
 // Any alignment having deletion longer than ALLOWED_END_GAP would be discarded.
 // Increasing this value would be more "abundant" encoding,
 // but it would be problem in local clustering, which requiring almost all the
-// unit is correctly globally aligned.
+// chunk is correctly globally aligned.
 const ALLOWED_END_GAP: usize = 25;
 pub trait Encode {
     fn encode(&mut self, threads: usize, sim_thr: f64, sd_of_error: f64);
@@ -20,7 +20,7 @@ impl Encode for definitions::DataSet {
         encode_by_mm2(self, threads, sim_thr).unwrap();
         let config =
             deletion_fill::CorrectDeletionConfig::new(false, Some(sim_thr), Some(sd_of_error));
-        deletion_fill::correct_unit_deletion(self, &config);
+        deletion_fill::correct_chunk_deletion(self, &config);
         debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(is_uppercase));
         if log_enabled!(log::Level::Debug) {
@@ -81,11 +81,11 @@ pub fn encode_by(ds: &mut DataSet, alignments: &[bio_utils::paf::PAF]) {
 fn encode_read_by_paf(
     read: &RawRead,
     alns: &[&bio_utils::paf::PAF],
-    units: &HashMap<u64, &Chunk>,
+    chunks: &HashMap<u64, &Chunk>,
 ) -> Option<EncodedRead> {
     let mut seq: Vec<_> = read.seq().to_vec();
     seq.iter_mut().for_each(u8::make_ascii_uppercase);
-    let nodes = encode_read_to_nodes_by_paf(&seq, alns, units)?;
+    let nodes = encode_read_to_nodes_by_paf(&seq, alns, chunks)?;
     nodes_to_encoded_read(read.id, nodes, &seq)
 }
 
@@ -119,17 +119,17 @@ pub fn nodes_to_encoded_read(id: u64, nodes: Vec<Node>, seq: &[u8]) -> Option<En
 fn encode_read_to_nodes_by_paf(
     seq: &[u8],
     alns: &[&bio_utils::paf::PAF],
-    units: &HashMap<u64, &Chunk>,
+    chunks: &HashMap<u64, &Chunk>,
 ) -> Option<Vec<Node>> {
     let mut nodes: Vec<_> = alns
         .iter()
         .filter_map(|aln| {
             let tname = aln.tname.parse::<u64>().ok()?;
-            encode_paf(seq, aln, units.get(&tname)?)
+            encode_paf(seq, aln, chunks.get(&tname)?)
         })
         .collect();
     (!nodes.is_empty()).then(|| {
-        nodes.sort_by_key(|n| n.unit);
+        nodes.sort_by_key(|n| n.chunk);
         let mut nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         remove_slippy_alignment(nodes)
@@ -176,13 +176,13 @@ fn trailing_alignment(refr: &[u8], mut trailing: Vec<u8>) -> (Vec<Op>, Vec<u8>) 
     (crate::misc::kiley_op_to_ops(&tops).0, trailing)
 }
 
-fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Chunk) -> Option<Node> {
+fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, chunk: &Chunk) -> Option<Node> {
     use bio_utils::sam;
     let cigar = sam::parse_cigar_string(aln.get_tag("cg")?.1);
     let (leading, aligned, trailing) = split_query(seq, aln);
     let mut ops = vec![];
     assert!(0 < aln.tstart || leading.is_empty());
-    let (leading_aln, leading) = leading_alignment(&unit.seq()[..aln.tstart], leading);
+    let (leading_aln, leading) = leading_alignment(&chunk.seq()[..aln.tstart], leading);
     ops.extend(leading_aln);
     let cigar = cigar.iter().map(|&op| match op {
         sam::Op::Align(l) | sam::Op::Match(l) | sam::Op::Mismatch(l) => Op::Match(l),
@@ -192,33 +192,33 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, unit: &Chunk) -> Option<Nod
     });
     ops.extend(cigar);
     assert!(aln.tlen != aln.tend || trailing.is_empty());
-    let (trailing_aln, trailing) = trailing_alignment(&unit.seq()[aln.tend..], trailing);
+    let (trailing_aln, trailing) = trailing_alignment(&chunk.seq()[aln.tend..], trailing);
     ops.extend(trailing_aln);
     let position_from_start = match aln.relstrand {
         true => aln.qstart - leading.len(),
         false => aln.qstart - trailing.len(),
     };
     let seq = vec![leading, aligned, trailing].concat();
-    check_length(&ops, seq.len(), unit.seq().len());
-    let cl = unit.cluster_num;
-    let node = Node::new(unit.id, aln.relstrand, seq, ops, position_from_start, cl);
+    check_length(&ops, seq.len(), chunk.seq().len());
+    let cl = chunk.cluster_num;
+    let node = Node::new(chunk.id, aln.relstrand, seq, ops, position_from_start, cl);
     Some(node)
 }
 
-fn check_length(ops: &[Op], query_len: usize, unit_len: usize) {
-    let (mut query_length, mut unit_length) = (0, 0);
+fn check_length(ops: &[Op], query_len: usize, chunk_len: usize) {
+    let (mut query_length, mut chunk_length) = (0, 0);
     for op in ops.iter() {
         match op {
             Op::Match(x) => {
                 query_length += x;
-                unit_length += x;
+                chunk_length += x;
             }
-            Op::Del(x) => unit_length += x,
+            Op::Del(x) => chunk_length += x,
             Op::Ins(x) => query_length += x,
         }
     }
     assert_eq!(query_length, query_len);
-    assert_eq!(unit_length, unit_len);
+    assert_eq!(chunk_length, chunk_len);
 }
 
 // Usually, the query is *longer* than the reference.
@@ -293,13 +293,13 @@ pub fn remove_slippy_alignment(nodes: Vec<Node>) -> Vec<Node> {
             })
             .sum::<i32>()
     }
-    // Remove overlapping same units.
+    // Remove overlapping same chunks.
     let mut deduped_nodes = vec![];
     let mut nodes = nodes.into_iter();
     let mut prev = nodes.next().unwrap();
     for node in nodes {
         let is_disjoint = prev.position_from_start + prev.query_length() < node.position_from_start;
-        if prev.unit != node.unit || prev.is_forward != node.is_forward || is_disjoint {
+        if prev.chunk != node.chunk || prev.is_forward != node.is_forward || is_disjoint {
             deduped_nodes.push(prev);
             prev = node;
         } else if score(&prev) < score(&node) {
@@ -321,10 +321,10 @@ pub fn mm2_alignment(ds: &definitions::DataSet, p: usize) -> std::io::Result<Vec
     // Create reference and reads.
     let (reference, reads) = {
         let mut reference = c_dir.clone();
-        reference.push("units.fa");
+        reference.push("chunks.fa");
         let mut wtr = std::fs::File::create(&reference).map(BufWriter::new)?;
-        for unit in ds.selected_chunks.iter() {
-            writeln!(wtr, ">{}\n{}", unit.id, &unit.seq)?;
+        for chunk in ds.selected_chunks.iter() {
+            writeln!(wtr, ">{}\n{}", chunk.id, &chunk.seq)?;
         }
         let mut reads = c_dir.clone();
         reads.push("reads.fa");

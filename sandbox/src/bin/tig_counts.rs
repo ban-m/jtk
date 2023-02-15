@@ -18,22 +18,22 @@ fn main() -> std::io::Result<()> {
             false => id2desc[&read.id].contains("000251v2") as usize,
         };
         for node in read.nodes.iter() {
-            counts.entry((node.unit, node.cluster)).or_default()[ans] += 1;
+            counts.entry((node.chunk, node.cluster)).or_default()[ans] += 1;
         }
     }
     let score: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u.score)).collect();
-    println!("UNIT\tunit\tcluster\thap1\thap2\tpurity\tscore");
-    for ((unit, cluster), counts) in counts.iter() {
-        let score = score[unit];
+    println!("UNIT\tchunk\tcluster\thap1\thap2\tpurity\tscore");
+    for ((chunk, cluster), counts) in counts.iter() {
+        let score = score[chunk];
         let total = counts[0] + counts[1];
         let pur = counts[0].max(counts[1]) as f64 / total as f64;
         println!(
             "UNIT\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}",
-            unit, cluster, counts[0], counts[1], pur, score,
+            chunk, cluster, counts[0], counts[1], pur, score,
         );
     }
     if args.len() < 3 {
-        eprintln!("Contig information was not supplied. Finish after dumping unit information.");
+        eprintln!("Contig information was not supplied. Finish after dumping chunk information.");
         return Ok(());
     }
     let tigs = std::fs::File::open(&args[2]).map(BufReader::new)?;
@@ -48,9 +48,9 @@ fn main() -> std::io::Result<()> {
             let clusters: Vec<_> = line
                 .filter_map(|x| {
                     let mut elm = x.split('-');
-                    let unit: u64 = elm.next()?.parse().unwrap();
+                    let chunk: u64 = elm.next()?.parse().unwrap();
                     let cluster: u64 = elm.next()?.parse().unwrap();
-                    Some((unit, cluster))
+                    Some((chunk, cluster))
                 })
                 .collect();
             (id, copy_num, clusters)
@@ -59,7 +59,7 @@ fn main() -> std::io::Result<()> {
     let mut max_cluster_id: HashMap<u64, u64> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         let _ = max_cluster_id
-            .entry(node.unit)
+            .entry(node.chunk)
             .and_modify(|x| *x = (*x).max(node.cluster))
             .or_insert(node.cluster);
     }

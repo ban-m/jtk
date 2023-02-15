@@ -46,7 +46,7 @@ seed = 19090432890
 chunk_len = 2000
 ### The margin between adjacent chunks in base pair.
 margin = 500
-### filter out unit having more than [exclude] repetitiveness."
+### filter out chunk having more than [exclude] repetitiveness."
 exclude = 0.8
 ### Min-counts of the k-mer.
 min_count = 10

@@ -34,7 +34,7 @@ fn main() -> std::io::Result<()> {
     let mut ds = get_input_file()?;
     let ds = &mut ds;
     match matches.subcommand() {
-        Some(("select_unit", sub_m)) => select_unit(sub_m, ds),
+        Some(("select_chunks", sub_m)) => select_chunks(sub_m, ds),
         Some(("mask_repeats", sub_m)) => repeat_masking(sub_m, ds),
         Some(("encode", sub_m)) => encode(sub_m, ds),
         Some(("pick_components", sub_m)) => pick_components(sub_m, ds),
@@ -105,7 +105,7 @@ fn stats(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<(
     Ok(())
 }
 
-fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
+fn select_chunks(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tSelecting Units");
     let chunk_len: usize = matches
         .value_of("chunk_len")
@@ -136,7 +136,7 @@ fn select_unit(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|e| e.parse::<u64>().ok())
         .unwrap();
     set_threads(matches);
-    use haplotyper::determine_units::{DetermineUnit, DetermineUnitConfig};
+    use haplotyper::determine_chunks::{DetermineUnit, DetermineUnitConfig};
     let (cl, tn) = (chunk_len, take_num);
     let config = DetermineUnitConfig::new(cl, tn, margin, thrds, filter, purge_copy_num, seed);
     dataset.select_chunks(&config);
@@ -237,8 +237,8 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tCorrectDeletion");
     set_threads(matches);
     let to_recal = matches.is_present("re_cluster");
-    use haplotyper::determine_units::calc_sim_thr;
-    use haplotyper::determine_units::TAKE_THR;
+    use haplotyper::determine_chunks::calc_sim_thr;
+    use haplotyper::determine_chunks::TAKE_THR;
     let sim_thr = calc_sim_thr(dataset, TAKE_THR);
     use haplotyper::encode::deletion_fill::*;
     let rt = dataset.read_type;

@@ -8,7 +8,6 @@ const EDGE_BOUND: f64 = 0.5;
 // Evaluating length of each side.
 const EDGE_LEN: usize = 100;
 const INS_THR: usize = 2;
-// Tuple of unit and cluster.
 #[derive(Debug, Clone)]
 pub struct CorrectDeletionConfig {
     re_clustering: bool,
@@ -17,7 +16,7 @@ pub struct CorrectDeletionConfig {
 }
 
 impl CorrectDeletionConfig {
-    /// If sim_thr is None, it is automatically estimated by `haplotyper::determine_units::calc_sim_thr`.
+    /// If sim_thr is None, it is automatically estimated by `haplotyper::determine_chunks::calc_sim_thr`.
     pub fn new(re_clustering: bool, sim_thr: Option<f64>, stddev_of_error: Option<f64>) -> Self {
         Self {
             re_clustering,
@@ -33,14 +32,14 @@ pub trait CorrectDeletion {
 const SEED_CONST: usize = 49823094830;
 impl CorrectDeletion for DataSet {
     fn correct_deletion(&mut self, config: &CorrectDeletionConfig) {
-        let mut find_new_units = correct_unit_deletion(self, config);
+        let mut find_new_chunks = correct_chunk_deletion(self, config);
         // If half of the coverage supports large deletion, remove them.
         const OCCUPY_FRACTION: f64 = 0.5;
         use crate::purge_diverged::*;
         let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION, false);
-        find_new_units.extend(self.purge_largeindel(&p_config));
+        find_new_chunks.extend(self.purge_largeindel(&p_config));
         let p_config = PurgeLargeDelConfig::new(crate::MAX_ALLOWED_GAP, OCCUPY_FRACTION, true);
-        find_new_units.extend(self.purge_largeindel(&p_config));
+        find_new_chunks.extend(self.purge_largeindel(&p_config));
         if config.re_clustering {
             // Log original assignments.
             let original_assignments = log_original_assignments(self);
@@ -60,8 +59,8 @@ impl CorrectDeletion for DataSet {
             let seed = (SEED_CONST * self.encoded_reads.len()) as u64;
             let config = MultiplicityEstimationConfig::new(seed, None);
             self.estimate_multiplicity(&config);
-            // Retain all the units changed their copy numbers.
-            let changed_units: HashSet<_> = self
+            // Retain all the chunks changed their copy numbers.
+            let changed_chunks: HashSet<_> = self
                 .selected_chunks
                 .iter()
                 .filter_map(|c| match prev_copy_numbers.get(&c.id) {
@@ -71,8 +70,8 @@ impl CorrectDeletion for DataSet {
                 })
                 .collect();
             // Merge these two.
-            let selection: HashSet<_> = find_new_units.union(&changed_units).copied().collect();
-            // Recover the original assignments on the retained units.
+            let selection: HashSet<_> = find_new_chunks.union(&changed_chunks).copied().collect();
+            // Recover the original assignments on the retained chunks.
             self.encoded_reads
                 .iter_mut()
                 .zip(original_assignments)
@@ -83,7 +82,7 @@ impl CorrectDeletion for DataSet {
             // Reclustering.
             use crate::local_clustering::LocalClustering;
             self.local_clustering_selected(&selection);
-            // By the way, removing zero-copy units. Give the upper bound a very large value.
+            // By the way, removing zero-copy chunks. Give the upper bound a very large value.
             self.purge_multiplicity(10000000);
         }
     }
@@ -93,7 +92,7 @@ fn log_original_assignments(ds: &DataSet) -> Vec<(u64, Vec<(u64, u64)>)> {
     ds.encoded_reads
         .iter()
         .map(|r| {
-            let xs: Vec<_> = r.nodes.iter().map(|u| (u.unit, u.cluster)).collect();
+            let xs: Vec<_> = r.nodes.iter().map(|u| (u.chunk, u.cluster)).collect();
             (r.id, xs)
         })
         .collect()
@@ -104,10 +103,10 @@ fn log_original_assignments(ds: &DataSet) -> Vec<(u64, Vec<(u64, u64)>)> {
 // But it does not removed!
 fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)], except: &HashSet<u64>) {
     let mut read = read.nodes.iter_mut();
-    for &(unit, cluster) in log {
+    for &(chunk, cluster) in log {
         for node in &mut read {
-            if node.unit == unit {
-                if !except.contains(&node.unit) {
+            if node.chunk == chunk {
+                if !except.contains(&node.chunk) {
                     node.cluster = cluster;
                 }
                 break;
@@ -117,27 +116,27 @@ fn recover_original_assignments(read: &mut EncodedRead, log: &[(u64, u64)], exce
 }
 
 /**
-The second argument is the vector of (index,unit_id) of the previous failed trials.
-for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th unit after the j-th
+The second argument is the vector of (index, chunk_id) of the previous failed trials.
+for example, if failed_trials[i][0] = (j,id), then, we've already tried to encode the id-th chunk after the j-th
 position of the i-th read, and failed it.
 If we can encode some position in the i-th read, the failed trials would be erased, as it change the
-condition of the read, making it possible to encode an unit previously failed to encode.
+condition of the read, making it possible to encode an chunk previously failed to encode.
 sim_thr is the similarity threshold.
-This function corrects "unit-deletions". To do that,
-it first align other reads onto a read to be corrected in unit resolution, detecting putative insertions.
+This function corrects "chunk-deletions". To do that,
+it first align other reads onto a read to be corrected in chunk resolution, detecting putative insertions.
 Then, it tries to encode these putative insertions in base-pair resolution.
-Note that, in the first - unit resolution - alignment, there's no distinction between clusters.
+Note that, in the first - chunk resolution - alignment, there's no distinction between clusters.
 However, in the second alignment, it tries to encode the putative region by each cluster's representative.
-Of course, if there's only one cluster for a unit, then, it just tries to encode by that unit.
+Of course, if there's only one cluster for a chunk, then, it just tries to encode by that chunk.
 Auto-tune the similarity threshold.
  */
 
-pub fn correct_unit_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) -> HashSet<u64> {
+pub fn correct_chunk_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) -> HashSet<u64> {
     const OUTER_LOOP: usize = 3;
     let mut find_new_node = HashSet::new();
     let consensi = take_consensus_sequence(ds);
     let fallback = config.sim_thr.unwrap_or_else(|| {
-        crate::determine_units::calc_sim_thr(ds, crate::determine_units::TAKE_THR)
+        crate::determine_chunks::calc_sim_thr(ds, crate::determine_chunks::TAKE_THR)
     });
     use crate::estimate_error_rate::estimate_error_rate;
     let errors = estimate_error_rate(ds, fallback);
@@ -165,7 +164,7 @@ fn filling_until(
     ds.encoded_reads.retain(|r| !r.nodes.is_empty());
     let raw_seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let mut find_new_node = HashSet::new();
-    let units: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
+    let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
     let mut failed_trials: Vec<_> = ds
         .encoded_reads
         .iter()
@@ -186,8 +185,8 @@ fn filling_until(
             .flat_map(|(read, fails)| {
                 let seq = raw_seq[&read.id];
                 let read = (read, seq);
-                let units = (&units, error_rates, consensi);
-                correct_deletion_error(read, fails, units, stddev, &read_skeltons)
+                let chunks = (&chunks, error_rates, consensi);
+                correct_deletion_error(read, fails, chunks, stddev, &read_skeltons)
             });
         find_new_node.par_extend(new_nodes);
         updates_updated_reads(&mut read_skeltons, &ds.encoded_reads, &failed_trials);
@@ -244,18 +243,18 @@ impl FailedUpdates {
     }
 }
 
-// Take consensus of each cluster of each unit, return the consensus seuqneces.
+// Take consensus of each cluster of each chunk, return the consensus seuqneces.
 // UnitID->(clsuterID, its consensus).
 // fn take_consensus_sequence(ds: &DataSet) -> HashMap<u64, Vec<(u64, Vec<u8>)>> {
 fn take_consensus_sequence(ds: &DataSet) -> HashMap<(u64, u64), Vec<u8>> {
-    fn polish(xs: &[&[u8]], unit: &Chunk, band: usize) -> Vec<u8> {
-        kiley::bialignment::guided::polish_until_converge(unit.seq(), xs, band)
+    fn polish(xs: &[&[u8]], chunk: &Chunk, band: usize) -> Vec<u8> {
+        kiley::bialignment::guided::polish_until_converge(chunk.seq(), xs, band)
     }
-    let ref_units: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
+    let ref_chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|u| (u.id, u)).collect();
     let mut bucket: HashMap<_, Vec<_>> = HashMap::new();
     for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
         bucket
-            .entry((node.unit, node.cluster))
+            .entry((node.chunk, node.cluster))
             .or_default()
             .push(node.seq());
     }
@@ -263,11 +262,11 @@ fn take_consensus_sequence(ds: &DataSet) -> HashMap<(u64, u64), Vec<u8>> {
         .par_iter()
         .filter(|(_, seq)| !seq.is_empty())
         .map(|(key, seqs)| {
-            let ref_unit = &ref_units[&key.0];
-            let band = ds.read_type.band_width(ref_unit.seq().len());
+            let ref_chunk = &ref_chunks[&key.0];
+            let band = ds.read_type.band_width(ref_chunk.seq().len());
             let representative: Vec<_> = match key.1 {
-                0 => ref_unit.seq().to_vec(),
-                _ => polish(seqs, ref_unit, band),
+                0 => ref_chunk.seq().to_vec(),
+                _ => polish(seqs, ref_chunk, band),
             };
             (*key, representative)
         })
@@ -279,11 +278,10 @@ fn abs(x: usize, y: usize) -> usize {
     x.max(y) - x.min(y)
 }
 
-// Aligment offset. We align [s-offset..e+offset] region to the unit.
-// const OFFSET: usize = 150;
+// Aligment offset. We align [s-offset..e+offset] region to the chunk.
 const OFFSET_FACTOR: f64 = 0.1;
-// returns the ids of the units newly encoded.
-// Maybe each (unit,cluster) should corresponds to a key...?
+// returns the ids of the chunks newly encoded.
+// Maybe each (chunk, cluster) should corresponds to a key...?
 type UnitInfo<'a> = (
     &'a HashMap<u64, &'a Chunk>,
     &'a crate::estimate_error_rate::ErrorRate,
@@ -292,11 +290,11 @@ type UnitInfo<'a> = (
 fn correct_deletion_error(
     (read, seq): (&mut EncodedRead, &[u8]),
     ft: &mut FailedUpdates,
-    unitinfo: UnitInfo,
+    chunkinfo: UnitInfo,
     stddev: f64,
     reads: &[ReadSkelton],
 ) -> Vec<u64> {
-    let read_error = unitinfo.1.read(read.id);
+    let read_error = chunkinfo.1.read(read.id);
     let pileups = get_pileup(read, reads);
     let nodes = &read.nodes;
     let mut inserts = vec![];
@@ -307,7 +305,7 @@ fn correct_deletion_error(
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
         head_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let head_best =
-            try_encoding_head(nodes, &head_cand, idx, unitinfo, seq, read_error, stddev);
+            try_encoding_head(nodes, &head_cand, idx, chunkinfo, seq, read_error, stddev);
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
             None => ft.extend(head_cand.keys().map(|&n| (idx, n))),
@@ -315,13 +313,13 @@ fn correct_deletion_error(
         let mut tail_cand = pileup.check_insertion_tail(nodes, ins_thr, idx);
         tail_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let tail_best =
-            try_encoding_tail(nodes, &tail_cand, idx, unitinfo, seq, read_error, stddev);
+            try_encoding_tail(nodes, &tail_cand, idx, chunkinfo, seq, read_error, stddev);
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
             None => ft.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
         }
     }
-    let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.unit).collect();
+    let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.chunk).collect();
     ft.is_alive = !inserts.is_empty();
     if !inserts.is_empty() {
         ft.revive();
@@ -333,7 +331,7 @@ fn correct_deletion_error(
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_overlapping_encoding, remove_slippy_alignment};
-        nodes.sort_by_key(|n| (n.unit, n.position_from_start));
+        nodes.sort_by_key(|n| (n.chunk, n.position_from_start));
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
@@ -348,7 +346,7 @@ fn try_encoding_head(
     nodes: &[Node],
     head_cand: &HashMap<LightNode, usize>,
     idx: usize,
-    (units, unit_error_rate, consensi): UnitInfo,
+    (chunks, chunk_error_rate, consensi): UnitInfo,
     seq: &[u8],
     read_error: f64,
     stddev: f64,
@@ -357,15 +355,15 @@ fn try_encoding_head(
         .iter()
         .filter(|&(_, &start_position)| start_position < seq.len())
         .filter_map(|(node, &start_position)| {
-            let (uid, cluster) = (node.unit, node.cluster);
-            let unit = *units.get(&uid)?;
+            let (uid, cluster) = (node.chunk, node.cluster);
+            let chunk = *chunks.get(&uid)?;
             let cons = consensi.get(&(uid, cluster))?;
             let offset = (OFFSET_FACTOR * cons.len() as f64).ceil() as usize;
             let end_position = (start_position + cons.len() + offset).min(seq.len());
             let start_position = start_position.saturating_sub(offset);
             let is_the_same_encode = match nodes.get(idx) {
                 Some(node) => {
-                    node.unit == uid && abs(node.position_from_start, start_position) < cons.len()
+                    node.chunk == uid && abs(node.position_from_start, start_position) < cons.len()
                 }
                 None => false,
             };
@@ -373,11 +371,11 @@ fn try_encoding_head(
             if is_the_same_encode {
                 return None;
             }
-            let expected = read_error + unit_error_rate.unit((uid, cluster));
+            let expected = read_error + chunk_error_rate.chunk((uid, cluster));
             let error_rate_bound = expected + THR * stddev;
             let position = (start_position, end_position, node.is_forward);
-            let unit_info = (unit, cluster, cons.as_slice());
-            encode_node(seq, position, unit_info, error_rate_bound)
+            let chunk_info = (chunk, cluster, cons.as_slice());
+            encode_node(seq, position, chunk_info, error_rate_bound)
         })
         .max_by_key(|x| x.1)
 }
@@ -386,7 +384,7 @@ fn try_encoding_tail(
     nodes: &[Node],
     tail_cand: &HashMap<LightNode, usize>,
     idx: usize,
-    (units, unit_error_rate, consensi): UnitInfo,
+    (chunks, chunk_error_rate, consensi): UnitInfo,
     seq: &[u8],
     read_error: f64,
     stddev: f64,
@@ -394,8 +392,8 @@ fn try_encoding_tail(
     tail_cand
         .iter()
         .filter_map(|(node, &end_position)| {
-            let (uid, cluster) = (node.unit, node.cluster);
-            let unit = *units.get(&uid)?;
+            let (uid, cluster) = (node.chunk, node.cluster);
+            let chunk = *chunks.get(&uid)?;
             let cons = consensi.get(&(uid, cluster))?;
             let offset = (OFFSET_FACTOR * cons.len() as f64).ceil() as usize;
             let start_position = end_position
@@ -405,7 +403,7 @@ fn try_encoding_tail(
             assert!(start_position < end_position);
             let is_the_same_encode = match nodes.get(idx) {
                 Some(node) => {
-                    node.unit == uid && abs(node.position_from_start, start_position) < cons.len()
+                    node.chunk == uid && abs(node.position_from_start, start_position) < cons.len()
                 }
                 None => false,
             };
@@ -414,10 +412,10 @@ fn try_encoding_tail(
             }
             assert!(start_position < end_position);
             let positions = (start_position, end_position, node.is_forward);
-            let unit_info = (unit, cluster, cons.as_slice());
-            let expected = read_error + unit_error_rate.unit((uid, cluster));
+            let chunk_info = (chunk, cluster, cons.as_slice());
+            let expected = read_error + chunk_error_rate.chunk((uid, cluster));
             let error_rate_bound = expected + THR * stddev;
-            encode_node(seq, positions, unit_info, error_rate_bound)
+            encode_node(seq, positions, chunk_info, error_rate_bound)
         })
         .max_by_key(|x| x.1)
 }
@@ -428,15 +426,15 @@ fn try_encoding_tail(
 fn encode_node(
     query: &[u8],
     (start, end, is_forward): (usize, usize, bool),
-    (unit, cluster, unitseq): (&Chunk, u64, &[u8]),
+    (chunk, cluster, chunkseq): (&Chunk, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<(Node, i32)> {
     // Initial filter.
-    // If the query is shorter than the unitseq,
+    // If the query is shorter than the chunkseq,
     // at least we need the edit operations to fill the gaps.
     // This is lower bound of the sequence identity.
-    let edit_dist_lower_bound = unitseq.len().saturating_sub(end - start);
-    let diff_lower_bound = edit_dist_lower_bound as f64 / unitseq.len() as f64;
+    let edit_dist_lower_bound = chunkseq.len().saturating_sub(end - start);
+    let diff_lower_bound = edit_dist_lower_bound as f64 / chunkseq.len() as f64;
     if sim_thr < diff_lower_bound {
         return None;
     }
@@ -448,9 +446,9 @@ fn encode_node(
     };
     query.iter_mut().for_each(u8::make_ascii_uppercase);
     let (seq, trim_head, trim_tail, kops, score) =
-        fine_mapping(&query, (unit, cluster, unitseq), sim_thr)?;
+        fine_mapping(&query, (chunk, cluster, chunkseq), sim_thr)?;
     let ops = crate::misc::kiley_op_to_ops(&kops).0;
-    let cl = unit.cluster_num;
+    let cl = chunk.cluster_num;
     let position_from_start = match is_forward {
         true => start + trim_head,
         false => start + trim_tail,
@@ -460,7 +458,7 @@ fn encode_node(
     // 2. if `cluster` assignment is just by chance,
     // then we just should not introduce any bias into the likelihood gain.
     let seq = seq.to_vec();
-    let mut node = Node::new(unit.id, is_forward, seq, ops, position_from_start, cl);
+    let mut node = Node::new(chunk.id, is_forward, seq, ops, position_from_start, cl);
     node.cluster = cluster;
     Some((node, score))
 }
@@ -470,19 +468,19 @@ type FineMapping<'a> = (&'a [u8], usize, usize, Vec<kiley::Op>, i32);
 // const EDLIB_OFS: f64 = 0.10;
 fn fine_mapping<'a>(
     orig_query: &'a [u8],
-    (unit, cluster, unitseq): (&Chunk, u64, &[u8]),
+    (chunk, cluster, chunkseq): (&Chunk, u64, &[u8]),
     sim_thr: f64,
 ) -> Option<FineMapping<'a>> {
     let (query, trim_head, trim_tail, ops, band) =
-        fit_query_by_edlib(unitseq, orig_query, sim_thr)?;
+        fit_query_by_edlib(chunkseq, orig_query, sim_thr)?;
     let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
     let identity = mat_num as f64 / ops.len() as f64;
-    let (head_identity, tail_identity) = edge_identity(unitseq, query, &ops, EDGE_LEN);
+    let (head_identity, tail_identity) = edge_identity(chunkseq, query, &ops, EDGE_LEN);
     let iden_bound = 1f64 - sim_thr;
     let below_dissim = iden_bound < identity && EDGE_BOUND < head_identity.min(tail_identity);
     {
-        let (rlen, qlen) = (unitseq.len(), query.len());
-        let id = unit.id;
+        let (rlen, qlen) = (chunkseq.len(), query.len());
+        let id = chunk.id;
         let orig_len = orig_query.len();
         let info = format!(
             "{id}\t{cluster}\t{identity:.2}\t{rlen}\t{qlen}\t{orig_len}\t{trim_head}\t{trim_tail}"
@@ -490,14 +488,7 @@ fn fine_mapping<'a>(
         trace!("FILLDEL\t{}\t{}", info, ["NG", "OK"][below_dissim as usize]);
     }
     if log_enabled!(log::Level::Trace) && !below_dissim {
-        // let mode = edlib_sys::AlignMode::Infix;
-        // let task = edlib_sys::AlignTask::Alignment;
-        // let aln = edlib_sys::align(unitseq, orig_query, mode, task);
-        // let (start, end) = aln.location().unwrap();
-        // let mut ops = vec![kiley::Op::Del; start];
-        // ops.extend(edlib_op_to_kiley_op(aln.operations().unwrap()));
-        // ops.extend(vec![kiley::Op::Del; orig_query.len() - end - 1]);
-        let (xr, ar, yr) = kiley::op::recover(unitseq, query, &ops);
+        let (xr, ar, yr) = kiley::op::recover(chunkseq, query, &ops);
         for ((xr, ar), yr) in xr.chunks(200).zip(ar.chunks(200)).zip(yr.chunks(200)) {
             eprintln!("ALN\t{}", String::from_utf8_lossy(xr));
             eprintln!("ALN\t{}", String::from_utf8_lossy(ar));
@@ -507,7 +498,7 @@ fn fine_mapping<'a>(
     if !below_dissim {
         return None;
     }
-    let (score, new_ops) = infix_guided(unit.seq(), query, &ops, band, ALN_PARAMETER);
+    let (score, new_ops) = infix_guided(chunk.seq(), query, &ops, band, ALN_PARAMETER);
     Some((query, trim_head, trim_tail, new_ops, score))
 }
 
@@ -521,21 +512,21 @@ fn edlib_op_to_kiley_op(ops: &[u8]) -> Vec<kiley::Op> {
 
 type FitQuery<'a> = (&'a [u8], usize, usize, Vec<kiley::op::Op>, usize);
 fn fit_query_by_edlib<'a>(
-    unitseq: &[u8],
+    chunkseq: &[u8],
     orig_query: &'a [u8],
     sim_thr: f64,
 ) -> Option<FitQuery<'a>> {
     let mode = edlib_sys::AlignMode::Infix;
     let task = edlib_sys::AlignTask::Alignment;
-    let alignment = edlib_sys::align(unitseq, orig_query, mode, task);
+    let alignment = edlib_sys::align(chunkseq, orig_query, mode, task);
     let (start, end) = alignment.location().unwrap();
     let mut ops = vec![kiley::Op::Del; start];
     ops.extend(edlib_op_to_kiley_op(alignment.operations().unwrap()));
     ops.extend(std::iter::repeat(kiley::Op::Del).take(orig_query.len() - end - 1));
     // Align twice, to get an accurate alignment.
     let band = ((orig_query.len() as f64 * sim_thr * 0.3).ceil() as usize).max(10);
-    let (_, ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
-    let (_, mut ops) = infix_guided(orig_query, unitseq, &ops, band, ALN_PARAMETER);
+    let (_, ops) = infix_guided(orig_query, chunkseq, &ops, band, ALN_PARAMETER);
+    let (_, mut ops) = infix_guided(orig_query, chunkseq, &ops, band, ALN_PARAMETER);
     // Reverse ops
     for op in ops.iter_mut() {
         *op = match *op {
@@ -549,11 +540,11 @@ fn fit_query_by_edlib<'a>(
     Some((query, trim_head, trim_tail, ops, band))
 }
 
-fn edge_identity(unit: &[u8], _: &[u8], ops: &[kiley::Op], len: usize) -> (f64, f64) {
+fn edge_identity(chunk: &[u8], _: &[u8], ops: &[kiley::Op], len: usize) -> (f64, f64) {
     let (mut head_aln_len, mut head_match) = (0, 0);
     let (mut tail_aln_len, mut tail_match) = (0, 0);
-    let head_eval_end = len.min(unit.len());
-    let tail_eval_start = unit.len().saturating_sub(len);
+    let head_eval_end = len.min(chunk.len());
+    let tail_eval_start = chunk.len().saturating_sub(len);
     let mut rpos = 0;
     for &op in ops {
         match op {
@@ -592,9 +583,9 @@ fn trim_head_tail_insertion(ops: &mut Vec<kiley::Op>) -> (usize, usize) {
     (head_ins, tail_ins)
 }
 
-fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton) -> Option<bool> {
-    fn count_match(units: &[(u64, u64, bool)], query: &[(u64, u64, bool)]) -> usize {
-        let mut r_ptr = units.iter().peekable();
+fn check_alignment_by_chunkmatch(chunks: &[(u64, u64, bool)], query: &ReadSkelton) -> Option<bool> {
+    fn count_match(chunks: &[(u64, u64, bool)], query: &[(u64, u64, bool)]) -> usize {
+        let mut r_ptr = chunks.iter().peekable();
         let mut q_ptr = query.iter().peekable();
         let mut match_num = 0;
         while r_ptr.peek().is_some() && q_ptr.peek().is_some() {
@@ -612,11 +603,11 @@ fn check_alignment_by_unitmatch(units: &[(u64, u64, bool)], query: &ReadSkelton)
     }
     let mut keys: Vec<_> = query.nodes.iter().map(|n| n.key()).collect();
     keys.sort_unstable();
-    let forward_match = count_match(units, &keys);
+    let forward_match = count_match(chunks, &keys);
     keys.iter_mut().for_each(|x| x.2 = !x.2);
     keys.sort_unstable();
-    let reverse_match = count_match(units, &keys);
-    let min_match = MIN_MATCH.min(units.len());
+    let reverse_match = count_match(chunks, &keys);
+    let min_match = MIN_MATCH.min(chunks.len());
     (min_match <= forward_match.max(reverse_match)).then_some(reverse_match <= forward_match)
 }
 
@@ -627,10 +618,10 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
     assert!(!read.nodes.is_empty());
     let mut pileups = vec![Pileup::new(); read.nodes.len() + 1];
     let skelton = ReadSkelton::new(read);
-    let mut units_in_read: Vec<_> = skelton.nodes.iter().map(|n| n.key()).collect();
-    units_in_read.sort_unstable();
+    let mut chunks_in_read: Vec<_> = skelton.nodes.iter().map(|n| n.key()).collect();
+    chunks_in_read.sort_unstable();
     for query in reads.iter() {
-        let is_forward = match check_alignment_by_unitmatch(&units_in_read, query) {
+        let is_forward = match check_alignment_by_chunkmatch(&chunks_in_read, query) {
             Some(is_forward) => is_forward,
             None => continue,
         };
@@ -684,7 +675,7 @@ fn get_pileup(read: &EncodedRead, reads: &[ReadSkelton]) -> Vec<Pileup> {
 // Maybe we should tune this.
 // For example, is it ok to use these parameters to treat long repeats?
 // Maybe OK, as we confirm these candidate by alignment.
-// Minimum required units to be matched.
+// Minimum required chunks to be matched.
 const MIN_MATCH: usize = 2;
 // Minimum required alignment score.
 const SCORE_THR: i32 = 1;
@@ -697,7 +688,7 @@ fn alignment(_: u64, read: &ReadSkelton, query: &ReadSkelton, dir: bool) -> Opti
             pairwise_alignment_gotoh(read, &query)
         }
     };
-    let match_num = get_match_units(&ops);
+    let match_num = get_match_chunks(&ops);
     let min_match = MIN_MATCH.min(read.nodes.len()).min(query.nodes.len());
     (min_match <= match_num && SCORE_THR <= score && is_proper(&ops)).then_some(ops)
 }
@@ -710,7 +701,7 @@ fn is_proper(ops: &[Op]) -> bool {
 
 const MIN_ALN: i32 = -10000000;
 fn score(x: &LightNode, y: &LightNode) -> i32 {
-    if x.unit != y.unit || x.is_forward != y.is_forward {
+    if x.chunk != y.chunk || x.is_forward != y.is_forward {
         MIN_ALN
     } else if x.cluster == y.cluster {
         1
@@ -835,7 +826,7 @@ fn compress_operations(ops: Vec<Op>) -> Vec<Op> {
     compressed
 }
 
-fn get_match_units(ops: &[Op]) -> usize {
+fn get_match_chunks(ops: &[Op]) -> usize {
     ops.iter()
         .map(|op| match op {
             Op::Match(l) => *l,
@@ -863,7 +854,7 @@ fn mean_cov(pileups: &[Pileup]) -> Option<usize> {
 }
 
 impl Pileup {
-    // Return the maximum insertion from the same unit, the same direction.
+    // Return the maximum insertion from the same chunk, the same direction.
     fn insertion_head(&self) -> HashMap<LightNode, usize> {
         let mut count: HashMap<_, usize> = HashMap::new();
         for node in self.head_inserted.iter() {
@@ -1003,7 +994,7 @@ impl ReadSkelton {
                 let after_offset = summaries.get(i + 1).map(|x| x.0 - summaries[i].1);
                 LightNode {
                     prev_offset,
-                    unit: n.unit,
+                    chunk: n.chunk,
                     cluster: n.cluster,
                     is_forward: n.is_forward,
                     after_offset,
@@ -1024,7 +1015,7 @@ struct LightNode {
     // get the start position of this node.
     // None if this is the first node.
     prev_offset: Option<isize>,
-    unit: u64,
+    chunk: u64,
     cluster: u64,
     is_forward: bool,
     // Almost the same as prev_offset. The distance between the last postion of this node to
@@ -1035,7 +1026,7 @@ struct LightNode {
 
 impl std::cmp::PartialEq for LightNode {
     fn eq(&self, other: &Self) -> bool {
-        self.unit == other.unit
+        self.chunk == other.chunk
             && self.cluster == other.cluster
             && self.is_forward == other.is_forward
     }
@@ -1045,7 +1036,7 @@ impl std::cmp::Eq for LightNode {}
 
 impl std::hash::Hash for LightNode {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.unit.hash(state);
+        self.chunk.hash(state);
         self.cluster.hash(state);
         self.is_forward.hash(state);
     }
@@ -1053,7 +1044,7 @@ impl std::hash::Hash for LightNode {
 
 impl std::fmt::Debug for LightNode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let (u, c) = (self.unit, self.cluster);
+        let (u, c) = (self.chunk, self.cluster);
         let dir = if self.is_forward { '+' } else { '-' };
         let prev = self.prev_offset.unwrap_or(-1);
         let after = self.after_offset.unwrap_or(-1);
@@ -1063,12 +1054,12 @@ impl std::fmt::Debug for LightNode {
 
 impl LightNode {
     fn key(&self) -> (u64, u64, bool) {
-        (self.unit, self.cluster, self.is_forward)
+        (self.chunk, self.cluster, self.is_forward)
     }
     fn rev(
         &Self {
             prev_offset,
-            unit,
+            chunk,
             cluster,
             is_forward,
             after_offset,
@@ -1076,7 +1067,7 @@ impl LightNode {
     ) -> Self {
         Self {
             prev_offset: after_offset,
-            unit,
+            chunk,
             cluster,
             is_forward: !is_forward,
             after_offset: prev_offset,
@@ -1127,9 +1118,9 @@ mod deletion_fill_test {
         let into_reads = |nodes: Vec<u64>| {
             let nodes: Vec<_> = nodes
                 .into_iter()
-                .map(|unit| LightNode {
+                .map(|chunk| LightNode {
                     prev_offset: None,
-                    unit,
+                    chunk,
                     cluster: 0,
                     is_forward: true,
                     after_offset: None,

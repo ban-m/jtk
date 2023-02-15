@@ -80,15 +80,15 @@ impl CopyNumberEstimation for DataSet {
         // Update copy numbers.
         let mut chunks: HashMap<u64, &mut definitions::Chunk> =
             self.selected_chunks.iter_mut().map(|c| (c.id, c)).collect();
-        for ((unit, _), cp) in node_cp {
-            if let Some(chunk) = chunks.get_mut(&unit) {
+        for ((chunk, _), cp) in node_cp {
+            if let Some(chunk) = chunks.get_mut(&chunk) {
                 chunk.copy_num += cp;
             }
         }
     }
     fn estimate_copy_numbers(&self, config: &Config) -> (Vec<(Node, usize)>, Vec<(Edge, usize)>) {
-        let unit_len = 2_000;
-        let graph = Graph::new(&self.encoded_reads, unit_len);
+        let chunk_len = 2_000;
+        let graph = Graph::new(&self.encoded_reads, chunk_len);
         graph.estimate_copy_numbers(config)
     }
 }
@@ -143,7 +143,7 @@ impl Graph {
         let mut nodes: HashMap<Node, usize> = HashMap::new();
         for node in reads.iter().flat_map(|r| r.borrow().nodes.iter()) {
             let len = nodes.len();
-            nodes.entry((node.unit, node.cluster)).or_insert(len);
+            nodes.entry((node.chunk, node.cluster)).or_insert(len);
         }
         nodes
     }
@@ -156,8 +156,8 @@ impl Graph {
         edges
     }
     fn normalize(u: &definitions::Node, v: &definitions::Node) -> Edge {
-        let u = (u.unit, u.cluster);
-        let v = (v.unit, v.cluster);
+        let u = (u.chunk, u.cluster);
+        let v = (v.chunk, v.cluster);
         (u.min(v), u.max(v))
     }
     fn get_connections<T: std::borrow::Borrow<EncodedRead>>(
@@ -168,8 +168,8 @@ impl Graph {
         let mut downstream = vec![vec![]; node_to_idx.len()];
         let mut upstream = vec![vec![]; node_to_idx.len()];
         for w in reads.iter().flat_map(|r| r.borrow().nodes.windows(2)) {
-            let from = node_to_idx[&(w[0].unit, w[0].cluster)];
-            let to = node_to_idx[&(w[1].unit, w[1].cluster)];
+            let from = node_to_idx[&(w[0].chunk, w[0].cluster)];
+            let to = node_to_idx[&(w[1].chunk, w[1].cluster)];
             let edge_idx = edge_to_idx[&Self::normalize(&w[0], &w[1])];
             let slot = match w[0].is_forward {
                 true => downstream.get_mut(from).unwrap(),
@@ -200,7 +200,7 @@ impl Graph {
         edges.sort_by_key(|x| x.0);
         edges.iter().map(|x| x.1).collect()
     }
-    fn new<T: std::borrow::Borrow<EncodedRead>>(reads: &[T], unit_len: usize) -> Self {
+    fn new<T: std::borrow::Borrow<EncodedRead>>(reads: &[T], chunk_len: usize) -> Self {
         let node_to_idx = Self::serialize_node(reads);
         let edge_to_idx = Self::serialize_edge(reads);
         let (downstream_edges, upstream_edges) =
@@ -210,12 +210,12 @@ impl Graph {
         let mut edges_len: Vec<_> = vec![0; edge_to_idx.len()];
         let mut edges: Vec<u64> = vec![0; edge_to_idx.len()];
         for node in reads.iter().flat_map(|r| r.borrow().nodes.iter()) {
-            nodes[node_to_idx[&(node.unit, node.cluster)]] += 1;
+            nodes[node_to_idx[&(node.chunk, node.cluster)]] += 1;
         }
         for read in reads.iter().map(|r| r.borrow()) {
             for (i, edge) in read.edges.iter().enumerate() {
-                assert_eq!(edge.from, read.nodes[i].unit);
-                assert_eq!(edge.to, read.nodes[i + 1].unit);
+                assert_eq!(edge.from, read.nodes[i].chunk);
+                assert_eq!(edge.to, read.nodes[i + 1].chunk);
             }
         }
         for read in reads.iter().map(|r| r.borrow()) {
@@ -230,9 +230,9 @@ impl Graph {
         let calibrator = CoverageCalibrator::new(&lens);
         nodes
             .iter_mut()
-            .for_each(|x| *x = calibrator.calib(*x, unit_len));
+            .for_each(|x| *x = calibrator.calib(*x, chunk_len));
         edges.iter_mut().zip(edges_len.iter()).for_each(|(x, len)| {
-            let gap_len = (*len / *x as i64 + 2 * unit_len as i64).max(0) as usize;
+            let gap_len = (*len / *x as i64 + 2 * chunk_len as i64).max(0) as usize;
             *x = calibrator.calib(*x, gap_len);
         });
         Self {
@@ -825,15 +825,10 @@ mod test {
             .skip(start_pos)
             .take(original_length / 2_000)
             .enumerate()
-            .map(|(idx, &unit)| {
+            .map(|(idx, &chunk)| {
                 let position = idx as usize * 2_000;
-                // let position = if rng.gen_bool(0.5) {
-                //     2_000 * idx + rng.gen_range(0..200)
-                // } else {
-                //     (2_000 * idx).saturating_sub(rng.gen_range(0..200))
-                // };
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, seq.clone(), cigar, position, 2)
+                definitions::Node::new(chunk, true, seq.clone(), cigar, position, 2)
             })
             .collect();
         let edges = nodes
@@ -847,8 +842,8 @@ mod test {
                 let start = to.position_from_start;
                 let label = vec![];
                 definitions::Edge {
-                    from: from.unit,
-                    to: to.unit,
+                    from: from.chunk,
+                    to: to.chunk,
                     offset: start as i64 - end as i64,
                     label: label.into(),
                 }
@@ -867,10 +862,10 @@ mod test {
     #[test]
     fn read_to_graph_test() {
         let nodes: Vec<_> = (0..2)
-            .map(|unit| {
-                let position = unit as usize * 2000;
+            .map(|chunk| {
+                let position = chunk as usize * 2000;
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, vec![b'A'; 2_000], cigar, position, 2)
+                definitions::Node::new(chunk, true, vec![b'A'; 2_000], cigar, position, 2)
             })
             .collect();
         let edges = nodes
@@ -884,8 +879,8 @@ mod test {
                 let start = to.position_from_start;
                 let label = vec![];
                 definitions::Edge {
-                    from: from.unit,
-                    to: to.unit,
+                    from: from.chunk,
+                    to: to.chunk,
                     offset: start as i64 - end as i64,
                     label: label.into(),
                 }
@@ -922,12 +917,12 @@ mod test {
         let reads: Vec<_> = (0..read_num)
             .map(|i| gen_read(i as u64, &mut rng, &hap))
             .collect();
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let mean_cov = total_units / hap.len() / 2;
+        let total_chunks: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let mean_cov = total_chunks / hap.len() / 2;
         let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let calibrator = CoverageCalibrator::new(&lens);
         let ajd = calibrator.calib(mean_cov as u64, 2_000);
-        println!("{}\t{}\t{}\t{}", total_units, hap.len(), mean_cov, ajd);
+        println!("{}\t{}\t{}\t{}", total_chunks, hap.len(), mean_cov, ajd);
         let graph = Graph::new(&reads, 2_000);
         println!("{}", graph);
         let config = Config::estimate_coverage(392480);
@@ -966,7 +961,7 @@ mod test {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 3)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 3)
                     .count()
             })
             .sum();
@@ -976,19 +971,19 @@ mod test {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 2)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 2)
                     .count()
             })
             .sum();
         println!("(1,2)\t{}", count);
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let mean_cov = total_units / (hap1.len() + hap2.len());
+        let total_chunks: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let mean_cov = total_chunks / (hap1.len() + hap2.len());
         let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let calibrator = CoverageCalibrator::new(&lens);
         let ajd = calibrator.calib(mean_cov as u64, 2_000);
         println!(
             "{}\t{}\t{}\t{}",
-            total_units,
+            total_chunks,
             hap1.len() + hap2.len(),
             mean_cov,
             ajd

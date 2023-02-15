@@ -395,7 +395,7 @@ pub fn update_coverage(ds: &mut DataSet) {
         use std::collections::HashMap;
         let mut counts: HashMap<_, u32> = HashMap::new();
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            *counts.entry(node.unit).or_default() += 1;
+            *counts.entry(node.chunk).or_default() += 1;
         }
         let mut counts: Vec<_> = counts.values().copied().collect();
         counts.sort_unstable();

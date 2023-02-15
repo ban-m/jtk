@@ -27,7 +27,7 @@ fn main() -> std::io::Result<()> {
             chunks: &HashMap<u64, &Chunk>,
         ) -> (usize, usize, f64) {
             let start = node.position_from_start;
-            let chunk = chunks[&node.unit];
+            let chunk = chunks[&node.chunk];
             let (_, ar, _) = node.recover(chunk);
             let identity =
                 1f64 - ar.iter().filter(|&&o| o != b'|').count() as f64 / ar.len() as f64;

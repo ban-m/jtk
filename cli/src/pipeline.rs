@@ -110,7 +110,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     let de = format!("{file_stem}.draft2.gfa");
     let dense_encode_config = DenseEncodingConfig::new(compress_contig, Some(&de));
     let correction_config = CorrectionConfig::default();
-    use haplotyper::determine_units::STDDEV_OR_ERROR;
+    use haplotyper::determine_chunks::STDDEV_OR_ERROR;
     let dump = Some(file_stem.as_str());
     let assemble_config = AssembleConfig::new(
         polish_window_size,

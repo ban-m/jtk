@@ -20,7 +20,7 @@ pub struct Node {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tile {
-    pub unit: u64,
+    pub chunk: u64,
     pub cluster: u64,
     pub strand: bool,
 }
@@ -151,7 +151,7 @@ impl Assemble for DataSet {
             let ids: Vec<_> = summary
                 .summary
                 .iter()
-                .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                .map(|elm| format!("{}-{}", elm.chunk, elm.cluster))
                 .collect();
             debug!("CONUNIT\t{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
         }
@@ -265,18 +265,18 @@ fn get_contig_copy_numbers(summaries: &[ContigSummary]) -> Vec<usize> {
 /// Return the co-occurence of the reads.
 /// [i][j] -> # of reads shared by summaries[i] and summaries[j].
 fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec<u32>> {
-    // (unit,cluster) -> indices of the summary whose either terminal is (unit,cluster), if there is any.
+    // (chunk, cluster) -> indices of the summary whose either terminal is (chunk, cluster), if there is any.
     let mut contig_terminals: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
     for (i, summary) in summaries.iter().enumerate() {
         let mut summary = summary.summary.iter();
         let first = summary.next().unwrap();
         contig_terminals
-            .entry((first.unit, first.cluster))
+            .entry((first.chunk, first.cluster))
             .or_default()
             .push(i);
         if let Some(last) = summary.last() {
             contig_terminals
-                .entry((last.unit, last.cluster))
+                .entry((last.chunk, last.cluster))
                 .or_default()
                 .push(i);
         }
@@ -289,7 +289,7 @@ fn count_contig_connection(ds: &DataSet, summaries: &[ContigSummary]) -> Vec<Vec
             // If this (n,c) - (n',c') is connecting
             // two contigs, we record the both contigs.
             let (from, to) = match w {
-                [f, t] => ((f.unit, f.cluster), (t.unit, t.cluster)),
+                [f, t] => ((f.chunk, f.cluster), (t.chunk, t.cluster)),
                 _ => unreachable!(),
             };
             if let (Some(f), Some(t)) = (contig_terminals.get(&from), contig_terminals.get(&to)) {

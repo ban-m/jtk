@@ -9,9 +9,9 @@ use definitions::*;
 use std::collections::{HashMap, HashSet};
 
 fn normalize_node(from: &Node, to: &Node) -> (u64, u64) {
-    match from.unit <= to.unit {
-        true => (from.unit, to.unit),
-        false => (to.unit, from.unit),
+    match from.chunk <= to.chunk {
+        true => (from.chunk, to.chunk),
+        false => (to.chunk, from.chunk),
     }
 }
 
@@ -65,48 +65,48 @@ fn enumerate_edges_to_remove(ds: &DataSet) -> HashMap<(u64, u64), u64> {
                     let to = &read.nodes[i + 1];
                     if normalize_node(from, to) == key {
                         if let Some(next) = read.nodes.get(i + 2) {
-                            match from.unit <= to.unit {
-                                true => former_neighbor.insert(next.unit),
-                                false => later_neighbor.insert(next.unit),
+                            match from.chunk <= to.chunk {
+                                true => former_neighbor.insert(next.chunk),
+                                false => later_neighbor.insert(next.chunk),
                             };
                         }
                         if let Some(prev) = read.nodes.get(i - 1) {
-                            match from.unit <= to.unit {
-                                true => later_neighbor.insert(prev.unit),
-                                false => former_neighbor.insert(prev.unit),
+                            match from.chunk <= to.chunk {
+                                true => later_neighbor.insert(prev.chunk),
+                                false => former_neighbor.insert(prev.chunk),
                             };
                         }
                     }
                 }
             }
-            for next_unit in former_neighbor {
-                let probe = if key.0 <= next_unit {
-                    (key.0, next_unit)
+            for next_chunk in former_neighbor {
+                let probe = if key.0 <= next_chunk {
+                    (key.0, next_chunk)
                 } else {
-                    (next_unit, key.0)
+                    (next_chunk, key.0)
                 };
                 let mod_cov = *edge_coverages.get(&probe).unwrap_or(&0f64);
                 if IMPROVE_THR * cov < mod_cov {
                     let (from, to) = key;
                     debug!(
                         "REMOVING\t{}\t{}\t{}\t{}\t{}\t{}",
-                        from, to, to, next_unit, cov, mod_cov
+                        from, to, to, next_chunk, cov, mod_cov
                     );
                     return Some((key, key.1));
                 }
             }
-            for prev_unit in later_neighbor {
-                let probe = if key.1 <= prev_unit {
-                    (key.1, prev_unit)
+            for prev_chunk in later_neighbor {
+                let probe = if key.1 <= prev_chunk {
+                    (key.1, prev_chunk)
                 } else {
-                    (prev_unit, key.1)
+                    (prev_chunk, key.1)
                 };
                 let mod_cov = *edge_coverages.get(&probe).unwrap_or(&0f64);
                 if IMPROVE_THR * cov < mod_cov {
                     let (from, to) = key;
                     debug!(
                         "REMOVING\t{}\t{}\t{}\t{}\t{}\t{}",
-                        from, to, from, prev_unit, cov, mod_cov
+                        from, to, from, prev_chunk, cov, mod_cov
                     );
                     return Some((key, key.0));
                 }
@@ -125,7 +125,7 @@ fn remove_node_idx(read: &EncodedRead, to_remove: &HashMap<(u64, u64), u64>) -> 
             let to = &read.nodes[i + 1];
             to_remove
                 .get(&normalize_node(from, to))
-                .map(|&removing| match removing == from.unit {
+                .map(|&removing| match removing == from.chunk {
                     true => i,
                     false => i + 1,
                 })

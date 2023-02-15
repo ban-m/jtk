@@ -20,7 +20,7 @@ impl MultiplicityEstimationConfig {
 
 pub trait MultiplicityEstimation {
     fn estimate_multiplicity(&mut self, config: &MultiplicityEstimationConfig);
-    // Remove units with copy number more than or equal to `upper`
+    // Remove chunks with copy number more than or equal to `upper`
     fn purge_multiplicity(&mut self, upper: usize);
 }
 
@@ -73,7 +73,7 @@ impl MultiplicityEstimation for DataSet {
             // DUMP Information
             let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
             for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-                *counts.entry((node.unit, node.cluster)).or_default() += 1;
+                *counts.entry((node.chunk, node.cluster)).or_default() += 1;
             }
             let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
             for (node, cp) in nodes.iter() {
@@ -111,7 +111,7 @@ impl MultiplicityEstimation for DataSet {
         {
             let mut counts: HashMap<_, u32> = HashMap::new();
             for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-                *counts.entry(node.unit).or_default() += 1;
+                *counts.entry(node.chunk).or_default() += 1;
             }
             for chunk in self
                 .selected_chunks
@@ -128,7 +128,7 @@ impl MultiplicityEstimation for DataSet {
             let mut idx = 0;
             loop {
                 match read.nodes.get(idx) {
-                    Some(node) if to_remove.contains(&node.unit) => read.remove(idx),
+                    Some(node) if to_remove.contains(&node.chunk) => read.remove(idx),
                     Some(_) => idx += 1,
                     None => break,
                 }
@@ -187,7 +187,7 @@ fn convert_to_gfa(graph: &DitchGraph, c: &AssembleConfig) -> gfa::GFA {
             let ids: Vec<_> = summary
                 .summary
                 .iter()
-                .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                .map(|elm| format!("{}-{}", elm.chunk, elm.cluster))
                 .collect();
             debug!(
                 "MULTIP\tContig\t{}\t{}\t{}",

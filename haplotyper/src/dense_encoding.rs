@@ -8,7 +8,7 @@ const CONS_MIN_LENGTH: usize = 400;
 const CONS_MAX_LENGTH: usize = 10_000;
 // Directed edge between nodes.
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
-// (unit,cluster,direction, if it is `from` part)
+// (chunk,cluster,direction, if it is `from` part)
 type DTip = (u64, u64, bool, bool);
 #[derive(Debug, Clone)]
 pub struct DenseEncodingConfig {
@@ -62,7 +62,7 @@ impl DenseEncoding for DataSet {
         let squish_config = SquishConfig::new(SQUISH_ARI_THR, SQUISH_COUNT_THR, MAT_ARI, MIS_ARI);
         self.squish_erroneous_clusters(&squish_config);
         self.correct_clustering(&cor_config);
-        let new_units = encode_polyploid_edges(self, config);
+        let new_chunks = encode_polyploid_edges(self, config);
         for read in self.encoded_reads.iter_mut() {
             let orig = &original_assignments[&read.id];
             recover_original_assignments(read, orig);
@@ -82,57 +82,57 @@ impl DenseEncoding for DataSet {
         });
         self.sanity_check();
         use crate::local_clustering::LocalClustering;
-        self.local_clustering_selected(&new_units);
+        self.local_clustering_selected(&new_chunks);
     }
 }
 
 type TipAndUnit<'a> = HashMap<DTip, Vec<&'a [Chunk]>>;
 fn encode_polyploid_edges(ds: &mut DataSet, config: &DenseEncodingConfig) -> HashSet<u64> {
-    let edge_units = enumerate_polyploid_edges(ds, config);
-    let tip_units = {
-        let mut tip_units: TipAndUnit = HashMap::new();
-        for (&(from, to), units) in edge_units.iter() {
+    let edge_chunks = enumerate_polyploid_edges(ds, config);
+    let tip_chunks = {
+        let mut tip_chunks: TipAndUnit = HashMap::new();
+        for (&(from, to), chunks) in edge_chunks.iter() {
             let from = (from.0, from.1, from.2, true);
             let to = (to.0, to.1, to.2, false);
-            tip_units.entry(from).or_default().push(units.as_slice());
-            tip_units.entry(to).or_default().push(units.as_slice());
+            tip_chunks.entry(from).or_default().push(chunks.as_slice());
+            tip_chunks.entry(to).or_default().push(chunks.as_slice());
         }
-        tip_units
+        tip_chunks
     };
     let readtype = ds.read_type;
     ds.encoded_reads
         .par_iter_mut()
-        .for_each(|read| edge_encode(read, &edge_units, &tip_units, readtype, config));
-    let unit_ids: HashSet<_> = edge_units
+        .for_each(|read| edge_encode(read, &edge_chunks, &tip_chunks, readtype, config));
+    let chunk_ids: HashSet<_> = edge_chunks
         .values()
         .flat_map(|x| x.iter().map(|x| x.id))
         .collect();
     {
-        let lens: HashMap<_, _> = edge_units
+        let lens: HashMap<_, _> = edge_chunks
             .values()
             .flat_map(|x| x.iter().map(|x| (x.id, x.seq().len())))
             .collect();
         let mut counts: HashMap<_, u32> = lens.keys().map(|&id| (id, 0)).collect();
         for node in ds.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            *counts.entry(node.unit).or_default() += 1;
+            *counts.entry(node.chunk).or_default() += 1;
         }
-        let mut unit_ids: Vec<_> = unit_ids.iter().collect();
-        unit_ids.sort();
-        for id in unit_ids.iter() {
+        let mut chunk_ids: Vec<_> = chunk_ids.iter().collect();
+        chunk_ids.sort();
+        for id in chunk_ids.iter() {
             let (count, len) = (counts[id], lens[id]);
             debug!("DE\tCount\t{}\t{}\t{}", id, count, len);
         }
     }
-    let mut current_units: HashSet<_> = ds.selected_chunks.iter().map(|c| c.id).collect();
-    for (_, units) in edge_units {
-        for unit in units {
-            if !current_units.contains(&unit.id) {
-                current_units.insert(unit.id);
-                ds.selected_chunks.push(unit);
+    let mut current_chunks: HashSet<_> = ds.selected_chunks.iter().map(|c| c.id).collect();
+    for (_, chunks) in edge_chunks {
+        for chunk in chunks {
+            if !current_chunks.contains(&chunk.id) {
+                current_chunks.insert(chunk.id);
+                ds.selected_chunks.push(chunk);
             }
         }
     }
-    unit_ids
+    chunk_ids
 }
 
 fn edge_encode(
@@ -143,7 +143,7 @@ fn edge_encode(
     _config: &DenseEncodingConfig,
 ) {
     let seq = read.recover_raw_read();
-    let inserts = fill_edges_by_new_units(read, &seq, edges, tips, &read_type);
+    let inserts = fill_edges_by_new_chunks(read, &seq, edges, tips, &read_type);
     for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
         match idx + accum_inserts {
             pos if pos < read.nodes.len() => read.nodes.insert(idx + accum_inserts, node),
@@ -158,7 +158,7 @@ fn re_encode_read(read: &mut EncodedRead, seq: &[u8]) {
         let mut nodes = vec![];
         nodes.append(&mut read.nodes);
         use crate::encode::{nodes_to_encoded_read, remove_slippy_alignment};
-        nodes.sort_by_key(|n| n.unit);
+        nodes.sort_by_key(|n| n.chunk);
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
@@ -174,7 +174,7 @@ fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<NodeLog>> {
             let xs: Vec<_> = r
                 .nodes
                 .iter()
-                .map(|u| (u.unit, u.cluster, u.posterior.clone()))
+                .map(|u| (u.chunk, u.cluster, u.posterior.clone()))
                 .collect();
             (r.id, xs)
         })
@@ -186,20 +186,20 @@ fn log_original_assignments(ds: &DataSet) -> HashMap<u64, Vec<NodeLog>> {
 // But it does not removed!
 fn recover_original_assignments(read: &mut EncodedRead, log: &[NodeLog]) {
     let mut read = read.nodes.iter_mut();
-    'outer: for &(unit, cluster, ref post) in log {
+    'outer: for &(chunk, cluster, ref post) in log {
         for node in &mut read {
-            if node.unit == unit {
+            if node.chunk == chunk {
                 node.cluster = cluster;
                 node.posterior.clear();
                 node.posterior.extend(post);
                 continue 'outer;
             }
         }
-        panic!("Can not find the logged units.");
+        panic!("Can not find the logged chunks.");
     }
 }
 
-pub fn fill_edges_by_new_units(
+pub fn fill_edges_by_new_chunks(
     read: &EncodedRead,
     seq: &[u8],
     edges: &EdgeAndUnit,
@@ -212,22 +212,22 @@ pub fn fill_edges_by_new_units(
     // Head tip.
     if let Some(head) = read.nodes.first() {
         let (start, end) = (0, (head.position_from_start + MARGIN).min(len));
-        let key = (head.unit, head.cluster, head.is_forward, false);
-        if let Some(units) = tips.get(&key) {
+        let key = (head.chunk, head.cluster, head.is_forward, false);
+        if let Some(chunks) = tips.get(&key) {
             // --Tip--|Node[0]>|------
             // --Unit-|ToNode|-----
-            for unit_info in units {
-                let nodes = encode_edge(seq, start, end, true, unit_info, read_type);
+            for chunk_info in chunks {
+                let nodes = encode_edge(seq, start, end, true, chunk_info, read_type);
                 inserts.extend(nodes.into_iter().map(|x| (0, x)));
             }
         }
         // Here is a bug
-        let key = (head.unit, head.cluster, !head.is_forward, true);
-        if let Some(units) = tips.get(&key) {
+        let key = (head.chunk, head.cluster, !head.is_forward, true);
+        if let Some(chunks) = tips.get(&key) {
             // |<Node[0]|-Tip--
             // |FromNode|-Unit-
-            for unit_info in units {
-                let nodes = encode_edge(seq, start, end, false, unit_info, read_type);
+            for chunk_info in chunks {
+                let nodes = encode_edge(seq, start, end, false, chunk_info, read_type);
                 inserts.extend(nodes.into_iter().map(|x| (0, x)));
             }
         }
@@ -239,7 +239,7 @@ pub fn fill_edges_by_new_units(
         let end = (end + MARGIN).min(len);
         let forward = get_forward_d_edge_from_window(window);
         let reverse = get_reverse_d_edge_from_window(window);
-        let (unit_info, direction) = if edges.contains_key(&forward) {
+        let (chunk_info, direction) = if edges.contains_key(&forward) {
             (&edges[&forward], true)
         } else if edges.contains_key(&reverse) {
             (&edges[&reverse], false)
@@ -254,12 +254,12 @@ pub fn fill_edges_by_new_units(
                 "TooNear\t{}\t{}\t{}\t{}\t{}",
                 read.id, start, end, seqlen, len
             );
-            let from = (window[0].unit, window[0].cluster);
-            let to = (window[1].unit, window[1].cluster);
+            let from = (window[0].chunk, window[0].cluster);
+            let to = (window[1].chunk, window[1].cluster);
             warn!("Dump\t{}\t{:?}\t{:?}", read.id, from, to);
             continue;
         }
-        let encoded = encode_edge(seq, start, end, direction, unit_info, read_type);
+        let encoded = encode_edge(seq, start, end, direction, chunk_info, read_type);
         for node in encoded {
             // idx=0 -> Insert at the first edge. So, the index should be 1.
             inserts.push((idx + 1, node));
@@ -270,21 +270,21 @@ pub fn fill_edges_by_new_units(
         let idx = read.nodes.len();
         let (start, end) = ((tail.position_from_start + tail.seq().len()).min(len), len);
         let (start, end) = (start.saturating_sub(MARGIN), (end + MARGIN).min(len));
-        let key = (tail.unit, tail.cluster, tail.is_forward, true);
-        if let Some(units) = tips.get(&key) {
+        let key = (tail.chunk, tail.cluster, tail.is_forward, true);
+        if let Some(chunks) = tips.get(&key) {
             // | Last>  |-Tip--
             // |FromNode|-Unit-
-            for unit_info in units {
-                let nodes = encode_edge(seq, start, end, true, unit_info, read_type);
+            for chunk_info in chunks {
+                let nodes = encode_edge(seq, start, end, true, chunk_info, read_type);
                 inserts.extend(nodes.into_iter().map(|x| (idx + 1, x)));
             }
         }
-        let key = (tail.unit, tail.cluster, !tail.is_forward, false);
-        if let Some(units) = tips.get(&key) {
+        let key = (tail.chunk, tail.cluster, !tail.is_forward, false);
+        if let Some(chunks) = tips.get(&key) {
             // --Tip-|<Node[0]|
             // -Unit-|ToNode|
-            for unit_info in units {
-                let nodes = encode_edge(seq, start, end, false, unit_info, read_type);
+            for chunk_info in chunks {
+                let nodes = encode_edge(seq, start, end, false, chunk_info, read_type);
                 inserts.extend(nodes.into_iter().map(|x| (idx + 1, x)));
             }
         }
@@ -324,7 +324,7 @@ fn write_to_file(
         let ids: Vec<_> = summary
             .summary
             .iter()
-            .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+            .map(|elm| format!("{}-{}", elm.chunk, elm.cluster))
             .collect();
         debug!("DRAFT2\t{}\t{}\t{}", summary.id, copy_num, ids.join("\t"));
     }
@@ -372,8 +372,8 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
                 .summary
                 .windows(2)
                 .map(|w| {
-                    let from = (w[0].unit, w[0].cluster, w[0].strand);
-                    let to = (w[1].unit, w[1].cluster, w[1].strand);
+                    let from = (w[0].chunk, w[0].cluster, w[0].strand);
+                    let to = (w[1].chunk, w[1].cluster, w[1].strand);
                     ((from, to), copy_number)
                 })
                 .collect(),
@@ -386,47 +386,47 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         let sum: usize = ds.selected_chunks.iter().map(|x| x.seq().len()).sum();
         sum / ds.selected_chunks.len()
     };
-    let mut newly_defined_unit = HashMap::new();
-    let mut max_unit_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
+    let mut newly_defined_chunk = HashMap::new();
+    let mut max_chunk_id = ds.selected_chunks.iter().map(|c| c.id).max().unwrap();
     for (key, consensus, copy_num) in take_consensus_on_multitig(ds, &edges, cov_thr) {
         let chunk_num = (consensus.len() as f64 / mean_chunk_len as f64).ceil();
         let chunk_len = (consensus.len() as f64 / chunk_num).ceil() as usize;
-        let units: Vec<_> = consensus
+        let chunks: Vec<_> = consensus
             .chunks(chunk_len)
             .map(|seq| {
-                max_unit_id += 1;
-                Chunk::new(max_unit_id, seq.to_vec(), copy_num)
+                max_chunk_id += 1;
+                Chunk::new(max_chunk_id, seq.to_vec(), copy_num)
             })
             .collect();
         let edge = format!("({},{})-({},{})", key.0 .0, key.0 .2, key.1 .0, key.1 .2);
         let len = consensus.len();
-        let (start, end) = (max_unit_id - units.len() as u64, max_unit_id);
+        let (start, end) = (max_chunk_id - chunks.len() as u64, max_chunk_id);
         debug!("DE\tInNode\t{len}\t{start}\t{end}\t{edge}",);
-        newly_defined_unit.insert(key, units);
+        newly_defined_chunk.insert(key, chunks);
     }
     let consensi =
         take_consensus_to_multitig(ds, &records, &summaries, &multicopy_contigs, cov_thr);
     for (edges, consensus, copy_num) in consensi {
         let chunk_num = (consensus.len() as f64 / mean_chunk_len as f64).ceil();
         let chunk_len = (consensus.len() as f64 / chunk_num).ceil() as usize;
-        let units: Vec<_> = consensus
+        let chunks: Vec<_> = consensus
             .chunks(chunk_len)
             .map(|seq| {
-                max_unit_id += 1;
-                Chunk::new(max_unit_id, seq.to_vec(), copy_num)
+                max_chunk_id += 1;
+                Chunk::new(max_chunk_id, seq.to_vec(), copy_num)
             })
             .collect();
         let len = consensus.len();
-        let (start, end) = (max_unit_id - units.len() as u64, max_unit_id);
+        let (start, end) = (max_chunk_id - chunks.len() as u64, max_chunk_id);
         for key in edges.iter() {
             let &((u1, c1, d1), (u2, c2, d2)) = key;
             let edge = format!("({u1},{c1},{d1})-({u2},{c2},{d2})");
             debug!("DE\tBetEdge\t{len}\t{start}\t{end}\t{edge}",);
-            newly_defined_unit.insert(*key, units.clone());
+            newly_defined_chunk.insert(*key, chunks.clone());
         }
     }
-    debug!("DE\tDefined\t{}", newly_defined_unit.len());
-    newly_defined_unit
+    debug!("DE\tDefined\t{}", newly_defined_chunk.len());
+    newly_defined_chunk
 }
 
 fn take_consensus_on_multitig(
@@ -438,7 +438,7 @@ fn take_consensus_on_multitig(
     for read in ds.encoded_reads.iter() {
         assert_eq!(read.nodes.len(), read.edges.len() + 1);
         for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
-            assert_eq!((edge.from, edge.to), (w[0].unit, w[1].unit));
+            assert_eq!((edge.from, edge.to), (w[0].chunk, w[1].chunk));
             let forward = get_forward_d_edge_from_window(w);
             let reverse = get_reverse_d_edge_from_window(w);
             if edges.contains_key(&forward) {
@@ -492,10 +492,10 @@ fn take_consensus_to_multitig(
             false => summary.summary.first().unwrap(),
         };
         match (pos.is_last, is_from) {
-            (true, true) => (node.unit, node.cluster, node.strand),
-            (false, true) => (node.unit, node.cluster, !node.strand),
-            (true, false) => (node.unit, node.cluster, !node.strand),
-            (false, false) => (node.unit, node.cluster, node.strand),
+            (true, true) => (node.chunk, node.cluster, node.strand),
+            (false, true) => (node.chunk, node.cluster, !node.strand),
+            (true, false) => (node.chunk, node.cluster, !node.strand),
+            (false, false) => (node.chunk, node.cluster, node.strand),
         }
     }
     let mut into_multitig_edges: HashMap<_, Vec<_>> = HashMap::new();
@@ -526,7 +526,7 @@ fn take_consensus_to_multitig(
             for read in ds.encoded_reads.iter() {
                 assert_eq!(read.nodes.len(), read.edges.len() + 1);
                 for (edge, w) in read.edges.iter().zip(read.nodes.windows(2)) {
-                    assert_eq!((edge.from, edge.to), (w[0].unit, w[1].unit));
+                    assert_eq!((edge.from, edge.to), (w[0].chunk, w[1].chunk));
                     let forward = get_forward_d_edge_from_window(w);
                     let reverse = get_reverse_d_edge_from_window(w);
                     if edges.iter().any(|&e| e == forward) {
@@ -580,25 +580,25 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
 
 // w: windows of nodes with 2 length.
 fn get_forward_d_edge_from_window(w: &[Node]) -> DEdge {
-    let from = (w[0].unit, w[0].cluster, w[0].is_forward);
-    let to = (w[1].unit, w[1].cluster, w[1].is_forward);
+    let from = (w[0].chunk, w[0].cluster, w[0].is_forward);
+    let to = (w[1].chunk, w[1].cluster, w[1].is_forward);
     (from, to)
 }
 
 // w: windows of nodes with 2 length.
 fn get_reverse_d_edge_from_window(w: &[Node]) -> DEdge {
-    let from = (w[1].unit, w[1].cluster, !w[1].is_forward);
-    let to = (w[0].unit, w[0].cluster, !w[0].is_forward);
+    let from = (w[1].chunk, w[1].cluster, !w[1].is_forward);
+    let to = (w[0].chunk, w[0].cluster, !w[0].is_forward);
     (from, to)
 }
 
-fn merge_units(units: &[Chunk]) -> (Vec<u8>, Vec<usize>) {
-    let contig: Vec<_> = units.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
+fn merge_chunks(chunks: &[Chunk]) -> (Vec<u8>, Vec<usize>) {
+    let contig: Vec<_> = chunks.iter().map(|x| x.seq()).fold(Vec::new(), |mut x, y| {
         x.extend(y);
         x
     });
     let (break_points, _): (Vec<_>, _) =
-        units
+        chunks
             .iter()
             .map(|x| x.seq().len())
             .fold((Vec::new(), 0), |(mut acc, x), y| {
@@ -629,10 +629,10 @@ fn encode_edge(
     start: usize,
     end: usize,
     is_forward: bool,
-    units: &[Chunk],
+    chunks: &[Chunk],
     read_type: &definitions::ReadType,
 ) -> Vec<definitions::Node> {
-    let (contig, break_points) = merge_units(units);
+    let (contig, break_points) = merge_chunks(chunks);
     // seq is equal to seq[start..end], revcmped if is_forward is false.
     let band = read_type.band_width(contig.len());
     let ((start, end, seq), (ctg_start, ctg_end, _), mut ops) =
@@ -643,7 +643,7 @@ fn encode_edge(
         Some(i) => i,
         None => return Vec::new(),
     };
-    // Current edit operations inside the focal unit.
+    // Current edit operations inside the focal chunk.
     let mut alignments = match target_idx {
         0 => vec![kiley::Op::Del; ctg_start],
         i => vec![kiley::Op::Del; ctg_start - break_points[i - 1]],
@@ -669,23 +669,23 @@ fn encode_edge(
         if xpos == break_points[target_idx] {
             // Reached the boundary.
             if 1f64 - sim_thr < alignment_identity(&alignments) {
-                let unit = &units[target_idx];
+                let chunk = &chunks[target_idx];
                 let ylen = alignments.iter().filter(|&&x| x != kiley::Op::Del).count();
                 let position_from_start = match is_forward {
                     true => start + ypos - ylen,
                     false => end - ypos,
                 };
                 let seq = seq[ypos - ylen..ypos].to_vec();
-                let cl = unit.cluster_num;
+                let cl = chunk.cluster_num;
                 let cigar = crate::misc::kiley_op_to_ops(&alignments).0;
-                let node = Node::new(unit.id, is_forward, seq, cigar, position_from_start, cl);
+                let node = Node::new(chunk.id, is_forward, seq, cigar, position_from_start, cl);
                 nodes.push(node);
             }
             // Refresh.
             target_idx += 1;
             alignments.clear();
         }
-        if target_idx == units.len() {
+        if target_idx == chunks.len() {
             // This is needed, as sometimes only insertions would be remain.
             break;
         }

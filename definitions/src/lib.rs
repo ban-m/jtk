@@ -286,17 +286,17 @@ impl DataSet {
     /// Of course, these should be hold at any steps in the pipeline,
     /// So, this is just a checking function.
     pub fn sanity_check(&self) {
-        let units: HashSet<_> = self.selected_chunks.iter().map(|c| c.id).collect();
+        let chunks: HashSet<_> = self.selected_chunks.iter().map(|c| c.id).collect();
         self.encoded_reads
             .iter()
             .flat_map(|r| r.nodes.iter())
-            .for_each(|n| assert!(units.contains(&n.unit)));
+            .for_each(|n| assert!(chunks.contains(&n.chunk)));
         self.encoded_reads_can_be_recovered();
         use std::collections::HashSet;
-        let mut units = HashSet::new();
-        for unit in self.selected_chunks.iter() {
-            assert!(!units.contains(&unit.id));
-            units.insert(unit.id);
+        let mut chunks = HashSet::new();
+        for chunk in self.selected_chunks.iter() {
+            assert!(!chunks.contains(&chunk.id));
+            chunks.insert(chunk.id);
         }
         for chunk in self.selected_chunks.iter() {
             assert!(
@@ -314,7 +314,7 @@ impl DataSet {
             .map(|c| (c.id, c.cluster_num))
             .collect();
         for node in self.encoded_reads.iter().flat_map(|r| r.nodes.iter()) {
-            assert!(node.cluster <= max_cl_num[&node.unit] as u64);
+            assert!(node.cluster <= max_cl_num[&node.chunk] as u64);
         }
     }
     fn encoded_reads_can_be_recovered(&self) {
@@ -493,13 +493,13 @@ impl std::fmt::Display for EncodedRead {
             write!(
                 f,
                 "{}-{} ({}) ",
-                node.unit,
+                node.chunk,
                 node.cluster,
                 edge.label().len()
             )?;
         }
         if let Some(node) = self.nodes.last() {
-            write!(f, "{}-{}", node.unit, node.cluster)?;
+            write!(f, "{}-{}", node.chunk, node.cluster)?;
         }
         write!(f, " | {} bp gap", self.trailing_gap.len())
     }
@@ -596,7 +596,7 @@ impl EncodedRead {
     pub fn recover_raw_read(&self) -> Vec<u8> {
         let mut original_seq: Vec<_> = self.leading_gap.clone().into();
         for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
-            assert_eq!(n.unit, e.from);
+            assert_eq!(n.chunk, e.from);
             original_seq.extend(n.original_seq());
             for _ in 0..(-e.offset).max(0) {
                 original_seq.pop();
@@ -609,11 +609,11 @@ impl EncodedRead {
         original_seq.extend(self.trailing_gap.iter());
         original_seq
     }
-    /// Return true if this read contains (unit,cluster)-node. Linear time.
-    pub fn contains(&self, (unit, cluster): (u64, u64)) -> bool {
+    /// Return true if this read contains (chunk,cluster)-node. Linear time.
+    pub fn contains(&self, (chunk, cluster): (u64, u64)) -> bool {
         self.nodes
             .iter()
-            .any(|n| n.unit == unit && n.cluster == cluster)
+            .any(|n| n.chunk == chunk && n.cluster == cluster)
     }
 }
 
@@ -653,8 +653,8 @@ impl Edge {
                 .collect()
         };
         Edge {
-            from: from.unit,
-            to: to.unit,
+            from: from.chunk,
+            to: to.chunk,
             offset: start as i64 - end as i64,
             label: label.into(),
         }
@@ -665,7 +665,7 @@ impl Edge {
 pub struct Node {
     /// 0-index.
     pub position_from_start: usize,
-    pub unit: u64,
+    pub chunk: u64,
     pub cluster: u64,
     /// Sequence. No lowercase included. Already rev-comped.
     pub seq: DNASeq,
@@ -681,7 +681,7 @@ impl std::fmt::Display for Node {
         write!(
             f,
             "{}-{}({}bp,{},{start}-{end})",
-            self.unit,
+            self.chunk,
             self.cluster,
             self.seq.len(),
             self.is_forward as u8,
@@ -701,9 +701,9 @@ impl Node {
     }
     /// Create a new instance of node.
     /// As usually it is created before the local clustering,
-    /// It only accepts the minimum requirements, i.e, the position in the read, the units, the direction, the sequence, and the cigar string.
+    /// It only accepts the minimum requirements, i.e, the position in the read, the chunks, the direction, the sequence, and the cigar string.
     pub fn new(
-        unit: u64,
+        chunk: u64,
         is_forward: bool,
         seq: Vec<u8>,
         cigar: Vec<Op>,
@@ -715,7 +715,7 @@ impl Node {
         let post_prob = (cluster_num.max(1) as f64).recip().ln();
         Self {
             position_from_start,
-            unit,
+            chunk,
             cluster: 0,
             seq: seq.into(),
             is_forward,
@@ -753,8 +753,8 @@ impl Node {
             .sum::<usize>()
     }
     /// Return (match length, alignment length). Match length does not include mismatches.
-    pub fn aln_info(&self, unit: &Chunk) -> (usize, usize) {
-        let (_, ops, _) = self.recover(unit);
+    pub fn aln_info(&self, chunk: &Chunk) -> (usize, usize) {
+        let (_, ops, _) = self.recover(chunk);
         ops.iter().fold((0, 0), |(mat, aln), x| match x {
             b' ' | b'X' => (mat, aln + 1),
             b'|' => (mat + 1, aln),
@@ -763,7 +763,7 @@ impl Node {
     }
     /// Return (node path, alignment, chunk path)
     pub fn recover(&self, chunk: &Chunk) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        let (read, unit) = (self.seq(), chunk.seq());
+        let (read, chunk) = (self.seq(), chunk.seq());
         let (mut q, mut al, mut r) = (vec![], vec![], vec![]);
         let (mut q_pos, mut r_pos) = (0, 0);
         let match_char = |(x, y): (&u8, &u8)| {
@@ -779,18 +779,18 @@ impl Node {
                     al.extend(
                         read[q_pos..q_pos + l]
                             .iter()
-                            .zip(&unit[r_pos..r_pos + l])
+                            .zip(&chunk[r_pos..r_pos + l])
                             .map(match_char),
                     );
                     q.extend(read[q_pos..q_pos + l].iter().copied());
-                    r.extend(unit[r_pos..r_pos + l].iter().copied());
+                    r.extend(chunk[r_pos..r_pos + l].iter().copied());
                     q_pos += l;
                     r_pos += l;
                 }
                 Op::Del(l) => {
                     al.extend(vec![b' '; l]);
                     q.extend(vec![b' '; l]);
-                    r.extend(unit[r_pos..r_pos + l].iter().copied());
+                    r.extend(chunk[r_pos..r_pos + l].iter().copied());
                     r_pos += l;
                 }
                 Op::Ins(l) => {

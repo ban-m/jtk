@@ -10,7 +10,7 @@ pub fn normalize_local_clustering(ds: &mut DataSet) {
         .take(max_chunk as usize)
         .collect();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        pileups[node.unit as usize].push(node);
+        pileups[node.chunk as usize].push(node);
     }
     use std::collections::HashMap;
     let cluster_num: HashMap<_, _> = ds

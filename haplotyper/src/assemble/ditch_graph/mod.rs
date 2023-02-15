@@ -37,7 +37,7 @@ impl std::convert::From<NodeIndex> for usize {
 }
 
 /// Ditch Graph
-/// Each unit of the dataset consists of a pair of node, named
+/// Each chunk of the dataset consists of a pair of node, named
 /// tail-node and head-node, and it is represented as a 'node'in a
 /// Ditch graph.
 /// Each node has several edges, induced by the connection inside reads.
@@ -48,7 +48,7 @@ impl std::convert::From<NodeIndex> for usize {
 /// - All edges *should not* connected to/from deleted nodes.
 #[derive(Clone)]
 pub struct DitchGraph<'a> {
-    /// Node and the next node representing the same (unit,cluster).
+    /// Node and the next node representing the same (chunk, cluster).
     nodes: Vec<DitchNode<'a>>,
     nodes_index: HashMap<Node, NodeIndex>,
 }
@@ -98,7 +98,7 @@ impl<'a> std::fmt::Debug for DitchGraph<'a> {
 /// rather, it borrows the reference to the `definitions::Node`s.
 /// Note that even if a read contains (x,y,h) -> (z,w,t) connection,
 /// the node of (z, w, t) contains an edge toward (x,y,h)-node.
-/// Here, x and z are unit, y and w are cluster, and h and t are
+/// Here, x and z are chunks, y and w are cluster, and h and t are
 /// head or tail.
 #[derive(Debug, Clone)]
 pub struct DitchNode<'a> {
@@ -106,7 +106,7 @@ pub struct DitchNode<'a> {
     pub occ: usize,
     pub seq: Vec<u8>,
     pub edges: Vec<DitchEdge>,
-    // "Tip" of reads. In other words, as we tiling a read by units,
+    // "Tip" of reads. In other words, as we tiling a read by chunks,
     // there is un-encoded regions at the both end of a read,
     // and we allocate memories for them.
     pub tips: Vec<DitchTip<'a>>,
@@ -349,8 +349,8 @@ fn take_representative<R: std::borrow::Borrow<EncodedRead>>(
     use Position::*;
     for read in reads.iter().map(|r| r.borrow()) {
         for (i, edge) in read.edges.iter().enumerate() {
-            let from_node = read.nodes.get(i).map(|n| (n.unit, n.cluster)).unwrap();
-            let to_node = read.nodes.get(i + 1).map(|n| (n.unit, n.cluster)).unwrap();
+            let from_node = read.nodes.get(i).map(|n| (n.chunk, n.cluster)).unwrap();
+            let to_node = read.nodes.get(i + 1).map(|n| (n.chunk, n.cluster)).unwrap();
             let from = node_to_idx[&from_node];
             let to = node_to_idx[&to_node];
             let from_pos = if read.nodes[i].is_forward { Tail } else { Head };
@@ -407,15 +407,15 @@ fn take_representative<R: std::borrow::Borrow<EncodedRead>>(
 impl<'b, 'a: 'b> DitchGraph<'a> {
     pub fn new<R: std::borrow::Borrow<EncodedRead>>(
         reads: &'a [R],
-        units: &[Chunk],
+        chunks: &[Chunk],
         _read_type: definitions::ReadType,
         c: &AssembleConfig,
     ) -> Self {
-        let nodes_seq: HashMap<_, _> = units.iter().map(|c| (c.id, c.seq())).collect();
+        let nodes_seq: HashMap<_, _> = chunks.iter().map(|c| (c.id, c.seq())).collect();
         use std::collections::BTreeMap;
         let mut nodes_counts: BTreeMap<_, usize> = BTreeMap::new();
         for node in reads.iter().flat_map(|r| r.borrow().nodes.iter()) {
-            *nodes_counts.entry((node.unit, node.cluster)).or_default() += 1;
+            *nodes_counts.entry((node.chunk, node.cluster)).or_default() += 1;
         }
         let (nodes, nodes_index): (Vec<_>, HashMap<Node, _>) = nodes_counts
             .into_iter()
@@ -508,14 +508,14 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         if let Some(first) = read.nodes.first() {
             let direction = true;
             let position = if first.is_forward { Head } else { Tail };
-            let index = self.nodes_index[&(first.unit, first.cluster)];
+            let index = self.nodes_index[&(first.chunk, first.cluster)];
             let tip = DitchTip::new(&read.leading_gap, position, direction);
             self.node_mut(index).unwrap().tips.push(tip);
         }
         if let Some(last) = read.nodes.last() {
             let direction = true;
             let position = if last.is_forward { Head } else { Tail };
-            let index = self.nodes_index[&(last.unit, last.cluster)];
+            let index = self.nodes_index[&(last.chunk, last.cluster)];
             let tip = DitchTip::new(&read.trailing_gap, position, direction);
             self.node_mut(index).unwrap().tips.push(tip);
         }
@@ -742,7 +742,7 @@ fn dump(graph: &DitchGraph, i: usize, c: &AssembleConfig) {
                     let ids: Vec<_> = contigsummary
                         .summary
                         .iter()
-                        .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                        .map(|elm| format!("{}-{}", elm.chunk, elm.cluster))
                         .collect();
                     let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
                     let coverage =
@@ -883,14 +883,6 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         }
         primary_candidates
     }
-
-    // fn generate_coverage_calib(&self, naive_cov: f64, lens: &[usize]) -> (CoverageCalibrator, f64) {
-    //     let calibrator = CoverageCalibrator::new(lens);
-    //     let unit_len_sum: usize = self.nodes().map(|n| n.seq().len()).sum();
-    //     let cov = calibrator.calib_f64(naive_cov, unit_len_sum / self.nodes.len());
-    //     debug!("COPYNUM\tCOVERAGE\t{:.3}\t{:.3}", naive_cov, cov,);
-    //     (calibrator, cov)
-    // }
 
     /// Even though the edge/node is zero copy number, we do not remove it if the conditions below hold:
     /// 1. If it is an edge, and all edge from the same position is ZCP, and it is the heviest edge among them.
@@ -1114,8 +1106,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     }
     fn has_self_loop(&self, index: NodeIndex) -> bool {
         let node = self.node(index).unwrap();
-        let unit_cl = node.node;
-        node.edges.iter().any(|e| e.to_node == unit_cl)
+        let chunk_cl = node.node;
+        node.edges.iter().any(|e| e.to_node == chunk_cl)
     }
     pub fn zip_up_overclustering_dev(&'b mut self) {
         let mut keys: Vec<_> = self.nodes().map(|n| n.0).collect();
@@ -1176,15 +1168,15 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         if head_side_par.is_empty() || tail_side_par.is_empty() {
             return None;
         }
-        // Check if, on each side, there are exactly one type of unit.
-        let unit_and_position = |(idx, pos)| (self.node(idx).unwrap().node.0, pos);
+        // Check if, on each side, there are exactly one type of chunk.
+        let chunk_and_position = |(idx, pos)| (self.node(idx).unwrap().node.0, pos);
         let is_tail_side_par_unique = {
-            let key = unit_and_position(tail_side_par[0]);
-            tail_side_par.iter().all(|&e| unit_and_position(e) == key)
+            let key = chunk_and_position(tail_side_par[0]);
+            tail_side_par.iter().all(|&e| chunk_and_position(e) == key)
         };
         let is_head_side_par_unique = {
-            let key = unit_and_position(head_side_par[0]);
-            head_side_par.iter().all(|&e| unit_and_position(e) == key)
+            let key = chunk_and_position(head_side_par[0]);
+            head_side_par.iter().all(|&e| chunk_and_position(e) == key)
         };
         if !is_tail_side_par_unique || !is_head_side_par_unique {
             return None;
@@ -1193,8 +1185,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         if tail_side_sibs.len() != head_side_sibs.len() {
             return None;
         }
-        let tail_iter = tail_side_sibs.iter().map(|&e| unit_and_position(e).0);
-        let head_iter = head_side_sibs.iter().map(|&e| unit_and_position(e).0);
+        let tail_iter = tail_side_sibs.iter().map(|&e| chunk_and_position(e).0);
+        let head_iter = head_side_sibs.iter().map(|&e| chunk_and_position(e).0);
         if tail_iter.zip(head_iter).any(|(x, y)| x != y) {
             return None;
         }
@@ -1557,8 +1549,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 continue;
             }
             let pos = edges[0].to_position;
-            let unit = edges[0].to.0;
-            let is_the_same_unit = edges.iter().all(|e| e.to_position == pos && e.to.0 == unit);
+            let chunk = edges[0].to.0;
+            let is_the_same_chunk = edges
+                .iter()
+                .all(|e| e.to_position == pos && e.to.0 == chunk);
             let index_is_the_unique_parent = edges.iter().all(|e| {
                 self.node(e.to)
                     .unwrap()
@@ -1566,7 +1560,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     .iter()
                     .all(|f| (f.from_position != pos) | (f.to == index))
             });
-            if is_the_same_unit && index_is_the_unique_parent {
+            if is_the_same_chunk && index_is_the_unique_parent {
                 let (new_terminal, removed_nodes) = self.collapse_bubble_from(index, position, c);
                 to_remove.extend(removed_nodes);
                 queue.push_back(new_terminal)
@@ -1684,7 +1678,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// Squish short bubbles.
     /// In other words, if there is a branch,
     /// where the children have the same length,
-    /// and the same content w.r.t their unit IDs,
+    /// and the same content w.r.t their chunk IDs,
     /// then it squish these children into one contig.
     /// Note that this proc is *not* bubble collapsing.
     /// For example, it squish the small contig B,C, as follows:
@@ -1694,7 +1688,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     ///        \___|__C__|__/__|__E__|___ ...
     /// (Be careful. The B contig is connecting to D, not E, whereas
     /// C is connecting to both D and E.
-    /// The function returns how to change the **clustering** on each unit.
+    /// The function returns how to change the **clustering** on each chunk.
     pub fn squish_bubbles(&self, len: usize) -> HashMap<Node, u64> {
         let mut squish_to: HashMap<Node, u64> = HashMap::new();
         for (_index, node) in self.nodes() {
@@ -1711,9 +1705,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     let paths: Vec<_> = path_and_dest
                         .iter()
                         .map(|x| {
-                            let mut units: Vec<_> = x.iter().map(|x| x.0).collect();
-                            units.sort_unstable();
-                            units
+                            let mut chunks: Vec<_> = x.iter().map(|x| x.0).collect();
+                            chunks.sort_unstable();
+                            chunks
                         })
                         .collect();
                     paths.iter().all(|us| us == &paths[0] && us.len() <= len)
@@ -1722,20 +1716,20 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     let mut convert_table: HashMap<u64, u64> = HashMap::new();
                     for path in path_and_dest.iter() {
                         for &node in path.iter() {
-                            let (unit, cluster) = self.node(node).unwrap().node;
+                            let (chunk, cluster) = self.node(node).unwrap().node;
                             convert_table
-                                .entry(unit)
+                                .entry(chunk)
                                 .and_modify(|x| *x = (*x).min(cluster))
                                 .or_insert(cluster);
                         }
                     }
                     for path in path_and_dest.iter() {
                         for &node in path.iter() {
-                            let (unit, cluster) = self.node(node).unwrap().node;
+                            let (chunk, cluster) = self.node(node).unwrap().node;
                             squish_to
-                                .entry((unit, cluster))
-                                .and_modify(|to| *to = (*to).min(convert_table[&unit]))
-                                .or_insert_with(|| convert_table[&unit]);
+                                .entry((chunk, cluster))
+                                .and_modify(|to| *to = (*to).min(convert_table[&chunk]))
+                                .or_insert_with(|| convert_table[&chunk]);
                         }
                     }
                 }
@@ -1866,10 +1860,10 @@ mod tests {
             .skip(start_pos)
             .take(original_length / 2_000)
             .enumerate()
-            .map(|(idx, &unit)| {
+            .map(|(idx, &chunk)| {
                 let position = idx as usize * 2_000;
                 let cigar = vec![definitions::Op::Match(2_000)];
-                definitions::Node::new(unit, true, seq.clone(), cigar, position, cl)
+                definitions::Node::new(chunk, true, seq.clone(), cigar, position, cl)
             })
             .collect();
         let edges = nodes
@@ -1883,8 +1877,8 @@ mod tests {
                 let start = to.position_from_start;
                 let label = Vec::new();
                 definitions::Edge {
-                    from: from.unit,
-                    to: to.unit,
+                    from: from.chunk,
+                    to: to.chunk,
                     offset: start as i64 - end as i64,
                     label: label.into(),
                 }
@@ -1904,7 +1898,7 @@ mod tests {
     fn from_reads_1() {
         // Generating reads from looping_case
         let node_cp: Vec<_> = vec![2, 2, 8, 2, 2, 4, 4, 2, 2];
-        let units: Vec<_> = node_cp
+        let chunks: Vec<_> = node_cp
             .iter()
             .enumerate()
             .map(|(id, &cp)| Chunk::new(id as u64, vec![], cp))
@@ -1915,11 +1909,11 @@ mod tests {
         let reads: Vec<_> = (0..read_num)
             .map(|i| gen_read(i as u64, &mut rng, &hap))
             .collect();
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let cov = (total_units / hap.len() / 2) as f64;
+        let total_chunks: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let cov = (total_chunks / hap.len() / 2) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false, None);
-        let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
+        let graph = DitchGraph::new(&reads, &chunks, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
             let node = (i as u64, 0);
@@ -1930,7 +1924,7 @@ mod tests {
     #[test]
     fn from_reads_2() {
         let node_cp: Vec<_> = vec![2, 3, 2, 3, 2, 3, 2, 2];
-        let units: Vec<_> = node_cp
+        let chunks: Vec<_> = node_cp
             .iter()
             .enumerate()
             .map(|(id, &cp)| Chunk::new(id as u64, vec![], cp))
@@ -1957,7 +1951,7 @@ mod tests {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 3)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 3)
                     .count()
             })
             .sum();
@@ -1967,16 +1961,16 @@ mod tests {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 2)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 2)
                     .count()
             })
             .sum();
         println!("(1,2)\t{}", count);
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let cov = (total_units / (hap1.len() + hap2.len())) as f64;
+        let total_chunks: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let cov = (total_chunks / (hap1.len() + hap2.len())) as f64;
         // let lens: Vec<_> = reads.iter().map(|r| r.original_length).collect();
         let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false, None);
-        let graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
+        let graph = DitchGraph::new(&reads, &chunks, ReadType::CCS, &assemble_config);
         let (nodes, _) = graph.copy_number_estimation_gbs(cov);
         for (i, &cp) in node_cp.iter().enumerate() {
             let index = graph.nodes_index[&(i as u64, 0)];
@@ -1986,7 +1980,7 @@ mod tests {
     #[test]
     fn from_reads_2_mst() {
         let node_cp: Vec<_> = vec![2, 3, 2, 3, 2, 3, 2, 2];
-        let units: Vec<_> = node_cp
+        let chunks: Vec<_> = node_cp
             .iter()
             .enumerate()
             .map(|(id, &cp)| Chunk::new(id as u64, vec![], cp))
@@ -2013,7 +2007,7 @@ mod tests {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 3)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 3)
                     .count()
             })
             .sum();
@@ -2023,15 +2017,15 @@ mod tests {
             .map(|r| {
                 r.nodes
                     .windows(2)
-                    .filter(|w| w[0].unit == 1 && w[1].unit == 2)
+                    .filter(|w| w[0].chunk == 1 && w[1].chunk == 2)
                     .count()
             })
             .sum();
         println!("(1,2)\t{}", count);
-        let total_units: usize = reads.iter().map(|r| r.nodes.len()).sum();
-        let cov = (total_units / (hap1.len() + hap2.len())) as f64;
+        let total_chunks: usize = reads.iter().map(|r| r.nodes.len()).sum();
+        let cov = (total_chunks / (hap1.len() + hap2.len())) as f64;
         let assemble_config = AssembleConfig::new(100, false, false, 6, 1f64, false, None);
-        let mut graph = DitchGraph::new(&reads, &units, ReadType::CCS, &assemble_config);
+        let mut graph = DitchGraph::new(&reads, &chunks, ReadType::CCS, &assemble_config);
         assert!(graph.sanity_check());
         println!("graph:{graph:?}");
         graph.assign_copy_number_mst(cov, &mut rng);

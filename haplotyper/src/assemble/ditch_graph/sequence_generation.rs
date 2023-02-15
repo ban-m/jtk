@@ -3,7 +3,7 @@
 use super::*;
 
 /// A summary of a contig. It tells us
-/// the unit, the cluster, and the direction
+/// the chunk, the cluster, and the direction
 /// it spelled.
 #[derive(Debug, Clone)]
 pub struct ContigSummary {
@@ -26,7 +26,7 @@ impl std::fmt::Display for ContigSummary {
         let line: Vec<_> = self
             .summary
             .iter()
-            .map(|n| format!("{}-{}", n.unit, n.cluster))
+            .map(|n| format!("{}-{}", n.chunk, n.cluster))
             .collect();
         write!(f, "{}\t{}", self.id, line.join("\t"))
     }
@@ -34,7 +34,7 @@ impl std::fmt::Display for ContigSummary {
 
 #[derive(Debug, Clone)]
 pub struct ContigElement {
-    pub unit: u64,
+    pub chunk: u64,
     pub cluster: u64,
     pub strand: bool,
     /// The "coverage."
@@ -44,12 +44,12 @@ pub struct ContigElement {
 
 impl ContigElement {
     fn new(node: &DitchNode, position: Position) -> Self {
-        let (unit, cluster) = node.node;
+        let (chunk, cluster) = node.node;
         let strand = position == Position::Head;
         let occ = node.occ;
         let copy_number = node.copy_number;
         Self {
-            unit,
+            chunk,
             cluster,
             strand,
             occ,
@@ -86,7 +86,7 @@ impl ContigEncoding {
         }
     }
     fn push(&mut self, tile: UnitAlignmentInfo) {
-        let k = tile.unit_info();
+        let k = tile.chunk_info();
         let hit = (0..).find(|&i| !self.cache.contains_key(&(k, i))).unwrap();
         self.cache.insert((k, hit), self.tiles.len());
         self.tiles.push(tile);
@@ -106,7 +106,7 @@ impl<'a> std::iter::Iterator for MatchIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match self.inner.cache.get(&(self.node, self.hit)) {
-                Some(&idx) if self.inner.tiles[idx].unit_direction == self.direction => break,
+                Some(&idx) if self.inner.tiles[idx].chunk_direction == self.direction => break,
                 None => return None,
                 Some(_) => self.hit += 1,
             }
@@ -119,68 +119,68 @@ impl<'a> std::iter::Iterator for MatchIter<'a> {
 
 #[derive(Debug, Clone, Default)]
 pub struct UnitAlignmentInfo {
-    unit: u64,
+    chunk: u64,
     cluster: u64,
     contig_start: usize,
     contig_end: usize,
     // If false, it should be rev-comped.
-    unit_direction: bool,
-    unit_start: usize,
-    unit_end: usize,
-    unit_len: usize,
+    chunk_direction: bool,
+    chunk_start: usize,
+    chunk_end: usize,
+    chunk_len: usize,
 }
 
 impl UnitAlignmentInfo {
-    pub fn unit_len(&self) -> usize {
-        self.unit_len
+    pub fn chunk_len(&self) -> usize {
+        self.chunk_len
     }
     pub fn contig_range(&self) -> (usize, usize) {
         (self.contig_start, self.contig_end)
     }
-    pub fn unit_range(&self) -> (bool, usize, usize) {
-        (self.unit_direction, self.unit_start, self.unit_end)
+    pub fn chunk_range(&self) -> (bool, usize, usize) {
+        (self.chunk_direction, self.chunk_start, self.chunk_end)
     }
-    pub fn unit_info(&self) -> Node {
-        (self.unit, self.cluster)
+    pub fn chunk_info(&self) -> Node {
+        (self.chunk, self.cluster)
     }
-    pub fn unit_and_dir_info(&self) -> (Node, bool) {
-        ((self.unit, self.cluster), self.unit_direction)
+    pub fn chunk_and_dir_info(&self) -> (Node, bool) {
+        ((self.chunk, self.cluster), self.chunk_direction)
     }
     pub fn new(
-        (unit, cluster): (u64, u64),
-        (unit_direction, unit_start, unit_end): (bool, usize, usize),
+        (chunk, cluster): (u64, u64),
+        (chunk_direction, chunk_start, chunk_end): (bool, usize, usize),
         (contig_start, contig_end): (usize, usize),
-        unit_len: usize,
+        chunk_len: usize,
     ) -> Self {
         Self {
-            unit,
+            chunk,
             cluster,
             contig_start,
             contig_end,
-            unit_direction,
-            unit_start,
-            unit_end,
-            unit_len,
+            chunk_direction,
+            chunk_start,
+            chunk_end,
+            chunk_len,
         }
     }
 }
 
 #[derive(Debug, Copy, Clone, Default)]
 struct UnitAlnInfoBuilder {
-    pub unit: Option<u64>,
+    pub chunk: Option<u64>,
     pub cluster: Option<u64>,
     pub contig_start: Option<usize>,
     pub contig_end: Option<usize>,
     /// If false, it should be rev-comped.
-    pub unit_direction: Option<bool>,
-    pub unit_start: Option<usize>,
-    pub unit_end: Option<usize>,
-    pub unit_len: Option<usize>,
+    pub chunk_direction: Option<bool>,
+    pub chunk_start: Option<usize>,
+    pub chunk_end: Option<usize>,
+    pub chunk_len: Option<usize>,
 }
 
 impl UnitAlnInfoBuilder {
-    fn set_node(mut self, (unit, cluster): Node) -> Self {
-        self.unit = Some(unit);
+    fn set_node(mut self, (chunk, cluster): Node) -> Self {
+        self.chunk = Some(chunk);
         self.cluster = Some(cluster);
         self
     }
@@ -192,42 +192,42 @@ impl UnitAlnInfoBuilder {
         self.contig_end = Some(end);
         self
     }
-    fn set_unit_direction(mut self, position: Position) -> Self {
-        self.unit_direction = Some(position == Position::Head);
+    fn set_chunk_direction(mut self, position: Position) -> Self {
+        self.chunk_direction = Some(position == Position::Head);
         self
     }
-    fn set_unit_start(mut self, start: usize) -> Self {
-        self.unit_start = Some(start);
+    fn set_chunk_start(mut self, start: usize) -> Self {
+        self.chunk_start = Some(start);
         self
     }
-    fn set_unit_end(mut self, end: usize) -> Self {
-        self.unit_end = Some(end);
+    fn set_chunk_end(mut self, end: usize) -> Self {
+        self.chunk_end = Some(end);
         self
     }
-    fn set_unit_len(mut self, len: usize) -> Self {
-        self.unit_len = Some(len);
+    fn set_chunk_len(mut self, len: usize) -> Self {
+        self.chunk_len = Some(len);
         self
     }
     fn build(&self) -> UnitAlignmentInfo {
         let Self {
-            unit,
+            chunk,
             cluster,
             contig_start,
             contig_end,
-            unit_direction,
-            unit_start,
-            unit_end,
-            unit_len,
+            chunk_direction,
+            chunk_start,
+            chunk_end,
+            chunk_len,
         } = *self;
         UnitAlignmentInfo {
-            unit: unit.unwrap(),
+            chunk: chunk.unwrap(),
             cluster: cluster.unwrap(),
             contig_start: contig_start.unwrap(),
             contig_end: contig_end.unwrap(),
-            unit_direction: unit_direction.unwrap(),
-            unit_start: unit_start.unwrap(),
-            unit_end: unit_end.unwrap(),
-            unit_len: unit_len.unwrap(),
+            chunk_direction: chunk_direction.unwrap(),
+            chunk_start: chunk_start.unwrap(),
+            chunk_end: chunk_end.unwrap(),
+            chunk_len: chunk_len.unwrap(),
         }
     }
 }
@@ -257,12 +257,12 @@ type TraversedContigs = (
 );
 impl<'a> super::DitchGraph<'a> {
     /// Reduce simple path of this graph and returns the edges and nodes of the reduced graph..
-    /// The contig summary contains the units used to construct a contig in the traversing order.
+    /// The contig summary contains the chunks used to construct a contig in the traversing order.
     pub fn spell(&self, c: &AssembleConfig) -> TraversedContigs {
         let mut arrived = HashSet::new();
         let mut sids: HashMap<_, _> = HashMap::new();
         let (mut g_segs, mut g_edges, mut summaries) = (vec![], vec![], vec![]);
-        let mut unit_position_on_contigs = vec![];
+        let mut chunk_position_on_contigs = vec![];
         let mut candidates = self.enumerate_candidates();
         candidates.sort();
         for (node, p) in candidates {
@@ -271,11 +271,11 @@ impl<'a> super::DitchGraph<'a> {
             }
             let name = format!("tig_{:04}", g_segs.len());
             let contig_info = self.traverse_from(&mut arrived, &mut sids, node, p, name, c);
-            let (contig, edges, summary, unit_positions) = contig_info;
+            let (contig, edges, summary, chunk_positions) = contig_info;
             g_segs.push(contig);
             g_edges.extend(edges);
             summaries.push(summary);
-            unit_position_on_contigs.push(unit_positions);
+            chunk_position_on_contigs.push(chunk_positions);
         }
         let mut nodes: Vec<_> = self.nodes().map(|x| x.0).collect();
         nodes.sort();
@@ -286,11 +286,11 @@ impl<'a> super::DitchGraph<'a> {
             let p = Position::Head;
             let name = format!("tig_{:04}", g_segs.len());
             let contig_info = self.traverse_from(&mut arrived, &mut sids, key, p, name, c);
-            let (contig, edges, summary, unit_positions) = contig_info;
+            let (contig, edges, summary, chunk_positions) = contig_info;
             g_segs.push(contig);
             g_edges.extend(edges);
             summaries.push(summary);
-            unit_position_on_contigs.push(unit_positions);
+            chunk_position_on_contigs.push(chunk_positions);
         }
         for (idx, _) in self.nodes() {
             assert!(arrived.contains(&idx));
@@ -302,7 +302,7 @@ impl<'a> super::DitchGraph<'a> {
             .collect();
         let uid = Some(format!("group-{}", 0));
         let group = gfa::Group::Set(gfa::UnorderedGroup { uid, ids });
-        (g_segs, g_edges, group, summaries, unit_position_on_contigs)
+        (g_segs, g_edges, group, summaries, chunk_position_on_contigs)
     }
     fn enumerate_adjacent_tag(
         &self,
@@ -349,7 +349,7 @@ impl<'a> super::DitchGraph<'a> {
     }
 
     // Traverse from the given `start` node of `start_position` Position.
-    // The retuened ContigSummary contains which (unit,cluster) elements is used to
+    // The retuened ContigSummary contains which (chunk,cluster) elements is used to
     // construct this contig, in the order of apprearance.
     fn traverse_from(
         &self,
@@ -369,35 +369,35 @@ impl<'a> super::DitchGraph<'a> {
         // I impled here!
         let gfa_pos = gfa::Position::from(0, false);
         let edges = self.enumerate_adjacent_tag(&seqname, start, start_position, sids, gfa_pos);
-        let mut position_of_units = ContigEncoding::new(&seqname);
+        let mut position_of_chunk = ContigEncoding::new(&seqname);
         let (mut node_index, mut position) = (start, start_position);
         let mut seq = self.initial_sequence(start, start_position);
         // Start traveresing.
-        let mut unit_names = vec![];
+        let mut chunk_names = vec![];
         loop {
             let mut builder = UnitAlnInfoBuilder::default();
             let node = self.node(node_index).unwrap();
             builder = builder
                 .set_node(node.node)
                 .set_contig_start(seq.len())
-                .set_unit_start(0)
-                .set_unit_direction(position)
-                .set_unit_len(node.seq().len());
+                .set_chunk_start(0)
+                .set_chunk_direction(position)
+                .set_chunk_len(node.seq().len());
             arrived.insert(node_index);
             // Move forward.
             let cons = match position {
                 Position::Head => node.seq_as_string(),
                 Position::Tail => revcmp_str(&node.seq_as_string()),
             };
-            unit_names.push(ContigElement::new(node, position));
+            chunk_names.push(ContigElement::new(node, position));
             seq += &cons;
             position = !position;
             // Check.
             if self.count_edges(node_index, position) != 1 {
                 builder = builder
                     .set_contig_end(seq.len())
-                    .set_unit_end(node.seq().len());
-                position_of_units.push(builder.build());
+                    .set_chunk_end(node.seq().len());
+                position_of_chunk.push(builder.build());
                 break;
             }
             // There is only one child.
@@ -414,16 +414,16 @@ impl<'a> super::DitchGraph<'a> {
                     let _ = (0..(-l)).filter_map(|_| seq.pop()).count();
                     builder = builder
                         .set_contig_end(seq.len())
-                        .set_unit_end(node.seq().len() - (-l) as usize);
+                        .set_chunk_end(node.seq().len() - (-l) as usize);
                 }
                 EdgeLabel::Seq(label) => {
                     builder = builder
                         .set_contig_end(seq.len())
-                        .set_unit_end(node.seq().len());
+                        .set_chunk_end(node.seq().len());
                     seq.extend(label.iter().map(|&x| x as char));
                 }
             };
-            position_of_units.push(builder.build());
+            position_of_chunk.push(builder.build());
             let (next, next_position) = (selected_edge.to, selected_edge.to_position);
             // Check the number of child.
             let num_children = self.count_edges(next, next_position);
@@ -438,7 +438,7 @@ impl<'a> super::DitchGraph<'a> {
         }
         seq += &self.trailing_sequence(node_index, position);
         seq.make_ascii_uppercase();
-        let summary = ContigSummary::new(&seqname, &unit_names);
+        let summary = ContigSummary::new(&seqname, &chunk_names);
         // Register start and tail node.
         // This if statement is no needed?
         if start == node_index {
@@ -455,7 +455,7 @@ impl<'a> super::DitchGraph<'a> {
         let tail_edges = self.enumerate_adjacent_tag(&seqname, node_index, position, sids, gfa_pos);
         let mut edges = edges;
         edges.extend(tail_edges);
-        (seg, edges, summary, position_of_units)
+        (seg, edges, summary, position_of_chunk)
     }
     fn initial_sequence(&self, node: NodeIndex, position: Position) -> String {
         if self.count_edges(node, position) > 0 {

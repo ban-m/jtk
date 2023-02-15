@@ -80,7 +80,7 @@ fn subcommand_stats() -> Command<'static> {
 }
 
 fn subcommand_select_chunk() -> Command<'static> {
-    Command::new("select_chunk")
+    Command::new("select_chunks")
         .version("0.1")
         .author("BanshoMasutani")
         .about("Pick subsequence from raw reads.")

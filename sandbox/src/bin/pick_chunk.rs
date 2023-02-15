@@ -15,14 +15,14 @@ fn main() -> std::io::Result<()> {
         .collect();
     for query in &args[2..] {
         let mut query = query.split(':');
-        let unit: u64 = query.next().unwrap().parse().unwrap();
+        let chunk: u64 = query.next().unwrap().parse().unwrap();
         let range = query.next().map(|range| {
             let mut range = range.split('-');
             let start: usize = range.next().unwrap().parse().unwrap();
             let end: usize = range.next().unwrap().parse().unwrap();
             (start, end)
         });
-        let ref_chunk = ds.selected_chunks.iter().find(|c| c.id == unit).unwrap();
+        let ref_chunk = ds.selected_chunks.iter().find(|c| c.id == chunk).unwrap();
         let mut nodes: Vec<_> = ds
             .encoded_reads
             .iter()
@@ -34,26 +34,23 @@ fn main() -> std::io::Result<()> {
                 read.nodes
                     .iter()
                     .enumerate()
-                    .filter(|n| unit == n.1.unit)
+                    .filter(|n| chunk == n.1.chunk)
                     .map(|(i, n)| (read.id, is_hap1, i, n, read.nodes.len()))
                     .collect::<Vec<_>>()
             })
             .collect();
         nodes.sort_unstable_by_key(|x| (x.3.cluster, x.1));
-        // println!(
-        //     "UNIT\t>{unit}\nUNIT\t{}",
-        //     std::str::from_utf8(ref_chunk.seq()).unwrap(),
-        // );
+
         for (readid, _is_hap1, i, node, len) in nodes {
             let (query, aln, refr) = node.recover(ref_chunk);
             let dist = aln.iter().filter(|&&x| x != b'|').count();
             let identity = 1f64 - dist as f64 / aln.len() as f64;
             let post: Vec<_> = node.posterior.iter().map(|p| format!("{:.2}", p)).collect();
-            let (unit, cluster, post) = (node.unit, node.cluster, post.join("\t"));
+            let (chunk, cluster, post) = (node.chunk, node.cluster, post.join("\t"));
             let name = &id2desc[&readid];
             let is_forward = node.is_forward;
             println!(
-                "{readid}\t{is_forward}\t{i}\t{len}\t{unit}\t{cluster}\t{identity:.2}\t{post}\t{name}",
+                "{readid}\t{is_forward}\t{i}\t{len}\t{chunk}\t{cluster}\t{identity:.2}\t{post}\t{name}",
             );
             println!(
                 "QUERY\t>{readid}\nQUERY\t{}",

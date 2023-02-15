@@ -43,15 +43,15 @@ pub trait SquishErroneousClusters {
 
 impl SquishErroneousClusters for DataSet {
     fn squish_erroneous_clusters(&mut self, config: &SquishConfig) {
-        let unit_class = classify_units(self, config);
+        let chunk_class = classify_chunks(self, config);
         self.selected_chunks
             .iter_mut()
-            .filter(|n| matches!(unit_class.get(&n.id), Some(RelClass::Suspicious)))
+            .filter(|n| matches!(chunk_class.get(&n.id), Some(RelClass::Suspicious)))
             .for_each(|n| n.cluster_num = 1);
         self.encoded_reads
             .iter_mut()
             .flat_map(|r| r.nodes.iter_mut())
-            .filter(|n| matches!(unit_class.get(&n.unit), Some(RelClass::Suspicious)))
+            .filter(|n| matches!(chunk_class.get(&n.chunk), Some(RelClass::Suspicious)))
             .for_each(|n| {
                 n.cluster = 0;
                 n.posterior = vec![0f64];
@@ -76,48 +76,48 @@ impl std::fmt::Display for RelClass {
     }
 }
 
-fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass> {
-    let mut unit_pairs: HashMap<_, usize> = HashMap::new();
+fn classify_chunks(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass> {
+    let mut chunk_pairs: HashMap<_, usize> = HashMap::new();
     for read in ds.encoded_reads.iter() {
         let nodes = read.nodes.iter().enumerate();
         for (i, n1) in nodes.filter(|n| n.1.is_biased(BIAS_THR)) {
             let n2s = read.nodes.iter().skip(i + 1);
             for n2 in n2s.filter(|n| n.is_biased(BIAS_THR)) {
-                let key = (n1.unit.min(n2.unit), n1.unit.max(n2.unit));
-                *unit_pairs.entry(key).or_default() += 1;
+                let key = (n1.chunk.min(n2.chunk), n1.chunk.max(n2.chunk));
+                *chunk_pairs.entry(key).or_default() += 1;
             }
         }
     }
-    let units: HashMap<_, _> = ds
+    let chunks: HashMap<_, _> = ds
         .selected_chunks
         .iter()
         .map(|n| (n.id, n.cluster_num))
         .collect();
-    unit_pairs.retain(|_, val| config.count_thr < *val);
-    unit_pairs.retain(|(u1, u2), _| 1 < units[u1] && 1 < units[u2]);
-    let adj_rand_indices: Vec<_> = unit_pairs
+    chunk_pairs.retain(|_, val| config.count_thr < *val);
+    chunk_pairs.retain(|(u1, u2), _| 1 < chunks[u1] && 1 < chunks[u2]);
+    let adj_rand_indices: Vec<_> = chunk_pairs
         .par_iter()
         .map(|(&(u1, u2), _)| {
-            let (cl1, cl2) = (units[&u1], units[&u2]);
+            let (cl1, cl2) = (chunks[&u1], chunks[&u2]);
             let (rel, count) = check_correl(ds, (u1, cl1), (u2, cl2));
             (u1, u2, (rel, count))
         })
         .collect();
-    let mut touch_units: HashMap<_, Vec<_>> = HashMap::new();
-    for (&(u1, u2), _) in unit_pairs.iter() {
-        touch_units.entry(u1).or_default().push(u2);
+    let mut touch_chunks: HashMap<_, Vec<_>> = HashMap::new();
+    for (&(u1, u2), _) in chunk_pairs.iter() {
+        touch_chunks.entry(u1).or_default().push(u2);
     }
-    let stiff_units = match adj_rand_indices.is_empty() {
+    let stiff_chunks = match adj_rand_indices.is_empty() {
         true => HashSet::new(),
         false => classify(&adj_rand_indices, config),
     };
     ds.selected_chunks
         .iter()
         .map(|c| {
-            let touch_stiff = touch_units.get(&c.id);
+            let touch_stiff = touch_chunks.get(&c.id);
             let touch_stiff =
-                touch_stiff.map(|rels| rels.iter().any(|to| stiff_units.contains(to)));
-            if stiff_units.contains(&c.id) || 2 < c.copy_num {
+                touch_stiff.map(|rels| rels.iter().any(|to| stiff_chunks.contains(to)));
+            if stiff_chunks.contains(&c.id) || 2 < c.copy_num {
                 (c.id, RelClass::Stiff)
             } else if touch_stiff == Some(true) {
                 let (to, ari, count) = adj_rand_indices
@@ -144,21 +144,21 @@ fn classify_units(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass>
 
 fn check_correl(
     ds: &DataSet,
-    (unit1, cl1): (u64, usize),
-    (unit2, cl2): (u64, usize),
+    (chunk1, cl1): (u64, usize),
+    (chunk2, cl2): (u64, usize),
 ) -> (f64, usize) {
     let (mut c1, mut c2) = (vec![], vec![]);
     for read in ds.encoded_reads.iter() {
         let node1 = read
             .nodes
             .iter()
-            .filter(|n| n.unit == unit1 && n.is_biased(BIAS_THR))
+            .filter(|n| n.chunk == chunk1 && n.is_biased(BIAS_THR))
             .map(|n| n.cluster as usize)
             .min();
         let node2 = read
             .nodes
             .iter()
-            .filter(|n| n.unit == unit2 && n.is_biased(BIAS_THR))
+            .filter(|n| n.chunk == chunk2 && n.is_biased(BIAS_THR))
             .map(|n| n.cluster as usize)
             .min();
         if let (Some(n1), Some(n2)) = (node1, node2) {

@@ -56,7 +56,7 @@ pub fn assemble_draft(ds: &DataSet, c: &AssembleConfig) -> Vec<gfa::Record> {
                     let ids: Vec<_> = contigsummary
                         .summary
                         .iter()
-                        .map(|elm| format!("{}-{}", elm.unit, elm.cluster))
+                        .map(|elm| format!("{}-{}", elm.chunk, elm.cluster))
                         .collect();
                     let total: usize = contigsummary.summary.iter().map(|n| n.occ).sum();
                     let coverage =

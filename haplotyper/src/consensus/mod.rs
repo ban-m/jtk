@@ -736,7 +736,7 @@ fn enumerate_chain(read: &EncodedRead, encs: &[ContigEncoding]) -> Vec<Chain> {
         .map(|n| {
             let start = n.position_from_start;
             let end = start + n.query_length();
-            LightNode::new((n.unit, n.cluster), n.is_forward, (start, end))
+            LightNode::new((n.chunk, n.cluster), n.is_forward, (start, end))
         })
         .collect();
     for enc in encs.iter() {
@@ -868,14 +868,14 @@ const MISM: i64 = -100;
 const GAP: i64 = -4;
 const MATCH: i64 = 10;
 fn match_score(n: &LightNode, m: &UnitAlignmentInfo) -> (i64, Op) {
-    let ((unit, cluster), dir) = m.unit_and_dir_info();
-    let (n_unit, n_cluster) = n.node;
-    if dir != n.is_forward || unit != n_unit {
+    let ((chunk, cluster), dir) = m.chunk_and_dir_info();
+    let (n_chunk, n_cluster) = n.node;
+    if dir != n.is_forward || chunk != n_chunk {
         (MISM, Op::Mismatch)
     } else if n_cluster != cluster {
         (MIS_CLUSTER, Op::Match)
     } else {
-        assert_eq!((n_unit, n_cluster, n.is_forward), (unit, cluster, dir));
+        assert_eq!((n_chunk, n_cluster, n.is_forward), (chunk, cluster, dir));
         (MATCH, Op::Match)
     }
 }
@@ -892,9 +892,9 @@ fn alignment(query: &[LightNode], refr: &[UnitAlignmentInfo]) -> (Vec<Op>, i64) 
     }
     for (i, n) in query.iter().enumerate() {
         let i = i + 1;
-        for (j, unit) in refr.iter().enumerate() {
+        for (j, chunk) in refr.iter().enumerate() {
             let j = j + 1;
-            let (mat, _) = match_score(n, unit);
+            let (mat, _) = match_score(n, chunk);
             dp[i][j] = (dp[i - 1][j] + GAP)
                 .max(dp[i][j - 1] + GAP)
                 .max(dp[i - 1][j - 1] + mat);
@@ -1386,11 +1386,11 @@ fn convert_into_tiles<'a, 'b>(
 }
 
 fn convert_to_read_coordinate(node: &definitions::Node, seg: &UnitAlignmentInfo) -> (usize, usize) {
-    let map_range_in_unit = match seg.unit_range() {
+    let map_range_in_chunk = match seg.chunk_range() {
         (true, start, end) => (start, end),
-        (false, start, end) => (seg.unit_len() - end, seg.unit_len() - start),
+        (false, start, end) => (seg.chunk_len() - end, seg.chunk_len() - start),
     };
-    let (start, end) = convert_to_map_range(node, map_range_in_unit);
+    let (start, end) = convert_to_map_range(node, map_range_in_chunk);
     match node.is_forward {
         true => (start, end),
         false => (node.seq().len() - end, node.seq().len() - start),
@@ -1398,39 +1398,39 @@ fn convert_to_read_coordinate(node: &definitions::Node, seg: &UnitAlignmentInfo)
 }
 
 fn convert_to_map_range(node: &definitions::Node, (start, end): (usize, usize)) -> (usize, usize) {
-    let (mut readpos, mut unitpos) = (0, 0);
+    let (mut readpos, mut chunkpos) = (0, 0);
     let mut read_start = 0;
     for op in node.cigar.iter() {
         match op {
-            definitions::Op::Match(l) if end <= unitpos + l => {
-                readpos += end - unitpos;
+            definitions::Op::Match(l) if end <= chunkpos + l => {
+                readpos += end - chunkpos;
                 break;
             }
-            definitions::Op::Match(l) if start <= unitpos => {
+            definitions::Op::Match(l) if start <= chunkpos => {
                 readpos += l;
-                unitpos += l;
+                chunkpos += l;
             }
-            definitions::Op::Match(l) if start <= unitpos + l => {
+            definitions::Op::Match(l) if start <= chunkpos + l => {
                 assert_eq!(read_start, 0);
-                read_start = readpos + start - unitpos;
+                read_start = readpos + start - chunkpos;
                 readpos += l;
-                unitpos += l;
+                chunkpos += l;
             }
             definitions::Op::Match(l) => {
                 readpos += l;
-                unitpos += l;
+                chunkpos += l;
             }
-            definitions::Op::Del(l) if end <= unitpos + l => {
-                readpos += end - unitpos;
+            definitions::Op::Del(l) if end <= chunkpos + l => {
+                readpos += end - chunkpos;
                 break;
             }
-            definitions::Op::Del(l) if start <= unitpos => unitpos += l,
-            definitions::Op::Del(l) if start <= unitpos + l => {
+            definitions::Op::Del(l) if start <= chunkpos => chunkpos += l,
+            definitions::Op::Del(l) if start <= chunkpos + l => {
                 assert_eq!(read_start, 0);
-                read_start = readpos + start - unitpos;
-                unitpos += l;
+                read_start = readpos + start - chunkpos;
+                chunkpos += l;
             }
-            definitions::Op::Del(l) => unitpos += l,
+            definitions::Op::Del(l) => chunkpos += l,
             definitions::Op::Ins(l) => readpos += l,
         }
     }
@@ -1456,18 +1456,18 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
         tile.node.seq().len(),
         tile.node.is_forward,
     );
-    let (start, end) = match tile.encoding.unit_range() {
+    let (start, end) = match tile.encoding.chunk_range() {
         (true, start, end) => (start, end),
         (false, start, end) => (
-            tile.encoding.unit_len() - end,
-            tile.encoding.unit_len() - start,
+            tile.encoding.chunk_len() - end,
+            tile.encoding.chunk_len() - start,
         ),
     };
     assert!(start <= end, "{},{}", start, end);
     let alignment = crate::misc::ops_to_kiley(&tile.node.cigar);
     let r_len = alignment.iter().filter(|&&op| op != Op::Del).count();
     let u_len = alignment.iter().filter(|&&op| op != Op::Ins).count();
-    assert_eq!(u_len, tile.encoding.unit_len());
+    assert_eq!(u_len, tile.encoding.chunk_len());
     assert_eq!(r_len, tile.node.seq().len());
     let (mut r_pos, mut u_pos) = (0, 0);
     let mut temp_o = vec![];
@@ -1493,7 +1493,7 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
     let u_len = temp_o.iter().filter(|&&op| op != Op::Ins).count();
     assert_eq!(r_len, r_end - r_start);
     assert_eq!(u_len, end - start);
-    if tile.encoding.unit_range().0 {
+    if tile.encoding.chunk_range().0 {
         query.extend(aligned_seq);
         ops.extend(temp_o);
     } else {
@@ -1634,18 +1634,18 @@ mod align_test {
             LightNode::new((4, 0), true, range),
         ];
         let refr = vec![
-            unit_aln_info((7, 0), true),
-            unit_aln_info((1, 0), true),
-            unit_aln_info((2, 1), true),
-            unit_aln_info((3, 1), true),
-            unit_aln_info((6, 0), true),
+            chunk_aln_info((7, 0), true),
+            chunk_aln_info((1, 0), true),
+            chunk_aln_info((2, 1), true),
+            chunk_aln_info((3, 1), true),
+            chunk_aln_info((6, 0), true),
         ];
         let ops = alignment(&query, &refr).0;
         use Op::*;
         assert_eq!(ops, vec![Del, Ins, Match, Match, Match, Del, Ins]);
     }
-    fn unit_aln_info((unit, cluster): (u64, u64), direction: bool) -> UnitAlignmentInfo {
-        UnitAlignmentInfo::new((unit, cluster), (direction, 0, 0), (0, 0), 0)
+    fn chunk_aln_info((chunk, cluster): (u64, u64), direction: bool) -> UnitAlignmentInfo {
+        UnitAlignmentInfo::new((chunk, cluster), (direction, 0, 0), (0, 0), 0)
     }
     fn chain_node(read_start: usize, contig_start: usize) -> ChainNode {
         ChainNode {

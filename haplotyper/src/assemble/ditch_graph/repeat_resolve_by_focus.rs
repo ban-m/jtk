@@ -355,14 +355,18 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 continue;
             }
             checked.extend(diplo_path.iter().map(|x| x.0));
-            let units: HashSet<_> = diplo_path
+            let chunks: HashSet<_> = diplo_path
                 .iter()
                 .filter_map(|&(idx, _)| self.node(idx))
                 .map(|n| n.node)
                 .collect();
             let reads: Vec<_> = reads
                 .iter()
-                .filter(|r| r.nodes.iter().any(|n| units.contains(&(n.unit, n.cluster))))
+                .filter(|r| {
+                    r.nodes
+                        .iter()
+                        .any(|n| chunks.contains(&(n.chunk, n.cluster)))
+                })
                 .copied()
                 .collect();
             const TAKE_VAR_LIMIT: usize = 3;
@@ -493,12 +497,12 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             let head_hits: Vec<_> = read
                 .nodes
                 .iter()
-                .filter_map(|n| hit((n.unit, n.cluster), &heads))
+                .filter_map(|n| hit((n.chunk, n.cluster), &heads))
                 .collect();
             let tail_hits: Vec<_> = read
                 .nodes
                 .iter()
-                .filter_map(|n| hit((n.unit, n.cluster), &tails))
+                .filter_map(|n| hit((n.chunk, n.cluster), &tails))
                 .collect();
             for &hi in head_hits.iter() {
                 for &ti in tail_hits.iter() {
@@ -563,7 +567,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             let start = read
                 .nodes
                 .iter()
-                .position(|n| (n.unit, n.cluster) == node)
+                .position(|n| (n.chunk, n.cluster) == node)
                 .unwrap();
             match (read.nodes[start].is_forward, pos) {
                 (true, Position::Tail) | (false, Position::Head) => {
@@ -571,7 +575,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     // <--- (Here to start) -- <---> -- <---> ....
                     for (d, node) in read.nodes.iter().skip(start).enumerate() {
                         *node_counts_at[d]
-                            .entry((node.unit, node.cluster))
+                            .entry((node.chunk, node.cluster))
                             .or_default() += 1;
                     }
                 }
@@ -579,7 +583,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                     let read = read.nodes.iter().take(start + 1).rev();
                     for (d, node) in read.enumerate() {
                         *node_counts_at[d]
-                            .entry((node.unit, node.cluster))
+                            .entry((node.chunk, node.cluster))
                             .or_default() += 1;
                     }
                 }

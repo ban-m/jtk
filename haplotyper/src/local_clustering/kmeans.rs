@@ -374,7 +374,7 @@ fn to_posterior_probability(lks: &mut [Vec<f64>]) {
 }
 
 // i->k->the likelihood gain of the i-th read when clustered in the k-th cluster.
-// `copy_num` is the copy number of this unit, not the *cluster number*.
+// `copy_num` is the copy number of this chunk, not the *cluster number*.
 // Usually, they are the same but sometimes there are exact repeats, and the number of the cluster
 // would be smaller than the copy number.
 fn get_likelihood_gain(variants: &[Vec<f64>], assignments: &[usize], k: usize) -> Vec<Vec<f64>> {

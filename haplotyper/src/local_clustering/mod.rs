@@ -36,14 +36,14 @@ fn pileup_nodes<'a>(ds: &'a mut DataSet, selection: &HashSet<u64>) -> HashMap<u6
         .map(|c| (c.id, (vec![], c)))
         .collect();
     for node in ds.encoded_reads.iter_mut().flat_map(|r| r.nodes.iter_mut()) {
-        if let Some(bucket) = pileups.get_mut(&node.unit) {
+        if let Some(bucket) = pileups.get_mut(&node.chunk) {
             bucket.0.push(node);
         }
     }
     pileups.iter_mut().for_each(|(_, nodes)| {
-        let (nodes, ref_unit) = nodes;
+        let (nodes, ref_chunk) = nodes;
         nodes.sort_by_cached_key(|node| {
-            let (_, aln, _) = node.recover(ref_unit);
+            let (_, aln, _) = node.recover(ref_chunk);
             aln.iter().filter(|&&x| x != b'|').count()
         });
     });
@@ -68,11 +68,12 @@ fn local_clustering_selected(ds: &mut DataSet, selection: &HashSet<u64>) {
         })
         .collect();
     debug!("LC\t{}", consensus_and_clusternum.len());
-    for unit in ds.selected_chunks.iter_mut() {
-        if let Some(&(ref consensus, score, cluster_num)) = consensus_and_clusternum.get(&unit.id) {
-            unit.seq = consensus.to_vec().into();
-            unit.score = score;
-            unit.cluster_num = cluster_num;
+    for chunk in ds.selected_chunks.iter_mut() {
+        if let Some(&(ref consensus, score, cluster_num)) = consensus_and_clusternum.get(&chunk.id)
+        {
+            chunk.seq = consensus.to_vec().into();
+            chunk.score = score;
+            chunk.cluster_num = cluster_num;
         }
     }
     normalize::normalize_local_clustering(ds);
@@ -114,8 +115,8 @@ fn clustering_on_pileup(
     let polished_time = (polished - start).as_millis();
     let elapsed = (end - start).as_millis();
     let (len, cov) = (cons.len(), nodes.len());
-    let unit_id = ref_chunk.id;
-    debug!("RECORD\t{unit_id}\t{elapsed}\t{polished_time}\t{len}\t{score:.3}\t{cov}",);
+    let chunk_id = ref_chunk.id;
+    debug!("RECORD\t{chunk_id}\t{elapsed}\t{polished_time}\t{len}\t{score:.3}\t{cov}",);
     (cons, score, k)
 }
 
@@ -240,37 +241,19 @@ fn estim_copy_num(asn: &[usize], k: usize, copy_num: usize, coverage: f64) -> Ve
 }
 
 fn update_by_clusterings(
-    units: &mut [&mut Node],
+    chunks: &mut [&mut Node],
     asn: &[usize],
     ops: &[Vec<kiley::Op>],
     pss: &[Vec<f64>],
 ) {
-    for (node, ps) in units.iter_mut().zip(pss) {
+    for (node, ps) in chunks.iter_mut().zip(pss) {
         node.posterior.clear();
         node.posterior.extend(ps);
     }
-    for (node, &asn) in units.iter_mut().zip(asn) {
+    for (node, &asn) in chunks.iter_mut().zip(asn) {
         node.cluster = asn as u64;
     }
-    for (node, ops) in units.iter_mut().zip(ops) {
+    for (node, ops) in chunks.iter_mut().zip(ops) {
         node.cigar = crate::misc::kiley_op_to_ops(ops);
     }
 }
-
-// type Phmm = kiley::hmm::PairHiddenMarkovModel;
-// fn prep_consensus(
-//     hmm: &Phmm,
-//     draft: &[u8],
-//     seqs: &[&[u8]],
-//     ops: &mut [Vec<kiley::Op>],
-//     band_width: usize,
-// ) -> (Vec<u8>, Phmm) {
-//     let mut hmm = hmm.clone();
-//     let mut cons = draft.to_vec();
-//     for _t in 0..2 {
-//         // TODO: Tune here.
-//         hmm.fit_naive_with(&cons, seqs, ops, band_width / 2);
-//         cons = hmm.polish_until_converge_with(&cons, seqs, ops, band_width / 2);
-//     }
-//     (cons, hmm)
-// }
