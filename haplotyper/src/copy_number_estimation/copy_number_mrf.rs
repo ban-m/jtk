@@ -60,13 +60,6 @@ impl MCMCConfig {
     }
     // Smaller is better.
     pub fn node_potential(&self, w: u64, copy: usize) -> f64 {
-        // const SIG_FACTOR: f64 = 2f64;
-        // let cov = self.coverage;
-        // let mean = (copy as f64 * cov).max(cov * ERROR_FRAC);
-        // let sd = SIG_FACTOR * mean;
-        // let denom = 2f64 * sd * sd;
-        // let diff = w as f64 - mean;
-        // diff * diff / denom + sd.ln()
         let cov = self.coverage;
         let lambda = (copy as f64 * cov).max(cov * ERROR_FRAC);
         -(w as f64) * lambda.ln() + lambda

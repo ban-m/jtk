@@ -1,15 +1,12 @@
 //! Methods to update copy numbers.
 //!
-use rand::Rng;
-
-use super::copy_num_by_flow;
-use super::copy_num_by_mst;
 use super::DitEdge;
 use super::DitchEdge;
 use super::DitchGraph;
 use super::EdgeBetweenSimplePath;
 use super::NodeIndex;
 use super::Position;
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
@@ -61,7 +58,8 @@ impl<'a> DitchGraph<'a> {
         let mut nodes = self.convert_path_weight(&node_to_pathid);
         edges.iter_mut().for_each(|x| x.4 /= cov);
         nodes.iter_mut().for_each(|x| x.0 /= cov);
-        let (node_cp, edge_cp) = crate::assemble::copy_number::estimate_copy_number(&nodes, &edges);
+        let (node_cp, edge_cp) =
+            crate::copy_number_estimation::copy_number_gibbs::estimate_copy_number(&nodes, &edges);
         self.gather_answer(&edges, &node_cp, &edge_cp, &node_to_pathid, &terminals)
     }
 
@@ -85,7 +83,9 @@ impl<'a> DitchGraph<'a> {
         let nodes = self.convert_path_weight(&node_to_pathid);
         let nodes: Vec<_> = nodes.iter().map(|x| x.0).collect();
         let (node_cp, edge_cp) =
-            crate::assemble::copy_number::estimate_copy_number_gbs(&nodes, &edges, cov);
+            crate::copy_number_estimation::copy_number_gibbs::estimate_copy_number_gbs(
+                &nodes, &edges, cov,
+            );
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
             for (n, cp) in nodes.iter().zip(node_cp.iter()) {
@@ -120,7 +120,9 @@ impl<'a> DitchGraph<'a> {
         let (terminals, edges) = self.convert_connecting_edges(&node_to_pathid, &connecting_edges);
         let nodes = self.convert_path_weight(&node_to_pathid);
         let (node_cp, edge_cp) =
-            crate::assemble::copy_number::estimate_copy_number_mcmc(&nodes, &edges, cov, rng);
+            crate::copy_number_estimation::copy_number_gibbs::estimate_copy_number_mcmc(
+                &nodes, &edges, cov, rng,
+            );
         if log_enabled!(log::Level::Trace) {
             trace!("COVCP\tType\tCov\tCp");
             for ((cov, len), cp) in nodes.iter().zip(node_cp.iter()) {
@@ -151,6 +153,7 @@ impl<'a> DitchGraph<'a> {
         hap_cov: f64,
         rng: &mut R,
     ) -> (CopyNumbers, HashMap<DitEdge, usize>) {
+        use crate::copy_number_estimation::copy_number_mst;
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (terminals, edges) = self.convert_connecting_edges(&node_to_pathid, &connecting_edges);
         let nodes = self.convert_path_weight(&node_to_pathid);
@@ -158,11 +161,11 @@ impl<'a> DitchGraph<'a> {
         let mut fat_self_loops = vec![];
         for (i, &(target, len)) in nodes.iter().enumerate() {
             let occ = target.ceil() as usize;
-            fat_edges.push(copy_num_by_mst::FatEdge::new(2 * i, 2 * i + 1, occ, len));
+            fat_edges.push(copy_number_mst::FatEdge::new(2 * i, 2 * i + 1, occ, len));
         }
         for &(from, fdir, to, todir, target) in edges.iter() {
             let (from, to) = (2 * from + fdir as usize, 2 * to + todir as usize);
-            let edge = copy_num_by_mst::FatEdge::new(from, to, target.ceil() as usize, 1);
+            let edge = copy_number_mst::FatEdge::new(from, to, target.ceil() as usize, 1);
             if from / 2 != to / 2 {
                 fat_edges.push(edge);
             } else {
@@ -175,8 +178,8 @@ impl<'a> DitchGraph<'a> {
             fat_edges.len(),
             fat_self_loops.len()
         );
-        let mut graph = copy_num_by_mst::Graph::new(hap_cov, fat_edges, fat_self_loops);
-        let config = copy_num_by_mst::MSTConfig::default();
+        let mut graph = copy_number_mst::Graph::new(hap_cov, fat_edges, fat_self_loops);
+        let config = copy_number_mst::MSTConfig::default();
         graph.update_copy_numbers(rng, &config);
         let mut node_cps = vec![];
         let mut edge_cps = HashMap::new();
@@ -227,7 +230,8 @@ impl<'a> DitchGraph<'a> {
         let (node_to_pathid, connecting_edges) = self.reduce_simple_path();
         let (terminals, edges) = self.convert_connecting_edges(&node_to_pathid, &connecting_edges);
         let nodes = self.convert_path_weight(&node_to_pathid);
-        let mut graph = copy_num_by_flow::Graph::new(&nodes, &edges, hap_cov);
+        use crate::copy_number_estimation::copy_number_flow;
+        let mut graph = copy_number_flow::Graph::new(&nodes, &edges, hap_cov);
         graph.optimize(rng);
         let (node_cp, edge_cp) = graph.copy_numbers();
         assert_eq!(nodes.len(), node_cp.len());

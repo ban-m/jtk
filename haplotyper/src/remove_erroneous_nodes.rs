@@ -4,7 +4,7 @@ pub trait RemoveErroneousNodes {
     fn remove_erroneous_nodes(&mut self);
 }
 
-use crate::assemble::copy_number::CoverageCalibrator;
+use crate::copy_number_estimation::CoverageCalibrator;
 use definitions::*;
 use std::collections::{HashMap, HashSet};
 
@@ -36,7 +36,7 @@ fn edge_calibed_coverage(ds: &DataSet) -> HashMap<(u64, u64), f64> {
         .into_iter()
         .map(|(key, (obs, totlen))| {
             let len = (totlen / obs as i64).max(0) as usize;
-            let calibed = calib.calib(obs, len);
+            let calibed = calib.calib(obs as u64, len);
             (key, calibed)
         })
         .collect()

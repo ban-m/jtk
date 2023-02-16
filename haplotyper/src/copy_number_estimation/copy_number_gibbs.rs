@@ -5,82 +5,6 @@ use std::collections::HashMap;
 type Edge = (usize, bool, usize, bool, f64);
 type GbsEdge = (usize, bool, usize, bool, u64);
 
-#[derive(Debug, Clone)]
-pub struct CoverageCalibrator {
-    // Sorted.
-    lengths: Vec<usize>,
-    // i->sum of the inverse value from i to the end.
-    // cum_inverse_sum: Vec<f64>,
-    // i->sum of the length of the reads longer than the i-th read.
-    // Note that u64 is as big as 2^64 > total bp possibly.
-    cum_sum: Vec<usize>,
-    // Mean length.
-    mean: f64,
-}
-
-impl CoverageCalibrator {
-    pub fn new(lens: &[usize]) -> Self {
-        let mut lengths = lens.to_vec();
-        lengths.sort_unstable();
-        let (mut cum_sum, sum): (Vec<_>, _) =
-            lengths
-                .iter()
-                .rev()
-                .fold((vec![], 0), |(mut sums, cum), &x| {
-                    sums.push(cum + x as usize);
-                    (sums, cum + x as usize)
-                });
-        cum_sum.reverse();
-        let mean = sum as f64 / lengths.len() as f64;
-        Self {
-            lengths,
-            cum_sum,
-            mean,
-        }
-    }
-    /// Calibrate the observed coverage in the gap-len bp region
-    /// into the "actual" coverage, regarding that region as a single-bp region.
-    /// Note that if the gap_len is longer than the longest reads in the dataset,
-    /// it returns zero.
-    pub fn calib(&self, observed: usize, gap_len: usize) -> f64 {
-        let idx = match self.lengths.binary_search(&gap_len) {
-            Ok(idx) => idx,
-            Err(idx) if idx == self.lengths.len() => return 0f64,
-            Err(idx) => idx,
-        };
-        let factor = self.cum_sum[idx] - gap_len * (self.lengths.len() - idx);
-        observed as f64 * self.mean / (factor as f64 / self.lengths.len() as f64)
-        // (observed * self.lengths.len()) as f64
-        //     / ((self.lengths.len() - idx) as f64 - gap_len as f64 * self.cum_inverse_sum[idx])
-    }
-    /// Calibrate the observed coverage in the gap-len bp region
-    /// into the "actual" coverage, regarding that region as a single-bp region.
-    /// Note that if the gap_len is longer than the longest reads in the dataset,
-    /// it returns zero.
-    pub fn calib_f64(&self, observed: f64, gap_len: usize) -> f64 {
-        let idx = match self.lengths.binary_search(&gap_len) {
-            Ok(idx) => idx,
-            Err(idx) if idx == self.lengths.len() => return 0f64,
-            Err(idx) => idx,
-        };
-        let factor = self.cum_sum[idx] - gap_len * (self.lengths.len() - idx);
-        observed * self.mean / (factor as f64 / self.lengths.len() as f64)
-        // observed * self.lengths.len() as f64
-        //     / ((self.lengths.len() - idx) as f64 - gap_len as f64 * self.cum_inverse_sum[idx])
-    }
-    /// Return the probability that a read span `gap_len` gap at a specific position.
-    pub fn prob_spanning(&self, gap_len: usize) -> f64 {
-        let idx = match self.lengths.binary_search(&gap_len) {
-            Ok(idx) => idx,
-            Err(idx) if idx == self.lengths.len() => return 0f64,
-            Err(idx) => idx,
-        };
-        (self.cum_sum[idx] - gap_len * (self.lengths.len() - idx)) as f64
-            / self.lengths.len() as f64
-            / self.mean
-    }
-}
-
 // Out of the haploid coverage, how much fraction would be observed in the 0-coverage nodes.
 // For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge
 // even in the zero-copy elements.
@@ -339,14 +263,14 @@ pub fn estimate_copy_number_mcmc<R: Rng>(
         .iter()
         .map(|&(x, len)| (x.round() as u64, len))
         .collect();
-    let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
+    let graph = crate::copy_number_estimation::copy_number_mrf::Graph::with(&edges, &coverages);
     debug!("COPYNUM\tGraph\t{}", graph);
     use rayon::prelude::*;
     let seeds: Vec<_> = (0..CHAIN_NUM).map(|_| rng.gen::<u64>()).collect();
     let (argmin, min) = seeds
         .into_par_iter()
         .map(|seed| {
-            let config = crate::copy_number_estimation_mrf::Config::new(cov);
+            let config = crate::copy_number_estimation::copy_number_mrf::Config::new(cov);
             let mut rng: Xoroshiro128StarStar = SeedableRng::seed_from_u64(seed);
             graph.map_estimate_copy_numbers(&mut rng, &config)
         })
@@ -371,8 +295,8 @@ pub fn get_potential(
         .iter()
         .map(|&(x, len)| (x.round() as u64, len))
         .collect();
-    let graph = crate::copy_number_estimation_mrf::Graph::with(&edges, &coverages);
-    let config = crate::copy_number_estimation_mrf::MCMCConfig::new(1f64, 20f64, cov);
+    let graph = crate::copy_number_estimation::copy_number_mrf::Graph::with(&edges, &coverages);
+    let config = crate::copy_number_estimation::copy_number_mrf::MCMCConfig::new(1f64, 20f64, cov);
     graph.total_energy(node_cp, edge_cp, &config)
 }
 
@@ -540,7 +464,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
         .enumerate()
         .map(|(idx, id)| (id.clone(), idx))
         .collect();
-    let calibrator = CoverageCalibrator::new(lens);
+    let calibrator = super::CoverageCalibrator::new(lens);
     let old_cov = cov;
     let cov = calibrator.calib_f64(cov, chunk_len);
     debug!("Coverage\t{}\t{}", old_cov, cov);
@@ -554,7 +478,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .find(|tag| tag.inner.starts_with("cv"))
                     .and_then(|tag| tag.inner.split(':').nth(2))
                     .and_then(|x| x.parse().ok())?;
-                let weight = calibrator.calib(coverage, chunk_len) / cov;
+                let weight = calibrator.calib(coverage as u64, chunk_len) / cov;
                 let len = seg.slen as usize / chunk_len;
                 Some((weight, len))
             } else {
@@ -585,8 +509,7 @@ pub fn estimate_copy_number_on_gfa(gfa: &mut gfa::GFA, cov: f64, lens: &[usize],
                     .and_then(|cov| cov.parse().ok())
                     .unwrap_or_else(|| panic!("{:?}", record.tags));
                 let gap_len = (gap_len + 2 * chunk_len as isize).max(0) as usize;
-                let weight = calibrator.calib(coverage, gap_len) / cov;
-                // debug!("DUMP\t{}\t{:.2}\t{:.2}\tEdge", coverage, weight, gap_len);
+                let weight = calibrator.calib(coverage as u64, gap_len) / cov;
                 Some((from, from_plus, to, to_plus, weight))
             }
             _ => None,

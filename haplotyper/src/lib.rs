@@ -4,7 +4,6 @@ extern crate log;
 pub mod assemble;
 pub mod consensus;
 pub mod copy_number_estimation;
-pub mod copy_number_estimation_mrf;
 pub mod dense_encoding;
 pub mod determine_chunks;
 pub mod encode;

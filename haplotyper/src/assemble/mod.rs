@@ -1,4 +1,3 @@
-pub mod copy_number;
 pub mod ditch_graph;
 use definitions::*;
 use ditch_graph::*;
