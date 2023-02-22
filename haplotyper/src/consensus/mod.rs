@@ -416,7 +416,6 @@ fn split_sequences<'a, 'b>(
         use_ops.push(ops);
         use_strands.push(strand);
     }
-    // let (use_seqs, use_ops): (Vec<_>, Vec<_>) = will_be_use.into_iter().unzip();
     (use_strands, use_seqs, use_ops, update_indices)
 }
 
@@ -434,7 +433,6 @@ fn global_align(query: &[u8], target: &[u8]) -> Vec<Op> {
 }
 
 fn bootstrap_consensus(seqs: &[&[u8]], ops: &mut [Vec<Op>], radius: usize) -> Vec<u8> {
-    // let draft = kiley::ternary_consensus_by_chunk(seqs, radius);
     let draft = seqs[0].to_vec();
     for (seq, ops) in std::iter::zip(seqs, ops.iter_mut()) {
         *ops = global_align(seq, &draft);
@@ -473,8 +471,8 @@ fn polish_seg(
         true => polished,
         false => bootstrap_consensus(&use_seqs, &mut temp_ops, radius),
     };
-    let config = kiley::hmm::guided::HMMConfig::new(radius, max_cov, 0);
-    polished = models.polish_until_converge_with_conf(
+    let config = kiley::hmm::HMMPolishConfig::new(radius / 2, max_cov, 0);
+    polished = models.polish_until_converge_antidiagonal(
         &polished,
         &use_seqs,
         &mut temp_ops,

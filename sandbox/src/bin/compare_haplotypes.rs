@@ -1,3 +1,4 @@
+use bio_utils::fasta::Record;
 fn main() -> std::io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     let references = bio_utils::fasta::parse_into_vec(&args[1])?;
@@ -101,77 +102,3 @@ fn compare_dev(
         })
         .fold((0, 0), |(d, cov), (x, y)| (d + x, cov + y))
 }
-
-use bio_utils::fasta::Record;
-// fn compare(refers: &[Record], ref_hap: &[&str], asms: &[Record], asm_hap: &[&str]) -> usize {
-//     let asms: Vec<_> = asm_hap
-//         .iter()
-//         .filter_map(|name| asms.iter().find(|r| r.id() == *name))
-//         .collect();
-//     ref_hap
-//         .iter()
-//         .map(|ref_name| {
-//             let record = refers.iter().find(|r| r.id() == *ref_name).unwrap();
-//             asms.iter()
-//                 .map(|asm| {
-//                     let (query, target) = match asm.seq().len() < record.seq().len() {
-//                         true => (asm.seq(), record.seq()),
-//                         false => (record.seq(), asm.seq()),
-//                     };
-//                     if similar(query, target) {
-//                         dist(query, target)
-//                     } else {
-//                         let query = bio_utils::revcmp(query);
-//                         if similar(&query, target) {
-//                             dist(&query, target)
-//                         } else {
-//                             query.len() + target.len()
-//                         }
-//                     }
-//                 })
-//                 .min()
-//                 .unwrap()
-//         })
-//         .sum()
-// }
-
-// fn dist(query: &[u8], refr: &[u8]) -> usize {
-//     let mode = edlib_sys::AlignMode::Global;
-//     let task = edlib_sys::AlignTask::Alignment;
-//     let aln = edlib_sys::align(&query, &refr, mode, task);
-//     let start = std::time::Instant::now();
-//     let path = haplotyper::misc::edlib_to_kiley(&aln.operations().unwrap());
-//     let edl = std::time::Instant::now();
-//     let path =
-//         kiley::bialignment::guided::global_guided(&refr, &query, &path, 5, (1, -1, -1, -1)).1;
-//     let path =
-//         kiley::bialignment::guided::global_guided(&refr, &query, &path, 5, (1, -1, -1, -1)).1;
-//     let path = remove_indel(path);
-//     let fix = std::time::Instant::now();
-//     let edlib = (edl - start).as_secs();
-//     let fixing = (fix - edl).as_secs();
-//     eprintln!("{edlib}\t{fixing}");
-//     path.iter().filter(|&&op| op != kiley::Op::Match).count()
-// }
-
-// fn remove_indel(mut path: Vec<kiley::Op>) -> Vec<kiley::Op> {
-//     while path.last() == Some(&kiley::Op::Del) || path.last() == Some(&kiley::Op::Ins) {
-//         path.pop();
-//     }
-//     path.reverse();
-//     while path.last() == Some(&kiley::Op::Del) || path.last() == Some(&kiley::Op::Ins) {
-//         path.pop();
-//     }
-//     path.reverse();
-//     path
-// }
-
-// fn similar(xs: &[u8], ys: &[u8]) -> bool {
-//     use std::collections::HashSet;
-//     let xs: HashSet<_> = xs.windows(15).map(|x| x.to_vec()).collect();
-//     let ys: HashSet<_> = ys.windows(15).map(|x| x.to_vec()).collect();
-//     let intersection = xs.intersection(&ys).count();
-//     let union = xs.union(&ys).count();
-//     eprintln!("{intersection},{union}");
-//     (intersection as f64 / union as f64) > 0.05
-// }

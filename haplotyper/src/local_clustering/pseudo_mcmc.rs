@@ -1,6 +1,5 @@
 //! A small K-means clustering algorithm.
 // First and last `MASK_LENGTH` bases would not be considered in variant calling.
-// Should be greater than the maximum length of kiley::hmm::guided::COPY_SIZE or DEL_SIZE.
 const MASK_LENGTH: usize = 7;
 const MAX_HOMOP_LENGTH: usize = 2;
 const POS_THR: f64 = 0.00001;
@@ -59,13 +58,10 @@ fn modification_table<T: std::borrow::Borrow<[u8]>>(
                 true => hmm.forward(),
                 false => hmm.reverse(),
             };
-            match hmm.modification_table(template, seq.borrow(), band, op) {
-                Some((mut table, lk)) => {
-                    table.iter_mut().for_each(|x| *x -= lk);
-                    table
-                }
-                None => vec![0f64; NUM_ROW * (template.len() + 1)],
-            }
+            let (mut table, lk) =
+                hmm.modification_table_antidiagonal(template, seq.borrow(), op, band);
+            table.iter_mut().for_each(|x| *x -= lk);
+            table
         })
         .collect()
 }

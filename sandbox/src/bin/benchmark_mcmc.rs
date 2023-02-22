@@ -1,7 +1,7 @@
 use clap::Parser;
 use haplotyper::local_clustering::exact_clustering;
 use haplotyper::local_clustering::pseudo_mcmc::ClusteringConfig;
-use kiley::{gen_seq::*, hmm::guided::HMMConfig};
+use kiley::{gen_seq::*, hmm::HMMPolishConfig};
 use log::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -101,11 +101,11 @@ fn main() -> std::io::Result<()> {
     use haplotyper::local_clustering::pseudo_mcmc;
     let mut ops: Vec<_> = reads
         .iter()
-        .map(|x| hmm.forward().align_guided(&template, x, band).1)
+        .map(|x| hmm.forward().align_guided_bootstrap(&template, x, band).1)
         .collect();
-    let h_config = HMMConfig::new(command_arg.radius, reads.len(), 4);
+    let h_config = HMMPolishConfig::new(command_arg.radius, reads.len(), 4);
     let template =
-        hmm.polish_until_converge_with_conf(&template, &reads, &mut ops, &strands, &h_config);
+        hmm.polish_until_converge_antidiagonal(&template, &reads, &mut ops, &strands, &h_config);
     let feature_vectors =
         pseudo_mcmc::search_variants(&template, &reads, &ops, &strands, &hmm, &config);
     let mcmc_start = std::time::Instant::now();

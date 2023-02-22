@@ -1,5 +1,5 @@
 use clap::Parser;
-use kiley::{gen_seq::*, hmm::guided::HMMConfig};
+use kiley::gen_seq::*;
 use log::*;
 use rand::Rng;
 use rand_xoshiro::Xoroshiro128PlusPlus;
@@ -102,11 +102,11 @@ fn main() -> std::io::Result<()> {
     let hmm = kiley::hmm::PairHiddenMarkovModelOnStrands::default();
     let mut ops: Vec<_> = reads
         .iter()
-        .map(|x| hmm.forward().align_guided(&draft, x, band).1)
+        .map(|x| hmm.forward().align_guided_bootstrap(&draft, x, band).1)
         .collect();
     let strands = vec![true; reads.len()];
-    let h_config = HMMConfig::new(band, reads.len(), 4);
-    draft = hmm.polish_until_converge_with_conf(&draft, &reads, &mut ops, &strands, &h_config);
+    let h_config = kiley::hmm::HMMPolishConfig::new(band, reads.len(), 4);
+    draft = hmm.polish_until_converge_antidiagonal(&draft, &reads, &mut ops, &strands, &h_config);
     let gains = haplotyper::likelihood_gains::estimate_gain(&hmm, 4283094, 100, 20, 5);
     let coverage = coverage as f64;
     use haplotyper::local_clustering::pseudo_mcmc::ClusteringConfig;

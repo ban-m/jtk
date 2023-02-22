@@ -76,26 +76,26 @@ impl CoverageCalibrator {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct GraphWithCoverage {
-    nodes: Vec<NodeWithCoverage>,
-    edges: Vec<Vec<EdgeWithCoverage>>,
-    haploid_coverage: f64,
-}
+// #[derive(Debug, Clone)]
+// pub struct GraphWithCoverage {
+//     nodes: Vec<NodeWithCoverage>,
+//     edges: Vec<Vec<EdgeWithCoverage>>,
+//     haploid_coverage: f64,
+// }
 
-#[derive(Debug, Clone, Copy)]
-pub struct NodeWithCoverage {
-    length: usize,
-    coverage: f64,
-}
+// #[derive(Debug, Clone, Copy)]
+// pub struct NodeWithCoverage {
+//     length: usize,
+//     coverage: f64,
+// }
 
-#[derive(Debug, Clone, Copy)]
-pub struct EdgeWithCoverage {
-    from: usize,
-    from_position: bool,
-    to: usize,
-    to_position: bool,
-}
+// #[derive(Debug, Clone, Copy)]
+// pub struct EdgeWithCoverage {
+//     from: usize,
+//     from_position: bool,
+//     to: usize,
+//     to_position: bool,
+// }
 
 // #[derive(Debug, Clone)]
 // pub struct GibbsSampler {

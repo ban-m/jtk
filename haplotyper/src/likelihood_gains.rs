@@ -22,8 +22,8 @@ pub fn estimate_minimum_gain(hmm: &PairHiddenMarkovModelOnStrands) -> f64 {
                         false => hmm.reverse(),
                     };
                     let read = hmm.gen(&hap1, &mut rng);
-                    let lk_base = hmm.likelihood_bootstrap(&hap1, &read, BAND);
-                    let lk_diff = hmm.likelihood_bootstrap(&hap2, &read, BAND);
+                    let lk_base = hmm.likelihood_antidiagonal_bootstrap(&hap1, &read, BAND);
+                    let lk_diff = hmm.likelihood_antidiagonal_bootstrap(&hap2, &read, BAND);
                     lk_base - lk_diff
                 })
                 .collect();
@@ -277,8 +277,8 @@ fn gain_of(
                         false => hmm.reverse(),
                     };
                     let read = hmm.gen(&diff, &mut rng);
-                    let lk_base = hmm.likelihood_bootstrap(&template, &read, band);
-                    let lk_diff = hmm.likelihood_bootstrap(&diff, &read, band);
+                    let lk_base = hmm.likelihood_antidiagonal_bootstrap(&template, &read, band);
+                    let lk_diff = hmm.likelihood_antidiagonal_bootstrap(&diff, &read, band);
                     lk_diff - lk_base
                 })
                 .collect();
@@ -296,8 +296,8 @@ fn gain_of(
                         false => hmm.reverse(),
                     };
                     let read = hmm.gen(&template, &mut rng);
-                    let lk_base = hmm.likelihood_bootstrap(&template, &read, band);
-                    let lk_diff = hmm.likelihood_bootstrap(&diff, &read, band);
+                    let lk_base = hmm.likelihood_antidiagonal_bootstrap(&template, &read, band);
+                    let lk_diff = hmm.likelihood_antidiagonal_bootstrap(&diff, &read, band);
                     lk_base + min_gain < lk_diff
                 })
                 .count();

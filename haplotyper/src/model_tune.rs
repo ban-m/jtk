@@ -1,5 +1,5 @@
 use definitions::*;
-use kiley::hmm::guided::HMMConfig;
+use kiley::hmm::HMMPolishConfig;
 use std::collections::HashMap;
 
 use kiley::hmm::PairHiddenMarkovModel;
@@ -90,8 +90,8 @@ fn kiley_into_def(model: &kiley::hmm::PairHiddenMarkovModel) -> definitions::HMM
     }
 }
 
-const TRAIN_UNIT_SIZE: usize = 10;
-const TRAIN_ROUND: usize = 10;
+const TRAIN_UNIT_SIZE: usize = 3;
+const TRAIN_ROUND: usize = 2;
 fn estimate_model_parameters_on_both_strands(
     ds: &DataSet,
 ) -> Option<PairHiddenMarkovModelOnStrands> {
@@ -137,8 +137,9 @@ fn estimate_model_parameters_on_both_strands(
         polishing_pairs
             .par_iter_mut()
             .for_each(|(cons, seqs, ops, strands, bw)| {
-                let config = HMMConfig::new(*bw, seqs.len(), 0);
-                *cons = models.polish_until_converge_with_conf(cons, seqs, ops, strands, &config);
+                let config = HMMPolishConfig::new(*bw / 2, seqs.len(), 0);
+                *cons =
+                    models.polish_until_converge_antidiagonal(cons, seqs, ops, strands, &config);
             });
         let training_datapack: Vec<_> = polishing_pairs
             .iter()
@@ -146,7 +147,7 @@ fn estimate_model_parameters_on_both_strands(
                 kiley::hmm::TrainingDataPack::new(cons, strands, seqs, ops)
             })
             .collect();
-        models.fit_multiple_with_par(&training_datapack, bw);
+        models.fit_antidiagonal_par_multiple(&training_datapack, bw / 2);
     }
     debug!("FORWARD\tHMM\n{}", models.forward());
     debug!("REVERSE\tHMM\n{}", models.reverse());
