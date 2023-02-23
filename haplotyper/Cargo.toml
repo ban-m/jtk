@@ -1,6 +1,6 @@
 [package]
 name = "haplotyper"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["ban-m <ban-m@g.ecc.u-tokyo.ac.jp>"]
 edition = "2018"
 
@@ -22,5 +22,5 @@ histgram_viz = {git = "https://github.com/ban-m/histgram_viz", branch = "master"
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 bytecount = "0.6.2"
-# kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.2.0"}
-kiley = {path = "../../kiley"}
+kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.3.0"}
+# kiley = {path = "../../kiley"}

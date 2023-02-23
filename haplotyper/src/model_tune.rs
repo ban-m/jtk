@@ -90,8 +90,8 @@ fn kiley_into_def(model: &kiley::hmm::PairHiddenMarkovModel) -> definitions::HMM
     }
 }
 
-const TRAIN_UNIT_SIZE: usize = 3;
-const TRAIN_ROUND: usize = 2;
+const TRAIN_UNIT_SIZE: usize = 5;
+const TRAIN_ROUND: usize = 10;
 fn estimate_model_parameters_on_both_strands(
     ds: &DataSet,
 ) -> Option<PairHiddenMarkovModelOnStrands> {

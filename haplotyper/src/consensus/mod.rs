@@ -340,6 +340,7 @@ pub fn polish(
                     xs.push(len);
                     (xs, len)
                 });
+        // Has bug above.
         assert_eq!(acc_len.len(), polished_seg.len() + 1);
         polished = polished_seg.iter().flatten().copied().collect();
         // Fix alignment.
@@ -684,6 +685,7 @@ fn split(
                 }
                 None if current_chunk_id == window_num - 1 && (contig_len - cpos) < EDGE => {
                     assert_eq!(qpos, alignment.query.len());
+                    assert!(cpos <= contig_len);
                     chunk_ops.extend(std::iter::repeat(Op::Del).take(contig_len - cpos));
                     chunks.push((current_chunk_id, &alignment.query[start..qpos], chunk_ops));
                     end_pos = qpos;

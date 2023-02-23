@@ -1,6 +1,6 @@
 [package]
 name = "sandbox"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["ban-m <ban-m@g.ecc.u-tokyo.ac.jp>"]
 edition = "2018"
 
@@ -22,5 +22,5 @@ rayon = "1.5.3"
 bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 clap = {version = "3.1.18", features = ["derive"]}
-# kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.2.0"}
-kiley = {path = "../../kiley"}
+kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.3.0"}
+# kiley = {path = "../../kiley"}
