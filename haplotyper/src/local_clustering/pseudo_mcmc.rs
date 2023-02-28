@@ -523,36 +523,46 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
     // So, in total, O(ML) time to select M variants. It is OK I think, because
     // usually L is 2K, M is around 3-20.
     let mut is_selected = vec![0; probes.len()];
-    'outer: for _ in 0..ROUND {
+    for _ in 0..ROUND {
         is_selected
             .iter_mut()
             .filter(|b| **b == 3)
             .for_each(|b| *b = 0);
         for _ in 0..cluster_num.max(2) {
-            let next_var_idx = find_next_variants(probes, &is_selected);
-            if let Some(next_var_idx) = next_var_idx {
-                let (picked_pos, lk) = probes[next_var_idx];
-                let (picked_pos_in_bp, ed) = pos_to_bp_and_difftype(picked_pos);
-                trace!("PICK\t{picked_pos_in_bp}\t{ed}\t{lk:.3}");
-                is_selected[next_var_idx] = 1;
-                for (&(pos, _), selected) in probes
-                    .iter()
-                    .zip(is_selected.iter_mut())
-                    .filter(|&(_, &mut selected)| selected == 0 || selected == 3)
-                {
-                    let (pos_in_bp, _) = pos_to_bp_and_difftype(pos);
-                    let diff_in_bp =
-                        pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
+            let next_var_idx = match find_next_variants(probes, &is_selected) {
+                Some(idx) => idx,
+                None => break,
+            };
+            let (picked_pos, lk) = probes[next_var_idx];
+            let (picked_pos_in_bp, ed) = pos_to_bp_and_difftype(picked_pos);
+            trace!("PICK\t{picked_pos_in_bp}\t{ed}\t{lk:.3}");
+            is_selected[next_var_idx] = 1;
+            for (&(pos, _), selected) in probes
+                .iter()
+                .zip(is_selected.iter_mut())
+                .filter(|&(_, &mut selected)| selected == 0 || selected == 3)
+            {
+                let (pos_in_bp, _) = pos_to_bp_and_difftype(pos);
+                let diff_in_bp = pos_in_bp.max(picked_pos_in_bp) - pos_in_bp.min(picked_pos_in_bp);
+                if diff_in_bp < MASK_LENGTH {
+                    trace!("REMOVE\tPERM\t{pos_in_bp}\t{picked_pos_in_bp}\t{diff_in_bp}");
+                    *selected = 2;
+                } else {
                     let sok_sim = sokal_michener(profiles, picked_pos, pos);
                     let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                    if 0.99 < sok_sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
-                        *selected = 2;
-                    } else if 0.8 < cos_sim.abs() {
+                    if 0.8 < sok_sim || 0.8 < cos_sim.abs() {
                         *selected = 3;
                     }
                 }
-            } else {
-                break 'outer;
+                // let sok_sim = sokal_michener(profiles, picked_pos, pos);
+                // let cos_sim = cosine_similarity(profiles, picked_pos, pos);
+                // if 0.99 < sok_sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
+                //     trace!("REMOVE\tPERM\t{pos_in_bp}\t{picked_pos_in_bp}\t{sok_sim:.3}\t{cos_sim:.3}");
+                //     *selected = 2;
+                // } else if 0.8 < cos_sim.abs() {
+                //     trace!("REMOVE\tTEMP\t{pos_in_bp}\t{picked_pos_in_bp}\t{sok_sim:.3}\t{cos_sim:.3}");
+                //     *selected = 3;
+                // }
             }
         }
     }

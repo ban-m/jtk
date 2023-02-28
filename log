@@ -1,0 +1,465 @@
+   Compiling haplotyper v0.2.0 (/work/00/gg57/g57009/codes/hla_haplotyper/haplotyper)
+warning: unused variable: `profiles`
+   --> haplotyper/src/local_clustering/pseudo_mcmc.rs:517:5
+    |
+517 |     profiles: &[T],
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_profiles`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: function `cosine_similarity` is never used
+   --> haplotyper/src/local_clustering/pseudo_mcmc.rs:597:4
+    |
+597 | fn cosine_similarity<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
+    |    ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `sokal_michener` is never used
+   --> haplotyper/src/local_clustering/pseudo_mcmc.rs:613:4
+    |
+613 | fn sokal_michener<T: std::borrow::Borrow<[f64]>>(profiles: &[T], i: usize, j: usize) -> f64 {
+    |    ^^^^^^^^^^^^^^
+
+   Compiling sandbox v0.2.0 (/work/00/gg57/g57009/codes/hla_haplotyper/sandbox)
+warning: `haplotyper` (lib) generated 3 warnings
+    Finished release [optimized] target(s) in 18.83s
+     Running `/work/00/gg57/g57009/codes/hla_haplotyper/target/release/test_hap temp.clustered.json 181`
+[2023-02-28T02:14:31Z DEBUG haplotyper::misc] MULTP	COVERAGE	30.5	HAPLOID
+[2023-02-28T02:14:52Z DEBUG haplotyper::model_tune] FORWARD	HMM
+    MAT:0.976	0.011	0.013
+    INS:0.287	0.390	0.323
+    DEL:0.311	0.238	0.452
+    Obs:0.993	0.002	0.003	0.002
+    Obs:0.002	0.994	0.002	0.003
+    Obs:0.002	0.003	0.993	0.002
+    Obs:0.002	0.002	0.002	0.993
+    Ins:0.243	0.256	0.253	0.248
+    Ins:0.250	0.233	0.253	0.264
+    Ins:0.274	0.233	0.244	0.249
+    Ins:0.263	0.250	0.271	0.216
+    Ins:0.517	0.172	0.170	0.141
+[2023-02-28T02:14:52Z DEBUG haplotyper::model_tune] REVERSE	HMM
+    MAT:0.976	0.010	0.014
+    INS:0.308	0.377	0.316
+    DEL:0.307	0.271	0.422
+    Obs:0.994	0.002	0.002	0.002
+    Obs:0.002	0.993	0.002	0.003
+    Obs:0.002	0.003	0.993	0.002
+    Obs:0.002	0.002	0.002	0.994
+    Ins:0.235	0.252	0.260	0.252
+    Ins:0.264	0.227	0.245	0.265
+    Ins:0.267	0.242	0.254	0.237
+    Ins:0.249	0.236	0.254	0.261
+    Ins:0.241	0.049	0.448	0.262
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] 
+    6,0.02	6,0.02	6,0.02
+    5,0.08	5,0.08	4,0.12
+    6,0.02	7,0.02	7,0.02
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	93	S	78.393	15	4.479	0.000	[1, 1, 2]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[9, 8], [18, 7]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	122	S	96.574	17	4.478	0.000	[2, 2, 2]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[8, 8], [17, 9]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	176	S	98.186	18	4.479	0.000	[1, 1, 1]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[8, 9], [18, 9]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	434	S	99.431	18	4.479	0.000	[1, 1, 2]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[8, 9], [15, 9]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	633	S	104.997	18	4.477	0.000	[3, 3, 1]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[8, 9], [13, 9]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	723	S	84.264	15	4.479	0.000	[3, 1, 1]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[8, 9], [17, 6]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	1026	S	79.472	14	4.478	0.000	[2, 2, 2]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[9, 6], [16, 8]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	1261	S	102.913	18	4.479	0.000	[2, 1, 2]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RAWCOUNT	[[9, 9], [16, 9]]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	1818	S	87.074	23	4.477	0.000	[29, 29, 1]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	1960	S	54.653	14	4.479	0.000	[2, 1, 1]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PVALUE	1961	S	61.253	16	4.479	0.000	[1, 1, 1]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] TOTAL	8
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	93	1	71.3	15
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	122	1	90.7	17
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	176	2	92.8	18
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	434	2	94.1	18
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	633	0	99.6	18
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	723	1	77.1	15
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	1026	0	71.6	14
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] CAND	1261	1	97.5	18
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PICK	633	S	99.620
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PICK	1261	S	97.537
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PICK	434	S	94.055
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PICK	176	S	92.810
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PICK	122	S	90.670
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] PICK	723	S	77.131
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] DUMP	0	122	1	90.7	96.6
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] DUMP	1	176	2	92.8	98.2
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] DUMP	2	434	2	94.1	99.4
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] DUMP	3	633	0	99.6	105.0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] DUMP	4	723	1	77.1	84.3
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] DUMP	5	1261	1	97.5	102.9
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	0	-6.082664382899793
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	1	-5.856000744710855
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	2	-5.833267812616953
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	3	-5.950988216015048
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	4	-5.7093521659624
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	5	-5.711144264598374
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	0	-5.89620814158252
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	1	-5.827060623318914
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	2	-5.821928478580446
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	3	-5.956514678702774
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	4	-5.588617109005099
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	5	-5.590368423525831
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	0	-6.083456622172662
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	1	-5.856000744710229
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	2	-5.83326781261718
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	3	-5.950988216015219
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	4	-5.709352165962571
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	5	-5.711144297437329
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	0	-6.0848334782623965
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	1	-5.8560007447101725
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	2	-5.833267812616782
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	3	-5.9376837841921315
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	4	-5.709352165962173
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	5	-5.71114429872199
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	0	5.947182985389418
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	1	5.633974519754474
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	2	3.753274662867227
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	3	6.089158691779858
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	4	5.7559347185311935
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	5	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	0	-6.08483347826251
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	1	-5.856000744710286
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	2	-5.833267812616782
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	3	-5.950988216014821
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	4	-5.709352165962287
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	5	-3.7740314220002347
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	0	5.931878403744292
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	1	5.778687158200455
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	2	5.769526941400386
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	3	5.879748352621334
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	4	5.823038869851416
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	5	5.8230173245919445
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	0	-6.084826208820914
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	1	-5.850077627772066
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	3	-5.9509882158965866
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	4	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	5	-5.711144298722786
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	0	-5.8962081415825764
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	1	-5.827060623318857
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	2	-5.821957775079454
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	3	-5.956514678702149
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	4	-5.588617109132144
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	5	-5.590368423525888
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	0	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	1	-5.827060623318289
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	2	-4.143972081261438
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	3	-5.956514678701751
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	4	-5.588617109131121
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	5	-5.590368423525035
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	0	-5.705834712263368
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	1	-5.8560007447104
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	2	-5.833267812616555
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	3	-5.350920480765296
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	4	-5.7093521659626845
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	5	-2.8069026588876795
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	0	-6.0848334513282225
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	1	-5.8560007447043745
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	3	-5.950988216016185
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	4	-5.70935007522047
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	5	-5.71114429872415
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	0	-5.8962080129819014
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	1	3.931152391311116
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	2	-5.8219577750771805
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	3	-5.956514678700103
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	4	-5.588617081272389
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	5	-5.590368418676803
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	0	5.947182986703638
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	1	5.6339745197529965
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	2	5.639251807194114
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	3	6.089133606099153
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	4	5.88148325227462
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	5	5.878208780341538
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	0	-6.084833478262567
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	1	-5.8560007447104
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	2	-5.833254169821771
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	3	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	4	-5.354405692888292
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	5	-5.7111442987211944
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	0	-6.052441357673217
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	1	-5.856000743821653
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	2	-5.833267811727637
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	3	-5.95098821512579
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	4	-5.709293942018348
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	5	-5.711144297832789
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	0	-5.896208141581667
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	1	-5.8270606233180615
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	2	-3.9242202048825447
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	3	-5.956514678702263
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	4	-5.588617109131519
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	5	-5.590285841562206
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	0	-5.896206687687766
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	1	-5.826975806254438
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	2	-5.821957773828217
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	3	-5.956454263223179
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	4	-5.588617107880225
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	5	-5.590368422274253
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	0	-5.8962081415818375
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	1	-5.827060623037255
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	3	-5.956514678701922
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	4	5.841687767995211
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	5	-5.590368423524751
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	0	5.946594006309169
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	1	5.633974519753508
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	2	5.639251807194
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	3	5.152341725292331
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	4	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	5	5.873208983178699
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	0	-6.0848334782620555
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	1	-5.856000744710059
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	2	-5.833267812616043
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	3	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	4	-5.709352165960809
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	5	-5.644301712802587
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	0	5.903137808581562
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	1	5.797743675882771
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	2	5.787296376949655
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	3	5.897517788187145
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	4	5.8408099893424605
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	5	5.840502370690274
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	0	-6.084833478262453
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	1	-5.856000744710343
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	2	-5.833267812615873
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	3	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	4	-5.709352165962002
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	5	-5.7111442987222745
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	0	5.950525618042434
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	1	5.685326155681082
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	2	5.788174155698357
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	3	5.898395566919476
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	4	5.8416877680748485
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	5	5.784880465208971
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	0	-6.084833478262624
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	1	-5.8560000916901345
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	2	-4.578913554404551
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	3	-5.9509882160153325
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	4	-5.704532795635259
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	5	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	0	-5.217721250736474
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	1	-5.856000709267619
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	2	-5.8330691070653415
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	3	-5.950988180571699
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	4	-5.709352130519221
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	5	-5.71114426326659
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	0	5.943680083163713
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	1	5.570193842709159
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	2	4.1249910112688895
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	3	6.0726236448479085
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	4	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	5	5.8830978382540025
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	0	5.947138999040931
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	1	5.633974519753451
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	2	5.639225095696361
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	3	6.088869600871817
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	4	5.881483252373869
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	5	5.883055758845103
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	0	5.949647839311638
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	1	5.770966565859453
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	2	5.787296376967561
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	3	5.897517788028836
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	4	4.063923769892085
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	5	5.8407867649074205
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	0	-6.084833478263931
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	1	-2.8527692910002997
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	2	-5.833267812617919
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	3	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	4	-5.70934989650118
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	5	3.3594173169780106
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	0	-5.895627590345384
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	1	-5.823846316099889
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	2	-5.731998793917114
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	3	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	4	-5.588617109110942
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	5	-5.590368423496329
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	0	3.354899220732591
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	1	5.798621454704971
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	2	5.788174155699721
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	3	5.896146901211978
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	4	5.841687768076895
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	5	5.841664531566948
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	0	-6.084833478261885
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	1	-3.9923079550245575
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	3	-5.950779619269042
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	4	-5.605798741949002
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	5	-5.711144091968549
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	0	5.9471829857074
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	1	5.633974489519801
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	2	5.63925180719059
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	3	4.167867616287708
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	4	5.88148325237421
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	5	5.883055522492782
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	0	4.256715069561778
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	1	4.273059190592676
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	2	5.7881741556992665
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	3	5.898395566920385
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	4	5.841687768075872
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	5	5.841664543640377
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	0	-4.180661687624593
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	1	-5.854314443132353
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	2	-5.833267808108758
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	3	-5.9509882036658155
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	4	-5.709352165962343
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	5	-5.711144298722445
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	0	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	2	5.788172034103354
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	3	5.898395566675276
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	4	5.841687768067004
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	5	5.841664441146349
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	0	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	1	-4.737321727153926
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	2	-5.833267812617237
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	3	-5.940299873211529
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	4	-5.709231573253419
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	5	-5.711144298723184
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	0	5.947182986703638
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	1	5.55986913026652
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	2	5.637948270753554
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	3	6.089158691484272
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	4	4.2046061196346045
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	5	5.883055758842829
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	0	-6.084833478261544
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	1	-5.85600074470949
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	2	-5.833267812615418
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	3	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	4	-5.7093427714660265
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	5	-5.711144298721024
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	0	5.749602900799005
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	1	5.798621454183376
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	2	5.788121501942101
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	3	5.8983692825229355
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	4	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	5	5.8416645436398085
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	0	5.947182986704092
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	1	5.633974519753679
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	2	5.6392518071932045
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	3	6.089158691779517
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	4	5.881483252257908
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	5	5.88305575884408
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	0	5.950525618085408
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	1	5.798621454725435
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	2	5.788171925092911
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	3	5.898395566956992
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	4	5.841687453792588
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	5	5.8416645395855085
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	0	-5.894756652605338
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	1	-5.825853467211459
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	2	-5.820750590262605
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	3	-5.94390682833739
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	4	-5.587409953163046
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	5	-5.589161267556733
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	0	5.9534984124095445
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	1	4.6194773249784475
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	2	5.645567232899225
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	3	6.095474117484969
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	4	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	5	5.889371184549304
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	-1	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	-1	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] RANGE	2..=2
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] LK	2	573.233
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] LK	2	573.233	100.882	18
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] COUNTS	[27, 18]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] FILTER	[true, true, true, true, true, true]
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	0	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	1	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	2	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	3	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	4	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	5	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	6	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	7	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	8	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	9	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	10	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	11	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	12	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	13	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	14	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	15	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	16	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	17	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	18	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	19	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	20	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	21	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	22	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	23	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	24	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	25	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	26	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	27	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	28	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	29	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	30	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	31	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	32	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	33	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	34	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	35	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	36	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	37	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	38	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	39	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	40	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	41	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	42	-2	1
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	43	-2	0
+[2023-02-28T02:14:54Z TRACE haplotyper::local_clustering::pseudo_mcmc] VARS	44	-2	1
+[2023-02-28T02:14:54Z DEBUG haplotyper::local_clustering] RECORD	181	1828	920	2030	573.233	45
+[2023-02-28T02:14:54Z DEBUG haplotyper::local_clustering] LC	1
