@@ -24,16 +24,77 @@ pub struct RepeatAnnot {
     kmers: HashSet<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct KMers<'a> {
+    input: &'a [u8],
+    idx: usize,
+    forward: u64,
+    reverse: u64,
+    next: Option<u64>,
+    k: usize,
+}
+
+impl<'a> KMers<'a> {
+    fn new(input: &'a [u8], k: usize) -> Self {
+        assert!(k <= 32);
+        let forward: u64 = input
+            .iter()
+            .take(k)
+            .enumerate()
+            .map(|(i, &b)| BASE2BIT[b as usize] << (2 * i))
+            .sum();
+        let reverse = input
+            .iter()
+            .take(k)
+            .rev()
+            .enumerate()
+            .map(|(i, &b)| BASE2BITCMP[b as usize] << (2 * i))
+            .sum();
+        let next = (k <= input.len()).then_some(forward.min(reverse));
+        Self {
+            input,
+            idx: k,
+            forward,
+            reverse,
+            next,
+            k,
+        }
+    }
+}
+
+impl<'a> std::iter::Iterator for KMers<'a> {
+    type Item = u64;
+    fn next(&mut self) -> Option<Self::Item> {
+        let ret_value = self.next;
+        // Set up next value, if possible.
+        if let Some(&base) = self.input.get(self.idx) {
+            self.idx += 1;
+            self.forward = (self.forward >> 2) | (BASE2BIT[base as usize] << (2 * (self.k - 1)));
+            self.reverse = {
+                let mask = (1 << (2 * self.k)) - 1;
+                (mask & (self.reverse << 2)) | BASE2BITCMP[base as usize]
+            };
+            self.next = Some(self.forward.min(self.reverse));
+        } else {
+            self.next = None;
+        }
+        ret_value
+    }
+}
+
 impl RepeatAnnot {
     /// Return the fraction of the repetitive kmer.
     /// Here, the definition of the repetitiveness is both global (is it lowercase?) and local (is it occurred more than twice in this reads?)
     pub fn repetitiveness(&self, seq: &[u8]) -> f64 {
         let mut counts: HashMap<_, u32> = HashMap::new();
-        for kmer in seq
-            .windows(self.k)
-            .map(to_idx)
-            .filter(|x| self.kmers.contains(x))
-        {
+        // for kmer in seq
+        //     .windows(self.k)
+        //     .map(to_idx)
+        //     .filter(|x| self.kmers.contains(x))
+        // {
+        //     *counts.entry(kmer).or_default() += 1;
+        // }
+        for kmer in KMers::new(seq, self.k).filter(|x| self.kmers.contains(x)) {
             *counts.entry(kmer).or_default() += 1;
         }
         let rep_kmers: u32 = counts.values().filter(|&&count| 1 < count).sum();
@@ -56,6 +117,17 @@ impl RepeatMask for definitions::DataSet {
                     .collect::<Vec<_>>()
             })
             .collect();
+        // let kmers: HashSet<_> = self
+        //     .raw_reads
+        //     .par_iter()
+        //     .flat_map(|r| {
+        //         r.seq()
+        //             .windows(k)
+        //             .filter(|kmer| kmer.iter().all(u8::is_ascii_lowercase))
+        //             .map(to_idx)
+        //             .collect::<Vec<_>>()
+        //     })
+        //     .collect();
         RepeatAnnot { k, kmers }
     }
     fn mask_repeat(&mut self, config: &RepeatMaskConfig) {
@@ -68,60 +140,89 @@ impl RepeatMask for definitions::DataSet {
         });
         let (mask, _thr) = create_mask(&self.raw_reads, config);
         debug!("MASKREPEAT\tMaskLen\t{}\t{}", config.k, mask.len());
-        self.raw_reads
-            .par_iter_mut()
-            .for_each(|read| mask_repeats(read.seq.seq_mut(), &mask, config.k));
-        let num_bases = self.raw_reads.iter().map(|r| r.seq.len()).sum::<usize>();
-        let num_lower_base = self
+        let num_lower_base: usize = self
             .raw_reads
-            .iter()
-            .map(|r| r.seq.iter().filter(|x| x.is_ascii_lowercase()).count())
-            .sum::<usize>();
+            .par_iter_mut()
+            .map(|read| mask_repeats(read.seq.seq_mut(), &mask, config.k))
+            .sum();
+        let num_bases = self.raw_reads.iter().map(|r| r.seq.len()).sum::<usize>();
+        // let num_lower_base = self
+        //     .raw_reads
+        //     .iter()
+        //     .map(|r| r.seq.iter().filter(|x| x.is_ascii_lowercase()).count())
+        //     .sum::<usize>();
         debug!("MASKREPEAT\tTotalMask\t{num_lower_base}\t{num_bases}");
         debug!("MASKREPEAT\tMaskedKmers\t{}\t{}", mask.len(), config.k);
     }
 }
 
-const BUCKET_SIZE: usize = 1000;
 use definitions::*;
 pub fn kmer_counting(reads: &[RawRead], k: usize) -> HashMap<u64, u32> {
     assert!(k <= 32);
-    let mut counts: HashMap<u64, u32> = HashMap::new();
-    for bucket in reads.chunks(BUCKET_SIZE) {
-        let kmers: Vec<_> = bucket
-            .into_par_iter()
-            .fold(Vec::new, |mut x, read| {
-                x.extend(read.seq().windows(k).map(to_idx));
-                x
-            })
-            .flatten()
-            .collect();
-        for kmer in kmers {
-            *counts.entry(kmer).or_default() += 1;
-        }
-    }
-    counts
+    reads
+        .par_iter()
+        .fold(HashMap::new, |mut counts, read| {
+            for kmer in KMers::new(read.seq(), k) {
+                *counts.entry(kmer).or_default() += 1;
+            }
+            counts
+        })
+        .reduce(HashMap::new, |mut x, y| {
+            for (key, val) in y {
+                *x.entry(key).or_default() += val;
+            }
+            x
+        })
+    // const BUCKET_SIZE: usize = 1000;
+    // let mut counts: HashMap<u64, u32> = HashMap::new();
+    // for bucket in reads.chunks(BUCKET_SIZE) {
+    //     let kmers: Vec<_> = bucket
+    //         .into_par_iter()
+    //         .fold(Vec::new, |mut x, read| {
+    //             x.extend(read.seq().windows(k).map(to_idx));
+    //             x
+    //         })
+    //         .flatten()
+    //         .collect();
+    //     for kmer in kmers {
+    //         *counts.entry(kmer).or_default() += 1;
+    //     }
+    // }
+    // counts
 }
 
 pub fn to_idx(w: &[u8]) -> u64 {
-    // Determine if this k-mer is canonical.
-    let is_canonical = {
-        let mut idx = 0;
-        while idx < w.len() / 2
-            && w[idx].to_ascii_uppercase() == w[w.len() - idx - 1].to_ascii_uppercase()
-        {
-            idx += 1;
-        }
-        w[idx] <= w[w.len() - idx - 1]
-    };
-    if is_canonical {
-        w.iter()
-            .fold(0, |cum, &x| (cum << 2) | BASE2BIT[x as usize])
-    } else {
-        w.iter()
-            .rev()
-            .fold(0, |cum, &x| (cum << 2) | BASE2BITCMP[x as usize])
-    }
+    let forward: u64 = w
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| BASE2BIT[b as usize] << (2 * i))
+        .sum();
+    let reverse = w
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &b)| BASE2BITCMP[b as usize] << (2 * i))
+        .sum();
+    forward.min(reverse)
+    // // Determine if this k-mer is canonical.
+    // let is_canonical = {
+    //     let mut idx = 0;
+    //     while idx < w.len() / 2
+    //         && BASE2BIT[w[idx].to_ascii_uppercase() as usize]
+    //             == BASE2BITCMP[w[w.len() - idx - 1].to_ascii_uppercase() as usize]
+    //     {
+    //         idx += 1;
+    //     }
+    //     BASE2BIT[w[idx] as usize] <= BASE2BITCMP[w[w.len() - idx - 1] as usize]
+    // };
+    // if is_canonical {
+    //     w.iter()
+    //         .fold(0, |cum, &x| (cum << 2) | BASE2BIT[x as usize])
+    // } else {
+    //     w.iter()
+    //         .rev()
+    //         .fold(0, |cum, &x| (cum << 2) | BASE2BITCMP[x as usize])
+    // }
 }
 
 const BASE2BITCMP: [u64; 256] = base2bitcmp();
@@ -181,18 +282,89 @@ fn create_mask(reads: &[RawRead], config: &RepeatMaskConfig) -> (HashSet<u64>, u
     }
 }
 
-fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) {
-    if seq.len() <= k {
-        return;
-    }
-    let mut farthest = 0;
-    for idx in 0..seq.len() - k + 1 {
-        let kmer_position = to_idx(&seq[idx..idx + k]);
-        if mask.contains(&kmer_position) {
-            for seq in seq.iter_mut().take(idx + k).skip(farthest.max(idx)) {
-                seq.make_ascii_lowercase();
+fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) -> usize {
+    let (mut start, mut end) = (0, 0);
+    let mut mask_ranges = vec![];
+    for (idx, kmer) in KMers::new(seq, k).enumerate() {
+        if mask.contains(&kmer) {
+            if end < idx {
+                mask_ranges.push((start, end));
+                start = idx;
+                end = idx + k;
+            } else {
+                end = idx + k;
             }
-            farthest = idx + k - 1;
+        }
+    }
+    mask_ranges.push((start, end));
+    let num_lower = mask_ranges.iter().map(|(s, e)| e - s).sum();
+    for (start, end) in mask_ranges {
+        seq.iter_mut()
+            .take(end)
+            .skip(start)
+            .for_each(|s| s.make_ascii_lowercase());
+    }
+    // if seq.len() <= k {
+    //     return 0;
+    // }
+    // let mut num_lower = 0;
+    // let mut farthest = 0;
+    // for idx in 0..seq.len() - k + 1 {
+    //     let kmer_position = to_idx(&seq[idx..idx + k]);
+    //     if mask.contains(&kmer_position) {
+    //         for seq in seq.iter_mut().take(idx + k).skip(farthest.max(idx)) {
+    //             seq.make_ascii_lowercase();
+    //             num_lower += 1;
+    //         }
+    //         farthest = idx + k - 1;
+    //     }
+    // }
+    num_lower
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+    use rand_xoshiro::Xoroshiro128Plus;
+    #[test]
+    fn kmers() {
+        let kmers = b"AAAA";
+        let mut kmers_iter = KMers::new(kmers, 1);
+        assert_eq!(kmers_iter.clone().count(), 4);
+        assert!(kmers_iter.all(|x| x == 0));
+        assert!(KMers::new(kmers, 2).all(|x| x == 0));
+        let kmers = b"TTTT";
+        let mut kmers_iter = KMers::new(kmers, 1);
+        assert_eq!(kmers_iter.clone().count(), 4);
+        assert!(kmers_iter.all(|x| x == 0));
+        assert!(KMers::new(kmers, 2).all(|x| x == 0));
+
+        let kmers = b"CAGTGCAT";
+        let k = 2;
+        let kmers_iter = KMers::new(kmers, k);
+        println!("INIT\t{}\t{}", kmers_iter.forward, kmers_iter.reverse);
+        for (i, kmer) in kmers_iter.enumerate() {
+            assert!(kmer < (1 << (2 * k)));
+            let input = &kmers[i..i + k];
+            let seq = String::from_utf8_lossy(input);
+            assert_eq!(kmer, to_idx(input), "{},{:0b},{}", i, kmer, seq);
+        }
+
+        let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(832904);
+        let len = 1000;
+        let kmers: Vec<u8> = (0..len)
+            .map(|_| *b"ACGT".choose(&mut rng).unwrap())
+            .collect();
+        let k = 10;
+        let kmers_iter = KMers::new(&kmers, k);
+        assert_eq!(kmers_iter.clone().count(), len - k + 1);
+        for (i, kmer) in kmers_iter.enumerate() {
+            assert!(kmer < (1 << (2 * k)));
+            let input = &kmers[i..i + k];
+            let seq = String::from_utf8_lossy(input);
+            assert_eq!(kmer, to_idx(input), "{},{:0b},{}", i, kmer, seq);
         }
     }
 }

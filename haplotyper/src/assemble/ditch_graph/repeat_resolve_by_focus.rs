@@ -250,8 +250,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         thr: f64,
         bimatch: bool,
         use_branch: bool,
-    ) {
+    ) -> bool {
         debug!("FOCI\tRESOLVE\t{:.3}\t{}", thr, config.min_span_reads);
+        let mut is_updated = false;
         let mut count = 1;
         while count != 0 {
             let mut foci = self.get_foci(reads, use_branch, thr, bimatch, config);
@@ -260,8 +261,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 x => x,
             });
             count = self.survey_foci(&foci);
+            is_updated |= 0 < count;
             debug!("FOCI\tTryAndSuccess\t{}\t{}", foci.len(), count);
         }
+        is_updated
     }
     fn to_multi_copy(&self, node: &DitchNode, pos: Position) -> bool {
         let edge_num = node.edges.iter().filter(|e| e.from_position == pos).count();
@@ -350,7 +353,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
                 Some(res) => res,
                 None => continue,
             };
-            debug!("{}\t{}\t{}", index, head_childs.len(), tail_childs.len());
+            // debug!("{}\t{}\t{}", index, head_childs.len(), tail_childs.len());
             if head_childs.len() != 2 || tail_childs.len() != 2 || head_childs == tail_childs {
                 continue;
             }

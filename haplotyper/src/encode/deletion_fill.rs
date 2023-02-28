@@ -141,15 +141,28 @@ pub fn correct_chunk_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) 
     use crate::estimate_error_rate::estimate_error_rate;
     let errors = estimate_error_rate(ds, fallback);
     let standard_dev = config.stddev_of_error.unwrap_or(errors.median_of_sqrt_err);
+    let mut failed_trials: Vec<_> = ds
+        .encoded_reads
+        .iter()
+        .map(|r| FailedUpdates::new(r.id))
+        .collect();
     for t in 0..OUTER_LOOP {
         ds.encoded_reads.retain(|r| !r.nodes.is_empty());
         debug!("ErrorRateSTDDev\t{}\t{}", t, standard_dev);
-        let (new_nodes, is_updated) = filling_until(ds, &consensi, &errors, standard_dev);
+        let ft = &mut failed_trials;
+        let (new_nodes, is_updated) = filling_until(ds, ft, &consensi, &errors, standard_dev);
         find_new_node.extend(new_nodes);
+        {
+            let mut idx = 0;
+            failed_trials.retain(|_| {
+                idx += 1;
+                !ds.encoded_reads[idx - 1].nodes.is_empty()
+            });
+            ds.encoded_reads.retain(|r| !r.nodes.is_empty());
+        }
         if !is_updated {
             break;
         }
-        // remove_weak_edges(ds);
     }
     find_new_node
 }
@@ -157,24 +170,21 @@ pub fn correct_chunk_deletion(ds: &mut DataSet, config: &CorrectDeletionConfig) 
 const INNER_LOOP: usize = 12;
 fn filling_until(
     ds: &mut DataSet,
+    failed_trials: &mut Vec<FailedUpdates>,
     consensi: &HashMap<(u64, u64), Vec<u8>>,
     error_rates: &crate::estimate_error_rate::ErrorRate,
     stddev: f64,
 ) -> (HashSet<u64>, bool) {
     ds.encoded_reads.retain(|r| !r.nodes.is_empty());
+    failed_trials.iter_mut().for_each(|ft| ft.revive());
     let raw_seq: HashMap<_, _> = ds.raw_reads.iter().map(|r| (r.id, r.seq())).collect();
     let mut find_new_node = HashSet::new();
     let chunks: HashMap<_, _> = ds.selected_chunks.iter().map(|x| (x.id, x)).collect();
-    let mut failed_trials: Vec<_> = ds
-        .encoded_reads
-        .iter()
-        .map(|r| FailedUpdates::new(r.id))
-        .collect();
     let mut read_skeltons: Vec<_> = ds.encoded_reads.iter().map(ReadSkelton::new).collect();
     for i in 0..INNER_LOOP {
         let prev: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        let alive = failed_trials.iter().filter(|r| r.is_alive).count();
-        debug!("Reads\t{}\t{}", alive, failed_trials.len());
+        // let alive = failed_trials.iter().filter(|r| r.is_alive).count();
+        //      debug!("Reads\t{}\t{}", alive, failed_trials.len());
         assert_eq!(ds.encoded_reads.len(), failed_trials.len());
         assert_eq!(ds.encoded_reads.len(), read_skeltons.len());
         let new_nodes = ds
@@ -189,20 +199,19 @@ fn filling_until(
                 correct_deletion_error(read, fails, chunks, stddev, &read_skeltons)
             });
         find_new_node.par_extend(new_nodes);
-        updates_updated_reads(&mut read_skeltons, &ds.encoded_reads, &failed_trials);
+        updates_reads(&mut read_skeltons, &ds.encoded_reads, failed_trials);
         let after: usize = ds.encoded_reads.iter().map(|x| x.nodes.len()).sum();
-        debug!("Filled\t{i}\t{prev}\t{after}");
+        // debug!("Filled\t{i}\t{prev}\t{after}");
         if after == prev && i == 0 {
             return (find_new_node, false);
         } else if after == prev {
             break;
         }
     }
-    ds.encoded_reads.retain(|r| !r.nodes.is_empty());
     (find_new_node, true)
 }
 
-fn updates_updated_reads(
+fn updates_reads(
     skeltons: &mut [ReadSkelton],
     reads: &[EncodedRead],
     failed_updates: &[FailedUpdates],
@@ -301,11 +310,14 @@ fn correct_deletion_error(
     let ins_thr = mean_cov(&pileups)
         .map(|x| (x / 5).min(INS_THR))
         .unwrap_or(INS_THR);
+    //    let (mut tries, mut oks) = (vec![], vec![]);
     for (idx, pileup) in pileups.iter().enumerate() {
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
         head_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let head_best =
             try_encoding_head(nodes, &head_cand, idx, chunkinfo, seq, read_error, stddev);
+        // tries.extend(head_cand.iter().map(|(n, p)| (n.chunk, *p, idx, 0)));
+        // oks.extend(head_best.iter().map(|(n, p)| (n.chunk, *p, idx, 0)));
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
             None => ft.extend(head_cand.keys().map(|&n| (idx, n))),
@@ -314,29 +326,40 @@ fn correct_deletion_error(
         tail_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let tail_best =
             try_encoding_tail(nodes, &tail_cand, idx, chunkinfo, seq, read_error, stddev);
+        // tries.extend(tail_cand.iter().map(|(n, p)| (n.chunk, *p, idx, 1)));
+        // oks.extend(tail_best.iter().map(|(n, p)| (n.chunk, *p, idx, 1)));
         match tail_best {
             Some((tail_node, _)) => inserts.push((idx, tail_node)),
             None => ft.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
         }
     }
+    // debug!("FILLING\t{}\t{:?}\t{:?}", read.id, tries, oks);
     let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.chunk).collect();
+    // let old_len = read.nodes.len();
     ft.is_alive = !inserts.is_empty();
     if !inserts.is_empty() {
         ft.revive();
-        for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
-            read.nodes.insert(idx + accum_inserts, node);
-        }
+        read.nodes.extend(inserts.into_iter().map(|x| x.1));
+        // for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
+        //     read.nodes.insert(idx + accum_inserts, node);
+        // }
     }
     if ft.is_alive && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_overlapping_encoding, remove_slippy_alignment};
+        // let prev: HashSet<_> = nodes.iter().map(|x| x.chunk).collect();
         nodes.sort_by_key(|n| (n.chunk, n.position_from_start));
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
         nodes = remove_overlapping_encoding(nodes);
+        // let after: HashSet<_> = nodes.iter().map(|x| x.chunk).collect();
+        // let deled: Vec<_> = prev.difference(&after).collect();
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
+        // if old_len == read.nodes.len() {
+        //     debug!("REMOVED\t{}\t{deled:?}\t{}", read.id, deled.len());
+        // }
     }
     new_inserts
 }

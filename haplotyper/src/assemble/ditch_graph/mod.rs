@@ -666,9 +666,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         let llr_stream = ((min_llr + 0.0).floor() as usize..(10.0 + min_llr).floor() as usize)
             .rev()
             .map(|i| i as f64 + 0.00001)
-            .take_while(|&x| min_llr < x)
-            .enumerate();
-        for (i, llr) in llr_stream {
+            .take_while(|&x| min_llr < x);
+        for (i, llr) in llr_stream.clone().enumerate() {
             self.assign_copy_number(cov, &mut rng);
             self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
@@ -688,7 +687,9 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         self.squish_small_net(3);
         self.assign_copy_number(cov, &mut rng);
         self.zip_up_overclustering_dev();
-        self.resolve_repeats(reads, c, min_llr, false, true);
+        for llr in llr_stream {
+            self.resolve_repeats(reads, c, llr, false, true);
+        }
         self.assign_copy_number(cov, &mut rng);
         if c.to_bypass_contigs {
             self.bypass_repeats(reads, c, min_llr);

@@ -72,7 +72,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
     let file_stem = format!("{out_dir}/{prefix}");
-    let entry = format!("{file_stem}.encoded.json");
+    let entry = format!("{file_stem}.entry.json");
     let encoded = format!("{file_stem}.encoded.json");
     let clustered = format!("{file_stem}.clustered.json");
     let dense_encoded = format!("{file_stem}.de.json");

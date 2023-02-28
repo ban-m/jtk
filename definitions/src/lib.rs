@@ -175,6 +175,14 @@ pub const ONT_BAND_FRAC: f64 = 0.03;
 pub const HIFI_BAND_FRAC: f64 = 0.01;
 
 impl ReadType {
+    pub fn overlap_identity_thr(&self) -> f64 {
+        match self {
+            ReadType::CCS => 0.95,
+            ReadType::CLR => 0.85,
+            ReadType::ONT => 0.85,
+            ReadType::None => 0.85,
+        }
+    }
     pub fn sim_thr(&self) -> f64 {
         match *self {
             ReadType::CCS => HIFI_SIM_THR,

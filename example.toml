@@ -47,7 +47,8 @@ chunk_len = 2000
 ### The margin between adjacent chunks in base pair.
 margin = 500
 ### filter out chunk having more than [exclude] repetitiveness."
-exclude = 0.8
+exclude = 0.85
+# exclude = 0.8
 ### Min-counts of the k-mer.
 min_count = 10
 ### We pick the top [component_num] largest connected component for assembly.

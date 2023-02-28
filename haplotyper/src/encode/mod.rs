@@ -21,7 +21,7 @@ impl Encode for definitions::DataSet {
         let config =
             deletion_fill::CorrectDeletionConfig::new(false, Some(sim_thr), Some(sd_of_error));
         deletion_fill::correct_chunk_deletion(self, &config);
-        debug!("Encoded {} reads.", self.encoded_reads.len());
+        // debug!("Encoded {} reads.", self.encoded_reads.len());
         assert!(self.encoded_reads.iter().all(is_uppercase));
         if log_enabled!(log::Level::Debug) {
             let encoded: HashSet<_> = self.encoded_reads.iter().map(|r| r.id).collect();

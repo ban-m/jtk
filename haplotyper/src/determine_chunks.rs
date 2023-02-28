@@ -75,8 +75,6 @@ const CONS_COV: usize = 30;
 const COPY_NUM_OFFSET: usize = 3;
 const LOWER_FRAC: f64 = 0.1;
 impl DetermineUnit for definitions::DataSet {
-    // TODO: We can make this process much faster, by just skipping the needless re-encoding.
-    // TOOD: Maybe we can remove some low-quality reads?
     fn select_chunks(&mut self, config: &DetermineUnitConfig) {
         show_minimap2_version();
         self.selected_chunks.clear();
@@ -85,12 +83,7 @@ impl DetermineUnit for definitions::DataSet {
         let mut rng: Xoroshiro128Plus = SeedableRng::seed_from_u64(config.seed);
         self.selected_chunks = pick_random(self, config, &mut rng);
         debug!("UNITNUM\t{}\tPICKED", self.selected_chunks.len());
-        let overlap_identity_thr = match self.read_type {
-            ReadType::CCS => 0.95,
-            ReadType::CLR => 0.85,
-            ReadType::ONT => 0.85,
-            ReadType::None => 0.85,
-        };
+        let overlap_identity_thr = self.read_type.overlap_identity_thr();
         remove_overlapping_chunks(self, overlap_identity_thr, config).unwrap();
         compaction_chunks(self);
         // 1st polishing.
