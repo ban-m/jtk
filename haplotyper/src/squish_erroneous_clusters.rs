@@ -111,6 +111,29 @@ fn classify_chunks(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass
         true => HashSet::new(),
         false => classify(&adj_rand_indices, config),
     };
+    // let stiff_chunks = classify_chunks_by_graph(ds, config);
+    // ds.selected_chunks
+    //     .iter()
+    //     .map(|c| {
+    //         let (is_stiff, touch_stiff) = match stiff_chunks.get(&c.id) {
+    //             Some((is_stiff, touch_chunks)) => {
+    //                 let touch_stiff = touch_chunks.iter().any(|c| match stiff_chunks.get(c) {
+    //                     Some(x) => x.0,
+    //                     None => false,
+    //                 });
+    //                 (*is_stiff, touch_stiff)
+    //             }
+    //             None => (false, false),
+    //         };
+    //         if is_stiff || 2 < c.copy_num {
+    //             (c.id, RelClass::Stiff)
+    //         } else if touch_stiff {
+    //             (c.id, RelClass::Suspicious)
+    //         } else {
+    //             (c.id, RelClass::Isolated)
+    //         }
+    //     })
+    //     .collect()
     ds.selected_chunks
         .iter()
         .map(|c| {
@@ -141,6 +164,51 @@ fn classify_chunks(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, RelClass
         })
         .collect()
 }
+
+// fn classify_chunks_by_graph(ds: &DataSet, config: &SquishConfig) -> HashMap<u64, (bool, Vec<u64>)> {
+//     let mut chunk_pairs: HashMap<_, usize> = HashMap::new();
+//     for read in ds.encoded_reads.iter() {
+//         let nodes = read.nodes.iter().enumerate();
+//         for (i, n1) in nodes.filter(|n| n.1.is_biased(BIAS_THR)) {
+//             let n2s = read.nodes.iter().skip(i + 1);
+//             for n2 in n2s.filter(|n| n.is_biased(BIAS_THR)) {
+//                 let key = (n1.chunk.min(n2.chunk), n1.chunk.max(n2.chunk));
+//                 *chunk_pairs.entry(key).or_default() += 1;
+//             }
+//         }
+//     }
+//     let chunks: HashMap<_, _> = ds
+//         .selected_chunks
+//         .iter()
+//         .map(|n| (n.id, n.cluster_num))
+//         .collect();
+//     chunk_pairs.retain(|_, val| config.count_thr < *val);
+//     chunk_pairs.retain(|(u1, u2), _| 1 < chunks[u1] && 1 < chunks[u2]);
+//     let adj_rand_indices: Vec<_> = chunk_pairs
+//         .par_iter()
+//         .map(|(&(u1, u2), _)| {
+//             let (cl1, cl2) = (chunks[&u1], chunks[&u2]);
+//             let (rel, count) = check_correl(ds, (u1, cl1), (u2, cl2));
+//             (u1, u2, (rel, count))
+//         })
+//         .collect();
+//     let mut touch_chunks: HashMap<_, _> =
+//         ds.selected_chunks.iter().map(|c| (c.id, vec![])).collect();
+//     for (&(u1, u2), _) in chunk_pairs.iter() {
+//         touch_chunks.entry(u1).or_default().push(u2);
+//     }
+//     let stiff_chunks = match adj_rand_indices.is_empty() {
+//         true => HashSet::new(),
+//         false => classify(&adj_rand_indices, config),
+//     };
+//     touch_chunks
+//         .into_iter()
+//         .map(|(c, chunks)| {
+//             let is_stiff = stiff_chunks.contains(&c);
+//             (c, (is_stiff, chunks))
+//         })
+//         .collect()
+// }
 
 fn check_correl(
     ds: &DataSet,
