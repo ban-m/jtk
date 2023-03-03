@@ -29,6 +29,7 @@ fn main() -> std::io::Result<()> {
     for &(u1, u2) in chunk_pairs.keys() {
         let (cl1, cl2) = (chunks[&u1], chunks[&u2]);
         let (rel, _) = check_correl(&ds, (u1, cl1), (u2, cl2));
+        println!("{u1}\t{u2}\t{:.3}", rel);
         max_correl.entry(u1).and_modify(|x| *x = x.max(rel));
         max_correl.entry(u2).and_modify(|x| *x = x.max(rel));
     }

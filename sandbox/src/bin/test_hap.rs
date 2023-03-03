@@ -13,5 +13,13 @@ fn main() -> std::io::Result<()> {
         .map(|x| x.parse::<u64>().unwrap())
         .collect();
     ds.local_clustering_selected(&selection);
+    for &chunk in selection.iter() {
+        let c = match ds.selected_chunks.iter().find(|c| c.id == chunk) {
+            Some(c) => c,
+            None => continue,
+        };
+        let seq: String = c.seq().iter().map(|&c| c as char).collect();
+        println!("{}\t{}", c.id, seq);
+    }
     Ok(())
 }
