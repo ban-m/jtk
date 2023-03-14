@@ -92,7 +92,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
             panic!("{}", why);
         }
     };
-    let take_num = genome_size / chunk_len;
+    let take_num = 3 * genome_size / chunk_len / 2;
     let repeat_mask_config = RepeatMaskConfig::new(kmersize, top_freq, min_count);
     let select_chunk_config = DetermineUnitConfig::new(
         chunk_len,
