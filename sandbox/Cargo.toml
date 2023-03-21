@@ -19,9 +19,9 @@ env_logger = "0.9.0"
 log = "0.4.17"
 gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
 rayon = "1.5.3"
-bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
+bio_utils = {git = "https://github.com/ban-m/bio_utils.git", rev = "68a34b23b5a834d7322b7de184319726c17b35cd"}
 edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
-kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master"}
+kiley = {git = "https://github.com/ban-m/kiley.git", rev = "8f8296d5b699c1f989da674d18da4a6464b8f08e"}
 # kiley = {path = "../../kiley"}
 nalgebra = "0.31.0"
 clap = {version = "3.1.18", features = ["derive"]}
