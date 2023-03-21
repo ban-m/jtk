@@ -12,8 +12,9 @@ g <- dataset %>%
     filter(length %in% c(1000, 2000, 4000)) %>%
     ggplot() +
     geom_boxplot(aes(x = factor(coverage), y = rand)) +
-    geom_hline(aes(yintercept = 1 - error), color = "red") +
+#    geom_hline(aes(yintercept = 1 - error), color = "red") +
     facet_grid(error ~ length) +
+    scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1.0)) +
     labs(x = "Coverage (per haploid)", y = "Rand Index") +
     cowplot::theme_cowplot()
 
@@ -30,8 +31,9 @@ g <- dataset %>%
     filter(coverage %in% c(10, 20, 30)) %>%
     ggplot() +
     geom_boxplot(aes(x = factor(coverage), y = rand)) +
-    geom_hline(aes(yintercept = 0.8), color = "red") +
+#    geom_hline(aes(yintercept = 0.8), color = "red") +
     facet_grid(error ~ length) +
+    scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1.0)) +
     labs(x = "Coverage (per haploid)", y = "Rand Index") +
     cowplot::theme_cowplot()
 
