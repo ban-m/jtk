@@ -78,7 +78,7 @@ impl MultiplicityEstimation for DataSet {
             let mut counts_group: HashMap<_, Vec<_>> = HashMap::new();
             for (node, cp) in nodes.iter() {
                 let occ = counts.get(node).unwrap_or(&0);
-                counts_group.entry(cp).or_default().push(*occ as usize);
+                counts_group.entry(cp).or_default().push(*occ);
             }
             let mut counts_group: Vec<_> = counts_group.into_iter().collect();
             counts_group.sort_by_key(|x| x.0);

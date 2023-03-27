@@ -410,6 +410,7 @@ dependencies = [
 [[package]]
 name = "kiley"
 version = "0.3.0"
+source = "git+https://github.com/ban-m/kiley.git?branch=master#823976103f0dde17e28c5bc6044fe598cf788a30"
 dependencies = [
  "bio_utils 0.3.0 (git+https://github.com/ban-m/bio_utils.git)",
  "bytecount",

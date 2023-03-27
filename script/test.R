@@ -1,62 +1,78 @@
 library(tidyverse)
 loadNamespace("cowplot")
 
-filename <- "lap.tsv"
-dataset <- read_tsv(filename, col_names = FALSE)
-dataset <- as.matrix(dataset)
-heatmap(x = dataset, Rowv = NA, symm = TRUE, scale = "none")
+xlab <- "Length (bp) sorted in ascending order"
+ylab <- "Accumurated length / total length (between 0 and 1)"
+cum_ttl <- "The read length when the y-axis is 0.5 corresponds to the N50."
 
+hg002 <- "./result/obcx/jtk_result/reads_metric/hg002_reads.tsv"
+b080 <- "./result/pg/jtk/reads_metric/lengths.tsv"
 
-filename <- "181.tsv" # nolint
-
-dataset <- read_tsv(filename, col_names = FALSE)
-len <- dataset %>% pull(X1) %>% max()
-idmap <- setNames(object = seq(from = 0, to = len),
- nm = dataset %>% filter(X2 == -2) %>% arrange(X3) %>% pull(X1))
-dataset$newID <- idmap[as.character(dataset$X1)]
-
-g <- dataset %>%
+hg002_datasets <- read_tsv(hg002, col_names = c("quality", "length", "type"))
+g <- hg002_datasets %>%
+    filter(length < 200000) %>%
     ggplot() +
-    geom_tile(aes(x = X2, y = newID, fill = X3)) +
-    scale_fill_gradient2(low = "blue", high = "orange")
-
-temp <- dataset %>%
-filter(0 <= X2) %>%
-    select(-newID) %>%
-    mutate(X2 = paste0("Pos", X2)) %>%
-    pivot_wider(names_from = X2, values_from = X3)
-
-temp %>%
-    summarize(across(starts_with("Pos"), ~ sum(.x[0 < .x])))
-temp %>%
-    summarize(across(starts_with("Pos"), ~ sum(0 < .x)))
-
-
-matrix_data <- dataset %>% select(-X1, -X2) %>% as.matrix()
-
-
-col_names <- c("ID", "Contig", "Length", "Position")
-correct_aln <- read_tsv("answer.tsv", col_names = col_names)
-proposed_aln <- read_tsv("prop.tsv", col_names = c("ID", "assembly"))
-
-joined_data <- full_join(correct_aln, proposed_aln, by = "ID")
-
-
-diff_data <- read_tsv("pj73.diff")
-g <- diff_data %>%
-    ggplot() + geom_histogram(aes(x = Qpos), bins = 60) +
-    facet_grid(Type ~ Query) +
+    geom_histogram(aes(x = length, y = after_stat(density))) +
+    facet_wrap(vars(type)) +
     cowplot::theme_cowplot() +
-    labs(x = "Position in the assembly (bp)", y = "# of in/del/mism")
+    labs(x = "Read Length (bp)", y = "Density (%)")
 
-cowplot::ggsave2("./result/plots/pj73_diff.png", g)
+cowplot::ggsave2("./result/plots/histogram_hg002.png",
+    plot = g,
+    width = 25, height = 20, units = "cm", dpi = 250
+)
 
 
-g <- diff_data %>%
-    filter(Size > 3) %>%
-    ggplot() + geom_histogram(aes(x = Qpos), bins = 60) +
-    facet_grid(Type ~ Query) +
+g <- hg002_datasets %>%
+    group_by(type) %>%
+    group_modify(~ .x %>%
+        arrange(length) %>%
+        mutate(cumlen = cumsum(length) / sum(length))) %>%
+    ungroup() %>%
+    filter(length < 200000) %>%
+    ggplot() +
+    geom_line(aes(x = length, y = cumlen)) +
+    geom_hline(yintercept = 0.5, color = "red") +
+    facet_wrap(vars(type)) +
+    labs(x = xlab, y = ylab, title = cum_ttl) +
+    cowplot::theme_cowplot()
+
+cowplot::ggsave2("./result/plots/cumlen_hg002.png",
+    plot = g,
+    width = 25, height = 20, units = "cm", dpi = 250
+)
+
+
+b080_datasets <- read_tsv(b080, col_names = c("quality", "length", "type"))
+g <- b080_datasets %>%
+    filter(length < 200000) %>%
+    ggplot() +
+    geom_histogram(aes(x = length, y = after_stat(density))) +
+    facet_wrap(vars(type)) +
     cowplot::theme_cowplot() +
-    labs(x = "Position in the assembly (bp)", y = "# of in/del/mism")
+    labs(x = "Read Length (bp)", y = "Density (%)")
 
-cowplot::ggsave2("./result/plots/pj73_diff_above3.png", g)
+cowplot::ggsave2("./result/plots/histogram_b080.png",
+    plot = g,
+    width = 25, height = 20, units = "cm", dpi = 250
+)
+
+
+g <- b080_datasets %>%
+    group_by(type) %>%
+    group_modify(~ .x %>%
+        arrange(length) %>%
+        mutate(cumlen = cumsum(length) / sum(length))) %>%
+    ungroup() %>%
+    filter(length < 200000) %>%
+    ggplot() +
+    geom_line(aes(x = length, y = cumlen)) +
+    geom_hline(yintercept = 0.5, color = "red") +
+    facet_wrap(vars(type)) +
+    labs(x = xlab, y = ylab, title = cum_ttl) +
+    cowplot::theme_cowplot()
+
+cowplot::ggsave2("./result/plots/cumlen_b080.png",
+    plot = g,
+    width = 25, height = 20, units = "cm", dpi = 250
+)

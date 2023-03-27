@@ -766,7 +766,7 @@ mod test {
             .take(original_length / 2_000)
             .enumerate()
             .map(|(idx, &chunk)| {
-                let position = idx as usize * 2_000;
+                let position = idx * 2_000;
                 let cigar = vec![definitions::Op::Match(2_000)];
                 definitions::Node::new(chunk, true, seq.clone(), cigar, position, 2)
             })

@@ -672,7 +672,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             self.remove_zero_copy_elements(0.8);
             debug!("REPEATRESOLVE\t{}", i);
             self.remove_zero_copy_path(0.1);
-            self.resolve_repeats(reads, c, llr as f64, true, false);
+            self.resolve_repeats(reads, c, llr, true, false);
             debug!("CC\tSOLVEREP\t{}\t{i}", self.cc());
             self.zip_up_overclustering(2);
             if log_enabled!(log::Level::Trace) {
@@ -1860,7 +1860,7 @@ mod tests {
             .take(original_length / 2_000)
             .enumerate()
             .map(|(idx, &chunk)| {
-                let position = idx as usize * 2_000;
+                let position = idx * 2_000;
                 let cigar = vec![definitions::Op::Match(2_000)];
                 definitions::Node::new(chunk, true, seq.clone(), cigar, position, cl)
             })

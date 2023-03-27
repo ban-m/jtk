@@ -26,8 +26,8 @@ impl CoverageCalibrator {
                 .iter()
                 .rev()
                 .fold((vec![], 0), |(mut sums, cum), &x| {
-                    sums.push(cum + x as usize);
-                    (sums, cum + x as usize)
+                    sums.push(cum + x);
+                    (sums, cum + x)
                 });
         cum_sum.reverse();
         let mean = sum as f64 / lengths.len() as f64;
