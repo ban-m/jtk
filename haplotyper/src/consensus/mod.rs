@@ -723,7 +723,9 @@ fn align_to_contigs<R: Rng>(
         chains.retain(|c| c.overlap_frac(&chain) < 0.5);
         let seg = segs.iter().find(|seg| seg.sid == chain.id).unwrap();
         let enc = encs.iter().find(|enc| enc.id == chain.id).unwrap();
-        alns.push(base_pair_alignment(read, seq, &chain, seg, enc, alns.len()));
+        if let Some(aln) = base_pair_alignment(read, seq, &chain, seg, enc, alns.len()) {
+            alns.push(aln);
+        }
     }
     alns
 }
@@ -1057,7 +1059,7 @@ fn base_pair_alignment(
     seg: &gfa::Segment,
     encs: &crate::assemble::ditch_graph::ContigEncoding,
     _id: usize,
-) -> Alignment {
+) -> Option<Alignment> {
     let seg_seq = seg.sequence.as_ref().unwrap().as_bytes();
     let tiles = convert_into_tiles(read, chain, encs);
     if tiles.is_empty() {
@@ -1106,8 +1108,13 @@ fn base_pair_alignment(
     let is_forward = chain.is_forward;
     let contig_len = contig_end - contig_start;
     let reflen = ops.iter().filter(|&&op| op != Op::Ins).count();
+    if contig_len != reflen {
+        // TODO: FIX ME.
+        return None;
+    }
     assert_eq!(contig_len, reflen);
-    Alignment::new(read.id, id, contig_range, clips, query, ops, is_forward)
+    let aln = Alignment::new(read.id, id, contig_range, clips, query, ops, is_forward);
+    Some(aln)
 }
 
 fn check(query: &[u8], seq: &[u8], is_forward: bool) {
@@ -1438,17 +1445,23 @@ fn convert_to_map_range(node: &definitions::Node, (start, end): (usize, usize)) 
     (read_start, readpos.min(node.seq().len()))
 }
 
-fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
+fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) -> Option<()> {
     let (r_start, r_end) = (tile.read_start, tile.read_end);
     let offset = tile.node.position_from_start;
+    // TODO: FIX BUG.
+    if r_start < offset || r_end < r_start {
+        return None;
+    }
     assert!(offset <= r_start);
     assert!(r_start <= r_end);
-    // (r_start - offset, r_end - offset);
     let seqlen = tile.node.seq().len();
     let (r_start, r_end) = match tile.node.is_forward {
         true => (r_start - offset, r_end - offset),
         false => (seqlen + offset - r_end, seqlen + offset - r_start),
     };
+    if tile.node.seq().len() < r_end {
+        return None;
+    }
     assert!(
         r_end <= tile.node.seq().len(),
         "{},{},{}",
@@ -1501,6 +1514,7 @@ fn append_range(query: &mut Vec<u8>, ops: &mut Vec<Op>, tile: &Tile) {
         temp_o.reverse();
         ops.extend(temp_o);
     }
+    Some(())
 }
 
 #[derive(Debug, Clone)]

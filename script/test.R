@@ -9,6 +9,7 @@ hg002 <- "./result/obcx/jtk_result/reads_metric/hg002_reads.tsv"
 b080 <- "./result/pg/jtk/reads_metric/lengths.tsv"
 
 hg002_datasets <- read_tsv(hg002, col_names = c("quality", "length", "type"))
+
 g <- hg002_datasets %>%
     filter(length < 200000) %>%
     ggplot() +
