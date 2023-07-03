@@ -5,7 +5,7 @@ JTK is a targeted diploid genome assembler.
 ## Requirements 
 
 - [minimap2](https://github.com/lh3/minimap2) with version >= 2.23.
-- [Rust](https://www.rust-lang.org/) with version >= 1.66.0 **nightly**.
+- [Rust](https://www.rust-lang.org/) with version >= 1.72.0 **nightly**.
 
 ## Installation
 
@@ -15,7 +15,7 @@ First, check the version of the Rust language.
 cargo --version
 ```
 
-The minimum required version is 1.66.0-nightly (otherwise, `rustup update` so that the version is greater than or equal to 1.66.0-nightly). Then,
+The minimum required version is 1.72.0-nightly (otherwise, `rustup update` so that the version is greater than or equal to 1.72.0-nightly). Then,
 
 
 ```
