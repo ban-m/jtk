@@ -344,7 +344,7 @@ fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> E
         .filter(|summary| {
             let mut has_edges = [false, false];
             for rec in records.iter() {
-                if let &gfa::Content::Edge(ref edge) = &rec.content {
+                if let gfa::Content::Edge(ref edge) = &rec.content {
                     if edge.sid1.id == summary.id {
                         has_edges[edge.end1.is_last as usize] |= true;
                     }
@@ -500,7 +500,7 @@ fn take_consensus_to_multitig(
     }
     let mut into_multitig_edges: HashMap<_, Vec<_>> = HashMap::new();
     for rec in records.iter() {
-        if let &gfa::Content::Edge(ref edge) = &rec.content {
+        if let gfa::Content::Edge(ref edge) = &rec.content {
             if let Some(cp) = multicopy_contigs.get(&edge.sid1.id) {
                 let from = find(summaries, &edge.sid1.id, edge.end1, true);
                 let to = find(summaries, &edge.sid2.id, edge.end2, false);

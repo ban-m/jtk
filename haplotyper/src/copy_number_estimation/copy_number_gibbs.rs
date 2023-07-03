@@ -146,7 +146,7 @@ impl GibbsSampler {
         rng: &mut R,
     ) {
         let mut cps: Vec<usize> = vec![];
-        let &(ref down, ref up) = &self.node_terminals[node];
+        let (down, up) = &self.node_terminals[node];
         if !down.is_empty() {
             cps.push(down.iter().map(|&j| edge_cp[j]).sum());
         }
@@ -191,7 +191,7 @@ impl GibbsSampler {
         node_cp: &[usize],
         edge_cp: &[usize],
     ) -> usize {
-        let &(ref plus, ref minus) = &self.node_terminals[node];
+        let (plus, minus) = &self.node_terminals[node];
         let edge_cps_sum: usize = match is_plus {
             true => plus.iter().map(|&e| edge_cp[e]).sum(),
             false => minus.iter().map(|&e| edge_cp[e]).sum(),
@@ -432,8 +432,8 @@ impl Optimizer {
             .zip(integer_penalty.iter())
         {
             // Grad is currently the residual of the edge.
-            let from_grad = node_residual[from] * self.nodes[from].0 as f64;
-            let to_grad = node_residual[to] * self.nodes[to].0 as f64;
+            let from_grad = node_residual[from] * self.nodes[from].0;
+            let to_grad = node_residual[to] * self.nodes[to].0;
             // let from_grad = node_residual[from];
             // let to_grad = node_residual[to];
             let residual = from_grad + to_grad + *grad;

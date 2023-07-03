@@ -109,7 +109,7 @@ pub fn estimate_error_rate(ds: &DataSet, fallback: f64) -> ErrorRate {
     let mut residuals: Vec<f64> = errors
         .iter()
         .flat_map(|(readid, errors)| {
-            let readerror = read_error_rate[*readid as usize];
+            let readerror = read_error_rate[*readid];
             errors
                 .iter()
                 .map(|&(chunk, cluster, error)| {

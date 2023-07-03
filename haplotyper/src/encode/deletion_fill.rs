@@ -1013,7 +1013,7 @@ impl ReadSkelton {
             .enumerate()
             .map(|(i, n)| {
                 let prev_end = if i == 0 { None } else { summaries.get(i - 1) };
-                let prev_offset = prev_end.map(|x| summaries[i].0 as isize - x.1 as isize);
+                let prev_offset = prev_end.map(|x| summaries[i].0 - x.1);
                 let after_offset = summaries.get(i + 1).map(|x| x.0 - summaries[i].1);
                 LightNode {
                     prev_offset,

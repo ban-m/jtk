@@ -42,7 +42,10 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
             retain_current_clustering: false,
         }
     }
-    pub fn default() -> Self {
+}
+
+impl std::default::Default for ClusteringConfig<fn(u8, u8) -> i32> {
+    fn default() -> Self {
         let id: u64 = thread_rng().gen::<u64>() % 100_000;
         Self {
             cluster_num: 3,
@@ -59,7 +62,6 @@ impl ClusteringConfig<fn(u8, u8) -> i32> {
         }
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlignmentParameters<F>
 where

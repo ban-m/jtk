@@ -102,7 +102,7 @@ pub fn clustering<R: Rng, T: std::borrow::Borrow<[u8]>>(
         }
     }
     to_posterior_probability(&mut likelihood_gains);
-    (assignments, likelihood_gains, max, max_k as usize)
+    (assignments, likelihood_gains, max, max_k)
 }
 
 pub fn search_variants<T: std::borrow::Borrow<[u8]>>(
@@ -214,7 +214,7 @@ pub fn cluster_filtered_variants<R: Rng>(
     config: &ClusteringConfig,
     rng: &mut R,
 ) -> ClusteringDevResult {
-    let copy_num = config.copy_num as usize;
+    let copy_num = config.copy_num;
     let coverage = config.coverage;
     let gains = config.gains;
     if copy_num <= 1 || variants.iter().all(|xs| xs.is_empty()) || variants.len() <= copy_num {
@@ -269,7 +269,7 @@ pub fn cluster_filtered_variants<R: Rng>(
         }
     }
     let likelihood_gains = get_likelihood_gain(variants, &assignments, max_k);
-    (assignments, likelihood_gains, max, max_k as usize)
+    (assignments, likelihood_gains, max, max_k)
 }
 
 fn min_gain(gains: &Gains, variant_type: &[(usize, DiffType)], used_columns: &[bool]) -> f64 {
@@ -428,7 +428,7 @@ fn filter_profiles<T: std::borrow::Borrow<[f64]>>(
     strands: &[bool],
     config: &ClusteringConfig,
 ) -> Vec<(usize, f64)> {
-    let cluster_num = config.copy_num as usize;
+    let cluster_num = config.copy_num;
     let coverage = config.coverage;
     let gains = config.gains;
     trace!("\n{gains}");
