@@ -1,6 +1,6 @@
-# JKT -- Regional Diploid Genome Assembler
+# JKT -- Targeted Diploid Genome Assembler
 
-JTK is a regional diploid genome assembler.
+JTK is a targeted diploid genome assembler.
 
 ## Requirements 
 
@@ -15,7 +15,7 @@ First, check the version of the Rust language.
 cargo --version
 ```
 
-If it is not up to date, please `rustup update` so that the version is greater than or equal to 1.66.0-nightly. Then run,
+The minimum required version is 1.66.0-nightly (otherwise, `rustup update` so that the version is greater than or equal to 1.66.0-nightly). Then,
 
 
 ```
@@ -23,20 +23,30 @@ git clone https://github.com/ban-m/jtk.git
 cd jtk
 cargo build --release
 ./target/release/jtk --version 
-minimap2 --verion
+minimap2 --verion # minimap2 is needed.
 ```
 
 Move `./target/release/jtk` to the location in $PATH.
 
 ## Usage
 
+Suppose we have the following variables -- 
+
+- `REFERENCE`: a reference sequence in FASTA format.
+- `READS`: reads in FASTA format (recommended: ONT reads)
+- `REGION`: target region in [CHR]:[start]-[end] format (e.g., chr1:10000000-15000000). This region should be smaller than 10Mbp and should not end/starts in a segmental duplication.
+
+
 
 0. Prepare the reads for assembly.
-   - Map your reads to the reference and index the bam file with `minimap2`. For example, `minimap2 -x map-ont -t $THREADS --secondary=no -a $REFERENCE $READS | samtools sort -@$THREADS -OBAM > aln.bam && samtools index aln.bam`.
-   - Use `bash ./script/extract_region.sh $REFERENCE $BAM $REGION > reads.fastq`, where `$REGION` should be a region specification, such as `chr1:10000000-15000000`.
-   - This is equivalent to `samtools view -OBAM $BAM $REGION | samtools fastq > reads.fastq`
-   - A region should be smaller than 10Mbp and should not end in a segmental duplication (TODO: this should be fixed).
-1. Modify `example.toml` as you wish.
+   - Map your reads to the reference and index the bam file with `minimap2`:  
+   ```
+   minimap2 -x map-ont -t $THREADS --secondary=no -a $REFERENCE $READS |\
+      samtools sort -@$THREADS -OBAM > aln.bam && samtools index aln.bam
+   ```
+   - `bash ./script/extract_region.sh $REFERENCE $BAM $REGION > reads.fastq`  
+   This is equivalent to `samtools view -OBAM $BAM $REGION | samtools fastq > reads.fastq`.
+1. Modify `example.toml`
    - See `example.toml` for an explanation of the parameters.
    - I recommend using absolute paths for the input and the output directory.
    - `JTK` would create the temporary file at the *current directory*. Please exec at the location where you have a write permission.
@@ -65,4 +75,4 @@ Please do not enter reads coming from a region longer than 10M bp long. It has n
 
 ## Info 
 
-Contact: Bansho Masutani ban-m@g.ecc.u-tokyo.ac.jp
+Contact: Bansho Masutani banmasutani@gmail.com
