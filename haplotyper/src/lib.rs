@@ -1,4 +1,3 @@
-// #![feature(is_sorted)]
 #[macro_use]
 extern crate log;
 pub mod assemble;

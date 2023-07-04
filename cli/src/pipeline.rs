@@ -126,7 +126,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         CorrectDeletionConfig::new(true, None, Some(STDDEV_OR_ERROR));
     let squish_config = SquishConfig::new(supress_ari, required_count, match_ari, mismatch_ari);
     // Pipeline.
-    let mut ds = match resume && matches!(std::fs::try_exists(&entry), Ok(true)) {
+    let mut ds = match resume && matches!(std::path::Path::new(&entry).try_exists(), Ok(true)) {
         false => {
             let mut ds = parse_input(&input_file, &read_type)?;
             if let Some(hap) = haploid_coverage {
@@ -137,7 +137,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         }
         true => parse_input(&input_file, &read_type)?,
     };
-    if resume && matches!(std::fs::try_exists(&encoded), Ok(true)) {
+    if resume && matches!(std::path::Path::new(&encoded).try_exists(), Ok(true)) {
         ds = parse_json(&encoded)?
     } else {
         ds.mask_repeat(&repeat_mask_config);
@@ -149,13 +149,13 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         ds.purge_multiplicity(purge_copy_num);
         log(&ds, &encoded)?;
     }
-    if resume && matches!(std::fs::try_exists(&clustered), Ok(true)) {
+    if resume && matches!(std::path::Path::new(&clustered).try_exists(), Ok(true)) {
         ds = parse_json(&clustered)?
     } else {
         ds.local_clustering();
         log(&ds, &clustered)?;
     }
-    if resume && matches!(std::fs::try_exists(&dense_encoded), Ok(true)) {
+    if resume && matches!(std::path::Path::new(&dense_encoded).try_exists(), Ok(true)) {
         ds = parse_json(&dense_encoded)?;
     } else {
         ds.purge(&purge_config);
@@ -165,7 +165,7 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         ds.correct_deletion(&correct_deletion_config_recluster);
         log(&ds, &dense_encoded)?;
     }
-    if resume && matches!(std::fs::try_exists(&corrected), Ok(true)) {
+    if resume && matches!(std::path::Path::new(&corrected).try_exists(), Ok(true)) {
         ds = parse_json(&corrected)?;
     } else {
         ds.squish_erroneous_clusters(&squish_config);
