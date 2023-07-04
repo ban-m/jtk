@@ -46,16 +46,16 @@ See the [Installation](#installation) section and [How to run JTK](#how-to-run-j
 JTK is a targeted diploid genome assembler aimed for **haplotype-resolved sequence reconstruction of medically important, difficult-to-assemble regions** such as HLA and LILR+KIR regions in a human genome.
 JTK accurately assembles a pair of two (near-)complete haplotype sequences of a specified genomic region typically from noisy **ONT ultra-long reads** (and optionally from any other types of long read datasets).
 
-<img src="asset/jtk_overview.png" width=600px>
+<img src="asset/jtk_overview.png" width=700px>
 [adapted from Masutani et al., Bioinformatics, 2023]
 
 ### Features (for general users)
 
-- The most promising input for JTK is **ONT's ultra-long reads** of >100 kbp with a coverage of >60$\times$.
+- The most promising input for JTK is **ONT's ultra-long reads** of >100 kbp with a coverage of >60x.
   - Technically, however, JTK accepts any type of long read sequencing data as input.
 - JTK incorporates sophisticated probabilistic models and algorithms to accurately distinguish two haplotypes and multiple copies of repetitive elements from noisy ONT reads.
-- Given a dataset collected from a **single** sequencing technology with a sufficient amount of coverage (i.e. 60$\times$ ONT UL reads), JTK enables a (near-)complete reconstruction of a pair of haplotypes.
-  - For example, for two human samples (HG002 and a Japanese sample), JTK successfully assembled the two complete haplotypes of the histocompatibility complex (MHC) region and the leukocyte receptor complex (LRC) region from 60$\times$ ONT reads.
+- Given a dataset collected from a **single sequencing technology** with a sufficient amount of coverage (i.e. 60x ONT UL reads), JTK enables a (near-)complete reconstruction of a pair of haplotypes.
+  - For example, for two human samples (HG002 and a Japanese sample), JTK successfully assembled the two complete haplotypes of the histocompatibility complex (MHC) region and the leukocyte receptor complex (LRC) region from 60x ONT reads.
   - The resulting contigs have an ~99.9% sequence accuracy and a better contiguity than assemblies from high-coverage HiFi + Hi-C datasets.
 
 
@@ -165,7 +165,7 @@ The input data and corresponding Bash variables used in this section are as foll
 
 | Input Data | Bash variable name in this README |
 |:-|:-|
-| FASTA file of reads<br>(Here we assume 60$\times$ ONT ultra-long reads) | `$READS` |
+| FASTA file of reads<br>(Here we assume 60x ONT ultra-long reads) | `$READS` |
 | FASTA file of reference genome sequences<br>(e.g. `chm13v2.0.fa` of [T2T-CHM13](https://github.com/marbl/CHM13)) | `$REFERENCE` |
 | Chromosome range of the target genomic region<br>(e.g. `chr1:10000000-15000000`) | `$REGION` |
 | Config file for JTK<br>(Template is provided as described below) | `$CONFIG` |
@@ -197,7 +197,7 @@ NOTE:
 
     - There is a file named `example.toml` in the root of this GitHub repository. This is a template for the config file, and users typically copy and modify this file to create their own config file, `$CONFIG`:
 
-    ```toml
+    ```
     # example.toml
 
     ### The input file. Fasta and FASTQ is supported. Compressed files are not supported.
