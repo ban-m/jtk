@@ -86,32 +86,32 @@ JTK accurately assembles a pair of two (near-)complete haplotype sequences of a 
 
 ### Step-by-step instruction
 
-First, check the version of the Rust language and minimap2.
+1. First, check the version of the Rust language and minimap2 and update them if necessary.
 
-```
-cargo --version
-```
+    ```
+    cargo --version
+    ```
 
-If the version of Rust is smaller than 1.72.0-nightly, run `$ rustup update` to update Rust.
+    If the version of Rust is smaller than 1.72.0-nightly, run `$ rustup update` to update Rust.
 
-```
-minimap2 --verion
-```
+    ```
+    minimap2 --verion
+    ```
 
-If the version of minimap2 is smaller than 2.23 or minimap2 is not installed, install a newer version of minimap2 from [its GitHub repository](https://github.com/lh3/minimap2)
+    If the version of minimap2 is smaller than 2.23 or minimap2 is not installed, install a newer version of minimap2 from [its GitHub repository](https://github.com/lh3/minimap2).
 
-Then, compile JTK.
+2. Then, compile JTK.
 
-```
-git clone https://github.com/ban-m/jtk.git
-cd jtk
-cargo build --release
-./target/release/jtk --version
-```
+    ```
+    git clone https://github.com/ban-m/jtk.git
+    cd jtk
+    cargo build --release
+    ./target/release/jtk --version
+    ```
 
-`./target/release/jtk` is the resulting binary executable of JTK.
+    `./target/release/jtk` is the resulting binary executable of JTK.
 
-[Optional] Lastly, move the executable, `./target/release/jtk`, to any location included in the `$PATH` variable.
+3. [Optional] Lastly, move the executable, `./target/release/jtk`, to any location included in the `$PATH` variable.
 
 
 ## The Command: `jtk`
@@ -122,7 +122,7 @@ JTK has many subcommands corresponding to each specific step, but the following 
 jtk pipeline -p <config-toml-file>
 ```
 
-How to write the [TOML-formatted](https://toml.io/en/) config file, `<config-toml-file>`, is described in the next section.
+How to write the [TOML-formatted](https://toml.io/en/) config file, `<config-toml-file>`, is described in detail in the next section.
 
 The full description of all the subcommands of JTK can be viewed with `$ jtk --help`:
 
@@ -191,11 +191,11 @@ NOTE:
         samtools fasta > reads.fasta
     ```
 
-    - Here, the resulting file, `reads.fasta`, is the input file of ONT reads for JTK, i.e. `$READS`.
+    - Here the resulting file, `reads.fasta`, will be the input file of ONT reads for JTK, i.e. `$READS`.
 
 2. Then, create a config file for JTK.
 
-    - There is a file named `example.toml` in the root of this GitHub repository. This is a template for the config file, and users typically copy and modify this file to create their own config file, `$CONFIG`:
+    - There is a file named `example.toml` in the root of this GitHub repository, which is a template for the config file. Users are assumed to copy and modify this file to create their own config file, `$CONFIG`:
 
     ```
     # example.toml
