@@ -162,19 +162,19 @@ SUBCOMMANDS:
 
 ### Input
 
-The input data and corresponding Bash variables used in this section are as follows:
+In this section, we assume we have the following shell variables with values defined appropriately based on your input data and environment:
 
 | Input Data | Bash variable name in this README |
 |:-|:-|
-| FASTA file of reads<br>(Here we assume 60x ONT ultra-long reads) | `$READS` |
-| FASTA file of reference genome sequences<br>(e.g. `chm13v2.0.fa` of [T2T-CHM13](https://github.com/marbl/CHM13)) | `$REFERENCE` |
+| Path to the FASTA file of reads<br>(Here we assume 60x ONT ultra-long reads) | `$READS` |
+| Path to the FASTA file of reference genome sequences<br>(e.g. `chm13v2.0.fa` of [T2T-CHM13](https://github.com/marbl/CHM13)) | `$REFERENCE` |
 | Chromosome range of the target genomic region<br>(e.g. `chr1:10000000-15000000`) | `$REGION` |
-| Config file for JTK<br>(Template is provided as described below) | `$CONFIG` |
+| Path to the config file for JTK<br>(Template file is provided as described below) | `$CONFIG` |
 | Number of threads | `$THREADS` |
 
 NOTE:
 
-- The reference sequences, `$REFERENCE`, are used only for extracting reads derived from the target genomic region, `$REGION`, and not for assembly itself.
+- The reference genome sequences, `$REFERENCE`, are used only for extracting reads derived from the target genomic region, `$REGION`, and not for assembly itself.
 - The target region, `$REGION`, should be smaller than 10Mbp and should not start/end within a segmental duplication region.
 
 
@@ -220,7 +220,7 @@ NOTE:
       - The value of `input_file` must be the same as `$READS` prepared in the previous step.
       - The value of `region_size` must be calculated from the value of `$REGION` (i.e. end position minus start position).
     - Other options and parameters are explained in detail in the next section: [How to Tune JTK](#how-to-tune-jtk).
-    - `sed` is useful for automatically generating a config file. For example, the following command specifies the name of the input file as `$READS`.
+    - `sed` is useful for generating a config file from the template without manual edits. For example, the following command assigns the value of `$READS` as the name of the input read file.
 
     ```bash
     cat example.toml |
