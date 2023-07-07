@@ -29,22 +29,23 @@ See the [Installation](#installation) section and [How to run JTK](#how-to-run-j
   - [Algorithmic Features (for developers)](#algorithmic-features-for-developers)
 - [Installation](#installation)
   - [Requirements](#requirements)
-  - [Step-by-step instruction](#step-by-step-instruction)
+  - [Step-by-step Instruction](#step-by-step-instruction)
 - [The Command: `jtk`](#the-command-jtk)
-- [How to run JTK](#how-to-run-jtk)
+- [How to Run JTK](#how-to-run-jtk)
   - [Input](#input)
-  - [Usage](#usage)
+  - [Step-by-step Usage](#step-by-step-usage)
   - [Output Files](#output-files)
   - [Running JTK on a Test Data Set](#running-jtk-on-a-test-data-set)
+- [How to Tune JTK](#how-to-tune-jtk)
 - [Limitation](#limitation)
 - [Contact](#contact)
 - [Citation](#citation)
-- [TODO?](#todo)
+- [TODO for this README](#todo-for-this-readme)
 
 ## Introduction
 
 JTK is a targeted diploid genome assembler aimed for **haplotype-resolved sequence reconstruction of medically important, difficult-to-assemble regions** such as HLA and LILR+KIR regions in a human genome.
-JTK accurately assembles a pair of two (near-)complete haplotype sequences of a specified genomic region typically from noisy **ONT ultra-long reads** (and optionally from any other types of long read datasets).
+JTK accurately assembles a pair of two (near-)complete haplotype sequences of a specified genomic region *de novo* typically from noisy **ONT ultra-long reads** (and optionally from any other types of long read datasets).
 
 <img src="asset/jtk_overview.png" width=700px>
 [adapted from Masutani et al., Bioinformatics, 2023]
@@ -54,7 +55,7 @@ JTK accurately assembles a pair of two (near-)complete haplotype sequences of a 
 - The most promising input for JTK is **ONT's ultra-long reads** of >100 kbp with a coverage of >60x.
   - Technically, however, JTK accepts any type of long read sequencing data as input.
 - JTK incorporates sophisticated probabilistic models and algorithms to accurately distinguish two haplotypes and multiple copies of repetitive elements from noisy ONT reads.
-- Given a dataset collected from a **single sequencing technology** with a sufficient amount of coverage (i.e. 60x ONT UL reads), JTK enables a (near-)complete reconstruction of a pair of haplotypes.
+- Given a dataset collected from a **single sequencing technology** with a sufficient amount of coverage (i.e. 60x ONT UL reads), JTK achieves a (near-)complete reconstruction of both haplotypes.
   - For example, for two human samples (HG002 and a Japanese sample), JTK successfully assembled the two complete haplotypes of the histocompatibility complex (MHC) region and the leukocyte receptor complex (LRC) region from 60x ONT reads.
   - The resulting contigs have an ~99.9% sequence accuracy and a better contiguity than assemblies from high-coverage HiFi + Hi-C datasets.
 
@@ -84,7 +85,7 @@ JTK accurately assembles a pair of two (near-)complete haplotype sequences of a 
 - [minimap2](https://github.com/lh3/minimap2) with version >= 2.23.
 - [Rust](https://www.rust-lang.org/) with version >= 1.72.0 **nightly**.
 
-### Step-by-step instruction
+### Step-by-step Instruction
 
 1. First, check the version of the Rust language and minimap2 and update them if necessary.
 
@@ -122,7 +123,7 @@ JTK has many subcommands corresponding to each specific step, but the following 
 jtk pipeline -p <config-toml-file>
 ```
 
-How to write the [TOML-formatted](https://toml.io/en/) config file, `<config-toml-file>`, is described in detail in the next section.
+How to write the [TOML-formatted](https://toml.io/en/) config file, `<config-toml-file>`, is described in detail in the sections below: [How to run JTK](#how-to-run-jtk) and [How to tune JTK](#how-to-tune-jtk).
 
 The full description of all the subcommands of JTK can be viewed with `$ jtk --help`:
 
@@ -157,27 +158,27 @@ SUBCOMMANDS:
 ```
 
 
-## How to run JTK
+## How to Run JTK
 
 ### Input
 
-The input data and corresponding Bash variables used in this section are as follows:
+In this section, we assume we have the following shell variables with values defined appropriately based on your input data and environment:
 
 | Input Data | Bash variable name in this README |
 |:-|:-|
-| FASTA file of reads<br>(Here we assume 60x ONT ultra-long reads) | `$READS` |
-| FASTA file of reference genome sequences<br>(e.g. `chm13v2.0.fa` of [T2T-CHM13](https://github.com/marbl/CHM13)) | `$REFERENCE` |
+| Path to the FASTA file of reads<br>(Here we assume 60x ONT ultra-long reads) | `$READS` |
+| Path to the FASTA file of reference genome sequences<br>(e.g. `chm13v2.0.fa` of [T2T-CHM13](https://github.com/marbl/CHM13)) | `$REFERENCE` |
 | Chromosome range of the target genomic region<br>(e.g. `chr1:10000000-15000000`) | `$REGION` |
-| Config file for JTK<br>(Template is provided as described below) | `$CONFIG` |
+| Path to the config file for JTK<br>(Template file is provided as described below) | `$CONFIG` |
 | Number of threads | `$THREADS` |
 
 NOTE:
 
-- The reference sequences, `$REFERENCE`, are used only for extracting reads derived from the target genomic region, `$REGION`, and not for assembly itself.
+- The reference genome sequences, `$REFERENCE`, are used only for extracting reads derived from the target genomic region, `$REGION`, and not for assembly itself.
 - The target region, `$REGION`, should be smaller than 10Mbp and should not start/end within a segmental duplication region.
 
 
-### Usage
+### Step-by-step Usage
 
 1. First of all, you need to extract reads originated from the target region, which will be the input reads for JTK.
 
@@ -195,7 +196,7 @@ NOTE:
 
 2. Then, create a config file for JTK.
 
-    - There is a file named `example.toml` in the root of this GitHub repository, which is a template for the config file. Users are assumed to copy and modify this file to create their own config file, `$CONFIG`:
+    - There is a file named `example.toml` in the root of this GitHub repository, which is a template for the config file. Users are assumed to copy and modify this file to create their own config file, `$CONFIG`. The contents of `example.toml` are as follows:
 
     ```
     # example.toml
@@ -217,8 +218,9 @@ NOTE:
 
     - In many cases, at least `input_file` and `region_size` will likely need to be modified.
       - The value of `input_file` must be the same as `$READS` prepared in the previous step.
-      - The value of `region_size` must be calculated from the value of `$REGION`.
-    - `sed` is useful for automatically generating a config file. For example, the following command replaces the name of the input file with `$READS`.
+      - The value of `region_size` must be calculated from the value of `$REGION` (i.e. end position minus start position).
+    - Other options and parameters are explained in detail in the next section: [How to Tune JTK](#how-to-tune-jtk).
+    - `sed` is useful for generating a config file from the template without manual edits. For example, the following command assigns the value of `$READS` as the name of the input read file.
 
     ```bash
     cat example.toml |
@@ -268,6 +270,16 @@ jtk pipeline -p COX_PGF.toml 2> test.log
 
 After running the commands above, there should exist `./cox_pgf/temp.gfa`, the resulting assembly graph file containing consensus contig sequences.
 
+## How to Tune JTK
+
+The config file (whose template is `example.toml`) offers several tunable parameters that influences the final assembly result:
+
+- `purge_copy_num`: JTK discards every chunk whose estimated multiplicity in the underlying genome is greater than this value. Therefore, increasing this value could improve the assembly when the graph is fragmented or when the coverage of edges in the GFA (such as `cv:i:12`) is small. However, accurately clustering a chunk whose multiplicity is, say, 12 is quite challenging, and so increasing this value too much can worsen the assembly. The default value, 8, is typically the sweet spot of this trade-off.
+- `min_span`: Any repeat in the assembly graph is resolved if the repeat is spanned by at least this number of reads. This value is related to how aggressively JTK resolves repeats (smaller is more aggressive).
+
+The following parameter also has an impact on the assembly result, but it is not recommended to "tune" it:
+
+- `seed`: Seed value for a random number generater.
 
 ## Limitation
 
@@ -281,8 +293,8 @@ Bansho Masutani banmasutani@gmail.com
 
 Masutani et al., *Bioinformatics*, 2023
 
-## TODO?
+## TODO for this README
 
-- Rust nightly インストールもっと詳しく？
-- include minimap2 into this repository？
-- 例を増やす
+- Clarify Rust version requirement (nightly or stable?)
+- Incorporate minimap2 into this repository？
+- Add more examples
