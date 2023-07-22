@@ -1,0 +1,14 @@
+Bootstrap: docker
+From: rust:1.71
+
+%post
+    git clone https://github.com/ban-m/jtk
+    cd jtk
+    cargo build --release
+    ln -s $PWD/target/release/jtk /bin/jtk
+    cd ../
+    wget https://github.com/lh3/minimap2/releases/download/v2.26/minimap2-2.26_x64-linux.tar.bz2
+    tar -xvf minimap2-2.26_x64-linux.tar.bz2
+    ln -s $PWD/minimap2-2.26_x64-linux/minimap2 /bin/minimap2
+%runscript
+    jtk $*
