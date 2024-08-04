@@ -1,3 +1,4 @@
+use log::*;
 use rand::{prelude::SliceRandom, Rng, SeedableRng};
 use rand_xoshiro::Xoroshiro128PlusPlus;
 

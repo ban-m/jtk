@@ -1,9 +1,8 @@
 use definitions::*;
 use haplotyper::model_tune::ModelFit;
+use log::debug;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
-#[macro_use]
-extern crate log;
 
 fn main() -> std::io::Result<()> {
     let matches = jtk_cli::jtk_commands::jtk_parser().get_matches();

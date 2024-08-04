@@ -1,3 +1,5 @@
+use log::*;
+
 pub trait Entry {
     fn entry(input_file: &str, raw_data: Vec<(String, Vec<u8>)>, rt: &str) -> Self;
 }

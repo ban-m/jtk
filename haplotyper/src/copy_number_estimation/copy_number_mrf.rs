@@ -1,7 +1,9 @@
 use definitions::EncodedRead;
+use log::*;
 use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
 type Node = (u64, u64);
 type Edge = ((Node, bool), (Node, bool));
 type CopyNumResult = (Vec<(Node, usize)>, Vec<(Edge, usize)>);

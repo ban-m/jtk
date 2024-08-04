@@ -171,7 +171,7 @@ impl Stats for definitions::DataSet {
                 (del / aln_len, ins / aln_len, mismat / aln_len)
             })
             .collect();
-        debug!("Summary:{}", summaries.len());
+        log::debug!("Summary:{}", summaries.len());
         let del_summary = summarize(summaries.iter().map(|x| x.0));
         let ins_summary = summarize(summaries.iter().map(|x| x.1));
         let mism_summary = summarize(summaries.iter().map(|x| x.2));

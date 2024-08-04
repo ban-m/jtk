@@ -2,6 +2,7 @@ pub mod ditch_graph;
 use definitions::*;
 use ditch_graph::*;
 use gfa::GFA;
+use log::*;
 use serde::*;
 use std::collections::HashMap;
 

@@ -1,6 +1,8 @@
+use log::*;
 use rand::{prelude::SliceRandom, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use rayon::prelude::*;
+
 pub fn estimate_minimum_gain(hmm: &PairHiddenMarkovModelOnStrands) -> f64 {
     const SEED: u64 = 23908;
     const SAMPLE_NUM: usize = 1000;

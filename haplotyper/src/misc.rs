@@ -1,4 +1,5 @@
 //! Useful functions.
+use log::*;
 
 /// Return rand index.
 pub fn rand_index(label: &[usize], pred: &[usize]) -> f64 {

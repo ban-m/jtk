@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::*;
 pub mod deletion_fill;
 pub const MARGIN: usize = 50;
+use log::*;
+
 // Any alignment having deletion longer than ALLOWED_END_GAP would be discarded.
 // Increasing this value would be more "abundant" encoding,
 // but it would be problem in local clustering, which requiring almost all the

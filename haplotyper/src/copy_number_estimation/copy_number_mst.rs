@@ -4,6 +4,8 @@ use rand::{prelude::SliceRandom, Rng};
 use rayon::prelude::*;
 use std::collections::HashMap;
 const LARGE_VALUE: f64 = 1000000f64;
+use log::*;
+
 const INIT_NEG_COPY_NUM_PEN: f64 = 100f64;
 #[derive(Debug, Clone)]
 pub struct MSTConfig {

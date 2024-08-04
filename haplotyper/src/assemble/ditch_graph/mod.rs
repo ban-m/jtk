@@ -1,6 +1,7 @@
 use super::AssembleConfig;
 use definitions::DNASeq;
 use definitions::{Chunk, EncodedRead};
+use log::*;
 pub mod sequence_generation;
 pub use sequence_generation::*;
 use std::collections::HashMap;

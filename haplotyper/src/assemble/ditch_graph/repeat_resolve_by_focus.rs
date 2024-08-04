@@ -6,6 +6,7 @@ const ERROR_PROB: f64 = 0.1;
 // Minimum probability of the null distribution.
 // This is fallback parameter used when there are too many branches.
 const MIN_PROB: f64 = 0.001;
+use log::*;
 
 use super::super::AssembleConfig;
 use super::DitchGraph;

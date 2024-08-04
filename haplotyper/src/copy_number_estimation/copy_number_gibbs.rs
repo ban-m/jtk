@@ -4,6 +4,7 @@ use std::collections::HashMap;
 // Each edge has its direction to either "plus" or "minus" direction of the node.
 type Edge = (usize, bool, usize, bool, f64);
 type GbsEdge = (usize, bool, usize, bool, u64);
+use log::*;
 
 // Out of the haploid coverage, how much fraction would be observed in the 0-coverage nodes.
 // For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge

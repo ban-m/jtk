@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 mod config;
 pub use config::*;
+use log::*;
 
 use crate::model_tune::ModelFit;
 pub mod exact_clustering;

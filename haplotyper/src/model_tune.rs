@@ -1,5 +1,6 @@
 use definitions::*;
 use kiley::hmm::HMMPolishConfig;
+use log::*;
 use std::collections::HashMap;
 
 use kiley::hmm::PairHiddenMarkovModel;

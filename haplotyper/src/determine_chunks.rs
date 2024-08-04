@@ -4,10 +4,12 @@ use super::encode::Encode;
 use super::polish_chunks::PolishChunk;
 use super::polish_chunks::PolishChunkConfig;
 use definitions::*;
+use log::*;
 use rand::prelude::*;
 use rand_xoshiro::Xoroshiro128Plus;
 use rayon::prelude::*;
 use std::collections::HashMap;
+
 use std::hash::Hash;
 #[derive(Debug, Clone)]
 pub struct DetermineUnitConfig {

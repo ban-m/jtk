@@ -2,9 +2,8 @@
 //!
 //! Usually users need not to call this struct
 use definitions::DataSet;
-use serde::{Deserialize, Serialize};
-extern crate log;
 use log::*;
+use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PipelineConfig {
     input_file: String,

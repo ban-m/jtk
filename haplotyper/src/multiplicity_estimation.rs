@@ -1,8 +1,10 @@
 use crate::assemble::{ditch_graph::DitchGraph, *};
 use definitions::DataSet;
+use log::*;
 use serde::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiplicityEstimationConfig {
     seed: u64,

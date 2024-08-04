@@ -8,6 +8,8 @@ const EDGE_BOUND: f64 = 0.5;
 // Evaluating length of each side.
 const EDGE_LEN: usize = 100;
 const INS_THR: usize = 2;
+use log::*;
+
 #[derive(Debug, Clone)]
 pub struct CorrectDeletionConfig {
     re_clustering: bool,

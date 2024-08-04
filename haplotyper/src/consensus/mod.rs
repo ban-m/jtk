@@ -5,6 +5,7 @@ use definitions::*;
 use gfa::Segment;
 use kiley::hmm::PairHiddenMarkovModelOnStrands;
 use kiley::Op;
+use log::*;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;

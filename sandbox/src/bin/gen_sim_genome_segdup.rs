@@ -37,7 +37,7 @@ fn gen_haploids<R: rand::Rng>(rng: &mut R) -> (Vec<u8>, Vec<u8>) {
     let leading = gen_seq::generate_seq(rng, PADDING);
     let pad = gen_seq::generate_seq(rng, PADDING);
     let trail = gen_seq::generate_seq(rng, PADDING);
-    let hap_a: Vec<_> = vec![leading, segdup, pad, segdup2, trail].concat();
+    let hap_a: Vec<_> = [leading, segdup, pad, segdup2, trail].concat();
     let hap_b = gen_seq::introduce_randomness(&hap_a, rng, &PROFILE);
     (hap_a, hap_b)
 }

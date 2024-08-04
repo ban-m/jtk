@@ -12,8 +12,8 @@ fn main() -> std::io::Result<()> {
     let mut rng: Xoroshiro128PlusPlus = SeedableRng::seed_from_u64(34204);
     records.shuffle(&mut rng);
     use std::io::Write;
-    let mut picked = std::fs::File::create(&format!("{prefix}.0.fq")).unwrap();
-    let mut other = std::fs::File::create(&format!("{prefix}.1.fq")).unwrap();
+    let mut picked = std::fs::File::create(format!("{prefix}.0.fq")).unwrap();
+    let mut other = std::fs::File::create(format!("{prefix}.1.fq")).unwrap();
     let mut picked_so_far = 0;
     for record in records.iter() {
         if picked_so_far < amount {

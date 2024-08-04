@@ -11,6 +11,8 @@
 //! // Get copy numbers.
 //! let (node_copies, edge_copies) = ds.estimate_copy_numbers(&config);
 //! ```
+use log::*;
+
 // Out of the haploid coverage, how much fraction would be observed in the 0-coverage nodes.
 // For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge
 // even in the zero-copy elements.
