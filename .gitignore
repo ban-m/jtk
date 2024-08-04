@@ -16,7 +16,6 @@ script/*.sh
 script/*.job
 script/*.yml
 script/sync_*
-.*
 !.gitignore
 venv
 **__pycache__*
