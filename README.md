@@ -1,5 +1,7 @@
 # JKT -- Targeted Diploid Genome Assembler <!-- omit in toc -->
 
+![GHAPassing](https://github.com/ban-m/jtk/actions/workflows/ci.yml/badge.svg)
+
 ## Getting Started <!-- omit in toc -->
 
 ```bash
