@@ -53,13 +53,17 @@ impl Graph {
         id2index
             .iter()
             .filter_map(|(_, &index)| {
-                (fu.find(index).unwrap() == index).then(|| {
-                    self.nodes
+                if fu.find(index).unwrap() != index {
+                    None
+                } else {
+                    let nodes: Vec<_> = self
+                        .nodes
                         .iter()
                         .enumerate()
                         .filter_map(|(i, node)| (fu.find(i).unwrap() == index).then_some(node))
-                        .collect::<Vec<&Node>>()
-                })
+                        .collect();
+                    Some(nodes)
+                }
             })
             .collect()
     }
