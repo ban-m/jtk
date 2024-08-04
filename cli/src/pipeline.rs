@@ -1,3 +1,6 @@
+//! Configuration of the JTK's pipeline.
+//!
+//! Usually users need not to call this struct
 use definitions::DataSet;
 use serde::{Deserialize, Serialize};
 extern crate log;
@@ -32,6 +35,7 @@ pub struct PipelineConfig {
     mismatch_ari: f64,
     required_count: usize,
 }
+
 use haplotyper::{local_clustering::LocalClustering, *};
 use std::io::{BufReader, BufWriter, Write};
 pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
