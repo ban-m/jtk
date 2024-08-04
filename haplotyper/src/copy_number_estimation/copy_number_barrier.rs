@@ -2,6 +2,7 @@
 //! Estimate copy number of chunks based on coverages.
 //! # Example
 //! ```rust
+//! use haplotyper::copy_number_estimation::copy_number_barrier::*;
 //! use haplotyper::copy_number_estimation::*;
 //! let mut ds = definitions::DataSet::new();
 //! let config = Config::default();
