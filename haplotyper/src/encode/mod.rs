@@ -30,7 +30,7 @@ impl Encode for definitions::DataSet {
             let no_aln_reads: Vec<_> = self
                 .raw_reads
                 .iter()
-                .filter_map(|read| (!encoded.contains(&read.id)).then(|| read.seq().len()))
+                .filter(|&read| (!encoded.contains(&read.id))).map(|read| read.seq().len())
                 .collect();
             let lensum: usize = no_aln_reads.iter().sum();
             debug!("ENCODE\tNotEncoded\t{}\t{}", lensum, no_aln_reads.len());
@@ -200,7 +200,7 @@ fn encode_paf(seq: &[u8], aln: &bio_utils::paf::PAF, chunk: &Chunk) -> Option<No
         true => aln.qstart - leading.len(),
         false => aln.qstart - trailing.len(),
     };
-    let seq = vec![leading, aligned, trailing].concat();
+    let seq = [leading, aligned, trailing].concat();
     check_length(&ops, seq.len(), chunk.seq().len());
     let cl = chunk.cluster_num;
     let node = Node::new(chunk.id, aln.relstrand, seq, ops, position_from_start, cl);

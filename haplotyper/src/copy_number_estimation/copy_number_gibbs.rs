@@ -711,7 +711,7 @@ mod cpe_test {
         let mean_cov = 20f64;
         let div = 5f64;
         let node_cp: Vec<usize> =
-            vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
+            [vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
         let nodes: Vec<f64> = node_cp
             .iter()
             .map(|&copy| {

@@ -527,19 +527,17 @@ mod test {
         let mean_cov = 20;
         let div = 5;
         let node_cp: Vec<usize> =
-            vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
+            [vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
         let nodes: Vec<_> = node_cp
             .iter()
             .map(|&copy| rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64)
             .collect();
-        let edge_cp: Vec<usize> = vec![
-            vec![2],
+        let edge_cp: Vec<usize> = [vec![2],
             vec![1; 6],
             vec![2; 2],
             vec![1; 10],
             vec![2; 2],
-            vec![1],
-        ]
+            vec![1]]
         .concat();
         let edges: Vec<_> = edge_cp
             .iter()

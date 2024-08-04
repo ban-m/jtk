@@ -13,7 +13,7 @@ fn main() -> std::io::Result<()> {
     for line in std::fs::File::open(&args[1])
         .map(BufReader::new)?
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
     {
         if line.starts_with('#') {
             println!("{line}");

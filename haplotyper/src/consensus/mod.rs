@@ -1067,7 +1067,7 @@ fn base_pair_alignment(
         eprintln!("{chain:?}\n{read}\n{}", read.nodes.len());
     }
     let (mut query, mut ops, tip_len, head_clip) = align_tip(seq, seg, chain, &tiles[0], read.id);
-    for (_, w) in tiles.windows(2).enumerate() {
+    for w in tiles.windows(2) {
         append_range(&mut query, &mut ops, &w[0]);
         let seg_start = w[0].ctg_end;
         let seg_end = w[1].ctg_start;
@@ -1700,7 +1700,7 @@ mod align_test {
         let seq = b"AAAAA";
         let leading = b"TTTTTTTTAAAAAC";
         let (ops, len) = align_leading(seq, leading);
-        assert_eq!(ops, vec![vec![Op::Match; 5], vec![Op::Del]].concat());
+        assert_eq!(ops, [vec![Op::Match; 5], vec![Op::Del]].concat());
         assert_eq!(len, 6);
     }
     #[test]
@@ -1708,7 +1708,7 @@ mod align_test {
         let seq = b"AAAAA";
         let trailing = b"GAAAAATTTTTTTTTTTTC";
         let (ops, len) = align_trailing(seq, trailing);
-        assert_eq!(ops, vec![vec![Op::Mismatch], vec![Op::Match; 4]].concat());
+        assert_eq!(ops, [vec![Op::Mismatch], vec![Op::Match; 4]].concat());
         assert_eq!(len, 5);
     }
 }

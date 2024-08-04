@@ -245,8 +245,8 @@ fn gen_diff_haplotypes<R: Rng>(rng: &mut R, len: usize, diff_type: DiffType) -> 
         }
         center2
     };
-    let hap1 = vec![vec![right], center1, vec![left]].concat();
-    let hap2 = vec![vec![right], center2, vec![left]].concat();
+    let hap1 = [vec![right], center1, vec![left]].concat();
+    let hap2 = [vec![right], center2, vec![left]].concat();
     (hap1, hap2)
 }
 
@@ -270,8 +270,8 @@ fn gain_of(
             let seg1 = kiley::gen_seq::generate_seq(&mut rng, seq_len / 2);
             let seg2 = kiley::gen_seq::generate_seq(&mut rng, seq_len / 2);
             let (hap1, hap2) = gen_diff_haplotypes(&mut rng, len, diff_type);
-            let template = vec![seg1.clone(), hap1, seg2.clone()].concat();
-            let diff = vec![seg1, hap2, seg2].concat();
+            let template = [seg1.clone(), hap1, seg2.clone()].concat();
+            let diff = [seg1, hap2, seg2].concat();
             let mut lk_diff: Vec<_> = (0..SEQ_NUM)
                 .map(|t| {
                     let hmm = match t % 2 == 0 {

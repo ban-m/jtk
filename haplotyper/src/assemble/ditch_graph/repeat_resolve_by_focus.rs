@@ -431,7 +431,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
         if edges.len() != 1 {
             None
         } else {
-            let (root, root_pos) = edges.get(0).map(|e| (e.to, e.to_position)).unwrap();
+            let (root, root_pos) = edges.first().map(|e| (e.to, e.to_position)).unwrap();
             let (path, mut tail_dests) = self.simple_path_and_dest(root, root_pos);
             tail_dests.sort();
             Some((head_dests, path, tail_dests))

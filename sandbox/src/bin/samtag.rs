@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
     let read_tag: HashMap<_, u64> = std::fs::File::open(&args[1])
         .map(BufReader::new)?
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .map(|line| {
             let mut line = line.split('\t');
             let readid = line.next().unwrap().to_string();
@@ -16,7 +16,7 @@ fn main() -> std::io::Result<()> {
         .collect();
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());
-    for line in reader.lines().filter_map(|line| line.ok()) {
+    for line in reader.lines().map_while(Result::ok) {
         if line.starts_with('@') {
             println!("{line}");
         } else {

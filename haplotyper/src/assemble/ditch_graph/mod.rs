@@ -1517,8 +1517,8 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
             let mut actives = HashSet::new();
             let mut stack = vec![idx];
-            while !stack.is_empty() {
-                let last = stack.pop().unwrap();
+            while let Some(last) = stack.pop() {
+                
                 actives.insert(last);
                 arrived.insert(last);
                 for to in self.node(last).unwrap().edges.iter().map(|x| x.to) {

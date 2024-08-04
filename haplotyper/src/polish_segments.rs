@@ -67,14 +67,14 @@ fn parse_sam(
         let stdio = std::io::stdin();
         std::io::BufReader::new(stdio.lock())
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter_map(|l| l.parse().ok())
             .collect()
     } else {
         std::fs::File::open(alignments)
             .map(std::io::BufReader::new)?
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter_map(|l| l.parse().ok())
             .collect()
     };
@@ -197,14 +197,14 @@ fn parse_paf(
         let stdio = std::io::stdin();
         std::io::BufReader::new(stdio.lock())
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter_map(|l| bio_utils::paf::PAF::new(&l))
             .collect()
     } else {
         std::fs::File::open(alignments)
             .map(std::io::BufReader::new)?
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter_map(|l| bio_utils::paf::PAF::new(&l))
             .collect()
     };

@@ -8,7 +8,7 @@ fn main() -> std::io::Result<()> {
     let partitions: HashMap<_, _> = std::fs::File::open(&args[1])
         .map(BufReader::new)?
         .lines()
-        .filter_map(|x| x.ok())
+        .map_while(Result::ok)
         .skip(1)
         .filter_map(|line| {
             let mut line = line.split_whitespace();
