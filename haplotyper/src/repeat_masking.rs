@@ -87,13 +87,6 @@ impl RepeatAnnot {
     /// Here, the definition of the repetitiveness is both global (is it lowercase?) and local (is it occurred more than twice in this reads?)
     pub fn repetitiveness(&self, seq: &[u8]) -> f64 {
         let mut counts: HashMap<_, u32> = HashMap::new();
-        // for kmer in seq
-        //     .windows(self.k)
-        //     .map(to_idx)
-        //     .filter(|x| self.kmers.contains(x))
-        // {
-        //     *counts.entry(kmer).or_default() += 1;
-        // }
         for kmer in KMers::new(seq, self.k).filter(|x| self.kmers.contains(x)) {
             *counts.entry(kmer).or_default() += 1;
         }
@@ -117,17 +110,6 @@ impl RepeatMask for definitions::DataSet {
                     .collect::<Vec<_>>()
             })
             .collect();
-        // let kmers: HashSet<_> = self
-        //     .raw_reads
-        //     .par_iter()
-        //     .flat_map(|r| {
-        //         r.seq()
-        //             .windows(k)
-        //             .filter(|kmer| kmer.iter().all(u8::is_ascii_lowercase))
-        //             .map(to_idx)
-        //             .collect::<Vec<_>>()
-        //     })
-        //     .collect();
         RepeatAnnot { k, kmers }
     }
     fn mask_repeat(&mut self, config: &RepeatMaskConfig) {
@@ -146,11 +128,6 @@ impl RepeatMask for definitions::DataSet {
             .map(|read| mask_repeats(read.seq.seq_mut(), &mask, config.k))
             .sum();
         let num_bases = self.raw_reads.iter().map(|r| r.seq.len()).sum::<usize>();
-        // let num_lower_base = self
-        //     .raw_reads
-        //     .iter()
-        //     .map(|r| r.seq.iter().filter(|x| x.is_ascii_lowercase()).count())
-        //     .sum::<usize>();
         debug!("MASKREPEAT\tTotalMask\t{num_lower_base}\t{num_bases}");
         debug!("MASKREPEAT\tMaskedKmers\t{}\t{}", mask.len(), config.k);
     }
@@ -173,22 +150,6 @@ pub fn kmer_counting(reads: &[RawRead], k: usize) -> HashMap<u64, u32> {
             }
             x
         })
-    // const BUCKET_SIZE: usize = 1000;
-    // let mut counts: HashMap<u64, u32> = HashMap::new();
-    // for bucket in reads.chunks(BUCKET_SIZE) {
-    //     let kmers: Vec<_> = bucket
-    //         .into_par_iter()
-    //         .fold(Vec::new, |mut x, read| {
-    //             x.extend(read.seq().windows(k).map(to_idx));
-    //             x
-    //         })
-    //         .flatten()
-    //         .collect();
-    //     for kmer in kmers {
-    //         *counts.entry(kmer).or_default() += 1;
-    //     }
-    // }
-    // counts
 }
 
 pub fn to_idx(w: &[u8]) -> u64 {
@@ -204,25 +165,6 @@ pub fn to_idx(w: &[u8]) -> u64 {
         .map(|(i, &b)| BASE2BITCMP[b as usize] << (2 * i))
         .sum();
     forward.min(reverse)
-    // // Determine if this k-mer is canonical.
-    // let is_canonical = {
-    //     let mut idx = 0;
-    //     while idx < w.len() / 2
-    //         && BASE2BIT[w[idx].to_ascii_uppercase() as usize]
-    //             == BASE2BITCMP[w[w.len() - idx - 1].to_ascii_uppercase() as usize]
-    //     {
-    //         idx += 1;
-    //     }
-    //     BASE2BIT[w[idx] as usize] <= BASE2BITCMP[w[w.len() - idx - 1] as usize]
-    // };
-    // if is_canonical {
-    //     w.iter()
-    //         .fold(0, |cum, &x| (cum << 2) | BASE2BIT[x as usize])
-    // } else {
-    //     w.iter()
-    //         .rev()
-    //         .fold(0, |cum, &x| (cum << 2) | BASE2BITCMP[x as usize])
-    // }
 }
 
 const BASE2BITCMP: [u64; 256] = base2bitcmp();
@@ -304,21 +246,6 @@ fn mask_repeats(seq: &mut [u8], mask: &HashSet<u64>, k: usize) -> usize {
             .skip(start)
             .for_each(|s| s.make_ascii_lowercase());
     }
-    // if seq.len() <= k {
-    //     return 0;
-    // }
-    // let mut num_lower = 0;
-    // let mut farthest = 0;
-    // for idx in 0..seq.len() - k + 1 {
-    //     let kmer_position = to_idx(&seq[idx..idx + k]);
-    //     if mask.contains(&kmer_position) {
-    //         for seq in seq.iter_mut().take(idx + k).skip(farthest.max(idx)) {
-    //             seq.make_ascii_lowercase();
-    //             num_lower += 1;
-    //         }
-    //         farthest = idx + k - 1;
-    //     }
-    // }
     num_lower
 }
 

@@ -1,9 +1,12 @@
-//! This module includes light statistics metrics, such as error rates and coverages...
+//! Stats -- gives several metrics of the input data, current status, and observed patterns of errors.
+//!
+//!
 use definitions::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+/// The trait to define the method.
 pub trait Stats {
     fn error_rate(&self) -> ErrorRate;
     fn stats<W: std::io::Write>(&self, wtr: W) -> std::io::Result<()>;

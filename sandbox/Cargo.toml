@@ -24,3 +24,4 @@ edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
 clap = {version = "3.1.18", features = ["derive"]}
 kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.3.0"}
 # kiley = {path = "../../kiley"}
+toml = "0.5.9"

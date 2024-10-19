@@ -1,12 +1,22 @@
-//! Definitions of the JTK's serialized format.
-//! Roughly speaking, we incorporate with other programs, pass messages, or interact with other CLI via JSON object format. Specifically, the message is encoded only one, possibly large, structure named [DataSet](DataSet)
-
+//! Definition -- the definitions of the structure used in JTK's serialized format.
+//!
+//! This library/crate defines several types, which can be serialized by JSON object to make it easy to incorporate with other programs such as Python or JS.
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::path::PathBuf;
 
+/// A packed information of the dataset, intermediate objects, and inferred parameters.
+///
+/// Conceptually, this type saves the variables defined in the analysis pipeline.
+/// To make a rough intuition, let's suppose we are analysing data in an R interactively, like in Jupyter Lab.
+/// Then, we usually save the whole analysis by dumping the variables as ".Rdata".
+/// This type tries to do the same thing by saving the varaibles defined in the analysis as a member of this struct.
+/// By serializing the analysis results & parameters with the raw data, it is very easy to keep the consistency between the
+/// parameters and the raw dataset.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DataSet {
     /// The path to the input file.
-    pub input_file: String,
+    pub input_file: PathBuf,
     /// Masking information
     pub masked_kmers: MaskInfo,
     /// If Some(x), it is the estimated coverage per haplotype.
@@ -30,6 +40,8 @@ pub struct DataSet {
     /// Estimated error rate.
     pub error_rate: ErrorRate,
     /// JTK consists of several stages. `processed stages` shows the list of stages JTK has processed so far.
+    /// This information is usuful during debugging, as it can be used to know on which command the
+    /// program went wrong.
     pub processed_stages: Vec<ProcessedStage>,
 }
 
@@ -69,7 +81,7 @@ impl Coverage {
             false => Self::Estimated(cov),
         }
     }
-    /// Unwrap
+    /// Returns the coverage if it is avaialble. If not, it panics.
     pub fn unwrap(&self) -> f64 {
         match self {
             Coverage::NotAvailable => panic!("Please estimate the haploid coverage first."),
@@ -77,12 +89,15 @@ impl Coverage {
             Coverage::Estimated(cov) => *cov,
         }
     }
+    /// Sets the coverage to `cov` in `Coverage::Estimated(cov)` if it is not protected.
+    /// If the coverage is `Coverage::Protected`, nothing will happen.
     pub fn set(&mut self, cov: f64) {
         *self = match self {
             Coverage::Protected(x) => Coverage::Protected(*x),
             _ => Coverage::Estimated(cov),
         }
     }
+    /// Return true if the coverage information is protected.
     pub fn is_protected(&self) -> bool {
         match self {
             Coverage::Protected(_) => true,
@@ -92,9 +107,17 @@ impl Coverage {
     }
 }
 
+/// The parameters of the hidden Markov model (HMM) on each strand.
+/// It is not so intuitive to define a strand information, given that
+/// the long-reads do not have strand information.
+/// Nonetheless, there is a distinction between whether or not taking a reverse complement.
+/// I use the term `forward` to indicate a sequence without taking reverse complement, and
+/// `reverse` to indicate a sequence after taking the rev-comp.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HMMParamOnStrands {
+    /// The parameters of the HMM in the forward strand / as-is.
     pub forward: HMMParam,
+    /// The parameters of the HMM in the reverse strand / reverse-complemented.
     pub reverse: HMMParam,
 }
 
@@ -146,35 +169,34 @@ impl std::default::Default for HMMParam {
     }
 }
 
+/// The information of the k-mer masking.
+///
+/// In the JTk pipeline, it marks/masks the highly repetitive k-mers, i.e., k-mers occur more than `thr` in the dataset.
+/// This type retains the parameters (`k` and `thr`)used during the process
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MaskInfo {
+    /// The size of the k-mer.
     pub k: usize,
     /// Occurent threshold(k-mers occurring more than this value would be masked)
     pub thr: u32,
 }
 
+/// The type of the read.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
 pub enum ReadType {
+    /// Circular consensus sequence, a.k.a., PacBio HiFi.
     CCS,
+    /// Continuous Long read, a.k.a., PacBio Noisy
     CLR,
+    /// ONT reads.
     ONT,
+    /// Note specified. Allocated for future use.
     None,
 }
 
-pub const CLR_BAND_WIDTH: usize = 200;
-pub const HIFI_BAND_WIDTH: usize = 80;
-pub const ONT_BAND_WIDTH: usize = 100;
-
-pub const CLR_CTG_SIM: f64 = 0.20;
-pub const CLR_CLR_SIM: f64 = 0.20;
-pub const HIFI_SIM_THR: f64 = 0.05;
-pub const ONT_SIM_THR: f64 = 0.15;
-
-pub const CLR_BAND_FRAC: f64 = 0.05;
-pub const ONT_BAND_FRAC: f64 = 0.03;
-pub const HIFI_BAND_FRAC: f64 = 0.01;
-
 impl ReadType {
+    /// The threshold of an overlap threshold.
+    /// 95% for CCS and 85% all other types (CLR or ONT)
     pub fn overlap_identity_thr(&self) -> f64 {
         match self {
             ReadType::CCS => 0.95,
@@ -183,13 +205,21 @@ impl ReadType {
             ReadType::None => 0.85,
         }
     }
-    pub fn sim_thr(&self) -> f64 {
+    /// The upperbound of the error rate used in JTK for each type of reads.
+    /// This value is only used as the initial alignment & filtering step.
+    /// In the succient step, the program re-estimate the error rate and
+    /// the upperbound of the error rate based on the data, adaptively.
+    /// 5% difference for CCS, 15% for ONT, and 20% for CLR.
+    pub fn error_upperbound(&self) -> f64 {
         match *self {
-            ReadType::CCS => HIFI_SIM_THR,
-            ReadType::None | ReadType::CLR => CLR_CLR_SIM,
-            ReadType::ONT => ONT_SIM_THR,
+            ReadType::CCS => 0.05,
+            ReadType::None | ReadType::CLR => 0.20,
+            ReadType::ONT => 0.15,
         }
     }
+    /// The standard deviation of the error rate in JTK for each type of reads.
+    /// These values are determined manually based on the data,
+    /// but it is not accurate, and is re-estimated based on the data.
     pub fn sd_of_error(&self) -> f64 {
         match *self {
             ReadType::CCS => 0.005,
@@ -198,16 +228,22 @@ impl ReadType {
             ReadType::None => 0.01,
         }
     }
+    /// The width of the band in the banded alignment used to
+    /// align two reads with length `len`.
+    /// JTK use 1%, 3%, and 5% of the length of the reads for
+    /// CCS, ONT, and CLR, respectively.
     pub fn band_width(&self, len: usize) -> usize {
         let len = len as f64
             * match *self {
-                ReadType::CCS => HIFI_BAND_FRAC,
-                ReadType::CLR => CLR_BAND_FRAC,
-                ReadType::ONT => ONT_BAND_FRAC,
-                ReadType::None => CLR_BAND_FRAC,
+                ReadType::CCS => 0.01,
+                ReadType::CLR => 0.05,
+                ReadType::ONT => 0.03,
+                ReadType::None => 0.05,
             };
         len.ceil() as usize
     }
+    /// The minimum number of reads required to span a
+    /// bubble during the assembly step.
     pub fn min_span_reads(&self) -> usize {
         match *self {
             ReadType::CCS => 1,
@@ -216,6 +252,9 @@ impl ReadType {
             ReadType::None => 3,
         }
     }
+    /// The minimum number of log-likelihood ratio
+    /// required to spand a buddble druing the
+    /// assembly step.
     pub fn min_llr_value(&self) -> f64 {
         match *self {
             ReadType::CCS => 0.1f64,
@@ -224,28 +263,12 @@ impl ReadType {
             ReadType::None => 1f64,
         }
     }
-    pub fn weak_llr(&self) -> f64 {
-        match *self {
-            ReadType::CCS => 1.3f64,
-            ReadType::CLR => 1.3f64,
-            ReadType::ONT => 1.3f64,
-            ReadType::None => 1.3f64,
-        }
-    }
-    pub fn weak_span_reads(&self) -> usize {
-        match *self {
-            ReadType::CCS => 4,
-            ReadType::CLR => 4,
-            ReadType::ONT => 4,
-            ReadType::None => 4,
-        }
-    }
 }
 
 impl std::default::Default for DataSet {
     fn default() -> Self {
         Self {
-            input_file: String::new(),
+            input_file: PathBuf::new(),
             coverage: Coverage::NotAvailable,
             raw_reads: vec![],
             hic_pairs: vec![],
@@ -262,17 +285,12 @@ impl std::default::Default for DataSet {
 }
 
 impl DataSet {
-    /// Return an empty dataset.
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub fn with_minimum_data(
-        input_file: &str,
-        raw_reads: Vec<RawRead>,
-        read_type: ReadType,
-    ) -> Self {
+    /// Create a new instance of `DataSet` with the `input_file`, `raw_reads`, and `read_type`.
+    /// ToDo: This method should take only `input_file` path, as
+    /// it gives the way to determine `raw_reads`.
+    pub fn new(input_file: &Path, raw_reads: Vec<RawRead>, read_type: ReadType) -> Self {
         Self {
-            input_file: input_file.to_string(),
+            input_file: input_file.to_path_buf(),
             coverage: Coverage::NotAvailable,
             raw_reads,
             hic_pairs: vec![],
@@ -288,24 +306,28 @@ impl DataSet {
     }
     /// Sanity check function. Call it to ensure that some properties indeed holds.
     /// Currently, the following properties are checked.
-    /// 1: The input file exists.
-    /// 2: Every encoded read has its original read.
-    /// 3: Every encoded read can be correctly recovered into the original sequence.
-    /// Of course, these should be hold at any steps in the pipeline,
-    /// So, this is just a checking function.
+    /// - The input file exists.
+    /// - All chunks in the encoded reads are defined.  
+    ///   This property seems trivial, but it is not, because sometimes
+    ///   a workflow mistakenly remove a chunk from the defined chunks.
+    /// - There are no duplication in the chunks.
+    /// - Every encoded read has its raw read.
+    /// - We can correctly recover the original ACGT sequence from every encoded read.
+    /// - If a chunk has been clusterd into several clusters, the number of   
+    ///   the cluster should be less than its copy number.
     pub fn sanity_check(&self) {
-        let chunks: HashSet<_> = self.selected_chunks.iter().map(|c| c.id).collect();
+        use std::collections::HashMap;
+        assert!(self.input_file.exists());
+        let mut chunks: HashMap<_, u32> = HashMap::new();
+        for id in self.selected_chunks.iter().map(|c| c.id) {
+            *chunks.entry(id).or_default() += 1;
+        }
+        assert!(chunks.values().all(|&x| x == 1));
         self.encoded_reads
             .iter()
             .flat_map(|r| r.nodes.iter())
-            .for_each(|n| assert!(chunks.contains(&n.chunk)));
+            .for_each(|n| assert!(chunks.contains_key(&n.chunk)));
         self.encoded_reads_can_be_recovered();
-        use std::collections::HashSet;
-        let mut chunks = HashSet::new();
-        for chunk in self.selected_chunks.iter() {
-            assert!(!chunks.contains(&chunk.id));
-            chunks.insert(chunk.id);
-        }
         for chunk in self.selected_chunks.iter() {
             assert!(
                 chunk.cluster_num <= chunk.copy_num,
@@ -315,7 +337,6 @@ impl DataSet {
                 chunk.copy_num
             );
         }
-        use std::collections::HashMap;
         let max_cl_num: HashMap<_, _> = self
             .selected_chunks
             .iter()
@@ -358,19 +379,26 @@ impl DataSet {
     }
 }
 
+/// A read consisting of its name, desciription (if available), and DNA sequence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawRead {
-    /// Name of the read. It is the `id` in the fasta/fastq file.
+    /// Name of the read. It is the `id` row in the fasta/fastq file.
     pub name: String,
+    /// Description of the read. Formally, it is the string after the first
+    /// whitespace in the header (`>`) line.
+    /// For example, if the header reads '>id_129 description:1, 3, 4',
+    /// the name would be `id_129` and the description would be `description:1, 3, 4`.
     pub desc: String,
     /// The id of the read. It is automatically given by jtk program.
     pub id: u64,
-    /// Sequence. It is a string on an alphabet of A,C,G,T,a,c,g,t.
-    /// (i.e., lowercase included)
+    /// Sequence. It is a string on an alphabet of A,C,G,T,a,c,g,t
+    /// (i.e., lowercase included). Currently, there is no ambiguous bases
+    /// and N bases allowed.
     pub seq: DNASeq,
 }
 
 impl RawRead {
+    /// Return the sequence as a `u8` slice.
     pub fn seq(&self) -> &[u8] {
         &self.seq.0
     }
@@ -382,28 +410,32 @@ impl std::fmt::Display for RawRead {
     }
 }
 
+/// Hi-C pair. Under develepment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HiCPair {
     pub pair1: u64,
     pub pair2: u64,
     pub pair_id: u64,
-    pub seq1: String,
-    pub seq2: String,
+    pub seq1: DNASeq,
+    pub seq2: DNASeq,
 }
 
 impl HiCPair {
     pub fn seq1(&self) -> &[u8] {
-        self.seq1.as_bytes()
+        &self.seq1.0
     }
     pub fn seq2(&self) -> &[u8] {
-        self.seq2.as_bytes()
+        &self.seq2.0
     }
 }
 
+/// A chunk representing a subsequence in the underlying genome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
+    /// The ID of this instance. It should be unique, so one can use this
+    /// member as a key for a HashMap.
     pub id: u64,
-    /// Unit sequence.
+    /// DNA sequence of this chunk
     pub seq: DNASeq,
     /// Current estimation of the cluster number.
     pub cluster_num: usize,
@@ -414,8 +446,30 @@ pub struct Chunk {
     pub score: f64,
 }
 
+impl Chunk {
+    /// Create a new instance from the given elements.
+    pub fn new(id: u64, seq: Vec<u8>, copy_num: usize) -> Self {
+        Self {
+            id,
+            seq: seq.into(),
+            copy_num,
+            cluster_num: 1,
+            score: 0f64,
+        }
+    }
+    /// Return the DNA sequence as an u8 slice.
+    pub fn seq(&self) -> &[u8] {
+        &self.seq.0
+    }
+}
+
 use serde_with::DeserializeFromStr;
 use serde_with::SerializeDisplay;
+/// A type representing a DNA sequence.
+/// This type implements mof of the method needed to
+/// use the usual analysis, such as indexing and seuqence modification via
+/// `std::ops::Index` and `std::ops::IndexMut`.
+/// ToDo: Add example?
 #[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, Default)]
 pub struct DNASeq(Vec<u8>);
 
@@ -468,29 +522,37 @@ impl std::convert::From<DNASeq> for Vec<u8> {
     }
 }
 
-impl Chunk {
-    pub fn new(id: u64, seq: Vec<u8>, copy_num: usize) -> Self {
-        Self {
-            id,
-            seq: seq.into(),
-            copy_num,
-            cluster_num: 1,
-            score: 0f64,
-        }
-    }
-    pub fn seq(&self) -> &[u8] {
-        &self.seq.0
+impl std::ops::Index<usize> for DNASeq {
+    type Output = u8;
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0.get(index).unwrap()
     }
 }
 
+impl std::ops::IndexMut<usize> for DNASeq {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.0.get_mut(index).unwrap()
+    }
+}
+
+/// A type representing a encoded read.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EncodedRead {
+    /// Unique ID associated with this read.
+    /// One can use this ID to get the original FASTA/Q record in `raw_reads` in a `DataSet` type.
     pub id: u64,
+    /// The length of the raw read.
     pub original_length: usize,
+    /// The length of the un-encoded bases up to the first encoded read.
     pub leading_gap: DNASeq,
+    /// The length of the un-encoded bases from the last encoded bases to the last bases.
     pub trailing_gap: DNASeq,
-    pub edges: Vec<Edge>,
+    /// The encoded region in the read. They are sorted according to the location in the
+    /// read.
     pub nodes: Vec<Node>,
+    /// The edges between two consective encodings (or nodes for short).
+    /// Thus, `edges.len() + 1 == nodes.len()` should always hold.
+    pub edges: Vec<Edge>,
 }
 
 impl std::fmt::Display for EncodedRead {
@@ -514,13 +576,27 @@ impl std::fmt::Display for EncodedRead {
 }
 
 impl EncodedRead {
+    /// Return true if there are not chunks aligned to this read.
     pub fn is_gappy(&self) -> bool {
         self.nodes.is_empty()
     }
+    /// Return the # of the total bases encoded by the chunks,
+    /// divided by the total length of the read.
     pub fn encoded_rate(&self) -> f64 {
         let encoded_length = self.encoded_length();
         encoded_length as f64 / self.original_length as f64
     }
+    /// Return the total number of bases encoded by the chunks.
+    /// Note that, if two encodings overlaps, the bases in the overlapping
+    /// region are counted only once.
+    /// For example, if we have the following alignments,
+    /// the length of the `<----->` would be returned.
+    /// ```norun
+    /// Chunk B :        -------
+    /// Chunk A :     -------
+    /// Read    :   -----------------
+    ///         :     <-------->
+    /// ```
     pub fn encoded_length(&self) -> usize {
         let sum = self.nodes.iter().map(|n| n.query_length()).sum::<usize>();
         let offset = self
@@ -536,7 +612,7 @@ impl EncodedRead {
             length as usize
         }
     }
-    /// Remove the i-th node.
+    /// Remove the i-th node. It automatically fix the edges and the overlaps.
     pub fn remove(&mut self, i: usize) {
         assert!(i < self.nodes.len());
         assert_eq!(self.nodes.len(), self.edges.len() + 1);
@@ -595,12 +671,12 @@ impl EncodedRead {
                 }
             }
             self.edges[i - 1].to = removed_edge.to;
-            //self.edges[i - 1].label = edge.iter().map(|&x| x as char).collect();
             self.edges[i - 1].label = edge.to_vec().into();
             self.edges[i - 1].offset += removed_node.seq().len() as i64 + removed_edge.offset;
         }
         assert_eq!(self.nodes.len(), self.edges.len() + 1);
     }
+    /// Get the orignal sequence.
     pub fn recover_raw_read(&self) -> Vec<u8> {
         let mut original_seq: Vec<_> = self.leading_gap.clone().into();
         for (n, e) in self.nodes.iter().zip(self.edges.iter()) {
@@ -625,10 +701,21 @@ impl EncodedRead {
     }
 }
 
+/// The edge between two consective encodings.
+/// We refer to the chunk A below as `from` encoding/node,
+/// and the chunk B as `to` enconding/node.
+/// ```norun
+/// Chunk A :   -----
+/// Chunk B :          -----
+/// Read    : -----------------
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Edge {
+    /// The ID of the chunk at the former position in the read.
     pub from: u64,
+    /// The ID of the chunk at the latter position in the read.
     pub to: u64,
+    /// The length between the two encodings. If negative, it means that these two encodings overlaps.
     pub offset: i64,
     /// This is a string on an alphabet of A,C,G,T. There might be some lowercase characters.
     pub label: DNASeq,
@@ -641,9 +728,12 @@ impl std::fmt::Display for Edge {
 }
 
 impl Edge {
+    /// Return the label.
+    /// ToDo: Make it into DNASeq?
     pub fn label(&self) -> &[u8] {
         &self.label.0
     }
+    /// Construct an edge from two nodes. `ns.len() == 2` should hold.
     pub fn from_nodes(ns: &[Node], seq: &[u8]) -> Self {
         let (from, to) = match *ns {
             [ref from, ref to] => (from, to),
@@ -669,17 +759,26 @@ impl Edge {
     }
 }
 
+/// A type representing a encoding of a chunk in a read.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Node {
-    /// 0-index.
+    /// The position in the read where the alignment starts. It is 0-based index.
     pub position_from_start: usize,
+    /// The ID of the chunk.
     pub chunk: u64,
+    /// The ID of the cluster after the clustering. If a clustering process never runs on the data,
+    /// it should be zero.
     pub cluster: u64,
-    /// Sequence. No lowercase included. Already rev-comped.
-    pub seq: DNASeq,
-    pub is_forward: bool,
-    pub cigar: Ops,
+    /// The posterior probability of the clustering. Thus, `posterior.iter().sum()` should be 1.
     pub posterior: Vec<f64>,
+    /// Sequence. No lowercase included. It is already rev-comped.
+    /// Thus, `seq` member of the instances of the `Node` type with the same `chunk` ID
+    /// should have *similar* sequences (containating errors & haplotype variants & repeat-separating variants.)
+    pub seq: DNASeq,
+    /// Whether the alignment is foward or reverse direction.
+    pub is_forward: bool,
+    /// The alignmnt operation between the sequence and the node.
+    pub cigar: Ops,
 }
 
 impl std::fmt::Display for Node {
@@ -731,9 +830,13 @@ impl Node {
             posterior: vec![post_prob; cluster_num],
         }
     }
+    /// Return the sequence of the node.
     pub fn seq(&self) -> &[u8] {
         &self.seq.0
     }
+    /// Return the sequence of the node, but reverting all the operations applied onto
+    /// the original sequence (e.g., if we have reverse-complemented the seqeunce,
+    /// make it back).
     pub fn original_seq(&self) -> Vec<u8> {
         if self.is_forward {
             self.seq.clone().into()
@@ -751,6 +854,7 @@ impl Node {
                 .collect()
         }
     }
+    /// Return the length of the query. It is the same as `self.seq().len()`
     pub fn query_length(&self) -> usize {
         self.cigar
             .iter()

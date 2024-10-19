@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "haplotyper"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bio_utils 0.3.0 (git+https://github.com/ban-m/bio_utils.git?branch=master)",
  "bytecount",
@@ -746,6 +746,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

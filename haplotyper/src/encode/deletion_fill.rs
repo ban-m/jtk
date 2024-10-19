@@ -310,14 +310,11 @@ fn correct_deletion_error(
     let ins_thr = mean_cov(&pileups)
         .map(|x| (x / 5).min(INS_THR))
         .unwrap_or(INS_THR);
-    //    let (mut tries, mut oks) = (vec![], vec![]);
     for (idx, pileup) in pileups.iter().enumerate() {
         let mut head_cand = pileup.check_insertion_head(nodes, ins_thr, idx);
         head_cand.retain(|node, _| !ft.failed_trials.contains(&(idx, *node)));
         let head_best =
             try_encoding_head(nodes, &head_cand, idx, chunkinfo, seq, read_error, stddev);
-        // tries.extend(head_cand.iter().map(|(n, p)| (n.chunk, *p, idx, 0)));
-        // oks.extend(head_best.iter().map(|(n, p)| (n.chunk, *p, idx, 0)));
         match head_best {
             Some((head_node, _)) => inserts.push((idx, head_node)),
             None => ft.extend(head_cand.keys().map(|&n| (idx, n))),
@@ -333,33 +330,22 @@ fn correct_deletion_error(
             None => ft.extend(tail_cand.into_iter().map(|x| (idx, x.0))),
         }
     }
-    // debug!("FILLING\t{}\t{:?}\t{:?}", read.id, tries, oks);
     let new_inserts: Vec<_> = inserts.iter().map(|(_, n)| n.chunk).collect();
-    // let old_len = read.nodes.len();
     ft.is_alive = !inserts.is_empty();
     if !inserts.is_empty() {
         ft.revive();
         read.nodes.extend(inserts.into_iter().map(|x| x.1));
-        // for (accum_inserts, (idx, node)) in inserts.into_iter().enumerate() {
-        //     read.nodes.insert(idx + accum_inserts, node);
-        // }
     }
     if ft.is_alive && !read.nodes.is_empty() {
         let mut nodes = Vec::with_capacity(read.nodes.len());
         nodes.append(&mut read.nodes);
         use super::{nodes_to_encoded_read, remove_overlapping_encoding, remove_slippy_alignment};
-        // let prev: HashSet<_> = nodes.iter().map(|x| x.chunk).collect();
         nodes.sort_by_key(|n| (n.chunk, n.position_from_start));
         nodes = remove_slippy_alignment(nodes);
         nodes.sort_by_key(|n| n.position_from_start);
         nodes = remove_slippy_alignment(nodes);
         nodes = remove_overlapping_encoding(nodes);
-        // let after: HashSet<_> = nodes.iter().map(|x| x.chunk).collect();
-        // let deled: Vec<_> = prev.difference(&after).collect();
         *read = nodes_to_encoded_read(read.id, nodes, seq).unwrap();
-        // if old_len == read.nodes.len() {
-        //     debug!("REMOVED\t{}\t{deled:?}\t{}", read.id, deled.len());
-        // }
     }
     new_inserts
 }

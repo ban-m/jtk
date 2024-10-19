@@ -80,6 +80,12 @@ JTK accurately assembles a pair of two (near-)complete haplotype sequences of a 
 
 ## Installation
 
+We have three options to install `jtk`.
+
+1. Use `docker` to build the image. To do that, `docker build .` would be OK.
+2. Use `singularity` to build the image. To do that, `singularity build jtk.sif ./jtk.def` would be OK. We also provide a pre-built `jtk` image at [here]().
+3. Manually install `jtk` by using compiler. We recommend this approach, as it would provide the most efficient binary to most of the case.
+
 ### Requirements
 
 - [minimap2](https://github.com/lh3/minimap2) with version >= 2.23.
@@ -298,3 +304,10 @@ Masutani et al., *Bioinformatics*, 2023
 - Clarify Rust version requirement (nightly or stable?)
 - Incorporate minimap2 into this repository？
 - Add more examples
+
+## ToDo
+
+- Clean up code base
+- HiC integration
+- Singularity image
+- Regression files (automatically confirm whether the change in the codebase would not effect the algorithm.)

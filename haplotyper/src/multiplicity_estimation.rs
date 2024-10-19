@@ -3,18 +3,17 @@ use definitions::DataSet;
 use serde::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiplicityEstimationConfig {
     seed: u64,
-    path: Option<String>,
+    path: Option<PathBuf>,
 }
 
 impl MultiplicityEstimationConfig {
-    pub fn new(seed: u64, path: Option<&str>) -> Self {
-        Self {
-            seed,
-            path: path.map(|x| x.to_string()),
-        }
+    pub fn new(seed: u64, path: Option<&PathBuf>) -> Self {
+        let path = path.cloned();
+        Self { seed, path }
     }
 }
 

@@ -90,7 +90,7 @@ impl DetermineUnit for definitions::DataSet {
         use crate::repeat_masking::RepeatMask;
         use crate::stats::Stats;
         let repetitive_kmer = self.get_repetitive_kmer();
-        let mut sim_thr = self.read_type.sim_thr();
+        let mut sim_thr = self.read_type.error_upperbound();
         {
             debug!("UNITNUM\t{}\tREMOVED", self.selected_chunks.len());
             self.encode(config.threads, FIRST_RELAX * sim_thr, STDDEV_OR_ERROR);
@@ -108,7 +108,7 @@ impl DetermineUnit for definitions::DataSet {
         // 2nd polishing.
         {
             self.encode(config.threads, sim_thr, STDDEV_OR_ERROR);
-            sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
+            sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.error_upperbound());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             let fill_config = crate::encode::deletion_fill::CorrectDeletionConfig::new(
                 false,
@@ -152,14 +152,14 @@ impl DetermineUnit for definitions::DataSet {
             remove_frequent_chunks(self, upper_count);
             filter_chunk_by_ovlp(self, config);
             self.encode(config.threads, sim_thr, self.read_type.sd_of_error());
-            sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
+            sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.error_upperbound());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             remove_frequent_chunks(self, upper_count);
             filter_chunk_by_ovlp(self, config);
             compaction_chunks(self);
             debug!("UNITNUM\t{}\tFILTERED\t2", self.selected_chunks.len());
             remove_frequent_chunks(self, upper_count);
-            sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.sim_thr());
+            sim_thr = calc_sim_thr(self, TAKE_THR).max(self.read_type.error_upperbound());
             debug!("ERRORRATE\t{}\t{}", self.error_rate(), sim_thr);
             let polish_config = PolishChunkConfig::new(self.read_type, 2 * filter_size, CONS_COV);
             dump_histogram(self);
@@ -536,7 +536,7 @@ fn fill_gap(
         kiley::bialignment::guided::global_guided(chunk.seq(), seq, &ops, band, ALN_PARAMETER);
     let mat_num = ops.iter().filter(|&&op| op == kiley::Op::Match).count();
     let identity = mat_num as f64 / ops.len() as f64;
-    (1f64 - identity < readtype.sim_thr()).then(|| {
+    (1f64 - identity < readtype.error_upperbound()).then(|| {
         let cigar = crate::misc::kiley_op_to_ops(&ops).0;
         let seq = seq.to_vec();
         Node::new(chunk.id, direction, seq, cigar, position_from_start, 2)

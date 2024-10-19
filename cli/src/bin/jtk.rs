@@ -2,6 +2,7 @@ use definitions::*;
 use haplotyper::model_tune::ModelFit;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 #[macro_use]
 extern crate log;
 
@@ -58,19 +59,23 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     use haplotyper::entry::Entry;
     debug!("START\tEntry");
     set_threads(matches);
-    let file = matches.value_of("input").unwrap();
-    let reader = std::fs::File::open(file).map(BufReader::new)?;
-    debug!("Opening {}", file);
-    let seqs: Vec<(String, Vec<u8>)> = match file.chars().last() {
-        Some('a') => bio_utils::fasta::parse_into_vec_from(reader)?
+    let file = std::path::PathBuf::from(matches.value_of("input").unwrap());
+    debug!("Opening {:?}", file);
+    let reader = std::fs::File::open(&file).map(BufReader::new)?;
+    let extension = file.extension().unwrap().to_str().unwrap();
+    let is_fasta = extension.ends_with('a');
+    let is_fastq = extension.ends_with('q');
+    let seqs: Vec<(String, Vec<u8>)> = if is_fasta {
+        bio_utils::fasta::parse_into_vec_from(reader)?
             .into_iter()
             .map(|records| {
                 let (id, _, seq) = records.into();
                 let seq = seq.into_bytes();
                 (id, seq)
             })
-            .collect(),
-        Some('q') => bio_utils::fastq::parse_into_vec_from(reader)?
+            .collect()
+    } else if is_fastq {
+        bio_utils::fastq::parse_into_vec_from(reader)?
             .into_iter()
             .map(|record| {
                 if record.seq().iter().any(|x| !b"ACGT".contains(x)) {
@@ -79,11 +84,18 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
                 let (id, seq, _) = record.into();
                 (id, seq)
             })
-            .collect(),
-        _ => panic!("file type:{} not supported", file),
+            .collect()
+    } else {
+        panic!("file type:{:?} not supported", file)
     };
     let read_type = matches.value_of("read_type").unwrap();
-    Ok(DataSet::entry(file, seqs, read_type))
+    let read_type = match read_type {
+        "CLR" => ReadType::CLR,
+        "CCS" => ReadType::CCS,
+        "ONT" => ReadType::ONT,
+        _ => ReadType::None,
+    };
+    Ok(DataSet::entry(&file, seqs, read_type))
 }
 
 fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
@@ -173,7 +185,7 @@ fn encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     let rt = dataset.read_type;
     let sim_thr = match matches.value_of("sim_thr").and_then(|e| e.parse().ok()) {
         Some(res) => res,
-        None => rt.sim_thr(),
+        None => rt.error_upperbound(),
     };
     dataset.encode(threads, sim_thr, rt.sd_of_error())
 }
@@ -207,11 +219,11 @@ fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         Some(cov) => definitions::Coverage::Protected(cov),
         None => definitions::Coverage::NotAvailable,
     };
-    let path = matches.value_of("draft_assembly");
+    let path = matches.value_of("draft_assembly").map(PathBuf::from);
     set_threads(matches);
     use haplotyper::multiplicity_estimation::*;
     let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
-    let config = MultiplicityEstimationConfig::new(seed, path);
+    let config = MultiplicityEstimationConfig::new(seed, path.as_ref());
     dataset.estimate_multiplicity(&config);
     if let Some(upper) = purge {
         dataset.purge_multiplicity(upper);
@@ -271,8 +283,8 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
         .and_then(|num| num.parse().ok())
         .unwrap();
     use haplotyper::dense_encoding::*;
-    let file = matches.value_of("output");
-    let config = DenseEncodingConfig::new(length, file);
+    let file = matches.value_of("output").map(std::path::PathBuf::from);
+    let config = DenseEncodingConfig::new(length, file.as_ref());
     dataset.dense_encoding(&config);
 }
 fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {

@@ -1,16 +1,11 @@
+use definitions::ReadType;
+use std::path::Path;
 pub trait Entry {
-    fn entry(input_file: &str, raw_data: Vec<(String, Vec<u8>)>, rt: &str) -> Self;
+    fn entry(input_file: &Path, raw_data: Vec<(String, Vec<u8>)>, read_type: ReadType) -> Self;
 }
 
 impl Entry for definitions::DataSet {
-    fn entry(input_file: &str, raw_data: Vec<(String, Vec<u8>)>, rt: &str) -> Self {
-        use definitions::ReadType;
-        let read_type = match rt {
-            "CLR" => ReadType::CLR,
-            "CCS" => ReadType::CCS,
-            "ONT" => ReadType::ONT,
-            _ => ReadType::None,
-        };
+    fn entry(input_file: &Path, raw_data: Vec<(String, Vec<u8>)>, read_type: ReadType) -> Self {
         let compress_thr = match read_type {
             ReadType::CCS => 100,
             ReadType::CLR => 40,
@@ -41,7 +36,7 @@ impl Entry for definitions::DataSet {
                 panic!("{}", base);
             }
         }
-        DataSet::with_minimum_data(input_file, raw_reads, read_type)
+        DataSet::new(input_file, raw_reads, read_type)
     }
 }
 

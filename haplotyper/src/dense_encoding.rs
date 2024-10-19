@@ -10,17 +10,16 @@ const CONS_MAX_LENGTH: usize = 10_000;
 type DEdge = ((u64, u64, bool), (u64, u64, bool));
 // (chunk,cluster,direction, if it is `from` part)
 type DTip = (u64, u64, bool, bool);
+use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct DenseEncodingConfig {
     pub len: usize,
-    pub file: Option<String>,
+    pub file: Option<PathBuf>,
 }
 impl DenseEncodingConfig {
-    pub fn new(len: usize, file: Option<&str>) -> Self {
-        Self {
-            len,
-            file: file.map(|f| f.to_string()),
-        }
+    pub fn new(len: usize, file: Option<&PathBuf>) -> Self {
+        let file = file.cloned();
+        Self { len, file }
     }
 }
 pub trait DenseEncoding {
@@ -330,12 +329,12 @@ fn write_to_file(
     }
 }
 
+const MIN_LLR: f64 = 1.3;
+const MIN_SPAN: usize = 4;
 type EdgeAndUnit = HashMap<DEdge, Vec<Chunk>>;
 fn enumerate_polyploid_edges(ds: &DataSet, de_config: &DenseEncodingConfig) -> EdgeAndUnit {
     use crate::assemble::*;
-    let msr = ds.read_type.weak_span_reads();
-    let min_lk = ds.read_type.weak_llr();
-    let config = AssembleConfig::new(1000, false, true, msr, min_lk, false, None);
+    let config = AssembleConfig::new(1000, false, true, MIN_SPAN, MIN_LLR, false, None);
     let (records, summaries) = assemble(ds, &config);
     write_to_file(&records, &summaries, de_config);
     let multicopy_contigs: HashMap<_, _> = summaries
@@ -570,7 +569,7 @@ fn consensus(mut seqs: Vec<Vec<u8>>, cov_thr: usize) -> Option<Vec<u8>> {
         })
         .collect();
     let mean_len = seqs.iter().map(|x| x.len()).sum::<usize>() / seqs.len();
-    let band_width = (mean_len / 20).max(10).min(50);
+    let band_width = (mean_len / 20).clamp(10, 50);
     let draft =
         kiley::bialignment::guided::polish_until_converge_with(&draft, &seqs, &mut ops, band_width);
     let cons =
@@ -655,7 +654,7 @@ fn encode_edge(
     let mut ypos = remove_leading_insertions(&mut ops);
     // Encoded nodes.
     let mut nodes = vec![];
-    let sim_thr = read_type.sim_thr();
+    let sim_thr = read_type.error_upperbound();
     for op in ops {
         match op {
             kiley::Op::Match | kiley::Op::Mismatch => {

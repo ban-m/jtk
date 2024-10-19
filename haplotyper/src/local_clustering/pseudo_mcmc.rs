@@ -554,15 +554,6 @@ fn pick_filtered_profiles<T: std::borrow::Borrow<[f64]>>(
                         *selected = 3;
                     }
                 }
-                // let sok_sim = sokal_michener(profiles, picked_pos, pos);
-                // let cos_sim = cosine_similarity(profiles, picked_pos, pos);
-                // if 0.99 < sok_sim || 0.99 < cos_sim.abs() || diff_in_bp < MASK_LENGTH {
-                //     trace!("REMOVE\tPERM\t{pos_in_bp}\t{picked_pos_in_bp}\t{sok_sim:.3}\t{cos_sim:.3}");
-                //     *selected = 2;
-                // } else if 0.8 < cos_sim.abs() {
-                //     trace!("REMOVE\tTEMP\t{pos_in_bp}\t{picked_pos_in_bp}\t{sok_sim:.3}\t{cos_sim:.3}");
-                //     *selected = 3;
-                // }
             }
         }
     }

@@ -1,12 +1,26 @@
+//! Pipelines -- the whole pipeline of the JTK.
+//!
+//! This module defines the pipeline of the JTK to assemble a genomic region in a diploid resolution.
 use definitions::DataSet;
+use definitions::ReadType;
 use serde::{Deserialize, Serialize};
 extern crate log;
 use log::*;
+use std::path::Path;
+use std::path::PathBuf;
+
+/// The configuration of the pipeline.
+/// This struct is a comprehensive list of the parameters that can be
+/// set by a user. All other parameters in the pipeline or algorithm would be determined automatically or
+/// hard-coded to the values that work well for most of the case.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PipelineConfig {
-    input_file: String,
-    read_type: String,
-    out_dir: String,
+    /// The path to the input file.
+    input_file: PathBuf,
+    /// The type of the read. One of the
+    read_type: ReadType,
+    /// The path to the output directory.
+    out_dir: PathBuf,
     prefix: String,
     verbose: usize,
     threads: usize,
@@ -32,6 +46,7 @@ pub struct PipelineConfig {
     mismatch_ari: f64,
     required_count: usize,
 }
+
 use haplotyper::{local_clustering::LocalClustering, *};
 use std::io::{BufReader, BufWriter, Write};
 pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
@@ -71,12 +86,12 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         _ => "trace",
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
-    let file_stem = format!("{out_dir}/{prefix}");
-    let entry = format!("{file_stem}.entry.json");
-    let encoded = format!("{file_stem}.encoded.json");
-    let clustered = format!("{file_stem}.clustered.json");
-    let dense_encoded = format!("{file_stem}.de.json");
-    let corrected = format!("{file_stem}.json");
+    let file_stem = out_dir.join(prefix);
+    let entry = file_stem.with_extension("entry.json");
+    let encoded = file_stem.with_extension("encoded.json");
+    let clustered = file_stem.with_extension("clustered.json");
+    let dense_encoded = file_stem.with_extension("de.json");
+    let corrected = file_stem.with_extension("json");
     assert!(kmersize < 32);
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -104,14 +119,15 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
         seed,
     );
     let pick_component_config = ComponentPickingConfig::new(component_num);
-    let draft = format!("{file_stem}.draft.gfa");
+    let draft = file_stem.with_extension("draft.gfa");
     let multp_config = MultiplicityEstimationConfig::new(seed, Some(&draft));
     let purge_config = PurgeDivConfig::new();
-    let de = format!("{file_stem}.draft2.gfa");
+    let de = file_stem.with_extension("draft2.gfa");
     let dense_encode_config = DenseEncodingConfig::new(compress_contig, Some(&de));
     let correction_config = CorrectionConfig::default();
     use haplotyper::determine_chunks::STDDEV_OR_ERROR;
-    let dump = Some(file_stem.as_str());
+    // TODO: Make this to as-is.
+    let dump = file_stem.as_os_str().to_str();
     let assemble_config = AssembleConfig::new(
         polish_window_size,
         to_polish,
@@ -128,14 +144,14 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     // Pipeline.
     let mut ds = match resume && matches!(std::path::Path::new(&entry).try_exists(), Ok(true)) {
         false => {
-            let mut ds = parse_input(&input_file, &read_type)?;
+            let mut ds = parse_input(&input_file, read_type)?;
             if let Some(hap) = haploid_coverage {
                 ds.coverage = definitions::Coverage::Protected(hap);
             }
             log(&ds, &entry)?;
             ds
         }
-        true => parse_input(&input_file, &read_type)?,
+        true => parse_input(&input_file, read_type)?,
     };
     if resume && matches!(std::path::Path::new(&encoded).try_exists(), Ok(true)) {
         ds = parse_json(&encoded)?
@@ -174,37 +190,42 @@ pub fn run_pipeline(config: &PipelineConfig) -> std::io::Result<()> {
     }
     // Flush the result.
     let gfa = ds.assemble(&assemble_config);
-    let mut asm_file = std::fs::File::create(format!("{file_stem}.gfa")).map(BufWriter::new)?;
+    let mut asm_file =
+        std::fs::File::create(file_stem.clone().with_extension("gfa")).map(BufWriter::new)?;
     writeln!(asm_file, "{gfa}")
 }
 
-fn parse_json(filename: &str) -> std::io::Result<DataSet> {
-    debug!("RESUME\t{filename}");
+fn parse_json(filename: &Path) -> std::io::Result<DataSet> {
+    debug!("RESUME\t{filename:?}");
     std::fs::File::open(filename)
         .map(std::io::BufReader::new)
         .map(serde_json::de::from_reader)
         .map(|x| x.unwrap())
 }
 
-fn log(ds: &DataSet, path: &str) -> std::io::Result<()> {
+fn log(ds: &DataSet, path: &Path) -> std::io::Result<()> {
     let mut wtr = std::fs::File::create(path).map(BufWriter::new)?;
     serde_json::ser::to_writer(&mut wtr, ds).unwrap();
     Ok(())
 }
 
-fn parse_input(input_file: &str, read_type: &str) -> std::io::Result<DataSet> {
-    debug!("Opening {}", input_file);
+fn parse_input(input_file: &PathBuf, read_type: ReadType) -> std::io::Result<DataSet> {
+    debug!("Opening {:?}", input_file);
     let reader = std::fs::File::open(input_file).map(BufReader::new)?;
-    let seqs: Vec<(String, Vec<u8>)> = match input_file.chars().last() {
-        Some('a') => bio_utils::fasta::parse_into_vec_from(reader)?
+    let extension = input_file.extension().unwrap().to_str().unwrap();
+    let is_fasta = extension.ends_with('a');
+    let is_fastq = extension.ends_with('q');
+    let seqs: Vec<(String, Vec<u8>)> = if is_fasta {
+        bio_utils::fasta::parse_into_vec_from(reader)?
             .into_iter()
             .map(|records| {
                 let (id, _, seq) = records.into();
                 let seq = seq.into_bytes();
                 (id, seq)
             })
-            .collect(),
-        Some('q') => bio_utils::fastq::parse_into_vec_from(reader)?
+            .collect()
+    } else if is_fastq {
+        bio_utils::fastq::parse_into_vec_from(reader)?
             .into_iter()
             .map(|record| {
                 if record.seq().iter().any(|x| !b"ACGT".contains(x)) {
@@ -213,8 +234,9 @@ fn parse_input(input_file: &str, read_type: &str) -> std::io::Result<DataSet> {
                 let (id, seq, _) = record.into();
                 (id, seq)
             })
-            .collect(),
-        _ => panic!("file type:{} not supported", input_file),
+            .collect()
+    } else {
+        panic!("file type:{:?} not supported", input_file)
     };
     Ok(DataSet::entry(input_file, seqs, read_type))
 }

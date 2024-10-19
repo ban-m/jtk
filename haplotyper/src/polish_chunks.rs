@@ -119,36 +119,6 @@ impl PolishChunk for DataSet {
                 node.cigar = crate::misc::kiley_op_to_ops(&ops);
             });
         });
-        // let result: HashMap<_, _> = pileups
-        //     .par_iter_mut()
-        //     .map(|(id, pileup)| {
-        //         let med_idx = pileup.len() / 2;
-        //         pileup.select_nth_unstable_by_key(med_idx, |x| x.seq().len());
-        //         pileup.swap(0, med_idx);
-        //         let draft = pileup[0].seq();
-        //         let (seqs, mut ops): (Vec<_>, Vec<Vec<kiley::op::Op>>) = pileup
-        //             .iter()
-        //             .map(|x| {
-        //                 let ops = crate::misc::ops_to_kiley(&x.cigar);
-        //                 (x.seq(), ops)
-        //             })
-        //             .unzip();
-        //         use kiley::bialignment::guided::polish_until_converge_with_take;
-        //         let radius = c.read_type().band_width(draft.len());
-        //         let cov = c.consensus_size;
-        //         let consensus =
-        //             polish_until_converge_with_take(draft, &seqs, &mut ops, radius, cov);
-        //         pileup.iter_mut().zip(ops).for_each(|(node, ops)| {
-        //             node.cigar = crate::misc::kiley_op_to_ops(&ops);
-        //         });
-        //         (id, consensus)
-        //     })
-        //     .collect();
-        // self.selected_chunks
-        //     .retain(|chunk| result.contains_key(&chunk.id));
-        // self.selected_chunks.iter_mut().for_each(|chunk| {
-        //     chunk.seq = result[&chunk.id].clone().into();
-        // });
         self.polish_chunk(c);
     }
 }

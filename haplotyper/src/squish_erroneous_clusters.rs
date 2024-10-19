@@ -261,7 +261,7 @@ fn classify(adj_rand_indices: &[(u64, u64, (f64, usize))], config: &SquishConfig
     }
     let mut graph = vec![vec![]; nodes.len()];
     for &(from, to, (ari, count)) in adj_rand_indices.iter() {
-        let ari = ari.max(0f64).min(1f64);
+        let ari = ari.clamp(0f64, 1f64);
         let (from, to) = (nodes[&from], nodes[&to]);
         graph[from].push((to, ari, count));
         graph[to].push((from, ari, count));
