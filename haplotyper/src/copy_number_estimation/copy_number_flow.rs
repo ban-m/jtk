@@ -1,4 +1,5 @@
 use crate::find_union::FindUnion;
+use log::*;
 use rand::Rng;
 use std::collections::HashSet;
 

@@ -1,5 +1,7 @@
 pub const MEDIAN_FRAC: usize = 4;
 pub const IMPROVE_THR: f64 = 3f64;
+use log::*;
+
 pub trait RemoveErroneousNodes {
     fn remove_erroneous_nodes(&mut self);
 }

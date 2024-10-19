@@ -1,7 +1,9 @@
 use definitions::EncodedRead;
+use log::*;
 use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
 type Node = (u64, u64);
 type Edge = ((Node, bool), (Node, bool));
 type CopyNumResult = (Vec<(Node, usize)>, Vec<(Edge, usize)>);
@@ -599,7 +601,7 @@ mod test {
         let mean_cov = 20;
         let div = 5;
         let node_cp: Vec<usize> =
-            vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
+            [vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
         let coverages: Vec<_> = node_cp
             .iter()
             .map(|&copy| {
@@ -607,14 +609,12 @@ mod test {
                 (cov, 1)
             })
             .collect();
-        let _edge_cp: Vec<usize> = vec![
-            vec![2],
+        let _edge_cp: Vec<usize> = [vec![2],
             vec![1; 6],
             vec![2; 2],
             vec![1; 10],
             vec![2; 2],
-            vec![1],
-        ]
+            vec![1]]
         .concat();
         let edges = vec![
             (0, false, 1, true),

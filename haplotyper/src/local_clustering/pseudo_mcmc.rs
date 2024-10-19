@@ -5,6 +5,7 @@ const MAX_HOMOP_LENGTH: usize = 2;
 const POS_THR: f64 = 0.00001;
 use crate::likelihood_gains::{Gains, Pvalues};
 use kiley::hmm::NUM_ROW;
+use log::*;
 use rand::Rng;
 
 type FeatureVector = (

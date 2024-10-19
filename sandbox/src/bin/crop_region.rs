@@ -19,7 +19,7 @@ fn main() -> std::io::Result<()> {
     let cut_positions: Vec<_> = std::fs::File::open(&args[3])
         .map(BufReader::new)?
         .lines()
-        .filter_map(|r| r.ok())
+        .map_while(Result::ok)
         .map(|line| {
             let line: Vec<_> = line.split('\t').collect();
             let ctg_name = line[0].to_string();

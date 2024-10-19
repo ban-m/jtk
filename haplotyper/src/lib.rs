@@ -1,5 +1,3 @@
-#[macro_use]
-extern crate log;
 pub mod assemble;
 pub mod consensus;
 pub mod copy_number_estimation;

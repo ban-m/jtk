@@ -4,6 +4,8 @@ use rand::{prelude::SliceRandom, Rng};
 use rayon::prelude::*;
 use std::collections::HashMap;
 const LARGE_VALUE: f64 = 1000000f64;
+use log::*;
+
 const INIT_NEG_COPY_NUM_PEN: f64 = 100f64;
 #[derive(Debug, Clone)]
 pub struct MSTConfig {
@@ -604,7 +606,7 @@ pub mod tests {
             FatEdge::new(12, 11, 1, 1),
             FatEdge::new(13, 12, 2, 1),
         ];
-        let mut graph = vec![Vec::with_capacity(2); 14];
+        let mut graph = (0..14).map(|_| Vec::with_capacity(2)).collect::<Vec<_>>();
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
             graph[edge.to].push(LightEdge::new(edge.from));
@@ -642,7 +644,7 @@ pub mod tests {
             FatEdge::new(11, 12, 2, 1),
             FatEdge::new(12, 13, 2, 1),
         ];
-        let mut graph = vec![Vec::with_capacity(2); 14];
+        let mut graph = (0..14).map(|_| Vec::with_capacity(2)).collect::<Vec<_>>();
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
             graph[edge.to].push(LightEdge::new(edge.from));
@@ -673,7 +675,7 @@ pub mod tests {
             FatEdge::new(5, 6, 5, 1),
             FatEdge::new(6, 7, 20, 1),
         ];
-        let mut graph = vec![Vec::with_capacity(2); 8];
+        let mut graph = (0..8).map(|_| Vec::with_capacity(2)).collect::<Vec<_>>();
         for edge in edges.iter() {
             graph[edge.from].push(LightEdge::new(edge.to));
             graph[edge.to].push(LightEdge::new(edge.from));

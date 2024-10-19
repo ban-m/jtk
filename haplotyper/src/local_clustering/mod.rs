@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 mod config;
 pub use config::*;
+use log::*;
 
 use crate::model_tune::ModelFit;
 pub mod exact_clustering;
@@ -105,7 +106,7 @@ fn clustering_on_pileup(
     let cons = hmm.polish_until_converge_antidiagonal(refseq, &seqs, &mut ops, &strands, &config);
     let polished = std::time::Instant::now();
     let per_cluster_cov = match copy_num {
-        0 | 1 | 2 => seqs.len() as f64 / copy_num as f64,
+        0..=2 => seqs.len() as f64 / copy_num as f64,
         _ => (seqs.len() as f64 / copy_num as f64).max(coverage),
     };
     let config = ClusteringConfig::new(band_width / 2, copy_num, coverage, per_cluster_cov, gains);
@@ -164,7 +165,7 @@ fn clustering_recursive<R: rand::Rng>(
         trace!("RECURSE\tCLNUM\t{:?}\t{}", cluster_nums, config.copy_num);
         let total_cluster_num: usize = cluster_nums.iter().sum();
         let offsets = cumsum(cluster_nums.iter().copied());
-        let mut pointers = vec![0; BRANCH_NUM];
+        let mut pointers = [0; BRANCH_NUM];
         let mut merged_asn = Vec::with_capacity(seqs.len());
         let mut merged_post = Vec::with_capacity(seqs.len());
         for (asn, ps) in asn.into_iter().zip(pss) {

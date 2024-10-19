@@ -2,6 +2,7 @@
 //! Estimate copy number of chunks based on coverages.
 //! # Example
 //! ```rust
+//! use haplotyper::copy_number_estimation::copy_number_barrier::*;
 //! use haplotyper::copy_number_estimation::*;
 //! let mut ds = definitions::DataSet::new();
 //! let config = Config::default();
@@ -10,6 +11,8 @@
 //! // Get copy numbers.
 //! let (node_copies, edge_copies) = ds.estimate_copy_numbers(&config);
 //! ```
+use log::*;
+
 // Out of the haploid coverage, how much fraction would be observed in the 0-coverage nodes.
 // For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge
 // even in the zero-copy elements.
@@ -524,19 +527,17 @@ mod test {
         let mean_cov = 20;
         let div = 5;
         let node_cp: Vec<usize> =
-            vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
+            [vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
         let nodes: Vec<_> = node_cp
             .iter()
             .map(|&copy| rng.gen_range(mean_cov * copy - div..mean_cov * copy + div) as u64)
             .collect();
-        let edge_cp: Vec<usize> = vec![
-            vec![2],
+        let edge_cp: Vec<usize> = [vec![2],
             vec![1; 6],
             vec![2; 2],
             vec![1; 10],
             vec![2; 2],
-            vec![1],
-        ]
+            vec![1]]
         .concat();
         let edges: Vec<_> = edge_cp
             .iter()

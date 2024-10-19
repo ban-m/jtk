@@ -26,9 +26,9 @@ impl Entry for definitions::DataSet {
                 }
             })
             .collect();
-        debug!("Input\tReadNum\t{}", raw_reads.len());
+        log::debug!("Input\tReadNum\t{}", raw_reads.len());
         let sum: usize = raw_reads.iter().map(|r| r.seq().len()).sum();
-        debug!("Input\tBasePair(Mbp)\t{}", sum / 1_000_000);
+        log::debug!("Input\tBasePair(Mbp)\t{}", sum / 1_000_000);
         use definitions::DataSet;
         for read in raw_reads.iter() {
             if read.seq().iter().any(|x| !b"ACGT".contains(x)) {

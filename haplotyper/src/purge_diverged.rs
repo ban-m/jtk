@@ -1,6 +1,8 @@
 //! This modeule includes methods to newly define chunks
 //! From the result of local clustering.
 use definitions::*;
+use log::*;
+
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Default)]
 pub struct PurgeDivConfig {}

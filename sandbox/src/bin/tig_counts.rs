@@ -40,7 +40,7 @@ fn main() -> std::io::Result<()> {
     use std::io::BufRead;
     let tigs: Vec<_> = tigs
         .lines()
-        .filter_map(|x| x.ok())
+        .map_while(Result::ok)
         .map(|line| {
             let mut line = line.split('\t');
             let id = line.next().unwrap().to_string();

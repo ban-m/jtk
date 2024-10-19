@@ -1,4 +1,5 @@
 use definitions::*;
+use log::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 

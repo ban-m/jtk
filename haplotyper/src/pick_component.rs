@@ -1,4 +1,6 @@
 use definitions::*;
+use log::*;
+
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Copy)]
 pub struct ComponentPickingConfig {

@@ -26,7 +26,7 @@ struct Args {
     /// The band length of the alignment.
     #[clap(short, long, default_value_t = 20)]
     radius: usize,
-    #[clap(short, long, parse(from_occurrences))]
+    #[clap(short, long, action=clap::ArgAction::Count)]
     verbose: usize,
 }
 

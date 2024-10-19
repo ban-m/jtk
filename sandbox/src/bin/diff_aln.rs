@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
     let records: Vec<_> = std::fs::File::open(&args[1])
         .map(BufReader::new)?
         .lines()
-        .filter_map(|x| x.ok())
+        .map_while(Result::ok)
         .filter_map(|l| bio_utils::paf::PAF::new(&l))
         .collect();
     for record in records.iter() {

@@ -1,3 +1,5 @@
+use log::*;
+
 /// Invole minimap2 with specified input and return the stdout directry.
 pub fn minimap2(
     query: &str,

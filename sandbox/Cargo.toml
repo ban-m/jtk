@@ -10,18 +10,17 @@ edition = "2018"
 rand = "0.8.5"
 rand_xoshiro = "0.6.0"
 rand_distr = "0.4.3"
-serde = {version = "1.0", features = ["derive"]}
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-definitions = {path = "../definitions"}
-histgram_viz = {git = "https://github.com/ban-m/histgram_viz", branch = "master"}
-haplotyper = {path = "../haplotyper"}
-env_logger = "0.9.0"
-log = "0.4.17"
-gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
-rayon = "1.5.3"
-bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
-edlib_sys = {git = "https://github.com/ban-m/edlib-sys.git", branch = "master"}
-clap = {version = "3.1.18", features = ["derive"]}
-kiley = {git = "https://github.com/ban-m/kiley.git", branch = "master", version = "0.3.0"}
-# kiley = {path = "../../kiley"}
+clap = { version = "4.5.13", features = ["derive"] }
+log = "0.4.22"
+env_logger = "0.11.5"
+rayon = "1.10.0"
+bio_utils = { git = "https://github.com/ban-m/bio_utils.git", branch = "master" }
+edlib_sys = { git = "https://github.com/ban-m/edlib-sys.git", branch = "master" }
+gfa = { git = "https://github.com/ban-m/gfa_rust.git", branch = "master" }
+histgram_viz = { git = "https://github.com/ban-m/histgram_viz", branch = "master" }
+kiley = { git = "https://github.com/ban-m/kiley.git", branch = "main", version = "0.3.0" }
 toml = "0.5.9"
+definitions = { path = "../definitions" }
+haplotyper = { path = "../haplotyper" }

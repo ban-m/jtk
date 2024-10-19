@@ -1,6 +1,7 @@
 use super::AssembleConfig;
 use definitions::DNASeq;
 use definitions::{Chunk, EncodedRead};
+use log::*;
 pub mod sequence_generation;
 pub use sequence_generation::*;
 use std::collections::HashMap;
@@ -1516,8 +1517,7 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
             }
             let mut actives = HashSet::new();
             let mut stack = vec![idx];
-            while !stack.is_empty() {
-                let last = stack.pop().unwrap();
+            while let Some(last) = stack.pop() {
                 actives.insert(last);
                 arrived.insert(last);
                 for to in self.node(last).unwrap().edges.iter().map(|x| x.to) {
@@ -1740,8 +1740,10 @@ impl<'b, 'a: 'b> DitchGraph<'a> {
     /// In this function, we select edges based on the topology of the graph.
     /// Suppose a node with the degree more than 2 has a edge with no conflicting edge.
     /// Then, we remove edges from that node satisfying the conditions below:
+    ///
     /// 1. It connect to a node with degree more than 1.
     /// 2. The connected node has at least one connected node with outdegree is equal to 1.
+    ///
     /// In other words, we remove edges we could not select, otherwise the resulting graph would be split.
     pub fn z_edge_selection(&mut self) {
         let mut removed_edges = HashSet::new();

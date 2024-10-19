@@ -1,11 +1,11 @@
 //! Methods to update copy numbers.
-//!
 use super::DitEdge;
 use super::DitchEdge;
 use super::DitchGraph;
 use super::EdgeBetweenSimplePath;
 use super::NodeIndex;
 use super::Position;
+use log::*;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 

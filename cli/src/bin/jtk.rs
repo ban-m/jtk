@@ -1,15 +1,14 @@
 use definitions::*;
 use haplotyper::model_tune::ModelFit;
+use log::debug;
 use std::io::BufReader;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-#[macro_use]
-extern crate log;
 
 fn main() -> std::io::Result<()> {
     let matches = jtk_cli::jtk_commands::jtk_parser().get_matches();
     if let Some(("pipeline", sub_m)) = matches.subcommand() {
-        let path = sub_m.value_of("profile").unwrap();
+        let path: &String = sub_m.get_one("profile").unwrap();
         use std::io::Read;
         let mut rdr = std::fs::File::open(path).map(std::io::BufReader::new)?;
         let mut file = String::new();
@@ -18,7 +17,7 @@ fn main() -> std::io::Result<()> {
         return jtk_cli::pipeline::run_pipeline(&config);
     }
     if let Some((_, sub_m)) = matches.subcommand() {
-        let level = match sub_m.occurrences_of("verbose") {
+        let level = match sub_m.get_count("verbose") {
             0 => "warn",
             1 => "info",
             2 => "debug",
@@ -59,7 +58,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     use haplotyper::entry::Entry;
     debug!("START\tEntry");
     set_threads(matches);
-    let file = std::path::PathBuf::from(matches.value_of("input").unwrap());
+    let file = std::path::PathBuf::from(matches.get_one::<&String>("input").unwrap());
     debug!("Opening {:?}", file);
     let reader = std::fs::File::open(&file).map(BufReader::new)?;
     let extension = file.extension().unwrap().to_str().unwrap();
@@ -88,7 +87,7 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
     } else {
         panic!("file type:{:?} not supported", file)
     };
-    let read_type = matches.value_of("read_type").unwrap();
+    let read_type = matches.get_one("read_type").cloned().unwrap();
     let read_type = match read_type {
         "CLR" => ReadType::CLR,
         "CCS" => ReadType::CCS,
@@ -101,8 +100,8 @@ fn entry(matches: &clap::ArgMatches) -> std::io::Result<DataSet> {
 fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
     use haplotyper::extract::Extract;
     debug!("START\tExtract");
-    debug!("Target is {}", matches.value_of("target").unwrap());
-    let file = std::fs::File::create(matches.value_of("output").unwrap())?;
+    debug!("Target is {}", matches.get_one::<String>("target").unwrap());
+    let file = std::fs::File::create(matches.get_one::<String>("output").unwrap())?;
     let mut wtr = std::io::BufWriter::new(file);
     dataset.extract(&mut wtr)?;
     Ok(())
@@ -111,7 +110,8 @@ fn extract(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result
 fn stats(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<()> {
     use haplotyper::stats::Stats;
     debug!("START\tStats step");
-    let wtr = std::io::BufWriter::new(std::fs::File::create(matches.value_of("file").unwrap())?);
+    let wtr = matches.get_one::<String>("file").unwrap().as_str();
+    let wtr = std::io::BufWriter::new(std::fs::File::create(wtr)?);
     dataset.sanity_check();
     dataset.stats(wtr)?;
     Ok(())
@@ -120,32 +120,32 @@ fn stats(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Result<(
 fn select_chunks(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tSelecting Units");
     let chunk_len: usize = matches
-        .value_of("chunk_len")
-        .and_then(|e| e.parse().ok())
+        .get_one("chunk_len")
+        .and_then(|e: &String| e.parse().ok())
         .expect("Chunk len");
     let margin: usize = matches
-        .value_of("margin")
-        .and_then(|e| e.parse().ok())
+        .get_one("margin")
+        .and_then(|e: &String| e.parse().ok())
         .expect("Margin");
     let take_num: usize = matches
-        .value_of("take_num")
-        .and_then(|e| e.parse().ok())
+        .get_one("take_num")
+        .and_then(|e: &String| e.parse().ok())
         .expect("Take num");
     let thrds: usize = matches
-        .value_of("threads")
-        .and_then(|e| e.parse().ok())
+        .get_one("threads")
+        .and_then(|e: &String| e.parse().ok())
         .expect("threads");
     let filter: f64 = matches
-        .value_of("exclude")
-        .and_then(|e| e.parse().ok())
+        .get_one("exclude")
+        .and_then(|e: &String| e.parse().ok())
         .expect("exclude");
     let purge_copy_num: usize = matches
-        .value_of("purge_copy_num")
-        .and_then(|e| e.parse::<usize>().ok())
+        .get_one("purge_copy_num")
+        .and_then(|e: &String| e.parse::<usize>().ok())
         .unwrap();
     let seed: u64 = matches
-        .value_of("seed")
-        .and_then(|e| e.parse::<u64>().ok())
+        .get_one("seed")
+        .and_then(|e: &String| e.parse::<u64>().ok())
         .unwrap();
     set_threads(matches);
     use haplotyper::determine_chunks::{DetermineUnit, DetermineUnitConfig};
@@ -157,17 +157,20 @@ fn select_chunks(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 fn repeat_masking(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tmasking repeat.");
     set_threads(matches);
-    let k: usize = matches.value_of("k").and_then(|l| l.parse().ok()).unwrap();
+    let k: usize = matches
+        .get_one("k")
+        .and_then(|l: &String| l.parse().ok())
+        .unwrap();
     if k > 32 {
         panic!("K should be less than 32.");
     }
     let freq: f64 = matches
-        .value_of("freq")
-        .and_then(|l| l.parse().ok())
+        .get_one("freq")
+        .and_then(|l: &String| l.parse().ok())
         .unwrap();
     let min: u32 = matches
-        .value_of("min")
-        .and_then(|l| l.parse().ok())
+        .get_one("min")
+        .and_then(|l: &String| l.parse().ok())
         .unwrap();
     use haplotyper::repeat_masking::*;
     let config = RepeatMaskConfig::new(k, freq, min);
@@ -178,12 +181,15 @@ fn encode(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tEncoding step");
     set_threads(matches);
     let threads: usize = matches
-        .value_of("threads")
-        .and_then(|e| e.parse::<usize>().ok())
+        .get_one("threads")
+        .and_then(|e: &String| e.parse::<usize>().ok())
         .unwrap();
     use haplotyper::encode::Encode;
     let rt = dataset.read_type;
-    let sim_thr = match matches.value_of("sim_thr").and_then(|e| e.parse().ok()) {
+    let sim_thr = match matches
+        .get_one("sim_thr")
+        .and_then(|e: &String| e.parse().ok())
+    {
         Some(res) => res,
         None => rt.error_upperbound(),
     };
@@ -201,8 +207,8 @@ fn pick_components(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tpicking components.");
     set_threads(matches);
     let component_num: usize = matches
-        .value_of("component_num")
-        .and_then(|num| num.parse().ok())
+        .get_one("component_num")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     use haplotyper::pick_component::*;
     let config = ComponentPickingConfig::new(component_num);
@@ -211,18 +217,25 @@ fn pick_components(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 fn multiplicity_estimation(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tmultiplicity estimation");
     let seed: u64 = matches
-        .value_of("seed")
-        .and_then(|e| e.parse().ok())
+        .get_one("seed")
+        .and_then(|e: &String| e.parse().ok())
         .unwrap();
-    let cov: Option<f64> = matches.value_of("coverage").and_then(|e| e.parse().ok());
+    let cov: Option<f64> = matches
+        .get_one("coverage")
+        .and_then(|e: &String| e.parse().ok());
     dataset.coverage = match cov {
         Some(cov) => definitions::Coverage::Protected(cov),
         None => definitions::Coverage::NotAvailable,
     };
-    let path = matches.value_of("draft_assembly").map(PathBuf::from);
+    let path = matches
+        .get_one::<&String>("draft_assembly")
+        .map(PathBuf::from);
     set_threads(matches);
     use haplotyper::multiplicity_estimation::*;
-    let purge: Option<usize> = matches.value_of("purge").and_then(|x| x.parse().ok());
+    let purge: Option<usize> = match matches.get_one::<&String>("purge") {
+        Some(res) => res.parse::<usize>().ok(),
+        None => None,
+    };
     let config = MultiplicityEstimationConfig::new(seed, path.as_ref());
     dataset.estimate_multiplicity(&config);
     if let Some(upper) = purge {
@@ -248,7 +261,7 @@ fn purge_diverged(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tCorrectDeletion");
     set_threads(matches);
-    let to_recal = matches.is_present("re_cluster");
+    let to_recal = matches.get_flag("re_cluster");
     use haplotyper::determine_chunks::calc_sim_thr;
     use haplotyper::determine_chunks::TAKE_THR;
     let sim_thr = calc_sim_thr(dataset, TAKE_THR);
@@ -262,12 +275,12 @@ fn correct_deletion(matches: &clap::ArgMatches, dataset: &mut DataSet) {
 fn clustering_correction(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tClustering Correction step");
     let _repeat_num: usize = matches
-        .value_of("repeat_num")
-        .and_then(|num| num.parse::<usize>().ok())
+        .get_one("repeat_num")
+        .and_then(|num: &String| num.parse::<usize>().ok())
         .unwrap();
     let _threshold: usize = matches
-        .value_of("coverage_threshold")
-        .and_then(|num| num.parse().ok())
+        .get_one("coverage_threshold")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     set_threads(matches);
     use haplotyper::phmm_likelihood_correction::*;
@@ -279,11 +292,13 @@ fn encode_densely(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tEncode densely");
     set_threads(matches);
     let length: usize = matches
-        .value_of("length")
-        .and_then(|num| num.parse().ok())
+        .get_one("length")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     use haplotyper::dense_encoding::*;
-    let file = matches.value_of("output").map(std::path::PathBuf::from);
+    let file = matches
+        .get_one::<&String>("output")
+        .map(std::path::PathBuf::from);
     let config = DenseEncodingConfig::new(length, file.as_ref());
     dataset.dense_encoding(&config);
 }
@@ -291,20 +306,20 @@ fn squish(matches: &clap::ArgMatches, dataset: &mut DataSet) {
     debug!("START\tSquish Clustering");
     set_threads(matches);
     let ari_thr: f64 = matches
-        .value_of("ari")
-        .and_then(|num| num.parse().ok())
+        .get_one("ari")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     let count: usize = matches
-        .value_of("count")
-        .and_then(|num| num.parse().ok())
+        .get_one("count")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     let match_score: f64 = matches
-        .value_of("match_score")
-        .and_then(|num| num.parse().ok())
+        .get_one("match_score")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     let mismatch_score: f64 = matches
-        .value_of("mismatch_score")
-        .and_then(|num| num.parse().ok())
+        .get_one("mismatch_score")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     use haplotyper::{SquishConfig, SquishErroneousClusters};
     let config = SquishConfig::new(ari_thr, count, match_score, mismatch_score);
@@ -315,19 +330,20 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
     debug!("START\tAssembly step");
     set_threads(matches);
     let window_size: usize = matches
-        .value_of("window_size")
-        .and_then(|num| num.parse().ok())
+        .get_one("window_size")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     let min_llr: f64 = matches
-        .value_of("min_llr")
-        .and_then(|num| num.parse().ok())
+        .get_one("min_llr")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
     let min_span: usize = matches
-        .value_of("min_span")
-        .and_then(|num| num.parse().ok())
+        .get_one("min_span")
+        .and_then(|num: &String| num.parse().ok())
         .unwrap();
-    let skip_polish = matches.is_present("no_polish");
-    let file = matches.value_of("output").unwrap();
+    let skip_polish = matches.get_flag("no_polish");
+    let file: Option<&String> = matches.get_one("output");
+    let file = file.map(|x| x.as_str()).unwrap();
     use haplotyper::assemble::*;
     let config = AssembleConfig::new(
         window_size,
@@ -351,16 +367,16 @@ fn assembly(matches: &clap::ArgMatches, dataset: &mut DataSet) -> std::io::Resul
 fn polish(matches: &clap::ArgMatches) -> std::io::Result<()> {
     set_threads(matches);
     let window_size: usize = matches
-        .value_of("window_size")
-        .and_then(|x| x.parse().ok())
+        .get_one("window_size")
+        .and_then(|x: &String| x.parse().ok())
         .unwrap();
-    let reads = matches.value_of("reads").unwrap();
-    let contig = matches.value_of("contigs").unwrap();
-    let alignments = matches.value_of("alignments").unwrap();
-    let format = matches.value_of("format").unwrap();
+    let reads: &String = matches.get_one("reads").unwrap();
+    let contig: &String = matches.get_one("contigs").unwrap();
+    let alignments: &String = matches.get_one("alignments").unwrap();
+    let format: &String = matches.get_one("format").unwrap();
     let seed: u64 = matches
-        .value_of("seed")
-        .and_then(|x| x.parse().ok())
+        .get_one("seed")
+        .and_then(|x: &String| x.parse().ok())
         .unwrap();
     use haplotyper::polish_segments::polish_segmnents;
     polish_segmnents(reads, contig, alignments, format, window_size, seed)
@@ -393,7 +409,10 @@ fn flush_file(dataset: &DataSet) -> std::io::Result<()> {
 }
 
 fn set_threads(matches: &clap::ArgMatches) {
-    if let Some(threads) = matches.value_of("threads").and_then(|num| num.parse().ok()) {
+    if let Some(threads) = matches
+        .get_one("threads")
+        .and_then(|num: &String| num.parse().ok())
+    {
         debug!("Set Threads\t{}", threads);
         if let Err(why) = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)

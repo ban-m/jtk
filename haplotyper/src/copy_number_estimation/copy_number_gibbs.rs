@@ -4,6 +4,7 @@ use std::collections::HashMap;
 // Each edge has its direction to either "plus" or "minus" direction of the node.
 type Edge = (usize, bool, usize, bool, f64);
 type GbsEdge = (usize, bool, usize, bool, u64);
+use log::*;
 
 // Out of the haploid coverage, how much fraction would be observed in the 0-coverage nodes.
 // For example, if the haploid coverage is 20, we assume that there would be 20 * 0.25 = 5 occurence of edge
@@ -352,8 +353,7 @@ impl Optimizer {
             copy_num
                 .iter_mut()
                 .for_each(|x| *x += (epoch as f64 + 1f64).recip());
-            let mut loss_log: VecDeque<_> =
-                std::iter::repeat(std::f64::INFINITY).take(100).collect();
+            let mut loss_log: VecDeque<_> = std::iter::repeat(f64::INFINITY).take(100).collect();
             for t in 1.. {
                 let total_loss = self.update(copy_num, alpha, beta, gamma, t);
                 let old = loss_log.pop_front().unwrap();
@@ -710,7 +710,7 @@ mod cpe_test {
         let mean_cov = 20f64;
         let div = 5f64;
         let node_cp: Vec<usize> =
-            vec![vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
+            [vec![2; 2], vec![1; 4], vec![2; 3], vec![1; 9], vec![2; 3]].concat();
         let nodes: Vec<f64> = node_cp
             .iter()
             .map(|&copy| {

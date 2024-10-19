@@ -1,4 +1,5 @@
 //! Useful functions.
+use log::*;
 
 /// Return rand index.
 pub fn rand_index(label: &[usize], pred: &[usize]) -> f64 {
@@ -105,7 +106,7 @@ impl LogSumExp {
     pub fn new() -> Self {
         Self {
             accum: 0f64,
-            max: std::f64::NEG_INFINITY,
+            max: f64::NEG_INFINITY,
         }
     }
 }

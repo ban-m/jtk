@@ -1,5 +1,7 @@
+use log::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+
 #[derive(Debug, Clone)]
 pub struct RepeatMaskConfig {
     k: usize,
