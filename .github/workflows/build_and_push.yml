@@ -19,7 +19,7 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::862331892216:role/jtk-github-action
-        aws-region: ap-northeast-1
+        aws-region: us-east-1
     - name: Login to Amazon ECR Public
       id: login-ecr-public
       uses: aws-actions/amazon-ecr-login@v2
