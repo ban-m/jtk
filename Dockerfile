@@ -17,15 +17,15 @@ COPY sandbox/Cargo.toml sandbox/
 RUN mkdir sandbox/src && echo "fn main() {}" > sandbox/src/main.rs
 
 # Build the dependencies to leverage Docker cache
-# RUN cargo build --release
+RUN cargo build --release
 
-# # Copy the source code to the container
-# RUN rm -rf definitions/ haplotyper/ sandbox/ cli/
-# COPY . .
-# RUN touch definitions/src/lib.rs haplotyper/src/lib.rs 
+# Copy the source code to the container
+RUN rm -rf definitions/ haplotyper/ sandbox/ cli/
+COPY . .
+RUN touch definitions/src/lib.rs haplotyper/src/lib.rs 
 
-# RUN cargo build --release
-# # Stage 2: Create the runtime image
-# FROM debian:bookworm
-# COPY --from=builder /app/target/release/jtk /usr/bin/
-# CMD ["jtk"]
+RUN cargo build --release
+# Stage 2: Create the runtime image
+FROM debian:bookworm
+COPY --from=builder /app/target/release/jtk /usr/bin/
+CMD ["jtk"]
