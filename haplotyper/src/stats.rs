@@ -210,3 +210,11 @@ fn up_to(lens: &[usize], frac: f64) -> usize {
     }
     panic!()
 }
+
+fn test_function_2(test: String) -> String {
+    test
+}
+
+fn test_function_version_2(test: String) -> String {
+    test_function_2(test)
+}

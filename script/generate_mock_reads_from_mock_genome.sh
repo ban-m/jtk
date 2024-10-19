@@ -12,9 +12,15 @@ SEED=3490283
 SEED_BR=3910
 RENAME=${PWD}/script/rename_fastq.awk
 
+# Build binaru
+cargo build --release
 
 # Gen genome
-cargo run --release --bin gen_sim_genome -- ${REFERENCE} ${HAPA} ${HAPB} ${SEED} 
+./target/release/gen_sim_genome\
+    --ref-out-path ${REFERENCE}\
+    --hap1-out-path ${HAPA}\
+    --hap2-out-path ${HAPB}\
+    --seed ${SEED} 
 cat ${HAPA} ${HAPB} > ${MERGED}
 simulator.py genome --seed 100 -n 10000 -rg ${MERGED} -o ${ONT_READS}.30x -t 56 -c ${PWD}/../../tools/nanosim/training
 

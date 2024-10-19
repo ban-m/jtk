@@ -1,5 +1,8 @@
 // Synopsis:
-// `cargo run --release --bin gen_sim_genome -- ${reference} ${hap1} ${hap2} ${seed}
+// `gen_sim_genome --ref-out-path ${reference}\
+//    --hap1-out-path ${hap1}\
+//    --hap2-out-path ${hap2}\
+//    --seed ${seed}
 // The output sequences have header like `>reference/hapA/hapB`
 // `reference` is exactly 1Mbp sequence, and hapA and hapB are constructed by introducing 0.05% mutation (indel,subs in total with equal probability) after concatinating the following sequence one after another:
 // For hapA
@@ -15,9 +18,14 @@
 // 4. ref[600Kbp..800Kbp] with 50Kbp insertion at 700Kbp.
 // 5. ref[800Kbp..] with 50Kbp insertion at 900Kbp..
 // It would be very hard case for usual assembler or VariantCall+Phasing procedures.
+use clap::Parser;
 use kiley::gen_seq;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro128StarStar;
+use std::{
+    io::{BufWriter, Write},
+    path::PathBuf,
+};
 const HAPA_LEN: usize = 1_000_000;
 const MOD_LEN: usize = 50_000;
 // Variant rate = 0.1%
@@ -27,16 +35,31 @@ const PROFILE: kiley::gen_seq::Profile = kiley::gen_seq::Profile {
     ins: 0.0005 / 3f64,
 };
 
-use std::io::{BufWriter, Write};
+#[derive(Parser)]
+#[command(name = "gen_sim_genome")]
+#[command(version = "0.1")]
+#[command(about = "Generate a random genome")]
+struct Cli {
+    #[arg(long)]
+    ref_out_path: PathBuf,
+    #[arg(long)]
+    hap1_out_path: PathBuf,
+    #[arg(long)]
+    hap2_out_path: PathBuf,
+    /// Seed for the pseudo random number generator
+    #[arg(long)]
+    seed: u64,
+}
+
 fn main() -> std::io::Result<()> {
-    let args: Vec<_> = std::env::args().collect();
-    let seed: u64 = args[4].parse().unwrap();
+    let args = Cli::parse();
+    let seed = args.seed;
     let mut rng: Xoshiro128StarStar = SeedableRng::seed_from_u64(seed);
     let reference = gen_seq::generate_seq(&mut rng, HAPA_LEN);
     let (hap_a, hap_b) = gen_haploids(&mut rng, &reference);
-    let mut refr_file = std::fs::File::create(&args[1]).map(BufWriter::new)?;
-    let mut hapa_file = std::fs::File::create(&args[2]).map(BufWriter::new)?;
-    let mut hapb_file = std::fs::File::create(&args[3]).map(BufWriter::new)?;
+    let mut refr_file = std::fs::File::create(&args.ref_out_path).map(BufWriter::new)?;
+    let mut hapa_file = std::fs::File::create(&args.hap1_out_path).map(BufWriter::new)?;
+    let mut hapb_file = std::fs::File::create(&args.hap2_out_path).map(BufWriter::new)?;
     let reference = String::from_utf8_lossy(&reference);
     writeln!(refr_file, ">reference\n{}", reference)?;
     writeln!(hapa_file, ">hapA\n{}", String::from_utf8_lossy(&hap_a))?;

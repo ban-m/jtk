@@ -1,6 +1,6 @@
 [package]
 name = "haplotyper"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["ban-m <ban-m@g.ecc.u-tokyo.ac.jp>"]
 edition = "2018"
 
