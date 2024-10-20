@@ -1,7 +1,7 @@
 name: Create and publich a JTK docker image
 on:
   push:
-    branches: ['github-actions']
+    branches: ['refactor']
 env:
   CARGO_TERM_COLOR: always
 jobs:

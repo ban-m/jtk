@@ -28,4 +28,7 @@ RUN cargo build --release
 # Stage 2: Create the runtime image
 FROM debian:bookworm
 COPY --from=builder /app/target/release/jtk /usr/bin/
+RUN apt-get update && apt-get install -y curl unzip &&\
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" &&\
+    unzip awscliv2.zip && ./aws/install && rm -rf ./aws
 CMD ["jtk"]
