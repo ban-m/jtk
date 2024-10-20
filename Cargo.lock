@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "jtk_cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bio_utils 0.3.0 (git+https://github.com/ban-m/bio_utils.git?branch=master)",
  "clap",

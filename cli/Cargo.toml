@@ -1,20 +1,20 @@
 [package]
 name = "jtk_cli"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["ban-m <ban-m@g.ecc.u-tokyo.ac.jp>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = {version = "1.0", features = ["derive"]}
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-clap = {version = "4.5.13", features = ["derive"]}
+clap = { version = "4.5.13", features = ["derive"] }
 log = "0.4.22"
 env_logger = "0.11.5"
 rayon = "1.10.0"
 toml = "0.8.19"
-bio_utils = {git = "https://github.com/ban-m/bio_utils.git", branch = "master"}
-gfa = {git = "https://github.com/ban-m/gfa_rust.git", branch = "master"}
-haplotyper = {path = "../haplotyper"}
-definitions = {path = "../definitions"}
+bio_utils = { git = "https://github.com/ban-m/bio_utils.git", branch = "master" }
+gfa = { git = "https://github.com/ban-m/gfa_rust.git", branch = "master" }
+haplotyper = { path = "../haplotyper" }
+definitions = { path = "../definitions" }

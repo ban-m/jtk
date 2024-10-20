@@ -707,7 +707,7 @@ fn subcommand_pipeline() -> Command {
 }
 pub fn jtk_parser() -> clap::Command {
     clap::Command::new("jtk")
-        .version("0.1")
+        .version("0.3")
         .author("Bansho Masutani <ban-m@g.ecc.u-tokyo.ac.jp>")
         .about("JTK regional diploid assembler")
         .arg_required_else_help(true)
