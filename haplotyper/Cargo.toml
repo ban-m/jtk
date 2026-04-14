@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.8.5"
+rand = "0.9.3"
 rand_xoshiro = "0.6.0"
 rand_distr = "0.4.3"
 serde = {version = "1.0", features = ["derive"]}
